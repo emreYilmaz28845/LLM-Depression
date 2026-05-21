@@ -327,15 +327,26 @@ def main() -> None:
                 checkpoint_name=f"epoch_{epoch}",
                 run_generation=False,
             )
-            metric_value = float(metrics["likelihood"]["subject_metrics"]["positive_f1"])
+            subject_metrics = metrics["likelihood"]["subject_metrics"]
+            metric_value = float(subject_metrics["positive_f1"])
             history_row = {
                 "epoch": epoch,
                 "train_loss": sum(epoch_losses) / max(1, len(epoch_losses)),
                 "inner_val_likelihood_positive_f1": metric_value,
-                "inner_val_macro_f1": float(metrics["likelihood"]["subject_metrics"]["macro_f1"]),
-                "inner_val_accuracy": float(metrics["likelihood"]["subject_metrics"]["accuracy"]),
+                "inner_val_macro_f1": float(subject_metrics["macro_f1"]),
+                "inner_val_accuracy": float(subject_metrics["accuracy"]),
+                "inner_val_precision": float(subject_metrics["precision"]),
+                "inner_val_recall": float(subject_metrics["recall"]),
             }
             history.append(history_row)
+            LOGGER.info(
+                "Validation epoch=%s | ACC=%.6f F1=%.6f Precision=%.6f Recall=%.6f",
+                epoch,
+                float(subject_metrics["accuracy"]),
+                float(subject_metrics["positive_f1"]),
+                float(subject_metrics["precision"]),
+                float(subject_metrics["recall"]),
+            )
             if metric_value > best_metric:
                 best_metric = metric_value
                 best_epoch = epoch
