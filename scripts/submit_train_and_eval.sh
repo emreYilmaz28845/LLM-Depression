@@ -8,9 +8,21 @@ FOLD="${FOLD:-0}"
 RUN_NAME="${RUN_NAME:-mn5_reproduction}"
 SUBMIT_BEST_EVAL="${SUBMIT_BEST_EVAL:-1}"
 SUBMIT_LAST_EVAL="${SUBMIT_LAST_EVAL:-1}"
+ENV_ACTIVATE="${ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate}"
 
 TRAIN_SCRIPT="${TRAIN_SCRIPT:-$PROJECT_ROOT/scripts/run_train_slurm.sh}"
 EVAL_SCRIPT="${EVAL_SCRIPT:-$PROJECT_ROOT/scripts/run_eval_slurm.sh}"
+
+if [ -f "$ENV_ACTIVATE" ]; then
+    # shellcheck disable=SC1090
+    source "$ENV_ACTIVATE"
+fi
+
+echo "Resolving workflow configuration..."
+echo "  project_root: $PROJECT_ROOT"
+echo "  config: $CONFIG"
+echo "  fold: $FOLD"
+echo "  run_name: $RUN_NAME"
 
 if [ ! -f "$TRAIN_SCRIPT" ]; then
     echo "Training script not found: $TRAIN_SCRIPT"
@@ -22,30 +34,31 @@ if [ ! -f "$EVAL_SCRIPT" ]; then
     exit 1
 fi
 
-readarray -t CONFIG_INFO < <(
-    python - <<PY
-import sys
-from pathlib import Path
-sys.path.insert(0, "$PROJECT_ROOT")
-from src.utils import load_yaml, resolve_project_path
+DATASET_NAME="$(awk -F': *' '/^dataset:/{print $2; exit}' "$CONFIG" | tr -d '"' | tr -d "'")"
+RUN_ROOT_REL="$(awk '
+  /^output_dirs:/ {in_block=1; next}
+  in_block && /^[^[:space:]]/ {in_block=0}
+  in_block && /^[[:space:]]+run_root:/ {
+    sub(/^[[:space:]]+run_root:[[:space:]]*/, "", $0)
+    print $0
+    exit
+  }
+' "$CONFIG" | tr -d '"' | tr -d "'")"
 
-config = load_yaml(Path("$CONFIG"))
-dataset = str(config["dataset"])
-run_root = resolve_project_path(config["output_dirs"]["run_root"])
-fold_dir = run_root / "$RUN_NAME" / f"fold_{int('$FOLD')}"
-print(dataset)
-print(run_root)
-print(fold_dir)
-print(fold_dir / "best_model")
-print(fold_dir / "last_model")
-PY
-)
+if [ -z "$DATASET_NAME" ]; then
+    echo "Could not parse dataset from config: $CONFIG"
+    exit 1
+fi
 
-DATASET_NAME="${CONFIG_INFO[0]}"
-RUN_ROOT="${CONFIG_INFO[1]}"
-FOLD_DIR="${CONFIG_INFO[2]}"
-BEST_CHECKPOINT_DIR="${CONFIG_INFO[3]}"
-LAST_CHECKPOINT_DIR="${CONFIG_INFO[4]}"
+if [ -z "$RUN_ROOT_REL" ]; then
+    echo "Could not parse output_dirs.run_root from config: $CONFIG"
+    exit 1
+fi
+
+RUN_ROOT="${RUN_ROOT_REL//\$\{PROJECT_ROOT\}/$PROJECT_ROOT}"
+FOLD_DIR="$RUN_ROOT/$RUN_NAME/fold_$FOLD"
+BEST_CHECKPOINT_DIR="$FOLD_DIR/best_model"
+LAST_CHECKPOINT_DIR="$FOLD_DIR/last_model"
 
 EXPORT_ARGS="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$CONFIG,FOLD=$FOLD,RUN_NAME=$RUN_NAME"
 
