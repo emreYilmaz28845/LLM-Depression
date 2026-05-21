@@ -37,6 +37,7 @@ from src.model.qwen2audio_lora import (
     load_model_for_inference,
     load_model_for_training,
     load_processor,
+    prepare_model_for_evaluation,
     save_adapter_and_processor,
 )
 from src.utils import (
@@ -363,6 +364,8 @@ def main() -> None:
         save_adapter_and_processor(unwrapped, processor, last_dir)
         save_json(history, logs_dir / "training_history.json")
 
+        LOGGER.info("Starting final held-out evaluation for last_checkpoint")
+        prepare_model_for_evaluation(unwrapped)
         last_metrics = evaluate_examples(unwrapped, processor, final_eval_examples, config, eval_dir / "last_checkpoint", checkpoint_name="last_checkpoint")
         if best_epoch == int(config["training"]["num_train_epochs"]):
             best_metrics = last_metrics
@@ -376,6 +379,7 @@ def main() -> None:
             best_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             best_model.to(best_device)
             best_processor = load_processor(best_dir)
+            LOGGER.info("Starting final held-out evaluation for best_checkpoint")
             best_metrics = evaluate_examples(
                 best_model,
                 best_processor,

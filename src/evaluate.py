@@ -25,7 +25,7 @@ from src.data.runtime import (
     load_manifest_rows,
 )
 from src.data.split_utils import deterministic_inner_split
-from src.model.qwen2audio_lora import load_model_for_inference, load_processor
+from src.model.qwen2audio_lora import build_generation_config, load_model_for_inference, load_processor, prepare_model_for_evaluation
 from src.utils import (
     configure_logging,
     ensure_dir,
@@ -153,12 +153,11 @@ def generate_label_text(
 ) -> str:
     inputs = _processor_inputs(processor, example, example["prompt_text"], device, silence_audio)
     input_len = inputs["input_ids"].shape[1]
+    generation_config = build_generation_config(config)
     with torch.no_grad():
         generated = model.generate(
             **inputs,
-            max_new_tokens=int(config["evaluation"]["generation_max_new_tokens"]),
-            num_beams=int(config["evaluation"]["num_beams"]),
-            do_sample=bool(config["evaluation"]["do_sample"]),
+            generation_config=generation_config,
         )
     continuation = generated[0, input_len:]
     return processor.decode(
@@ -178,12 +177,21 @@ def evaluate_examples(
     run_generation: bool = True,
 ) -> dict[str, Any]:
     output_dir = ensure_dir(output_dir)
+    prepare_model_for_evaluation(model)
     device = next(model.parameters()).device
     silence_audio = bool(config["data"].get("silence_audio", False))
     sample_rows: list[dict[str, Any]] = []
     invalid_generation_rows: list[dict[str, Any]] = []
+    total_examples = len(examples)
+    progress_interval = max(1, int(config["evaluation"].get("progress_log_interval", 100)))
 
-    for example in examples:
+    LOGGER.info(
+        "Starting evaluation checkpoint=%s | samples=%s | mode=%s",
+        checkpoint_name,
+        total_examples,
+        "likelihood+generation" if run_generation else "likelihood_only",
+    )
+    for example_index, example in enumerate(examples, start=1):
         dep_score = score_candidate_label(model, processor, example, "Depressed", device, silence_audio)
         non_score = score_candidate_label(model, processor, example, "Non-depressed", device, silence_audio)
         likelihood_pred = 1 if dep_score > non_score else 0
@@ -210,6 +218,13 @@ def evaluate_examples(
         sample_rows.append(row)
         if run_generation and parsed_generation is None:
             invalid_generation_rows.append(row)
+        if example_index % progress_interval == 0 or example_index == total_examples:
+            LOGGER.info(
+                "Evaluation progress checkpoint=%s | %s/%s samples processed",
+                checkpoint_name,
+                example_index,
+                total_examples,
+            )
 
     likelihood_subject_rows, likelihood_metrics = aggregate_likelihood_predictions(sample_rows)
     if run_generation:
@@ -273,6 +288,14 @@ def evaluate_examples(
         for row in invalid_generation_rows:
             handle.write(__import__("json").dumps(row, ensure_ascii=False) + "\n")
 
+    LOGGER.info(
+        "Finished evaluation checkpoint=%s | ACC=%.6f F1=%.6f Precision=%.6f Recall=%.6f",
+        checkpoint_name,
+        float(likelihood_metrics["accuracy"]),
+        float(likelihood_metrics["positive_f1"]),
+        float(likelihood_metrics["precision"]),
+        float(likelihood_metrics["recall"]),
+    )
     return {
         "sample_rows": sample_rows,
         "subject_rows": merged_subject_rows,

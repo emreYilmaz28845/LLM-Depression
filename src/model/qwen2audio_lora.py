@@ -5,7 +5,7 @@ from typing import Any
 
 import torch
 from peft import LoraConfig, PeftModel, get_peft_model
-from transformers import AutoProcessor, Qwen2AudioForConditionalGeneration
+from transformers import AutoProcessor, GenerationConfig, Qwen2AudioForConditionalGeneration
 
 from src.utils import get_logger
 
@@ -55,8 +55,45 @@ def load_model_for_inference(model_name_or_path: str, adapter_path: str | Path |
     model = Qwen2AudioForConditionalGeneration.from_pretrained(model_name_or_path)
     if adapter_path:
         model = PeftModel.from_pretrained(model, adapter_path)
+    base_model = model.base_model.model if hasattr(model, "base_model") and hasattr(model.base_model, "model") else model
+    if hasattr(base_model, "gradient_checkpointing_disable"):
+        try:
+            base_model.gradient_checkpointing_disable()
+        except Exception:
+            pass
+    if hasattr(base_model, "config"):
+        base_model.config.use_cache = True
+    if hasattr(model, "config"):
+        model.config.use_cache = True
     model.eval()
     return model
+
+
+def prepare_model_for_evaluation(model) -> None:
+    base_model = model.base_model.model if hasattr(model, "base_model") and hasattr(model.base_model, "model") else model
+    if hasattr(base_model, "gradient_checkpointing_disable"):
+        try:
+            base_model.gradient_checkpointing_disable()
+        except Exception:
+            pass
+    if hasattr(base_model, "config"):
+        base_model.config.use_cache = True
+    if hasattr(model, "config"):
+        model.config.use_cache = True
+
+
+def build_generation_config(config: dict[str, Any]) -> GenerationConfig:
+    do_sample = bool(config["evaluation"]["do_sample"])
+    generation_kwargs = {
+        "max_new_tokens": int(config["evaluation"]["generation_max_new_tokens"]),
+        "num_beams": int(config["evaluation"]["num_beams"]),
+        "do_sample": do_sample,
+    }
+    if do_sample:
+        generation_kwargs["temperature"] = float(config["evaluation"].get("temperature", 1.0))
+        generation_kwargs["top_p"] = float(config["evaluation"].get("top_p", 1.0))
+        generation_kwargs["top_k"] = int(config["evaluation"].get("top_k", 50))
+    return GenerationConfig(**generation_kwargs)
 
 
 def save_adapter_and_processor(model, processor, output_dir: str | Path) -> None:
