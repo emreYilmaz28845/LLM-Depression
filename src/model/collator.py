@@ -14,17 +14,27 @@ class Qwen2AudioSFTCollator:
 
     def _process_single(self, example: dict[str, Any]) -> dict[str, Any]:
         audio = example["audio_arrays"] if example["audio_arrays"] else None
+        processor_kwargs = {
+            "text": example["training_text"],
+            "audio": audio,
+            "return_tensors": None,
+            "padding": False,
+        }
+        prompt_kwargs = {
+            "text": example["prompt_text"],
+            "audio": audio,
+            "return_tensors": None,
+            "padding": False,
+        }
+        if audio is not None:
+            sampling_rate = int(self.processor.feature_extractor.sampling_rate)
+            processor_kwargs["sampling_rate"] = sampling_rate
+            prompt_kwargs["sampling_rate"] = sampling_rate
         processed_full = self.processor(
-            text=example["training_text"],
-            audio=audio,
-            return_tensors=None,
-            padding=False,
+            **processor_kwargs,
         )
         processed_prompt = self.processor(
-            text=example["prompt_text"],
-            audio=audio,
-            return_tensors=None,
-            padding=False,
+            **prompt_kwargs,
         )
         input_ids = np.asarray(processed_full["input_ids"], dtype=np.int64)
         attention_mask = np.asarray(processed_full["attention_mask"], dtype=np.int64)

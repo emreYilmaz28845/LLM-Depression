@@ -109,7 +109,15 @@ def _load_example_audio(example: dict[str, Any], sampling_rate: int, silence_aud
 def _processor_inputs(processor, example: dict[str, Any], text: str, device: torch.device, silence_audio: bool):
     audio_arrays = _load_example_audio(example, processor.feature_extractor.sampling_rate, silence_audio)
     audio = audio_arrays if audio_arrays else None
-    inputs = processor(text=text, audio=audio, return_tensors="pt", padding=False)
+    processor_kwargs = {
+        "text": text,
+        "audio": audio,
+        "return_tensors": "pt",
+        "padding": False,
+    }
+    if audio is not None:
+        processor_kwargs["sampling_rate"] = int(processor.feature_extractor.sampling_rate)
+    inputs = processor(**processor_kwargs)
     return {key: value.to(device) for key, value in inputs.items()}
 
 

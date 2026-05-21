@@ -37,7 +37,14 @@ def load_model_for_training(model_name_or_path: str, config: dict[str, Any]):
     )
     model.config.use_cache = False
     if bool(config["training"].get("gradient_checkpointing", False)):
-        model.gradient_checkpointing_enable()
+        # PEFT + gradient checkpointing needs gradient-carrying inputs, otherwise
+        # checkpointed blocks can drop all grads and DDP reports unused params.
+        if hasattr(model, "enable_input_require_grads"):
+            model.enable_input_require_grads()
+        try:
+            model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        except TypeError:
+            model.gradient_checkpointing_enable()
     lora_config = build_lora_config(config)
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
