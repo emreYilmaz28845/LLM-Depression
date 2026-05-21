@@ -38,8 +38,17 @@ FOLD="${FOLD:-0}"
 OUTPUT_DIR="${OUTPUT_DIR:-$CHECKPOINT_DIR/standalone_eval}"
 MODEL_PATH="${MODEL_PATH:-}"
 EXTRA_EVAL_ARGS="${EXTRA_EVAL_ARGS:-}"
+DATASET_NAME="$(python - <<PY
+import sys
+from pathlib import Path
+sys.path.insert(0, "$PROJECT_ROOT")
+from src.utils import load_yaml
+config = load_yaml(Path("$CONFIG"))
+print(config["dataset"])
+PY
+)"
 
-LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/slurm_eval}"
+LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/slurm_eval/$DATASET_NAME}"
 mkdir -p "$LOG_ROOT"
 
 SLURM_STDOUT_FILE="$LOG_ROOT/eval-${SLURM_JOB_ID}.out"

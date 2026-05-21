@@ -39,8 +39,17 @@ NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
 MODEL_PATH="${MODEL_PATH:-}"
 EXTRA_TRAIN_ARGS="${EXTRA_TRAIN_ARGS:-}"
 ENABLE_LABEL_MASK_DEBUG="${ENABLE_LABEL_MASK_DEBUG:-0}"
+DATASET_NAME="$(python - <<PY
+import sys
+from pathlib import Path
+sys.path.insert(0, "$PROJECT_ROOT")
+from src.utils import load_yaml
+config = load_yaml(Path("$CONFIG"))
+print(config["dataset"])
+PY
+)"
 
-LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/slurm_train}"
+LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/slurm_train/$DATASET_NAME}"
 mkdir -p "$LOG_ROOT"
 
 SLURM_STDOUT_FILE="$LOG_ROOT/train-${SLURM_JOB_ID}.out"
