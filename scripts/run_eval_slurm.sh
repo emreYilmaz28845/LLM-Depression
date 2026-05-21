@@ -32,6 +32,11 @@ PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depre
 export PROJECT_ROOT
 cd "$PROJECT_ROOT"
 
+DATASET_BASE_ROOT="${DATASET_BASE_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets}"
+export DAIC_DATASET_ROOT="${DAIC_DATASET_ROOT:-$DATASET_BASE_ROOT/DAIC-WOZ}"
+export CMDC_DATASET_ROOT="${CMDC_DATASET_ROOT:-$DATASET_BASE_ROOT/CMDC}"
+export EATD_DATASET_ROOT="${EATD_DATASET_ROOT:-$DATASET_BASE_ROOT/EATD-Corpus}"
+
 CONFIG="${CONFIG:-$PROJECT_ROOT/configs/daic_audio_text.yaml}"
 CHECKPOINT_DIR="${CHECKPOINT_DIR:?Set CHECKPOINT_DIR}"
 FOLD="${FOLD:-0}"
@@ -70,6 +75,10 @@ echo "Fold: $FOLD" | tee -a "$RUN_LOG_FILE"
 echo "Checkpoint Dir: $CHECKPOINT_DIR" | tee -a "$RUN_LOG_FILE"
 echo "Output Dir: $OUTPUT_DIR" | tee -a "$RUN_LOG_FILE"
 echo "MODEL_PATH: ${MODEL_PATH:-<from YAML or checkpoint base model>}" | tee -a "$RUN_LOG_FILE"
+echo "DATASET_BASE_ROOT: $DATASET_BASE_ROOT" | tee -a "$RUN_LOG_FILE"
+echo "DAIC_DATASET_ROOT: $DAIC_DATASET_ROOT" | tee -a "$RUN_LOG_FILE"
+echo "CMDC_DATASET_ROOT: $CMDC_DATASET_ROOT" | tee -a "$RUN_LOG_FILE"
+echo "EATD_DATASET_ROOT: $EATD_DATASET_ROOT" | tee -a "$RUN_LOG_FILE"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-}" | tee -a "$RUN_LOG_FILE"
 echo "Hostname: $(hostname)" | tee -a "$RUN_LOG_FILE"
 echo "Working Directory: $(pwd)" | tee -a "$RUN_LOG_FILE"
