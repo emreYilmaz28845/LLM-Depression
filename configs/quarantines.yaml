@@ -1,0 +1,9 @@
+datasets:
+  daic:
+    missing_samples: []
+  cmdc:
+    missing_samples:
+      - sample_id: HC28_Q9
+        reason: "Official corpus directory contains Q9.txt but no Q9.wav."
+  eatd:
+    missing_samples: []
