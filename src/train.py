@@ -363,47 +363,60 @@ def main() -> None:
             shutil.rmtree(last_dir)
         save_adapter_and_processor(unwrapped, processor, last_dir)
         save_json(history, logs_dir / "training_history.json")
-
-        LOGGER.info("Starting final held-out evaluation for last_checkpoint")
-        prepare_model_for_evaluation(unwrapped)
-        last_metrics = evaluate_examples(unwrapped, processor, final_eval_examples, config, eval_dir / "last_checkpoint", checkpoint_name="last_checkpoint")
-        if best_epoch == int(config["training"]["num_train_epochs"]):
-            best_metrics = last_metrics
-            if not (eval_dir / "best_checkpoint").exists():
-                shutil.copytree(eval_dir / "last_checkpoint", eval_dir / "best_checkpoint")
-        else:
-            unwrapped.to("cpu")
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            best_model = load_model_for_inference(model_name_or_path, best_dir)
-            best_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            best_model.to(best_device)
-            best_processor = load_processor(best_dir)
-            LOGGER.info("Starting final held-out evaluation for best_checkpoint")
-            best_metrics = evaluate_examples(
-                best_model,
-                best_processor,
+        run_final_eval_in_train = bool(config["training"].get("run_final_eval_in_train", False))
+        if run_final_eval_in_train:
+            LOGGER.info("Starting final held-out evaluation for last_checkpoint")
+            prepare_model_for_evaluation(unwrapped)
+            last_metrics = evaluate_examples(
+                unwrapped,
+                processor,
                 final_eval_examples,
                 config,
-                eval_dir / "best_checkpoint",
-                checkpoint_name="best_checkpoint",
+                eval_dir / "last_checkpoint",
+                checkpoint_name="last_checkpoint",
             )
+            if best_epoch == int(config["training"]["num_train_epochs"]):
+                best_metrics = last_metrics
+                if not (eval_dir / "best_checkpoint").exists():
+                    shutil.copytree(eval_dir / "last_checkpoint", eval_dir / "best_checkpoint")
+            else:
+                unwrapped.to("cpu")
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                best_model = load_model_for_inference(model_name_or_path, best_dir)
+                best_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                best_model.to(best_device)
+                best_processor = load_processor(best_dir)
+                LOGGER.info("Starting final held-out evaluation for best_checkpoint")
+                best_metrics = evaluate_examples(
+                    best_model,
+                    best_processor,
+                    final_eval_examples,
+                    config,
+                    eval_dir / "best_checkpoint",
+                    checkpoint_name="best_checkpoint",
+                )
 
-        save_json(
-            {
-                "selected_best_checkpoint": {
-                    "epoch": best_epoch,
-                    "likelihood_metrics": best_metrics["likelihood"]["subject_metrics"],
-                    "generation_metrics": best_metrics["generation"]["subject_metrics"],
+            save_json(
+                {
+                    "selected_best_checkpoint": {
+                        "epoch": best_epoch,
+                        "likelihood_metrics": best_metrics["likelihood"]["subject_metrics"],
+                        "generation_metrics": best_metrics["generation"]["subject_metrics"],
+                    },
+                    "last_checkpoint": {
+                        "epoch": int(config["training"]["num_train_epochs"]),
+                        "likelihood_metrics": last_metrics["likelihood"]["subject_metrics"],
+                        "generation_metrics": last_metrics["generation"]["subject_metrics"],
+                    },
                 },
-                "last_checkpoint": {
-                    "epoch": int(config["training"]["num_train_epochs"]),
-                    "likelihood_metrics": last_metrics["likelihood"]["subject_metrics"],
-                    "generation_metrics": last_metrics["generation"]["subject_metrics"],
-                },
-            },
-            eval_dir / "best_vs_last_checkpoint_metrics.json",
-        )
+                eval_dir / "best_vs_last_checkpoint_metrics.json",
+            )
+        else:
+            LOGGER.info(
+                "Skipping final held-out evaluation inside training to avoid multi-GPU NCCL timeout. "
+                "Run scripts/run_eval_slurm.sh separately on best_model and last_model."
+            )
     accelerator.wait_for_everyone()
 
 

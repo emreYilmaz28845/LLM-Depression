@@ -52,6 +52,7 @@ training:
   logging_steps: 5
   bf16: true
   gradient_checkpointing: true
+  run_final_eval_in_train: false
   dataloader_num_workers: 0
   max_grad_norm: 1.0
 evaluation:
