@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import random
+import re
 from pathlib import Path
 from typing import Any
 
@@ -16,9 +17,14 @@ LABEL_DEPRESSED = "Depressed"
 LABEL_NON_DEPRESSED = "Non-depressed"
 LABEL_TEXT_BY_INT = {0: LABEL_NON_DEPRESSED, 1: LABEL_DEPRESSED}
 LABEL_INT_BY_TEXT = {value: key for key, value in LABEL_TEXT_BY_INT.items()}
+ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}")
+PROJECT_PATH_ANCHORS = ("outputs", "output_model", "configs", "scripts", "src")
 
 
 def project_root() -> Path:
+    env_root = os.environ.get("PROJECT_ROOT")
+    if env_root:
+        return Path(env_root).resolve()
     return Path(__file__).resolve().parents[1]
 
 
@@ -28,16 +34,30 @@ def ensure_dir(path: str | Path) -> Path:
     return path
 
 
+def _expand_string_value(value: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        var_name = match.group(1)
+        default_value = match.group(3)
+        if var_name == "PROJECT_ROOT":
+            return os.environ.get("PROJECT_ROOT", str(project_root()))
+        env_value = os.environ.get(var_name)
+        if env_value not in (None, ""):
+            return env_value
+        if default_value is not None:
+            return default_value
+        return match.group(0)
+
+    expanded = ENV_VAR_PATTERN.sub(replace, value)
+    return os.path.expandvars(expanded)
+
+
 def expand_env_vars(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: expand_env_vars(item) for key, item in value.items()}
     if isinstance(value, list):
         return [expand_env_vars(item) for item in value]
     if isinstance(value, str):
-        expanded = os.path.expandvars(value)
-        if "${PROJECT_ROOT}" in value:
-            expanded = expanded.replace("${PROJECT_ROOT}", str(project_root()))
-        return expanded
+        return _expand_string_value(value)
     return value
 
 
@@ -45,6 +65,37 @@ def load_yaml(path: str | Path) -> dict[str, Any]:
     with Path(path).open("r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle)
     return expand_env_vars(data)
+
+
+def resolve_project_path(path: str | Path) -> Path:
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        return (project_root() / candidate).resolve()
+    if candidate.exists():
+        return candidate
+    parts = candidate.parts
+    for anchor in PROJECT_PATH_ANCHORS:
+        if anchor in parts:
+            anchor_index = parts.index(anchor)
+            relocated = project_root().joinpath(*parts[anchor_index:])
+            return relocated
+    return candidate
+
+
+def serialize_project_path(path: str | Path) -> str:
+    resolved = Path(path).resolve()
+    try:
+        return str(resolved.relative_to(project_root()))
+    except ValueError:
+        return str(resolved)
+
+
+def resolve_metadata_paths(metadata: dict[str, Any]) -> dict[str, Any]:
+    resolved = dict(metadata)
+    for key, value in list(resolved.items()):
+        if key.endswith("_path") and isinstance(value, str) and value:
+            resolved[key] = str(resolve_project_path(value))
+    return resolved
 
 
 def save_yaml(data: dict[str, Any], path: str | Path) -> None:
@@ -157,4 +208,3 @@ def to_serializable(value: Any) -> Any:
 
 def print_json(data: Any) -> None:
     print(json.dumps(to_serializable(data), indent=2, ensure_ascii=False))
-

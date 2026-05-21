@@ -22,6 +22,7 @@ from src.data.validation import (
     print_random_rows,
 )
 from src.utils import configure_logging, ensure_dir, get_logger, load_yaml, save_json, sha256_jsonl_rows, write_jsonl
+from src.utils import serialize_project_path
 
 
 LOGGER = get_logger(__name__)
@@ -77,40 +78,40 @@ def build_for_config(config_path: str | Path) -> None:
     manifest_hash = sha256_jsonl_rows(manifest_rows)
     metadata = {
         "dataset": dataset_name,
-        "manifest_path": str(output_paths["manifest_jsonl"]),
+        "manifest_path": serialize_project_path(output_paths["manifest_jsonl"]),
         "manifest_hash": manifest_hash,
     }
     if "subject_partition_rows" in result:
         partition_path = split_dir / f"{dataset_name}_subject_partitions.json"
         save_json(result["subject_partition_rows"], partition_path)
-        metadata["subject_partition_path"] = str(partition_path)
+        metadata["subject_partition_path"] = serialize_project_path(partition_path)
     if "join_audit_rows" in result:
         join_audit_path = split_dir / f"{dataset_name}_join_audit.csv"
         _write_csv(result["join_audit_rows"], join_audit_path)
-        metadata["join_audit_path"] = str(join_audit_path)
+        metadata["join_audit_path"] = serialize_project_path(join_audit_path)
     if "folds" in result:
         folds_path = split_dir / f"{dataset_name}_folds.json"
         save_json(result["folds"], folds_path)
-        metadata["folds_path"] = str(folds_path)
+        metadata["folds_path"] = serialize_project_path(folds_path)
     if "fold_report" in result:
         fold_report_path = split_dir / f"{dataset_name}_fold_report.json"
         save_json(result["fold_report"], fold_report_path)
-        metadata["fold_report_path"] = str(fold_report_path)
+        metadata["fold_report_path"] = serialize_project_path(fold_report_path)
     if "workbook_fold_report" in result:
         workbook_fold_report_path = split_dir / f"{dataset_name}_workbook_fold_report.json"
         save_json(result["workbook_fold_report"], workbook_fold_report_path)
-        metadata["workbook_fold_report_path"] = str(workbook_fold_report_path)
+        metadata["workbook_fold_report_path"] = serialize_project_path(workbook_fold_report_path)
     if "split_source" in result:
         metadata["split_source"] = result["split_source"]
         metadata["split_source_notes"] = result.get("split_source_notes", "")
     if "subject_rows" in result:
         subject_rows_path = split_dir / f"{dataset_name}_subjects.json"
         save_json(result["subject_rows"], subject_rows_path)
-        metadata["subject_rows_path"] = str(subject_rows_path)
+        metadata["subject_rows_path"] = serialize_project_path(subject_rows_path)
     if "extra_file_audit" in result and result["extra_file_audit"]:
         extra_path = split_dir / f"{dataset_name}_extra_file_audit.json"
         save_json(result["extra_file_audit"], extra_path)
-        metadata["extra_file_audit_path"] = str(extra_path)
+        metadata["extra_file_audit_path"] = serialize_project_path(extra_path)
 
     metadata_path = split_dir / f"{dataset_name}_manifest_metadata.json"
     save_json(metadata, metadata_path)

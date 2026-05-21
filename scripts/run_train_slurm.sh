@@ -29,6 +29,7 @@ else
 fi
 
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
+export PROJECT_ROOT
 cd "$PROJECT_ROOT"
 
 CONFIG="${CONFIG:-$PROJECT_ROOT/configs/daic_audio_text.yaml}"
@@ -72,10 +73,12 @@ python -c "import torch, transformers, accelerate, peft; print('torch', torch.__
 
 python - <<PY | tee -a "$RUN_LOG_FILE"
 import json
+import sys
 from pathlib import Path
-import yaml
+sys.path.insert(0, "$PROJECT_ROOT")
+from src.utils import load_yaml, resolve_project_path
 
-config = yaml.safe_load(Path("$CONFIG").read_text())
+config = load_yaml(Path("$CONFIG"))
 dataset = config["dataset"]
 per_device = int(config["training"]["per_device_train_batch_size"])
 grad_acc = int(config["training"]["gradient_accumulation_steps"])
@@ -84,8 +87,9 @@ effective_batch_size = per_device * grad_acc * world_size
 
 print("dataset", dataset)
 print("effective_batch_size", effective_batch_size)
+print("dataset_root", config["dataset_root"])
 
-split_dir = Path(config["output_dirs"]["split_dir"])
+split_dir = resolve_project_path(config["output_dirs"]["split_dir"])
 metadata_path = split_dir / f"{dataset}_manifest_metadata.json"
 if metadata_path.exists():
     metadata = json.loads(metadata_path.read_text())
@@ -95,6 +99,9 @@ if metadata_path.exists():
 else:
     print("manifest_metadata", f"MISSING:{metadata_path}")
 PY
+
+echo "Building or refreshing manifests before torchrun" | tee -a "$RUN_LOG_FILE"
+python "$PROJECT_ROOT/src/data/build_manifest.py" --config "$CONFIG" 2>&1 | tee -a "$RUN_LOG_FILE"
 
 LABEL_MASK_FLAG=""
 if [ "$ENABLE_LABEL_MASK_DEBUG" = "1" ]; then

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import sys
+import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -30,12 +33,58 @@ from src.utils import (
     label_text_from_int,
     load_yaml,
     read_json,
+    resolve_metadata_paths,
     resolve_model_name_or_path,
+    resolve_project_path,
     save_json,
 )
 
 
 LOGGER = get_logger(__name__)
+
+
+def _metadata_artifacts_are_usable(metadata: dict[str, Any]) -> tuple[bool, str]:
+    manifest_path = Path(metadata["manifest_path"])
+    if not manifest_path.exists():
+        return False, f"manifest_missing:{manifest_path}"
+    for key, value in metadata.items():
+        if key.endswith("_path") and key != "manifest_path" and isinstance(value, str) and value:
+            if not Path(value).exists():
+                return False, f"artifact_missing:{key}:{value}"
+    preview_rows = []
+    try:
+        with manifest_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                preview_rows.append(json.loads(line))
+                if len(preview_rows) >= 3:
+                    break
+    except Exception as exc:
+        return False, f"manifest_read_error:{exc}"
+    if not preview_rows:
+        return False, "manifest_empty"
+    for row in preview_rows:
+        audio_paths = row.get("audio_paths") or ([row["audio_path"]] if row.get("audio_path") else [])
+        for audio_path in audio_paths:
+            if audio_path and not Path(audio_path).exists():
+                return False, f"stale_audio_path:{audio_path}"
+    return True, "ok"
+
+
+def _wait_for_usable_metadata(metadata_path: Path, timeout_seconds: int = 600) -> dict[str, Any]:
+    deadline = time.time() + timeout_seconds
+    last_reason = "metadata_not_ready"
+    while time.time() < deadline:
+        if metadata_path.exists():
+            metadata = resolve_metadata_paths(read_json(metadata_path))
+            usable, reason = _metadata_artifacts_are_usable(metadata)
+            if usable:
+                return metadata
+            last_reason = reason
+        time.sleep(2)
+    raise RuntimeError(f"Timed out waiting for usable metadata at {metadata_path}. Last reason: {last_reason}")
 
 
 def _write_csv(rows: list[dict[str, Any]], path: str | Path) -> None:
@@ -229,10 +278,17 @@ def evaluate_examples(
 
 
 def _load_metadata_or_build(config_path: str | Path, config: dict[str, Any]) -> dict[str, Any]:
-    metadata_path = Path(config["output_dirs"]["split_dir"]) / f"{config['dataset']}_manifest_metadata.json"
-    if not metadata_path.exists():
+    metadata_path = resolve_project_path(Path(config["output_dirs"]["split_dir"]) / f"{config['dataset']}_manifest_metadata.json")
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    if metadata_path.exists():
+        metadata = resolve_metadata_paths(read_json(metadata_path))
+        usable, reason = _metadata_artifacts_are_usable(metadata)
+        if usable:
+            return metadata
+        LOGGER.warning("Refreshing stale metadata for %s: %s", config["dataset"], reason)
+    if local_rank == 0:
         build_for_config(config_path)
-    return read_json(metadata_path)
+    return _wait_for_usable_metadata(metadata_path)
 
 
 def _resolve_final_eval_subject_ids(config: dict[str, Any], metadata: dict[str, Any], fold: int) -> list[str]:
