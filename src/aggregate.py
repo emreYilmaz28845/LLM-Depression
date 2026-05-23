@@ -13,6 +13,15 @@ from src.utils import (
 )
 
 
+def _prediction_count_payload(subject_rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts = Counter(int(row["prediction"]) for row in subject_rows)
+    return {
+        "predicted_non_depressed_subjects": int(counts[0]),
+        "predicted_depressed_subjects": int(counts[1]),
+        "predicted_invalid_subjects": int(counts[-1]),
+    }
+
+
 def aggregate_likelihood_predictions(sample_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in sample_rows:
@@ -50,6 +59,7 @@ def aggregate_likelihood_predictions(sample_rows: list[dict[str, Any]]) -> tuple
     metrics["prediction_backend"] = PREDICTION_MODE_LIKELIHOOD
     metrics["evaluation_protocol_name"] = evaluation_protocol_name(PREDICTION_MODE_LIKELIHOOD)
     metrics["aggregation_level"] = "subject"
+    metrics.update(_prediction_count_payload(subject_rows))
     return subject_rows, metrics
 
 
@@ -125,6 +135,7 @@ def _aggregate_majority_vote_predictions(
     metrics["prediction_backend"] = backend_name
     metrics["evaluation_protocol_name"] = evaluation_protocol_name(backend_name)
     metrics["aggregation_level"] = "subject"
+    metrics.update(_prediction_count_payload(subject_rows))
     return subject_rows, metrics
 
 

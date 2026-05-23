@@ -366,6 +366,14 @@ def evaluate_examples(
         float(metrics_payload["precision"]),
         float(metrics_payload["recall"]),
     )
+    LOGGER.info(
+        "Validation subject counts checkpoint=%s | backend=%s | predicted_depressed=%s predicted_non_depressed=%s predicted_invalid=%s",
+        checkpoint_name,
+        mode,
+        int(metrics_payload["predicted_depressed_subjects"]),
+        int(metrics_payload["predicted_non_depressed_subjects"]),
+        int(metrics_payload["predicted_invalid_subjects"]),
+    )
     return {
         "active_backend": mode,
         "evaluation_protocol_name": protocol_name,
