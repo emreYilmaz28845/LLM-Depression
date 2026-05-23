@@ -93,9 +93,38 @@ def parse_config_override(override: str) -> tuple[list[str], Any]:
     return path, _parse_override_value(raw_value)
 
 
+def normalize_config_overrides(overrides: list[str] | None) -> list[str]:
+    normalized: list[str] = []
+    if not overrides:
+        return normalized
+
+    expecting_value = False
+    for override in overrides:
+        token = str(override).strip()
+        if not token:
+            continue
+        if expecting_value:
+            normalized.append(token)
+            expecting_value = False
+            continue
+        if token == "--set":
+            expecting_value = True
+            continue
+        if token.startswith("--set="):
+            token = token[len("--set=") :].strip()
+            if not token:
+                raise ValueError("Invalid override '--set='. Expected KEY=VALUE.")
+        normalized.append(token)
+
+    if expecting_value:
+        raise ValueError("Invalid override '--set'. Expected KEY=VALUE after --set.")
+
+    return normalized
+
+
 def apply_config_overrides(config: dict[str, Any], overrides: list[str] | None) -> dict[str, Any]:
     resolved = expand_env_vars(dict(config))
-    for override in overrides or []:
+    for override in normalize_config_overrides(overrides):
         path, value = parse_config_override(override)
         cursor: Any = resolved
         for part in path[:-1]:
