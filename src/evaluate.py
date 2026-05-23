@@ -19,7 +19,6 @@ from src.aggregate import (
     aggregate_generation_predictions,
     aggregate_likelihood_predictions,
     aggregate_original_teacher_forced_predictions,
-    parse_generation_label,
 )
 from src.data.build_manifest import build_for_config
 from src.data.runtime import (
@@ -42,10 +41,13 @@ from src.utils import (
     ensure_dir,
     evaluation_protocol_name,
     get_logger,
+    internal_label_text_from_int,
     label_text_from_int,
     load_yaml_with_overrides,
     log_resolved_config,
+    parse_internal_label_text,
     read_json,
+    resolve_label_config,
     resolve_metadata_paths,
     resolve_model_name_or_path,
     resolve_prediction_mode,
@@ -146,6 +148,7 @@ def _base_sample_row(example: dict[str, Any], checkpoint_name: str, backend_name
         "sample_id": example["sample_id"],
         "label": int(example["label"]),
         "label_text": example["label_text"],
+        "internal_label_text": example["internal_label_text"],
     }
 
 
@@ -196,8 +199,22 @@ def generate_label_text(
 
 
 def _predict_sample_likelihood(model, processor, example: dict[str, Any], device: torch.device, silence_audio: bool, checkpoint_name: str) -> dict[str, Any]:
-    dep_score = score_candidate_label(model, processor, example, "Depressed", device, silence_audio)
-    non_score = score_candidate_label(model, processor, example, "Non-depressed", device, silence_audio)
+    dep_score = score_candidate_label(
+        model,
+        processor,
+        example,
+        internal_label_text_from_int(example["config"], 1),
+        device,
+        silence_audio,
+    )
+    non_score = score_candidate_label(
+        model,
+        processor,
+        example,
+        internal_label_text_from_int(example["config"], 0),
+        device,
+        silence_audio,
+    )
     likelihood_pred = 1 if dep_score > non_score else 0
     return {
         **_base_sample_row(example, checkpoint_name, PREDICTION_MODE_LIKELIHOOD),
@@ -218,7 +235,7 @@ def _predict_sample_generation(
     checkpoint_name: str,
 ) -> dict[str, Any]:
     generation_text = generate_label_text(model, processor, example, config, device, silence_audio)
-    parsed_generation = parse_generation_label(generation_text)
+    parsed_generation = parse_internal_label_text(generation_text, config)
     return {
         **_base_sample_row(example, checkpoint_name, PREDICTION_MODE_GENERATION),
         "generation_text": generation_text,
@@ -236,7 +253,7 @@ def _predict_sample_original_teacher_forced(
     checkpoint_name: str,
 ) -> dict[str, Any]:
     prompt_inputs = _processor_inputs(processor, example, example["prompt_text"], device, silence_audio)
-    full_text = example["prompt_text"] + example["label_text"]
+    full_text = example["prompt_text"] + example["internal_label_text"]
     full_inputs = _processor_inputs(processor, example, full_text, device, silence_audio)
     prompt_len = int(prompt_inputs["input_ids"].shape[1])
     target_ids = full_inputs["input_ids"][0, prompt_len:]
@@ -254,7 +271,7 @@ def _predict_sample_original_teacher_forced(
         skip_special_tokens=True,
         clean_up_tokenization_spaces=False,
     ).strip()
-    parsed_prediction = parse_generation_label(predicted_label_text)
+    parsed_prediction = parse_internal_label_text(predicted_label_text, example["config"])
     return {
         **_base_sample_row(example, checkpoint_name, PREDICTION_MODE_ORIGINAL_TEACHER_FORCED),
         "teacher_forced_gold_text": gold_label_text,
@@ -366,6 +383,8 @@ def evaluate_examples(
         protocol_name,
     )
     for example_index, example in enumerate(examples, start=1):
+        example = dict(example)
+        example["config"] = config
         if mode == PREDICTION_MODE_LIKELIHOOD:
             row = predict_sample(model, processor, example, device, silence_audio, checkpoint_name)
         elif mode == PREDICTION_MODE_GENERATION:
@@ -401,7 +420,9 @@ def evaluate_examples(
             "prediction_backend": mode,
             "evaluation_protocol_name": protocol_name,
             "aggregation_level": "subject",
-            "confusion_matrix": metrics_payload["confusion_matrix"],
+            "binary_strict_confusion_matrix": metrics_payload["binary_strict_confusion_matrix"],
+            "diagnostic_three_class_labels": metrics_payload["diagnostic_three_class_labels"],
+            "diagnostic_three_class_confusion_matrix": metrics_payload["diagnostic_three_class_confusion_matrix"],
         },
         output_dir / "confusion_matrix.json",
     )

@@ -65,3 +65,40 @@ def classification_metrics(y_true: list[int], y_pred: list[int]) -> dict[str, An
         "support_positive": int(support_pos),
         "confusion_matrix": matrix,
     }
+
+
+def multiclass_confusion(y_true: list[int], y_pred: list[int], labels: list[int]) -> list[list[int]]:
+    index_by_label = {label: idx for idx, label in enumerate(labels)}
+    matrix = [[0 for _ in labels] for _ in labels]
+    for gold, pred in zip(y_true, y_pred):
+        if gold not in index_by_label or pred not in index_by_label:
+            continue
+        matrix[index_by_label[gold]][index_by_label[pred]] += 1
+    return matrix
+
+
+def multiclass_macro_f1(y_true: list[int], y_pred: list[int], labels: list[int]) -> dict[str, Any]:
+    matrix = multiclass_confusion(y_true, y_pred, labels)
+    per_class: dict[int, dict[str, float]] = {}
+    f1_values: list[float] = []
+    for idx, label in enumerate(labels):
+        tp = matrix[idx][idx]
+        fp = sum(matrix[row][idx] for row in range(len(labels)) if row != idx)
+        fn = sum(matrix[idx][col] for col in range(len(labels)) if col != idx)
+        precision = _safe_divide(tp, tp + fp)
+        recall = _safe_divide(tp, tp + fn)
+        f1 = _safe_divide(2 * precision * recall, precision + recall)
+        support = sum(matrix[idx])
+        per_class[label] = {
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "support": int(support),
+        }
+        f1_values.append(f1)
+    return {
+        "labels": labels,
+        "confusion_matrix": matrix,
+        "macro_f1": float(sum(f1_values) / len(f1_values)) if f1_values else 0.0,
+        "per_class": per_class,
+    }

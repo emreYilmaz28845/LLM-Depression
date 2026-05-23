@@ -17,6 +17,9 @@ LABEL_DEPRESSED = "Depressed"
 LABEL_NON_DEPRESSED = "Non-depressed"
 LABEL_TEXT_BY_INT = {0: LABEL_NON_DEPRESSED, 1: LABEL_DEPRESSED}
 LABEL_INT_BY_TEXT = {value: key for key, value in LABEL_TEXT_BY_INT.items()}
+LABEL_VOCAB_VERSION_LEGACY = "legacy_english_labels"
+LABEL_VOCAB_VERSION_SHORT_AB = "short_internal_ab_labels"
+SUPPORTED_LABEL_VOCAB_VERSIONS = (LABEL_VOCAB_VERSION_LEGACY, LABEL_VOCAB_VERSION_SHORT_AB)
 PREDICTION_MODE_LIKELIHOOD = "likelihood"
 PREDICTION_MODE_GENERATION = "generation"
 PREDICTION_MODE_ORIGINAL_TEACHER_FORCED = "original_teacher_forced"
@@ -74,6 +77,49 @@ def load_yaml(path: str | Path) -> dict[str, Any]:
     with Path(path).open("r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle)
     return expand_env_vars(data)
+
+
+def _default_label_config_for_version(version: str) -> dict[str, str]:
+    if version == LABEL_VOCAB_VERSION_SHORT_AB:
+        return {
+            "label_vocab_version": LABEL_VOCAB_VERSION_SHORT_AB,
+            "internal_positive_label": "A",
+            "internal_negative_label": "B",
+            "external_positive_label": LABEL_DEPRESSED,
+            "external_negative_label": LABEL_NON_DEPRESSED,
+        }
+    if version == LABEL_VOCAB_VERSION_LEGACY:
+        return {
+            "label_vocab_version": LABEL_VOCAB_VERSION_LEGACY,
+            "internal_positive_label": LABEL_DEPRESSED,
+            "internal_negative_label": LABEL_NON_DEPRESSED,
+            "external_positive_label": LABEL_DEPRESSED,
+            "external_negative_label": LABEL_NON_DEPRESSED,
+        }
+    raise ValueError(
+        f"Unsupported labels.label_vocab_version={version!r}. "
+        f"Expected one of {', '.join(SUPPORTED_LABEL_VOCAB_VERSIONS)}."
+    )
+
+
+def resolve_label_config(config: dict[str, Any]) -> dict[str, str]:
+    labels_cfg = dict(config.get("labels", {}))
+    version = str(labels_cfg.get("label_vocab_version", LABEL_VOCAB_VERSION_SHORT_AB)).strip()
+    defaults = _default_label_config_for_version(version)
+    resolved = {**defaults, **labels_cfg}
+    required_keys = (
+        "internal_positive_label",
+        "internal_negative_label",
+        "external_positive_label",
+        "external_negative_label",
+        "label_vocab_version",
+    )
+    for key in required_keys:
+        value = str(resolved.get(key, "")).strip()
+        if not value:
+            raise ValueError(f"Missing labels.{key} in config.")
+        resolved[key] = value
+    return resolved
 
 
 def _parse_override_value(raw_value: str) -> Any:
@@ -260,6 +306,67 @@ def label_int_from_text(label_text: str) -> int:
     if label_text not in LABEL_INT_BY_TEXT:
         raise ValueError(f"Unexpected label text: {label_text}")
     return LABEL_INT_BY_TEXT[label_text]
+
+
+def external_label_text_from_int(config: dict[str, Any], label: int) -> str:
+    labels_cfg = resolve_label_config(config)
+    if label == 1:
+        return labels_cfg["external_positive_label"]
+    if label == 0:
+        return labels_cfg["external_negative_label"]
+    raise ValueError(f"Unexpected label value: {label}")
+
+
+def internal_label_text_from_int(config: dict[str, Any], label: int) -> str:
+    labels_cfg = resolve_label_config(config)
+    if label == 1:
+        return labels_cfg["internal_positive_label"]
+    if label == 0:
+        return labels_cfg["internal_negative_label"]
+    raise ValueError(f"Unexpected label value: {label}")
+
+
+def _normalized_label_text(text: str) -> str:
+    return " ".join(str(text).strip().split()).lower()
+
+
+def parse_internal_label_text(text: str, config: dict[str, Any]) -> int | None:
+    normalized = _normalized_label_text(text)
+    if not normalized:
+        return None
+    labels_cfg = resolve_label_config(config)
+    positive = _normalized_label_text(labels_cfg["internal_positive_label"])
+    negative = _normalized_label_text(labels_cfg["internal_negative_label"])
+    if normalized == positive:
+        return 1
+    if normalized == negative:
+        return 0
+    return None
+
+
+def prompt_label_descriptor(config: dict[str, Any]) -> str:
+    labels_cfg = resolve_label_config(config)
+    return (
+        f"{labels_cfg['external_positive_label']} or "
+        f"{labels_cfg['external_negative_label']}"
+    )
+
+
+def prompt_label_instruction(config: dict[str, Any]) -> str:
+    labels_cfg = resolve_label_config(config)
+    version = labels_cfg["label_vocab_version"]
+    if version == LABEL_VOCAB_VERSION_SHORT_AB:
+        return (
+            f"Use this label legend:\n"
+            f"{labels_cfg['internal_positive_label']} = {labels_cfg['external_positive_label']}\n"
+            f"{labels_cfg['internal_negative_label']} = {labels_cfg['external_negative_label']}\n"
+            f"Answer with exactly one label: "
+            f"{labels_cfg['internal_positive_label']} or {labels_cfg['internal_negative_label']}."
+        )
+    return (
+        "Answer with exactly one label: "
+        f"{labels_cfg['internal_positive_label']} or {labels_cfg['internal_negative_label']}."
+    )
 
 
 def resolve_model_name_or_path(cli_value: str | None, config: dict[str, Any]) -> str:

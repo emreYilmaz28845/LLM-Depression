@@ -17,6 +17,12 @@ prompt:
     Based on the audio and transcript, determine whether the subject is Depressed or Non-depressed.
     Answer with exactly one label: Depressed or Non-depressed.
   prompt_language: english
+labels:
+  label_vocab_version: legacy_english_labels
+  internal_positive_label: Depressed
+  internal_negative_label: Non-depressed
+  external_positive_label: Depressed
+  external_negative_label: Non-depressed
 data:
   use_audio: true
   use_text: true

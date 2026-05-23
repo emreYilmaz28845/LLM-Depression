@@ -11,10 +11,10 @@ from torch.utils.data import Dataset
 
 from src.data.eatd import CANONICAL_RESPONSES
 from src.utils import (
-    LABEL_DEPRESSED,
-    LABEL_NON_DEPRESSED,
     get_logger,
-    label_text_from_int,
+    internal_label_text_from_int,
+    prompt_label_descriptor,
+    prompt_label_instruction,
     read_jsonl,
     save_json,
     write_jsonl,
@@ -45,48 +45,62 @@ def _audio_prompt_block(num_audios: int) -> str:
     return "\n".join(f"Audio {index}: {AUDIO_PLACEHOLDER}" for index in range(1, num_audios + 1))
 
 
-def _single_example_user_text(use_audio: bool, use_text: bool, transcript: str) -> str:
+def _single_example_user_text_with_config(
+    config: dict[str, Any],
+    use_audio: bool,
+    use_text: bool,
+    transcript: str,
+) -> str:
+    label_descriptor = prompt_label_descriptor(config)
+    label_instruction = prompt_label_instruction(config)
     if use_audio and use_text:
         return (
             "The subject's speech audio is provided.\n"
             f"The transcript of the subject's speech is:\n{transcript}\n\n"
-            "Based on the audio and transcript, determine whether the subject is Depressed or Non-depressed.\n"
-            "Answer with exactly one label: Depressed or Non-depressed."
+            f"Based on the audio and transcript, determine whether the subject is {label_descriptor}.\n"
+            f"{label_instruction}"
         )
     if use_audio:
         return (
             "The subject's speech audio is provided.\n\n"
-            "Based on the audio, determine whether the subject is Depressed or Non-depressed.\n"
-            "Answer with exactly one label: Depressed or Non-depressed."
+            f"Based on the audio, determine whether the subject is {label_descriptor}.\n"
+            f"{label_instruction}"
         )
     if use_text:
         return (
             f"The transcript of the subject's speech is:\n{transcript}\n\n"
-            "Based on the transcript, determine whether the subject is Depressed or Non-depressed.\n"
-            "Answer with exactly one label: Depressed or Non-depressed."
+            f"Based on the transcript, determine whether the subject is {label_descriptor}.\n"
+            f"{label_instruction}"
         )
     raise ValueError("At least one of use_audio or use_text must be enabled.")
 
 
-def _subject_example_user_text(use_audio: bool, use_text: bool, transcript: str) -> str:
+def _subject_example_user_text_with_config(
+    config: dict[str, Any],
+    use_audio: bool,
+    use_text: bool,
+    transcript: str,
+) -> str:
+    label_descriptor = prompt_label_descriptor(config)
+    label_instruction = prompt_label_instruction(config)
     if use_audio and use_text:
         return (
             "The subject's speech audio is provided in three responses: negative, neutral, and positive.\n"
             f"The transcript of the subject's speech is:\n{transcript}\n\n"
-            "Based on the audio and transcript, determine whether the subject is Depressed or Non-depressed.\n"
-            "Answer with exactly one label: Depressed or Non-depressed."
+            f"Based on the audio and transcript, determine whether the subject is {label_descriptor}.\n"
+            f"{label_instruction}"
         )
     if use_audio:
         return (
             "The subject's speech audio is provided in three responses: negative, neutral, and positive.\n\n"
-            "Based on the audio, determine whether the subject is Depressed or Non-depressed.\n"
-            "Answer with exactly one label: Depressed or Non-depressed."
+            f"Based on the audio, determine whether the subject is {label_descriptor}.\n"
+            f"{label_instruction}"
         )
     if use_text:
         return (
             f"The transcript of the subject's speech is:\n{transcript}\n\n"
-            "Based on the transcript, determine whether the subject is Depressed or Non-depressed.\n"
-            "Answer with exactly one label: Depressed or Non-depressed."
+            f"Based on the transcript, determine whether the subject is {label_descriptor}.\n"
+            f"{label_instruction}"
         )
     raise ValueError("At least one of use_audio or use_text must be enabled.")
 
@@ -150,7 +164,8 @@ def _base_example_from_row(
     use_text = bool(config["data"]["use_text"])
     transcript = row["transcript"] if use_text else ""
     transcript, transcript_log = _truncate_text(transcript, transcript_max_chars)
-    user_text = _single_example_user_text(use_audio, use_text, transcript)
+    user_text = _single_example_user_text_with_config(config, use_audio, use_text, transcript)
+    example_internal_label = row.get("internal_label_text") or internal_label_text_from_int(config, int(row["label"]))
     prompt_text = build_prompt_text(
         system_prompt=config["prompt"]["system"],
         user_text=user_text,
@@ -163,11 +178,12 @@ def _base_example_from_row(
         "sample_id": row["sample_id"],
         "label": int(row["label"]),
         "label_text": row["label_text"],
+        "internal_label_text": example_internal_label,
         "transcript": transcript,
         "audio_paths": [row["audio_path"]] if use_audio else [],
         "audio_clip_seconds": [None] if use_audio else [],
         "prompt_text": prompt_text,
-        "training_text": build_training_text(prompt_text, row["label_text"]),
+        "training_text": build_training_text(prompt_text, example_internal_label),
         "question_id": row.get("question_id", ""),
     }
     return example, transcript_log
@@ -224,7 +240,8 @@ def build_examples(
                 "audio_total_kept_seconds": 0.0,
                 "audio_truncated": False,
             }
-            user_text = _subject_example_user_text(use_audio, use_text, combined_transcript)
+            user_text = _subject_example_user_text_with_config(config, use_audio, use_text, combined_transcript)
+            internal_label_text = internal_label_text_from_int(config, int(ordered_rows[0]["label"]))
             prompt_text = build_prompt_text(
                 system_prompt=config["prompt"]["system"],
                 user_text=user_text,
@@ -237,11 +254,12 @@ def build_examples(
                 "sample_id": subject_id,
                 "label": int(ordered_rows[0]["label"]),
                 "label_text": ordered_rows[0]["label_text"],
+                "internal_label_text": internal_label_text,
                 "transcript": combined_transcript,
                 "audio_paths": audio_paths,
                 "audio_clip_seconds": audio_plan["audio_kept_seconds"],
                 "prompt_text": prompt_text,
-                "training_text": build_training_text(prompt_text, ordered_rows[0]["label_text"]),
+                "training_text": build_training_text(prompt_text, internal_label_text),
                 "question_id": "subject_bundle",
                 "bundle_question_ids": CANONICAL_RESPONSES,
             }
