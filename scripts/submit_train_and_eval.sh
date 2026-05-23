@@ -8,6 +8,8 @@ FOLD="${FOLD:-0}"
 RUN_NAME="${RUN_NAME:-mn5_reproduction}"
 SUBMIT_BEST_EVAL="${SUBMIT_BEST_EVAL:-1}"
 SUBMIT_LAST_EVAL="${SUBMIT_LAST_EVAL:-1}"
+EXTRA_TRAIN_ARGS="${EXTRA_TRAIN_ARGS:-}"
+EXTRA_EVAL_ARGS="${EXTRA_EVAL_ARGS:-}"
 ENV_ACTIVATE="${ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate}"
 
 TRAIN_SCRIPT="${TRAIN_SCRIPT:-$PROJECT_ROOT/scripts/run_train_slurm.sh}"
@@ -23,6 +25,8 @@ echo "  project_root: $PROJECT_ROOT"
 echo "  config: $CONFIG"
 echo "  fold: $FOLD"
 echo "  run_name: $RUN_NAME"
+echo "  extra_train_args: ${EXTRA_TRAIN_ARGS:-<none>}"
+echo "  extra_eval_args: ${EXTRA_EVAL_ARGS:-<none>}"
 
 if [ ! -f "$TRAIN_SCRIPT" ]; then
     echo "Training script not found: $TRAIN_SCRIPT"
@@ -60,7 +64,7 @@ FOLD_DIR="$RUN_ROOT/$RUN_NAME/fold_$FOLD"
 BEST_CHECKPOINT_DIR="$FOLD_DIR/best_model"
 LAST_CHECKPOINT_DIR="$FOLD_DIR/last_model"
 
-EXPORT_ARGS="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$CONFIG,FOLD=$FOLD,RUN_NAME=$RUN_NAME"
+EXPORT_ARGS="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$CONFIG,FOLD=$FOLD,RUN_NAME=$RUN_NAME,EXTRA_TRAIN_ARGS=$EXTRA_TRAIN_ARGS,EXTRA_EVAL_ARGS=$EXTRA_EVAL_ARGS"
 
 echo "Submitting workflow"
 echo "  dataset: $DATASET_NAME"

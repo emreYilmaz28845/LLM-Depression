@@ -21,7 +21,16 @@ from src.data.validation import (
     print_class_counts,
     print_random_rows,
 )
-from src.utils import configure_logging, ensure_dir, get_logger, load_yaml, save_json, sha256_jsonl_rows, write_jsonl
+from src.utils import (
+    configure_logging,
+    ensure_dir,
+    get_logger,
+    load_yaml_with_overrides,
+    log_resolved_config,
+    save_json,
+    sha256_jsonl_rows,
+    write_jsonl,
+)
 from src.utils import serialize_project_path
 
 
@@ -52,8 +61,14 @@ def _save_common_outputs(config: dict[str, Any], manifest_rows: list[dict[str, A
     }
 
 
-def build_for_config(config_path: str | Path) -> None:
-    config = load_yaml(config_path)
+def build_for_config(config_path: str | Path, config_overrides: list[str] | None = None) -> None:
+    config = load_yaml_with_overrides(config_path, config_overrides)
+    log_resolved_config(
+        LOGGER,
+        base_config_path=config_path,
+        config_overrides=config_overrides,
+        resolved_config=config,
+    )
     dataset_name = str(config["dataset"]).lower()
     quarantine = load_quarantine(config.get("quarantine_path"))
 
@@ -126,6 +141,13 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="One or more dataset config paths.",
     )
+    parser.add_argument(
+        "--set",
+        dest="config_overrides",
+        action="append",
+        default=[],
+        help="Override config values with KEY=VALUE, using dot paths for nested keys.",
+    )
     return parser.parse_args()
 
 
@@ -133,7 +155,7 @@ def main() -> None:
     configure_logging()
     args = parse_args()
     for config_path in args.config:
-        build_for_config(config_path)
+        build_for_config(config_path, args.config_overrides)
 
 
 if __name__ == "__main__":

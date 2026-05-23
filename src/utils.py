@@ -76,6 +76,43 @@ def load_yaml(path: str | Path) -> dict[str, Any]:
     return expand_env_vars(data)
 
 
+def _parse_override_value(raw_value: str) -> Any:
+    try:
+        return yaml.safe_load(raw_value)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Invalid override value {raw_value!r}: {exc}") from exc
+
+
+def parse_config_override(override: str) -> tuple[list[str], Any]:
+    if "=" not in override:
+        raise ValueError(f"Invalid override {override!r}. Expected KEY=VALUE.")
+    raw_path, raw_value = override.split("=", 1)
+    path = [part.strip() for part in raw_path.split(".") if part.strip()]
+    if not path:
+        raise ValueError(f"Invalid override {override!r}. Expected non-empty dotted KEY path.")
+    return path, _parse_override_value(raw_value)
+
+
+def apply_config_overrides(config: dict[str, Any], overrides: list[str] | None) -> dict[str, Any]:
+    resolved = expand_env_vars(dict(config))
+    for override in overrides or []:
+        path, value = parse_config_override(override)
+        cursor: Any = resolved
+        for part in path[:-1]:
+            if not isinstance(cursor, dict) or part not in cursor:
+                raise ValueError(f"Unknown config override path: {'.'.join(path)}")
+            cursor = cursor[part]
+        leaf_key = path[-1]
+        if not isinstance(cursor, dict) or leaf_key not in cursor:
+            raise ValueError(f"Unknown config override path: {'.'.join(path)}")
+        cursor[leaf_key] = expand_env_vars(value)
+    return resolved
+
+
+def load_yaml_with_overrides(path: str | Path, overrides: list[str] | None = None) -> dict[str, Any]:
+    return apply_config_overrides(load_yaml(path), overrides)
+
+
 def resolve_project_path(path: str | Path) -> Path:
     candidate = Path(path)
     if not candidate.is_absolute():
@@ -217,6 +254,30 @@ def to_serializable(value: Any) -> Any:
 
 def print_json(data: Any) -> None:
     print(json.dumps(to_serializable(data), indent=2, ensure_ascii=False))
+
+
+def format_config_overrides_for_logging(overrides: list[str] | None) -> str:
+    if not overrides:
+        return "<none>"
+    return "\n".join(f"  - {item}" for item in overrides)
+
+
+def format_resolved_config_for_logging(config: dict[str, Any]) -> str:
+    return yaml.safe_dump(to_serializable(config), sort_keys=False, allow_unicode=True).rstrip()
+
+
+def log_resolved_config(
+    logger: logging.Logger,
+    *,
+    base_config_path: str | Path,
+    config_overrides: list[str] | None,
+    resolved_config: dict[str, Any],
+) -> None:
+    logger.info("========================================")
+    logger.info("Base Config: %s", Path(base_config_path))
+    logger.info("Config Overrides:\n%s", format_config_overrides_for_logging(config_overrides))
+    logger.info("Resolved Config:\n%s", format_resolved_config_for_logging(resolved_config))
+    logger.info("========================================")
 
 
 def normalize_prediction_mode(value: str | None) -> str:

@@ -45,7 +45,8 @@ from src.utils import (
     ensure_dir,
     evaluation_protocol_name,
     get_logger,
-    load_yaml,
+    load_yaml_with_overrides,
+    log_resolved_config,
     read_json,
     resolve_metadata_paths,
     resolve_model_name_or_path,
@@ -105,7 +106,7 @@ def _wait_for_usable_metadata(metadata_path: Path, timeout_seconds: int = 600) -
     raise RuntimeError(f"Timed out waiting for usable metadata at {metadata_path}. Last reason: {last_reason}")
 
 
-def _load_metadata_or_build(config_path: str | Path, config: dict[str, Any]) -> dict[str, Any]:
+def _load_metadata_or_build(config_path: str | Path, config: dict[str, Any], config_overrides: list[str] | None = None) -> dict[str, Any]:
     metadata_path = resolve_project_path(Path(config["output_dirs"]["split_dir"]) / f"{config['dataset']}_manifest_metadata.json")
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     if metadata_path.exists():
@@ -115,7 +116,7 @@ def _load_metadata_or_build(config_path: str | Path, config: dict[str, Any]) -> 
             return metadata
         LOGGER.warning("Refreshing stale metadata for %s: %s", config["dataset"], reason)
     if local_rank == 0:
-        build_for_config(config_path)
+        build_for_config(config_path, config_overrides)
     return _wait_for_usable_metadata(metadata_path)
 
 
@@ -179,16 +180,29 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model_name_or_path", default=None)
     parser.add_argument("--run_name", default="reproduction")
     parser.add_argument("--label_mask_debug", action="store_true")
+    parser.add_argument(
+        "--set",
+        dest="config_overrides",
+        action="append",
+        default=[],
+        help="Override config values with KEY=VALUE, using dot paths for nested keys.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     configure_logging()
     args = parse_args()
-    config = load_yaml(args.config)
+    config = load_yaml_with_overrides(args.config, args.config_overrides)
+    log_resolved_config(
+        LOGGER,
+        base_config_path=args.config,
+        config_overrides=args.config_overrides,
+        resolved_config=config,
+    )
     set_seed(int(config["seed"]))
     sample_prediction_mode = resolve_prediction_mode(config)
-    metadata = _load_metadata_or_build(args.config, config)
+    metadata = _load_metadata_or_build(args.config, config, args.config_overrides)
     manifest_rows = load_manifest_rows(metadata["manifest_path"])
     subject_labels = build_subject_label_map(manifest_rows)
     outer_partitions = _resolve_outer_partitions(config, metadata, args.fold)
@@ -288,6 +302,8 @@ def main() -> None:
 
     run_config = {
         "config": config,
+        "base_config_path": str(Path(args.config)),
+        "config_overrides": list(args.config_overrides),
         "evaluation": {
             "sample_prediction_mode": sample_prediction_mode,
             "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),

@@ -75,6 +75,7 @@ echo "Fold: $FOLD" | tee -a "$RUN_LOG_FILE"
 echo "Checkpoint Dir: $CHECKPOINT_DIR" | tee -a "$RUN_LOG_FILE"
 echo "Output Dir: $OUTPUT_DIR" | tee -a "$RUN_LOG_FILE"
 echo "MODEL_PATH: ${MODEL_PATH:-<from YAML or checkpoint base model>}" | tee -a "$RUN_LOG_FILE"
+echo "EXTRA_EVAL_ARGS: ${EXTRA_EVAL_ARGS:-<none>}" | tee -a "$RUN_LOG_FILE"
 echo "DATASET_BASE_ROOT: $DATASET_BASE_ROOT" | tee -a "$RUN_LOG_FILE"
 echo "DAIC_DATASET_ROOT: $DAIC_DATASET_ROOT" | tee -a "$RUN_LOG_FILE"
 echo "CMDC_DATASET_ROOT: $CMDC_DATASET_ROOT" | tee -a "$RUN_LOG_FILE"
@@ -112,8 +113,27 @@ else:
     print("manifest_metadata", f"MISSING:{metadata_path}")
 PY
 
+MANIFEST_CMD=(
+    python
+    "$PROJECT_ROOT/src/data/build_manifest.py"
+    --config "$CONFIG"
+)
+if [ -n "$EXTRA_EVAL_ARGS" ]; then
+    # shellcheck disable=SC2206
+    EXTRA_ARGS_ARRAY=($EXTRA_EVAL_ARGS)
+    for ((i=0; i<${#EXTRA_ARGS_ARRAY[@]}; i++)); do
+        if [ "${EXTRA_ARGS_ARRAY[$i]}" = "--set" ] && [ $((i + 1)) -lt ${#EXTRA_ARGS_ARRAY[@]} ]; then
+            MANIFEST_CMD+=("${EXTRA_ARGS_ARRAY[$i]}" "${EXTRA_ARGS_ARRAY[$((i + 1))]}")
+            i=$((i + 1))
+        fi
+    done
+fi
+
 echo "Building or refreshing manifests before evaluation" | tee -a "$RUN_LOG_FILE"
-python "$PROJECT_ROOT/src/data/build_manifest.py" --config "$CONFIG" 2>&1 | tee -a "$RUN_LOG_FILE"
+printf 'Manifest command: ' | tee -a "$RUN_LOG_FILE"
+printf '%q ' "${MANIFEST_CMD[@]}" | tee -a "$RUN_LOG_FILE"
+printf '\n' | tee -a "$RUN_LOG_FILE"
+"${MANIFEST_CMD[@]}" 2>&1 | tee -a "$RUN_LOG_FILE"
 
 CMD=(
     python

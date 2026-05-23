@@ -43,13 +43,15 @@ from src.utils import (
     evaluation_protocol_name,
     get_logger,
     label_text_from_int,
-    load_yaml,
+    load_yaml_with_overrides,
+    log_resolved_config,
     read_json,
     resolve_metadata_paths,
     resolve_model_name_or_path,
     resolve_prediction_mode,
     resolve_project_path,
     save_json,
+    save_yaml,
 )
 
 
@@ -378,7 +380,7 @@ def evaluate_examples(
     }
 
 
-def _load_metadata_or_build(config_path: str | Path, config: dict[str, Any]) -> dict[str, Any]:
+def _load_metadata_or_build(config_path: str | Path, config: dict[str, Any], config_overrides: list[str] | None = None) -> dict[str, Any]:
     metadata_path = resolve_project_path(Path(config["output_dirs"]["split_dir"]) / f"{config['dataset']}_manifest_metadata.json")
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     if metadata_path.exists():
@@ -388,7 +390,7 @@ def _load_metadata_or_build(config_path: str | Path, config: dict[str, Any]) -> 
             return metadata
         LOGGER.warning("Refreshing stale metadata for %s: %s", config["dataset"], reason)
     if local_rank == 0:
-        build_for_config(config_path)
+        build_for_config(config_path, config_overrides)
     return _wait_for_usable_metadata(metadata_path)
 
 
@@ -410,20 +412,33 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model_name_or_path", default=None)
     parser.add_argument("--output_dir", default=None)
     parser.add_argument("--sample_prediction_mode", default=None)
+    parser.add_argument(
+        "--set",
+        dest="config_overrides",
+        action="append",
+        default=[],
+        help="Override config values with KEY=VALUE, using dot paths for nested keys.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     configure_logging()
     args = parse_args()
-    config = load_yaml(args.config)
+    config = load_yaml_with_overrides(args.config, args.config_overrides)
+    log_resolved_config(
+        LOGGER,
+        base_config_path=args.config,
+        config_overrides=args.config_overrides,
+        resolved_config=config,
+    )
     sample_prediction_mode = resolve_prediction_mode(config, args.sample_prediction_mode)
     LOGGER.info(
         "Standalone evaluation backend selected: %s | protocol=%s",
         sample_prediction_mode,
         evaluation_protocol_name(sample_prediction_mode),
     )
-    metadata = _load_metadata_or_build(args.config, config)
+    metadata = _load_metadata_or_build(args.config, config, args.config_overrides)
     manifest_rows = load_manifest_rows(metadata["manifest_path"])
     final_eval_subject_ids = _resolve_final_eval_subject_ids(config, metadata, args.fold)
     final_eval_rows = filter_rows_by_subjects(manifest_rows, final_eval_subject_ids)
@@ -435,6 +450,18 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     output_dir = args.output_dir or (Path(args.checkpoint_dir) / "standalone_eval")
+    save_yaml(
+        {
+            "base_config_path": str(Path(args.config)),
+            "config_overrides": list(args.config_overrides),
+            "sample_prediction_mode": sample_prediction_mode,
+            "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
+            "resolved_model_name_or_path": model_name_or_path,
+            "checkpoint_dir": str(Path(args.checkpoint_dir)),
+            "config": config,
+        },
+        Path(output_dir) / "eval_config.yaml",
+    )
     metrics = evaluate_examples(
         model,
         processor,
