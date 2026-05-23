@@ -22,6 +22,14 @@ def _prediction_count_payload(subject_rows: list[dict[str, Any]]) -> dict[str, i
     }
 
 
+def _true_count_payload(subject_rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts = Counter(int(row["label"]) for row in subject_rows)
+    return {
+        "true_non_depressed_subjects": int(counts[0]),
+        "true_depressed_subjects": int(counts[1]),
+    }
+
+
 def aggregate_likelihood_predictions(sample_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in sample_rows:
@@ -59,7 +67,15 @@ def aggregate_likelihood_predictions(sample_rows: list[dict[str, Any]]) -> tuple
     metrics["prediction_backend"] = PREDICTION_MODE_LIKELIHOOD
     metrics["evaluation_protocol_name"] = evaluation_protocol_name(PREDICTION_MODE_LIKELIHOOD)
     metrics["aggregation_level"] = "subject"
+    metrics["num_valid_subject_predictions"] = len(subject_rows)
+    metrics["valid_only_accuracy"] = metrics["accuracy"]
+    metrics["valid_only_precision"] = metrics["precision"]
+    metrics["valid_only_recall"] = metrics["recall"]
+    metrics["valid_only_positive_f1"] = metrics["positive_f1"]
+    metrics["valid_only_macro_f1"] = metrics["macro_f1"]
+    metrics["valid_only_weighted_f1"] = metrics["weighted_f1"]
     metrics.update(_prediction_count_payload(subject_rows))
+    metrics.update(_true_count_payload(subject_rows))
     return subject_rows, metrics
 
 
@@ -114,7 +130,27 @@ def _aggregate_majority_vote_predictions(
             y_true.append(gold)
             y_pred.append(pred)
 
-    metrics = classification_metrics(y_true, y_pred) if y_true else {
+    valid_only_metrics = classification_metrics(y_true, y_pred) if y_true else {
+        "accuracy": 0.0,
+        "precision": 0.0,
+        "recall": 0.0,
+        "positive_f1": 0.0,
+        "macro_f1": 0.0,
+        "weighted_f1": 0.0,
+        "macro_precision": 0.0,
+        "macro_recall": 0.0,
+        "weighted_precision": 0.0,
+        "weighted_recall": 0.0,
+        "support_negative": 0,
+        "support_positive": 0,
+        "confusion_matrix": [[0, 0], [0, 0]],
+    }
+    strict_y_true = [int(row["label"]) for row in subject_rows]
+    strict_y_pred = [
+        int(row["prediction"]) if row["prediction"] in (0, 1) else (1 - int(row["label"]))
+        for row in subject_rows
+    ]
+    metrics = classification_metrics(strict_y_true, strict_y_pred) if strict_y_true else {
         "accuracy": 0.0,
         "precision": 0.0,
         "recall": 0.0,
@@ -131,11 +167,19 @@ def _aggregate_majority_vote_predictions(
     }
     metrics["num_subjects"] = len(subject_rows)
     metrics["invalid_subjects"] = invalid_subjects
+    metrics["num_valid_subject_predictions"] = len(y_true)
     metrics[invalid_metric_name] = total_invalid_predictions
     metrics["prediction_backend"] = backend_name
     metrics["evaluation_protocol_name"] = evaluation_protocol_name(backend_name)
     metrics["aggregation_level"] = "subject"
+    metrics["valid_only_accuracy"] = valid_only_metrics["accuracy"]
+    metrics["valid_only_precision"] = valid_only_metrics["precision"]
+    metrics["valid_only_recall"] = valid_only_metrics["recall"]
+    metrics["valid_only_positive_f1"] = valid_only_metrics["positive_f1"]
+    metrics["valid_only_macro_f1"] = valid_only_metrics["macro_f1"]
+    metrics["valid_only_weighted_f1"] = valid_only_metrics["weighted_f1"]
     metrics.update(_prediction_count_payload(subject_rows))
+    metrics.update(_true_count_payload(subject_rows))
     return subject_rows, metrics
 
 

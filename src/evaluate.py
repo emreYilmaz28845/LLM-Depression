@@ -52,6 +52,7 @@ from src.utils import (
     resolve_project_path,
     save_json,
     save_yaml,
+    write_jsonl,
 )
 
 
@@ -329,6 +330,14 @@ def _log_invalid_prediction_preview(mode: str, subject_rows: list[dict[str, Any]
     )
 
 
+def _invalid_sample_rows(mode: str, sample_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if mode == PREDICTION_MODE_GENERATION:
+        return [row for row in sample_rows if row.get("generation_prediction_text") == "INVALID"]
+    if mode == PREDICTION_MODE_ORIGINAL_TEACHER_FORCED:
+        return [row for row in sample_rows if row.get("teacher_forced_prediction_text") == "INVALID"]
+    return []
+
+
 def evaluate_examples(
     model,
     processor,
@@ -377,8 +386,15 @@ def evaluate_examples(
     metrics_payload = dict(subject_metrics)
     metrics_payload["checkpoint_name"] = checkpoint_name
 
-    _write_csv(sample_rows, output_dir / "predictions_sample_level.csv")
-    _write_csv(subject_rows, output_dir / "predictions_subject_level.csv")
+    sample_csv_path = output_dir / "predictions_sample_level.csv"
+    subject_csv_path = output_dir / "predictions_subject_level.csv"
+    sample_jsonl_path = output_dir / "predictions_sample_level.jsonl"
+    invalid_jsonl_path = output_dir / "predictions_invalid_sample_level.jsonl"
+    _write_csv(sample_rows, sample_csv_path)
+    _write_csv(subject_rows, subject_csv_path)
+    write_jsonl(sample_rows, sample_jsonl_path)
+    invalid_rows = _invalid_sample_rows(mode, sample_rows)
+    write_jsonl(invalid_rows, invalid_jsonl_path)
     save_json(metrics_payload, output_dir / _metrics_filename_for_mode(mode))
     save_json(
         {
@@ -407,6 +423,34 @@ def evaluate_examples(
         int(metrics_payload["predicted_non_depressed_subjects"]),
         int(metrics_payload["predicted_invalid_subjects"]),
     )
+    LOGGER.info(
+        "Validation true subject counts checkpoint=%s | backend=%s | true_depressed=%s true_non_depressed=%s",
+        checkpoint_name,
+        mode,
+        int(metrics_payload["true_depressed_subjects"]),
+        int(metrics_payload["true_non_depressed_subjects"]),
+    )
+    LOGGER.info(
+        "Validation output files checkpoint=%s | backend=%s | subject_csv=%s sample_csv=%s sample_jsonl=%s invalid_sample_jsonl=%s invalid_sample_count=%s",
+        checkpoint_name,
+        mode,
+        subject_csv_path,
+        sample_csv_path,
+        sample_jsonl_path,
+        invalid_jsonl_path,
+        len(invalid_rows),
+    )
+    if int(metrics_payload.get("invalid_subjects", 0)) > 0:
+        LOGGER.info(
+            "Validation valid-only metrics checkpoint=%s | backend=%s | valid_subjects=%s ACC=%.6f F1=%.6f Precision=%.6f Recall=%.6f",
+            checkpoint_name,
+            mode,
+            int(metrics_payload["num_valid_subject_predictions"]),
+            float(metrics_payload["valid_only_accuracy"]),
+            float(metrics_payload["valid_only_positive_f1"]),
+            float(metrics_payload["valid_only_precision"]),
+            float(metrics_payload["valid_only_recall"]),
+        )
     _log_invalid_prediction_preview(mode, subject_rows, sample_rows)
     return {
         "active_backend": mode,
