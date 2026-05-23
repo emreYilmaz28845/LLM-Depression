@@ -53,6 +53,7 @@ from src.utils import (
     resolve_prediction_mode,
     resolve_project_path,
     save_json,
+    save_json_atomic,
     save_yaml,
     set_seed,
     sha256_file,
@@ -173,6 +174,48 @@ def _sample_partition_counts(examples: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
+def _save_best_checkpoint(save_strategy: str) -> bool:
+    return save_strategy in {"full", "best_only"}
+
+
+def _save_last_checkpoint(save_strategy: str) -> bool:
+    return save_strategy == "full"
+
+
+def _write_trial_progress(
+    progress_path: str | None,
+    *,
+    epoch: int,
+    metric_name: str,
+    metric_value: float,
+    best_metric: float,
+    best_epoch: int,
+    run_root: Path,
+    config_overrides: list[str],
+) -> None:
+    if not progress_path:
+        return
+    save_json_atomic(
+        {
+            "epoch": int(epoch),
+            "step": int(epoch),
+            "metric_name": metric_name,
+            "metric": float(metric_value),
+            "best_metric": float(best_metric),
+            "best_epoch": int(best_epoch),
+            "run_root": str(run_root),
+            "config_overrides": list(config_overrides),
+        },
+        progress_path,
+    )
+
+
+def _write_trial_result(result_path: str | None, payload: dict[str, Any]) -> None:
+    if not result_path:
+        return
+    save_json_atomic(payload, result_path)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a leakage-safe Qwen2-Audio depression detector.")
     parser.add_argument("--config", required=True)
@@ -180,6 +223,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model_name_or_path", default=None)
     parser.add_argument("--run_name", default="reproduction")
     parser.add_argument("--label_mask_debug", action="store_true")
+    parser.add_argument("--trial-progress-file", default=None)
+    parser.add_argument("--trial-result-file", default=None)
+    parser.add_argument(
+        "--save_strategy",
+        choices=("full", "best_only", "hpo_minimal"),
+        default="full",
+        help="Artifact retention strategy. Use hpo_minimal for Optuna trials.",
+    )
     parser.add_argument(
         "--set",
         dest="config_overrides",
@@ -215,9 +266,9 @@ def main() -> None:
 
     run_root = Path(config["output_dirs"]["run_root"]) / args.run_name / f"fold_{args.fold}"
     logs_dir = ensure_dir(run_root / "logs")
-    eval_dir = ensure_dir(run_root / "eval")
-    best_dir = ensure_dir(run_root / "best_model")
-    last_dir = ensure_dir(run_root / "last_model")
+    eval_dir = run_root / "eval"
+    best_dir = run_root / "best_model"
+    last_dir = run_root / "last_model"
 
     split_payload = save_partition_subjects(
         logs_dir / "split_used.json",
@@ -314,6 +365,7 @@ def main() -> None:
         "split_metadata_path": metadata.get("folds_path") or metadata.get("subject_partition_path"),
         "split_metadata_hash": sha256_file(metadata.get("folds_path") or metadata.get("subject_partition_path")),
         "fold": int(args.fold),
+        "save_strategy": args.save_strategy,
     }
     if accelerator.is_main_process:
         save_yaml(run_config, run_root / "run_config.yaml")
@@ -381,20 +433,39 @@ def main() -> None:
             if metric_value > best_metric:
                 best_metric = metric_value
                 best_epoch = epoch
-                if best_dir.exists():
-                    shutil.rmtree(best_dir)
-                save_adapter_and_processor(unwrapped, processor, best_dir)
+                if _save_best_checkpoint(args.save_strategy):
+                    if best_dir.exists():
+                        shutil.rmtree(best_dir)
+                    save_adapter_and_processor(unwrapped, processor, best_dir)
+            _write_trial_progress(
+                args.trial_progress_file,
+                epoch=epoch,
+                metric_name="inner_val_positive_f1",
+                metric_value=metric_value,
+                best_metric=best_metric,
+                best_epoch=best_epoch,
+                run_root=run_root,
+                config_overrides=args.config_overrides,
+            )
             LOGGER.info("Finished epoch=%s | best_epoch=%s best_metric=%.6f", epoch, best_epoch, best_metric)
         accelerator.wait_for_everyone()
 
     if accelerator.is_main_process:
         unwrapped = accelerator.unwrap_model(model)
-        if last_dir.exists():
-            shutil.rmtree(last_dir)
-        save_adapter_and_processor(unwrapped, processor, last_dir)
         save_json(history, logs_dir / "training_history.json")
+        if _save_last_checkpoint(args.save_strategy):
+            if last_dir.exists():
+                shutil.rmtree(last_dir)
+            save_adapter_and_processor(unwrapped, processor, last_dir)
         run_final_eval_in_train = bool(config["training"].get("run_final_eval_in_train", False))
+        if run_final_eval_in_train and not _save_best_checkpoint(args.save_strategy):
+            LOGGER.info(
+                "Skipping final held-out evaluation inside training because save_strategy=%s does not keep best checkpoints.",
+                args.save_strategy,
+            )
+            run_final_eval_in_train = False
         if run_final_eval_in_train:
+            ensure_dir(eval_dir)
             LOGGER.info(
                 "Final held-out evaluation backend: %s | protocol=%s",
                 sample_prediction_mode,
@@ -454,6 +525,25 @@ def main() -> None:
                 "Skipping final held-out evaluation inside training to avoid multi-GPU NCCL timeout. "
                 "Run scripts/run_eval_slurm.sh separately on best_model and last_model."
             )
+        _write_trial_result(
+            args.trial_result_file,
+            {
+                "status": "completed",
+                "fold": int(args.fold),
+                "run_name": args.run_name,
+                "run_root": str(run_root),
+                "save_strategy": args.save_strategy,
+                "metric_name": "inner_val_positive_f1",
+                "best_metric": float(best_metric),
+                "best_epoch": int(best_epoch),
+                "history_path": str(logs_dir / "training_history.json"),
+                "best_model_dir": str(best_dir) if best_dir.exists() else None,
+                "last_model_dir": str(last_dir) if last_dir.exists() else None,
+                "config_overrides": list(args.config_overrides),
+                "sample_prediction_mode": sample_prediction_mode,
+                "history": history,
+            },
+        )
     accelerator.wait_for_everyone()
 
 

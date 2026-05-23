@@ -260,6 +260,16 @@ def save_json(data: Any, path: str | Path, indent: int = 2) -> None:
         handle.write("\n")
 
 
+def save_json_atomic(data: Any, path: str | Path, indent: int = 2) -> None:
+    path = Path(path)
+    ensure_dir(path.parent)
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=indent, ensure_ascii=False)
+        handle.write("\n")
+    tmp_path.replace(path)
+
+
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with Path(path).open("r", encoding="utf-8") as handle:

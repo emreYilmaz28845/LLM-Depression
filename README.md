@@ -138,12 +138,68 @@ sbatch scripts/run_train_slurm.sh
 sbatch scripts/run_eval_slurm.sh
 ```
 
+Optuna HPO entrypoint:
+
+```bash
+sbatch scripts/run_optuna_slurm.sh
+```
+
 Set variables such as:
 - `CONFIG`
 - `FOLD`
 - `RUN_NAME`
 - `CHECKPOINT_DIR`
 - `MODEL_PATH`
+
+For Optuna studies you will typically set:
+- `CONFIG`
+- `FOLD`
+- `N_TRIALS`
+- `MODEL_PATH`
+- `STUDY_NAME`
+- `EXTRA_HPO_ARGS`
+
+Example:
+
+```bash
+sbatch --export=ALL,CONFIG=/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/configs/daic_audio_text.yaml,FOLD=0,N_TRIALS=40,STUDY_NAME=daic_fold0_optuna,EXTRA_HPO_ARGS="--run-name-prefix daic_hpo --save_strategy hpo_minimal --trial-train-epochs 10 --lr-min 5e-6 --lr-max 5e-5 --lora-r-choices 2,4,8 --lora-alpha-choices 4,8,16 --lora-dropout-min 0.1 --lora-dropout-max 0.3 --weight-decay-min 0.01 --weight-decay-max 0.1" scripts/run_optuna_slurm.sh
+```
+
+By default, Optuna now searches:
+- `lr`
+- `lora_r`
+- `lora_alpha`
+- `lora_dropout`
+- `weight_decay`
+
+Default safe HPO profile:
+- `40` trials
+- `10` epochs per trial
+- `lr`: `5e-6` to `5e-5` with log sampling
+- `lora_r`: `2, 4, 8`
+- `lora_alpha`: `4, 8, 16`
+- `lora_dropout`: `0.1` to `0.3`
+- `weight_decay`: `0.01` to `0.1`
+
+You can disable the last two with:
+
+```bash
+--no-search-lora-dropout --no-search-weight-decay
+```
+
+Study artifacts are written under:
+
+```text
+outputs/optuna/{dataset}/{study_name}/
+```
+
+Key HPO outputs:
+- `study_config.json`
+- `study_results.json`
+- `study_results_table.csv`
+- `{study_name}.db`
+- `trial_runtime/`
+- `materialized_best_trial_summary.json` when `--materialize-best-trial` is enabled
 
 ## Outputs
 
