@@ -95,9 +95,10 @@ import json
 import sys
 from pathlib import Path
 sys.path.insert(0, "$PROJECT_ROOT")
-from src.utils import load_yaml, resolve_project_path
+from src.utils import load_yaml_with_overrides, resolve_project_path
 
-config = load_yaml(Path("$CONFIG"))
+override_args = """$EXTRA_TRAIN_ARGS""".split()
+config = load_yaml_with_overrides(Path("$CONFIG"), override_args)
 dataset = config["dataset"]
 per_device = int(config["training"]["per_device_train_batch_size"])
 grad_acc = int(config["training"]["gradient_accumulation_steps"])
@@ -107,6 +108,7 @@ effective_batch_size = per_device * grad_acc * world_size
 print("dataset", dataset)
 print("effective_batch_size", effective_batch_size)
 print("dataset_root", config["dataset_root"])
+print("sample_prediction_mode", config["evaluation"]["sample_prediction_mode"])
 
 split_dir = resolve_project_path(config["output_dirs"]["split_dir"])
 metadata_path = split_dir / f"{dataset}_manifest_metadata.json"
