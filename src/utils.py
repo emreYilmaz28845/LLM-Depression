@@ -106,7 +106,28 @@ def resolve_label_config(config: dict[str, Any]) -> dict[str, str]:
     labels_cfg = dict(config.get("labels", {}))
     version = str(labels_cfg.get("label_vocab_version", LABEL_VOCAB_VERSION_SHORT_AB)).strip()
     defaults = _default_label_config_for_version(version)
-    resolved = {**defaults, **labels_cfg}
+    resolved = dict(defaults)
+    # Apply explicit customizations only when they do not simply mirror the
+    # stale legacy YAML values from another vocabulary version.
+    for key, value in labels_cfg.items():
+        if key == "label_vocab_version":
+            resolved[key] = value
+            continue
+        if key not in defaults:
+            resolved[key] = value
+            continue
+        other_defaults = [
+            cfg[key]
+            for other_version in SUPPORTED_LABEL_VOCAB_VERSIONS
+            if other_version != version
+            for cfg in [_default_label_config_for_version(other_version)]
+        ]
+        if value == defaults[key]:
+            resolved[key] = value
+            continue
+        if value in other_defaults:
+            continue
+        resolved[key] = value
     required_keys = (
         "internal_positive_label",
         "internal_negative_label",
