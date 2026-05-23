@@ -163,12 +163,6 @@ def parse_generation_label(text: str) -> int | None:
     normalized = " ".join(text.strip().lower().split())
     if not normalized:
         return None
-    depressed_markers = [
-        "depressed",
-        "depression",
-        "speaker is depressed",
-        "subject is depressed",
-    ]
     non_markers = [
         "non-depressed",
         "non depressed",
@@ -176,10 +170,17 @@ def parse_generation_label(text: str) -> int | None:
         "healthy",
         "nondepressed",
     ]
-    has_dep = any(marker in normalized for marker in depressed_markers)
-    has_non = any(marker in normalized for marker in non_markers)
-    if has_dep and not has_non:
-        return 1
-    if has_non and not has_dep:
+    # Check negative-class markers first so "non-depressed" does not
+    # accidentally trigger the positive "depressed" substring match.
+    if any(marker in normalized for marker in non_markers):
         return 0
+    depressed_markers = [
+        "depression",
+        "speaker is depressed",
+        "subject is depressed",
+    ]
+    if any(marker in normalized for marker in depressed_markers):
+        return 1
+    if normalized == "depressed" or normalized.endswith(" depressed"):
+        return 1
     return None
