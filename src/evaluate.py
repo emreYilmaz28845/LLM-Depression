@@ -296,6 +296,39 @@ def _metrics_filename_for_mode(mode: str) -> str:
     raise ValueError(f"Unsupported prediction backend: {mode}")
 
 
+def _log_invalid_prediction_preview(mode: str, subject_rows: list[dict[str, Any]], sample_rows: list[dict[str, Any]]) -> None:
+    invalid_subjects = [row for row in subject_rows if row.get("prediction_text") == "INVALID"]
+    if invalid_subjects:
+        preview_subjects = ", ".join(
+            f"{row['subject_id']}({row['label_text']})" for row in invalid_subjects[:12]
+        )
+        LOGGER.info(
+            "Invalid subject preview backend=%s | count=%s | subjects=%s",
+            mode,
+            len(invalid_subjects),
+            preview_subjects,
+        )
+
+    if mode != PREDICTION_MODE_ORIGINAL_TEACHER_FORCED:
+        return
+
+    invalid_samples = [row for row in sample_rows if row.get("teacher_forced_prediction_text") == "INVALID"]
+    if not invalid_samples:
+        return
+
+    preview_chunks = []
+    for row in invalid_samples[:20]:
+        preview_chunks.append(
+            f"{row['sample_id']} gold={row['label_text']} decoded={row.get('teacher_forced_decoded_text', '')!r}"
+        )
+    LOGGER.info(
+        "Invalid teacher-forced sample preview backend=%s | count=%s | samples=%s",
+        mode,
+        len(invalid_samples),
+        " || ".join(preview_chunks),
+    )
+
+
 def evaluate_examples(
     model,
     processor,
@@ -374,6 +407,7 @@ def evaluate_examples(
         int(metrics_payload["predicted_non_depressed_subjects"]),
         int(metrics_payload["predicted_invalid_subjects"]),
     )
+    _log_invalid_prediction_preview(mode, subject_rows, sample_rows)
     return {
         "active_backend": mode,
         "evaluation_protocol_name": protocol_name,
