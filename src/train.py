@@ -43,11 +43,13 @@ from src.model.qwen2audio_lora import (
 from src.utils import (
     configure_logging,
     ensure_dir,
+    evaluation_protocol_name,
     get_logger,
     load_yaml,
     read_json,
     resolve_metadata_paths,
     resolve_model_name_or_path,
+    resolve_prediction_mode,
     resolve_project_path,
     save_json,
     save_yaml,
@@ -185,6 +187,7 @@ def main() -> None:
     args = parse_args()
     config = load_yaml(args.config)
     set_seed(int(config["seed"]))
+    sample_prediction_mode = resolve_prediction_mode(config)
     metadata = _load_metadata_or_build(args.config, config)
     manifest_rows = load_manifest_rows(metadata["manifest_path"])
     subject_labels = build_subject_label_map(manifest_rows)
@@ -285,6 +288,10 @@ def main() -> None:
 
     run_config = {
         "config": config,
+        "evaluation": {
+            "sample_prediction_mode": sample_prediction_mode,
+            "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
+        },
         "resolved_model_name_or_path": model_name_or_path,
         "manifest_path": metadata["manifest_path"],
         "manifest_hash": metadata["manifest_hash"],
@@ -319,6 +326,11 @@ def main() -> None:
         if accelerator.is_main_process:
             unwrapped = accelerator.unwrap_model(model)
             inner_eval_dir = ensure_dir(logs_dir / f"inner_val_epoch_{epoch}")
+            LOGGER.info(
+                "Inner validation backend: %s | protocol=%s",
+                sample_prediction_mode,
+                evaluation_protocol_name(sample_prediction_mode),
+            )
             metrics = evaluate_examples(
                 unwrapped,
                 processor,
@@ -326,14 +338,16 @@ def main() -> None:
                 config,
                 inner_eval_dir,
                 checkpoint_name=f"epoch_{epoch}",
-                run_generation=False,
+                sample_prediction_mode=sample_prediction_mode,
             )
-            subject_metrics = metrics["likelihood"]["subject_metrics"]
+            subject_metrics = metrics["backend_results"][sample_prediction_mode]["subject_metrics"]
             metric_value = float(subject_metrics["positive_f1"])
             history_row = {
                 "epoch": epoch,
                 "train_loss": sum(epoch_losses) / max(1, len(epoch_losses)),
-                "inner_val_likelihood_positive_f1": metric_value,
+                "inner_val_prediction_backend": sample_prediction_mode,
+                "inner_val_evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
+                "inner_val_positive_f1": metric_value,
                 "inner_val_macro_f1": float(subject_metrics["macro_f1"]),
                 "inner_val_accuracy": float(subject_metrics["accuracy"]),
                 "inner_val_precision": float(subject_metrics["precision"]),
@@ -365,6 +379,11 @@ def main() -> None:
         save_json(history, logs_dir / "training_history.json")
         run_final_eval_in_train = bool(config["training"].get("run_final_eval_in_train", False))
         if run_final_eval_in_train:
+            LOGGER.info(
+                "Final held-out evaluation backend: %s | protocol=%s",
+                sample_prediction_mode,
+                evaluation_protocol_name(sample_prediction_mode),
+            )
             LOGGER.info("Starting final held-out evaluation for last_checkpoint")
             prepare_model_for_evaluation(unwrapped)
             last_metrics = evaluate_examples(
@@ -374,6 +393,7 @@ def main() -> None:
                 config,
                 eval_dir / "last_checkpoint",
                 checkpoint_name="last_checkpoint",
+                sample_prediction_mode=sample_prediction_mode,
             )
             if best_epoch == int(config["training"]["num_train_epochs"]):
                 best_metrics = last_metrics
@@ -395,19 +415,20 @@ def main() -> None:
                     config,
                     eval_dir / "best_checkpoint",
                     checkpoint_name="best_checkpoint",
+                    sample_prediction_mode=sample_prediction_mode,
                 )
 
             save_json(
                 {
+                    "prediction_backend": sample_prediction_mode,
+                    "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
                     "selected_best_checkpoint": {
                         "epoch": best_epoch,
-                        "likelihood_metrics": best_metrics["likelihood"]["subject_metrics"],
-                        "generation_metrics": best_metrics["generation"]["subject_metrics"],
+                        "active_backend_metrics": best_metrics["backend_results"][sample_prediction_mode]["subject_metrics"],
                     },
                     "last_checkpoint": {
                         "epoch": int(config["training"]["num_train_epochs"]),
-                        "likelihood_metrics": last_metrics["likelihood"]["subject_metrics"],
-                        "generation_metrics": last_metrics["generation"]["subject_metrics"],
+                        "active_backend_metrics": last_metrics["backend_results"][sample_prediction_mode]["subject_metrics"],
                     },
                 },
                 eval_dir / "best_vs_last_checkpoint_metrics.json",

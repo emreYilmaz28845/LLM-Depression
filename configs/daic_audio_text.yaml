@@ -57,6 +57,7 @@ training:
   dataloader_num_workers: 0
   max_grad_norm: 1.0
 evaluation:
+  sample_prediction_mode: likelihood
   generation_max_new_tokens: 8
   num_beams: 1
   do_sample: false

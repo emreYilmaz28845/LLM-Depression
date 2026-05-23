@@ -17,6 +17,15 @@ LABEL_DEPRESSED = "Depressed"
 LABEL_NON_DEPRESSED = "Non-depressed"
 LABEL_TEXT_BY_INT = {0: LABEL_NON_DEPRESSED, 1: LABEL_DEPRESSED}
 LABEL_INT_BY_TEXT = {value: key for key, value in LABEL_TEXT_BY_INT.items()}
+PREDICTION_MODE_LIKELIHOOD = "likelihood"
+PREDICTION_MODE_GENERATION = "generation"
+PREDICTION_MODE_ORIGINAL_TEACHER_FORCED = "original_teacher_forced"
+PREDICTION_MODE_PROTOCOLS = {
+    PREDICTION_MODE_LIKELIHOOD: "candidate_label_likelihood",
+    PREDICTION_MODE_GENERATION: "free_generation_label_parse",
+    PREDICTION_MODE_ORIGINAL_TEACHER_FORCED: "teacher_forced_label_span",
+}
+SUPPORTED_PREDICTION_MODES = tuple(PREDICTION_MODE_PROTOCOLS.keys())
 ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}")
 PROJECT_PATH_ANCHORS = ("outputs", "output_model", "configs", "scripts", "src")
 
@@ -208,3 +217,25 @@ def to_serializable(value: Any) -> Any:
 
 def print_json(data: Any) -> None:
     print(json.dumps(to_serializable(data), indent=2, ensure_ascii=False))
+
+
+def normalize_prediction_mode(value: str | None) -> str:
+    normalized = (value or PREDICTION_MODE_LIKELIHOOD).strip().lower()
+    if normalized not in SUPPORTED_PREDICTION_MODES:
+        raise ValueError(
+            f"Unsupported evaluation.sample_prediction_mode={value!r}. "
+            f"Expected one of {', '.join(SUPPORTED_PREDICTION_MODES)}."
+        )
+    return normalized
+
+
+def resolve_prediction_mode(config: dict[str, Any], override: str | None = None) -> str:
+    if override is not None:
+        return normalize_prediction_mode(override)
+    evaluation_cfg = config.get("evaluation", {})
+    return normalize_prediction_mode(evaluation_cfg.get("sample_prediction_mode"))
+
+
+def evaluation_protocol_name(mode: str) -> str:
+    normalized = normalize_prediction_mode(mode)
+    return PREDICTION_MODE_PROTOCOLS[normalized]

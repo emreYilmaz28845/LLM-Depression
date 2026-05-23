@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import sys
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -15,26 +15,39 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import torch
 
-from src.aggregate import aggregate_generation_predictions, aggregate_likelihood_predictions, parse_generation_label
+from src.aggregate import (
+    aggregate_generation_predictions,
+    aggregate_likelihood_predictions,
+    aggregate_original_teacher_forced_predictions,
+    parse_generation_label,
+)
 from src.data.build_manifest import build_for_config
 from src.data.runtime import (
     build_examples,
-    build_subject_label_map,
     filter_rows_by_subjects,
     load_audio_array,
     load_manifest_rows,
 )
-from src.data.split_utils import deterministic_inner_split
-from src.model.qwen2audio_lora import build_generation_config, load_model_for_inference, load_processor, prepare_model_for_evaluation
+from src.model.qwen2audio_lora import (
+    build_generation_config,
+    load_model_for_inference,
+    load_processor,
+    prepare_model_for_evaluation,
+)
 from src.utils import (
+    PREDICTION_MODE_GENERATION,
+    PREDICTION_MODE_LIKELIHOOD,
+    PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
     configure_logging,
     ensure_dir,
+    evaluation_protocol_name,
     get_logger,
     label_text_from_int,
     load_yaml,
     read_json,
     resolve_metadata_paths,
     resolve_model_name_or_path,
+    resolve_prediction_mode,
     resolve_project_path,
     save_json,
 )
@@ -121,6 +134,18 @@ def _processor_inputs(processor, example: dict[str, Any], text: str, device: tor
     return {key: value.to(device) for key, value in inputs.items()}
 
 
+def _base_sample_row(example: dict[str, Any], checkpoint_name: str, backend_name: str) -> dict[str, Any]:
+    return {
+        "checkpoint_name": checkpoint_name,
+        "prediction_backend": backend_name,
+        "evaluation_protocol_name": evaluation_protocol_name(backend_name),
+        "subject_id": example["subject_id"],
+        "sample_id": example["sample_id"],
+        "label": int(example["label"]),
+        "label_text": example["label_text"],
+    }
+
+
 def score_candidate_label(
     model,
     processor,
@@ -167,6 +192,108 @@ def generate_label_text(
     ).strip()
 
 
+def _predict_sample_likelihood(model, processor, example: dict[str, Any], device: torch.device, silence_audio: bool, checkpoint_name: str) -> dict[str, Any]:
+    dep_score = score_candidate_label(model, processor, example, "Depressed", device, silence_audio)
+    non_score = score_candidate_label(model, processor, example, "Non-depressed", device, silence_audio)
+    likelihood_pred = 1 if dep_score > non_score else 0
+    return {
+        **_base_sample_row(example, checkpoint_name, PREDICTION_MODE_LIKELIHOOD),
+        "likelihood_prediction": likelihood_pred,
+        "likelihood_prediction_text": label_text_from_int(likelihood_pred),
+        "dep_score": dep_score,
+        "non_score": non_score,
+    }
+
+
+def _predict_sample_generation(
+    model,
+    processor,
+    example: dict[str, Any],
+    config: dict[str, Any],
+    device: torch.device,
+    silence_audio: bool,
+    checkpoint_name: str,
+) -> dict[str, Any]:
+    generation_text = generate_label_text(model, processor, example, config, device, silence_audio)
+    parsed_generation = parse_generation_label(generation_text)
+    return {
+        **_base_sample_row(example, checkpoint_name, PREDICTION_MODE_GENERATION),
+        "generation_text": generation_text,
+        "parsed_prediction": parsed_generation if parsed_generation is not None else "",
+        "generation_prediction_text": label_text_from_int(parsed_generation) if parsed_generation in (0, 1) else "INVALID",
+    }
+
+
+def _predict_sample_original_teacher_forced(
+    model,
+    processor,
+    example: dict[str, Any],
+    device: torch.device,
+    silence_audio: bool,
+    checkpoint_name: str,
+) -> dict[str, Any]:
+    prompt_inputs = _processor_inputs(processor, example, example["prompt_text"], device, silence_audio)
+    full_text = example["prompt_text"] + example["label_text"]
+    full_inputs = _processor_inputs(processor, example, full_text, device, silence_audio)
+    prompt_len = int(prompt_inputs["input_ids"].shape[1])
+    target_ids = full_inputs["input_ids"][0, prompt_len:]
+    with torch.no_grad():
+        outputs = model(**full_inputs)
+        logits = outputs.logits[0]
+        selected_logits = logits[prompt_len - 1 : full_inputs["input_ids"].shape[1] - 1]
+        predicted_token_ids = torch.argmax(selected_logits, dim=-1)
+    used_len = int(min(target_ids.shape[0], predicted_token_ids.shape[0]))
+    gold_label_ids = target_ids[:used_len]
+    predicted_label_ids = predicted_token_ids[:used_len]
+    gold_label_text = processor.decode(gold_label_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False).strip()
+    predicted_label_text = processor.decode(
+        predicted_label_ids,
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=False,
+    ).strip()
+    parsed_prediction = parse_generation_label(predicted_label_text)
+    return {
+        **_base_sample_row(example, checkpoint_name, PREDICTION_MODE_ORIGINAL_TEACHER_FORCED),
+        "teacher_forced_gold_text": gold_label_text,
+        "teacher_forced_decoded_text": predicted_label_text,
+        "teacher_forced_prediction": parsed_prediction if parsed_prediction is not None else "",
+        "teacher_forced_prediction_text": (
+            label_text_from_int(parsed_prediction) if parsed_prediction in (0, 1) else "INVALID"
+        ),
+        "teacher_forced_valid": parsed_prediction in (0, 1),
+    }
+
+
+def _prediction_backend(mode: str):
+    if mode == PREDICTION_MODE_LIKELIHOOD:
+        return _predict_sample_likelihood
+    if mode == PREDICTION_MODE_GENERATION:
+        return _predict_sample_generation
+    if mode == PREDICTION_MODE_ORIGINAL_TEACHER_FORCED:
+        return _predict_sample_original_teacher_forced
+    raise ValueError(f"Unsupported prediction backend: {mode}")
+
+
+def _aggregate_predictions(mode: str, sample_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if mode == PREDICTION_MODE_LIKELIHOOD:
+        return aggregate_likelihood_predictions(sample_rows)
+    if mode == PREDICTION_MODE_GENERATION:
+        return aggregate_generation_predictions(sample_rows)
+    if mode == PREDICTION_MODE_ORIGINAL_TEACHER_FORCED:
+        return aggregate_original_teacher_forced_predictions(sample_rows)
+    raise ValueError(f"Unsupported prediction backend: {mode}")
+
+
+def _metrics_filename_for_mode(mode: str) -> str:
+    if mode == PREDICTION_MODE_LIKELIHOOD:
+        return "metrics_likelihood.json"
+    if mode == PREDICTION_MODE_GENERATION:
+        return "metrics_generation.json"
+    if mode == PREDICTION_MODE_ORIGINAL_TEACHER_FORCED:
+        return "metrics_original_teacher_forced.json"
+    raise ValueError(f"Unsupported prediction backend: {mode}")
+
+
 def evaluate_examples(
     model,
     processor,
@@ -174,136 +301,79 @@ def evaluate_examples(
     config: dict[str, Any],
     output_dir: str | Path,
     checkpoint_name: str,
-    run_generation: bool = True,
+    sample_prediction_mode: str | None = None,
 ) -> dict[str, Any]:
+    mode = resolve_prediction_mode(config, sample_prediction_mode)
+    protocol_name = evaluation_protocol_name(mode)
     output_dir = ensure_dir(output_dir)
     prepare_model_for_evaluation(model)
     device = next(model.parameters()).device
     silence_audio = bool(config["data"].get("silence_audio", False))
     sample_rows: list[dict[str, Any]] = []
-    invalid_generation_rows: list[dict[str, Any]] = []
     total_examples = len(examples)
     progress_interval = max(1, int(config["evaluation"].get("progress_log_interval", 100)))
+    predict_sample = _prediction_backend(mode)
 
     LOGGER.info(
-        "Starting evaluation checkpoint=%s | samples=%s | mode=%s",
+        "Starting evaluation checkpoint=%s | samples=%s | backend=%s | protocol=%s",
         checkpoint_name,
         total_examples,
-        "likelihood+generation" if run_generation else "likelihood_only",
+        mode,
+        protocol_name,
     )
     for example_index, example in enumerate(examples, start=1):
-        dep_score = score_candidate_label(model, processor, example, "Depressed", device, silence_audio)
-        non_score = score_candidate_label(model, processor, example, "Non-depressed", device, silence_audio)
-        likelihood_pred = 1 if dep_score > non_score else 0
-        if run_generation:
-            generation_text = generate_label_text(model, processor, example, config, device, silence_audio)
-            parsed_generation = parse_generation_label(generation_text)
+        if mode == PREDICTION_MODE_LIKELIHOOD:
+            row = predict_sample(model, processor, example, device, silence_audio, checkpoint_name)
+        elif mode == PREDICTION_MODE_GENERATION:
+            row = predict_sample(model, processor, example, config, device, silence_audio, checkpoint_name)
         else:
-            generation_text = ""
-            parsed_generation = None
-        row = {
-            "checkpoint_name": checkpoint_name,
-            "subject_id": example["subject_id"],
-            "sample_id": example["sample_id"],
-            "label": int(example["label"]),
-            "label_text": example["label_text"],
-            "likelihood_prediction": likelihood_pred,
-            "likelihood_prediction_text": label_text_from_int(likelihood_pred),
-            "dep_score": dep_score,
-            "non_score": non_score,
-            "generation_text": generation_text,
-            "parsed_prediction": parsed_generation if parsed_generation is not None else "",
-            "generation_prediction_text": label_text_from_int(parsed_generation) if parsed_generation in (0, 1) else "INVALID",
-        }
+            row = predict_sample(model, processor, example, device, silence_audio, checkpoint_name)
         sample_rows.append(row)
-        if run_generation and parsed_generation is None:
-            invalid_generation_rows.append(row)
         if example_index % progress_interval == 0 or example_index == total_examples:
             LOGGER.info(
-                "Evaluation progress checkpoint=%s | %s/%s samples processed",
+                "Evaluation progress checkpoint=%s | backend=%s | %s/%s samples processed",
                 checkpoint_name,
+                mode,
                 example_index,
                 total_examples,
             )
 
-    likelihood_subject_rows, likelihood_metrics = aggregate_likelihood_predictions(sample_rows)
-    if run_generation:
-        generation_subject_rows, generation_metrics = aggregate_generation_predictions(sample_rows)
-    else:
-        generation_subject_rows = [
-            {
-                "subject_id": row["subject_id"],
-                "prediction": "",
-                "prediction_text": "",
-                "num_valid_predictions": 0,
-            }
-            for row in likelihood_subject_rows
-        ]
-        generation_metrics = {
-            "accuracy": 0.0,
-            "precision": 0.0,
-            "recall": 0.0,
-            "positive_f1": 0.0,
-            "macro_f1": 0.0,
-            "weighted_f1": 0.0,
-            "macro_precision": 0.0,
-            "macro_recall": 0.0,
-            "weighted_precision": 0.0,
-            "weighted_recall": 0.0,
-            "support_negative": 0,
-            "support_positive": 0,
-            "confusion_matrix": [[0, 0], [0, 0]],
-            "num_subjects": len(likelihood_subject_rows),
-            "invalid_subjects": 0,
-            "invalid_generations": 0,
-        }
-
-    merged_subject_rows: list[dict[str, Any]] = []
-    generation_by_subject = {row["subject_id"]: row for row in generation_subject_rows}
-    for likelihood_row in likelihood_subject_rows:
-        subject_id = likelihood_row["subject_id"]
-        generation_row = generation_by_subject[subject_id]
-        merged_subject_rows.append(
-            {
-                **likelihood_row,
-                "likelihood_prediction_text": likelihood_row["prediction_text"],
-                "generation_prediction": generation_row["prediction"],
-                "generation_prediction_text": generation_row["prediction_text"],
-                "generation_num_valid_predictions": generation_row["num_valid_predictions"],
-            }
-        )
+    subject_rows, subject_metrics = _aggregate_predictions(mode, sample_rows)
+    metrics_payload = dict(subject_metrics)
+    metrics_payload["checkpoint_name"] = checkpoint_name
 
     _write_csv(sample_rows, output_dir / "predictions_sample_level.csv")
-    _write_csv(merged_subject_rows, output_dir / "predictions_subject_level.csv")
-    save_json(likelihood_metrics, output_dir / "metrics_likelihood.json")
-    save_json(generation_metrics, output_dir / "metrics_generation.json")
+    _write_csv(subject_rows, output_dir / "predictions_subject_level.csv")
+    save_json(metrics_payload, output_dir / _metrics_filename_for_mode(mode))
     save_json(
         {
-            "likelihood": likelihood_metrics["confusion_matrix"],
-            "generation": generation_metrics["confusion_matrix"],
+            "prediction_backend": mode,
+            "evaluation_protocol_name": protocol_name,
+            "aggregation_level": "subject",
+            "confusion_matrix": metrics_payload["confusion_matrix"],
         },
         output_dir / "confusion_matrix.json",
     )
-    with (output_dir / "invalid_generations.jsonl").open("w", encoding="utf-8") as handle:
-        for row in invalid_generation_rows:
-            handle.write(__import__("json").dumps(row, ensure_ascii=False) + "\n")
 
     LOGGER.info(
-        "Finished evaluation checkpoint=%s | ACC=%.6f F1=%.6f Precision=%.6f Recall=%.6f",
+        "Finished evaluation checkpoint=%s | backend=%s | ACC=%.6f F1=%.6f Precision=%.6f Recall=%.6f",
         checkpoint_name,
-        float(likelihood_metrics["accuracy"]),
-        float(likelihood_metrics["positive_f1"]),
-        float(likelihood_metrics["precision"]),
-        float(likelihood_metrics["recall"]),
+        mode,
+        float(metrics_payload["accuracy"]),
+        float(metrics_payload["positive_f1"]),
+        float(metrics_payload["precision"]),
+        float(metrics_payload["recall"]),
     )
     return {
+        "active_backend": mode,
+        "evaluation_protocol_name": protocol_name,
         "sample_rows": sample_rows,
-        "subject_rows": merged_subject_rows,
-        "likelihood": {
-            "subject_metrics": likelihood_metrics,
-        },
-        "generation": {
-            "subject_metrics": generation_metrics,
+        "subject_rows": subject_rows,
+        "backend_results": {
+            mode: {
+                "subject_rows": subject_rows,
+                "subject_metrics": metrics_payload,
+            }
         },
     }
 
@@ -339,6 +409,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fold", type=int, default=0)
     parser.add_argument("--model_name_or_path", default=None)
     parser.add_argument("--output_dir", default=None)
+    parser.add_argument("--sample_prediction_mode", default=None)
     return parser.parse_args()
 
 
@@ -346,6 +417,12 @@ def main() -> None:
     configure_logging()
     args = parse_args()
     config = load_yaml(args.config)
+    sample_prediction_mode = resolve_prediction_mode(config, args.sample_prediction_mode)
+    LOGGER.info(
+        "Standalone evaluation backend selected: %s | protocol=%s",
+        sample_prediction_mode,
+        evaluation_protocol_name(sample_prediction_mode),
+    )
     metadata = _load_metadata_or_build(args.config, config)
     manifest_rows = load_manifest_rows(metadata["manifest_path"])
     final_eval_subject_ids = _resolve_final_eval_subject_ids(config, metadata, args.fold)
@@ -358,8 +435,17 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     output_dir = args.output_dir or (Path(args.checkpoint_dir) / "standalone_eval")
-    metrics = evaluate_examples(model, processor, examples, config, output_dir, checkpoint_name=Path(args.checkpoint_dir).name)
-    LOGGER.info("Standalone evaluation complete: %s", metrics["likelihood"]["subject_metrics"])
+    metrics = evaluate_examples(
+        model,
+        processor,
+        examples,
+        config,
+        output_dir,
+        checkpoint_name=Path(args.checkpoint_dir).name,
+        sample_prediction_mode=sample_prediction_mode,
+    )
+    active_backend = metrics["active_backend"]
+    LOGGER.info("Standalone evaluation complete: %s", metrics["backend_results"][active_backend]["subject_metrics"])
 
 
 if __name__ == "__main__":

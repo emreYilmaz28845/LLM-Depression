@@ -4,7 +4,13 @@ from collections import Counter, defaultdict
 from typing import Any
 
 from src.metrics import classification_metrics
-from src.utils import LABEL_DEPRESSED, LABEL_NON_DEPRESSED, label_text_from_int
+from src.utils import (
+    PREDICTION_MODE_GENERATION,
+    PREDICTION_MODE_LIKELIHOOD,
+    PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
+    evaluation_protocol_name,
+    label_text_from_int,
+)
 
 
 def aggregate_likelihood_predictions(sample_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -27,6 +33,8 @@ def aggregate_likelihood_predictions(sample_rows: list[dict[str, Any]]) -> tuple
                 "subject_id": subject_id,
                 "label": gold,
                 "label_text": label_text_from_int(gold),
+                "prediction_backend": PREDICTION_MODE_LIKELIHOOD,
+                "evaluation_protocol_name": evaluation_protocol_name(PREDICTION_MODE_LIKELIHOOD),
                 "prediction": pred,
                 "prediction_text": label_text_from_int(pred),
                 "dep_score": mean_dep,
@@ -38,10 +46,21 @@ def aggregate_likelihood_predictions(sample_rows: list[dict[str, Any]]) -> tuple
         y_pred.append(pred)
     metrics = classification_metrics(y_true, y_pred)
     metrics["num_subjects"] = len(subject_rows)
+    metrics["invalid_subjects"] = 0
+    metrics["prediction_backend"] = PREDICTION_MODE_LIKELIHOOD
+    metrics["evaluation_protocol_name"] = evaluation_protocol_name(PREDICTION_MODE_LIKELIHOOD)
+    metrics["aggregation_level"] = "subject"
     return subject_rows, metrics
 
 
-def aggregate_generation_predictions(sample_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _aggregate_majority_vote_predictions(
+    sample_rows: list[dict[str, Any]],
+    *,
+    prediction_field: str,
+    backend_name: str,
+    invalid_metric_name: str,
+    valid_count_field: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in sample_rows:
         grouped[row["subject_id"]].append(row)
@@ -50,10 +69,10 @@ def aggregate_generation_predictions(sample_rows: list[dict[str, Any]]) -> tuple
     y_true: list[int] = []
     y_pred: list[int] = []
     invalid_subjects = 0
-    total_invalid_generations = 0
+    total_invalid_predictions = 0
     for subject_id, rows in sorted(grouped.items()):
-        valid_predictions = [int(row["parsed_prediction"]) for row in rows if row["parsed_prediction"] in (0, 1)]
-        total_invalid_generations += sum(1 for row in rows if row["parsed_prediction"] not in (0, 1))
+        valid_predictions = [int(row[prediction_field]) for row in rows if row[prediction_field] in (0, 1)]
+        total_invalid_predictions += sum(1 for row in rows if row[prediction_field] not in (0, 1))
         gold = int(rows[0]["label"])
         if not valid_predictions:
             invalid_subjects += 1
@@ -73,10 +92,12 @@ def aggregate_generation_predictions(sample_rows: list[dict[str, Any]]) -> tuple
                 "subject_id": subject_id,
                 "label": gold,
                 "label_text": label_text_from_int(gold),
+                "prediction_backend": backend_name,
+                "evaluation_protocol_name": evaluation_protocol_name(backend_name),
                 "prediction": pred,
                 "prediction_text": pred_text,
                 "num_samples": len(rows),
-                "num_valid_predictions": len(valid_predictions),
+                valid_count_field: len(valid_predictions),
             }
         )
         if pred in (0, 1):
@@ -100,8 +121,31 @@ def aggregate_generation_predictions(sample_rows: list[dict[str, Any]]) -> tuple
     }
     metrics["num_subjects"] = len(subject_rows)
     metrics["invalid_subjects"] = invalid_subjects
-    metrics["invalid_generations"] = total_invalid_generations
+    metrics[invalid_metric_name] = total_invalid_predictions
+    metrics["prediction_backend"] = backend_name
+    metrics["evaluation_protocol_name"] = evaluation_protocol_name(backend_name)
+    metrics["aggregation_level"] = "subject"
     return subject_rows, metrics
+
+
+def aggregate_generation_predictions(sample_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    return _aggregate_majority_vote_predictions(
+        sample_rows,
+        prediction_field="parsed_prediction",
+        backend_name=PREDICTION_MODE_GENERATION,
+        invalid_metric_name="invalid_generations",
+        valid_count_field="generation_num_valid_predictions",
+    )
+
+
+def aggregate_original_teacher_forced_predictions(sample_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    return _aggregate_majority_vote_predictions(
+        sample_rows,
+        prediction_field="teacher_forced_prediction",
+        backend_name=PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
+        invalid_metric_name="invalid_teacher_forced_predictions",
+        valid_count_field="teacher_forced_num_valid_predictions",
+    )
 
 
 def parse_generation_label(text: str) -> int | None:
@@ -128,4 +172,3 @@ def parse_generation_label(text: str) -> int | None:
     if has_non and not has_dep:
         return 0
     return None
-
