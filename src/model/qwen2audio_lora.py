@@ -19,13 +19,18 @@ def load_processor(model_name_or_path: str):
 
 def build_lora_config(config: dict[str, Any]) -> LoraConfig:
     lora_cfg = config["lora"]
+    lora_kwargs: dict[str, Any] = {
+        "r": int(lora_cfg["rank"]),
+        "lora_alpha": int(lora_cfg["alpha"]),
+        "lora_dropout": float(lora_cfg["dropout"]),
+        "bias": str(lora_cfg["bias"]),
+        "target_modules": list(lora_cfg["target_modules"]),
+        "task_type": "CAUSAL_LM",
+    }
+    if "exclude_modules" in lora_cfg and lora_cfg["exclude_modules"]:
+        lora_kwargs["exclude_modules"] = lora_cfg["exclude_modules"]
     return LoraConfig(
-        r=int(lora_cfg["rank"]),
-        lora_alpha=int(lora_cfg["alpha"]),
-        lora_dropout=float(lora_cfg["dropout"]),
-        bias=str(lora_cfg["bias"]),
-        target_modules=list(lora_cfg["target_modules"]),
-        task_type="CAUSAL_LM",
+        **lora_kwargs,
     )
 
 

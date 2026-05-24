@@ -36,6 +36,8 @@ split:
   seed: 1337
 lora:
   # Paper implementation details: rank=16, alpha=32.
+  # The paper reports freezing the Whisper encoder and projection, so keep
+  # LoRA on the text attention stack only.
   rank: 16
   alpha: 32
   dropout: 0.05
@@ -45,9 +47,7 @@ lora:
     - k_proj
     - v_proj
     - o_proj
-    - gate_proj
-    - up_proj
-    - down_proj
+  exclude_modules: ".*audio_tower.*|.*multi_modal_projector.*"
 training:
   # Paper implementation details: trained for 20 epochs.
   num_train_epochs: 20
