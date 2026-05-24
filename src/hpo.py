@@ -28,6 +28,7 @@ from src.utils import (
 
 
 LOGGER = get_logger(__name__)
+TRIAL_FAILURE_EXCEPTIONS = (RuntimeError,)
 TRIAL_TABLE_COLUMNS = [
     "trial_number",
     "value",
@@ -217,6 +218,18 @@ def _launch_trial(
             return_code = process.poll()
             if return_code is not None:
                 if return_code != 0:
+                    save_json_atomic(
+                        {
+                            "status": "failed",
+                            "trial_number": int(trial.number),
+                            "run_name": trial_name,
+                            "return_code": int(return_code),
+                            "params": params,
+                            "progress_path": str(progress_path),
+                            "result_path": str(result_path),
+                        },
+                        result_path,
+                    )
                     raise RuntimeError(f"torchrun exited with code {return_code} for trial {trial.number}")
                 break
             time.sleep(5)
@@ -483,7 +496,7 @@ def main() -> None:
 
     LOGGER.info("Starting Optuna study=%s dataset=%s fold=%s trials=%s", study_name, dataset_name, args.fold, args.n_trials)
     try:
-        study.optimize(objective, n_trials=args.n_trials, n_jobs=1)
+        study.optimize(objective, n_trials=args.n_trials, n_jobs=1, catch=TRIAL_FAILURE_EXCEPTIONS)
     finally:
         _write_study_summary(args, config, study, study_dir, storage_path)
 
