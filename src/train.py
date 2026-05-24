@@ -210,6 +210,31 @@ def _save_last_checkpoint(save_strategy: str) -> bool:
     return save_strategy == "full"
 
 
+def _resolve_early_stopping(config: dict[str, Any]) -> dict[str, Any]:
+    training_cfg = config["training"]
+    early_cfg = training_cfg.get("early_stopping") or {}
+    enabled = bool(early_cfg.get("enabled", False))
+    metric_name = str(early_cfg.get("metric", "inner_val_positive_f1"))
+    mode = str(early_cfg.get("mode", "auto")).lower()
+    if mode == "auto":
+        mode = "min" if metric_name.endswith("_loss") else "max"
+    if mode not in {"min", "max"}:
+        raise ValueError(f"Unsupported early_stopping.mode={mode!r}. Expected 'min', 'max', or 'auto'.")
+    return {
+        "enabled": enabled,
+        "metric": metric_name,
+        "mode": mode,
+        "patience": int(early_cfg.get("patience", 0)),
+        "min_delta": float(early_cfg.get("min_delta", 0.0)),
+    }
+
+
+def _metric_improved(metric_value: float, best_value: float, mode: str, min_delta: float) -> bool:
+    if mode == "min":
+        return metric_value < (best_value - min_delta)
+    return metric_value > (best_value + min_delta)
+
+
 def _write_trial_progress(
     progress_path: str | None,
     *,
@@ -412,6 +437,13 @@ def main() -> None:
 
     best_metric = float("-inf")
     best_epoch = -1
+    early_stop_cfg = _resolve_early_stopping(config)
+    early_stop_best = float("inf") if early_stop_cfg["mode"] == "min" else float("-inf")
+    early_stop_best_epoch = -1
+    early_stop_bad_epochs = 0
+    stopped_early = False
+    stop_epoch: int | None = None
+    stop_reason: str | None = None
     history: list[dict[str, Any]] = []
     for epoch in range(1, int(config["training"]["num_train_epochs"]) + 1):
         model.train()
@@ -451,17 +483,21 @@ def main() -> None:
             )
             subject_metrics = metrics["backend_results"][sample_prediction_mode]["subject_metrics"]
             metric_value = float(subject_metrics["positive_f1"])
+            metric_values = {
+                "inner_val_positive_f1": metric_value,
+                "inner_val_macro_f1": float(subject_metrics["macro_f1"]),
+                "inner_val_accuracy": float(subject_metrics["accuracy"]),
+                "inner_val_precision": float(subject_metrics["precision"]),
+                "inner_val_recall": float(subject_metrics["recall"]),
+                "inner_val_loss": inner_val_loss,
+            }
             history_row = {
                 "epoch": epoch,
                 "train_loss": sum(epoch_losses) / max(1, len(epoch_losses)),
                 "inner_val_loss": inner_val_loss,
                 "inner_val_prediction_backend": sample_prediction_mode,
                 "inner_val_evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
-                "inner_val_positive_f1": metric_value,
-                "inner_val_macro_f1": float(subject_metrics["macro_f1"]),
-                "inner_val_accuracy": float(subject_metrics["accuracy"]),
-                "inner_val_precision": float(subject_metrics["precision"]),
-                "inner_val_recall": float(subject_metrics["recall"]),
+                **metric_values,
             }
             history.append(history_row)
             LOGGER.info(
@@ -490,11 +526,50 @@ def main() -> None:
                 run_root=run_root,
                 config_overrides=args.config_overrides,
             )
+            if early_stop_cfg["enabled"]:
+                monitor_value = float(metric_values[early_stop_cfg["metric"]])
+                if _metric_improved(
+                    monitor_value,
+                    early_stop_best,
+                    early_stop_cfg["mode"],
+                    early_stop_cfg["min_delta"],
+                ):
+                    early_stop_best = monitor_value
+                    early_stop_best_epoch = epoch
+                    early_stop_bad_epochs = 0
+                else:
+                    early_stop_bad_epochs += 1
+                LOGGER.info(
+                    "Early stopping monitor=%s mode=%s epoch=%s value=%.6f best=%.6f best_epoch=%s bad_epochs=%s patience=%s",
+                    early_stop_cfg["metric"],
+                    early_stop_cfg["mode"],
+                    epoch,
+                    monitor_value,
+                    early_stop_best,
+                    early_stop_best_epoch,
+                    early_stop_bad_epochs,
+                    early_stop_cfg["patience"],
+                )
             LOGGER.info("Finished epoch=%s | best_epoch=%s best_metric=%.6f", epoch, best_epoch, best_metric)
+        stop_training_tensor = torch.tensor(0, device=accelerator.device, dtype=torch.int32)
+        if accelerator.is_main_process and early_stop_cfg["enabled"] and early_stop_bad_epochs >= early_stop_cfg["patience"]:
+            stopped_early = True
+            stop_epoch = epoch
+            stop_reason = (
+                f"early_stopping:{early_stop_cfg['metric']}:{early_stop_cfg['mode']}:"
+                f"patience={early_stop_cfg['patience']}:best_epoch={early_stop_best_epoch}"
+            )
+            LOGGER.info("Stopping early at epoch=%s | %s", epoch, stop_reason)
+            stop_training_tensor.fill_(1)
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.broadcast(stop_training_tensor, src=0)
         accelerator.wait_for_everyone()
+        if int(stop_training_tensor.item()) == 1:
+            break
 
     if accelerator.is_main_process:
         unwrapped = accelerator.unwrap_model(model)
+        completed_epochs = len(history)
         save_json(history, logs_dir / "training_history.json")
         if _save_last_checkpoint(args.save_strategy):
             if last_dir.exists():
@@ -525,7 +600,7 @@ def main() -> None:
                 checkpoint_name="last_checkpoint",
                 sample_prediction_mode=sample_prediction_mode,
             )
-            if best_epoch == int(config["training"]["num_train_epochs"]):
+            if best_epoch == completed_epochs:
                 best_metrics = last_metrics
                 if not (eval_dir / "best_checkpoint").exists():
                     shutil.copytree(eval_dir / "last_checkpoint", eval_dir / "best_checkpoint")
@@ -557,7 +632,7 @@ def main() -> None:
                         "active_backend_metrics": best_metrics["backend_results"][sample_prediction_mode]["subject_metrics"],
                     },
                     "last_checkpoint": {
-                        "epoch": int(config["training"]["num_train_epochs"]),
+                        "epoch": completed_epochs,
                         "active_backend_metrics": last_metrics["backend_results"][sample_prediction_mode]["subject_metrics"],
                     },
                 },
@@ -579,9 +654,13 @@ def main() -> None:
                 "metric_name": "inner_val_positive_f1",
                 "best_metric": float(best_metric),
                 "best_epoch": int(best_epoch),
+                "completed_epochs": int(completed_epochs),
                 "history_path": str(logs_dir / "training_history.json"),
                 "best_model_dir": str(best_dir) if best_dir.exists() else None,
                 "last_model_dir": str(last_dir) if last_dir.exists() else None,
+                "stopped_early": bool(stopped_early),
+                "stop_epoch": int(stop_epoch) if stop_epoch is not None else None,
+                "stop_reason": stop_reason,
                 "config_overrides": list(args.config_overrides),
                 "sample_prediction_mode": sample_prediction_mode,
                 "history": history,

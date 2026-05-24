@@ -1,0 +1,69 @@
+dataset: daic
+seed: 1337
+dataset_root: ${DAIC_DATASET_ROOT:-/media/emre/Backup/AudioLLM/Datasets/DAIC-WOZ}
+quarantine_path: ${PROJECT_ROOT}/configs/quarantines.yaml
+model_name_or_path: /gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instruct
+output_dirs:
+  manifest_dir: ${PROJECT_ROOT}/outputs/manifests
+  split_dir: ${PROJECT_ROOT}/outputs/splits
+  run_root: ${PROJECT_ROOT}/output_model/audio_text/daic
+prompt:
+  system: You are a psychologist analyzing speech and transcript information for depression screening.
+  user_template: |-
+    The subject's speech audio is provided.
+    The transcript of the subject's speech is:
+    {transcript}
+
+    Based on the audio and transcript, determine whether the subject is Depressed or Non-depressed.
+    Answer with exactly one label: Depressed or Non-depressed.
+  prompt_language: english
+labels:
+  label_vocab_version: short_internal_ab_labels
+data:
+  use_audio: true
+  use_text: true
+  silence_audio: false
+  sample_mode: chunk
+  transcript_max_chars: 4000
+  allow_empty_transcript: false
+split:
+  final_eval_partition: dev
+  train_partition: train
+  inner_val_ratio: 0.2
+  seed: 1337
+lora:
+  # Next hypothesis: keep the hybrid target scope, but reduce LoRA capacity.
+  rank: 8
+  alpha: 16
+  dropout: 0.1
+  bias: none
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  exclude_modules: ".*audio_tower.*|.*multi_modal_projector.*"
+training:
+  # Keep the shorter schedule and stronger regularization, but reduce LR.
+  num_train_epochs: 8
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.03
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 8
+  logging_steps: 5
+  bf16: true
+  gradient_checkpointing: true
+  run_final_eval_in_train: false
+  dataloader_num_workers: 0
+  max_grad_norm: 1.0
+evaluation:
+  sample_prediction_mode: original_teacher_forced
+  generation_max_new_tokens: 8
+  num_beams: 1
+  do_sample: false
+  headline_mode: original_teacher_forced
