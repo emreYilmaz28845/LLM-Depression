@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import csv
 import json
 import re
@@ -12,13 +13,57 @@ from src.utils import get_logger, label_text_from_int
 
 
 LOGGER = get_logger(__name__)
-CHUNK_RE = re.compile(r"^(?P<subject_id>\d+)_(?P<chunk_id>\d+)\.wav$")
+LEGACY_CHUNK_RE = re.compile(r"^(?P<subject_id>\d+)_(?P<chunk_id>\d+)\.wav$")
+PREPROCESSED_SEGMENT_RE = re.compile(
+    r"^(?P<subject_id>\d+)_(?P<segment_kind>random_segment|segment)_(?P<chunk_id>\d+)\.wav$"
+)
 
 
-def _load_official_split_csv(path: Path) -> list[dict[str, str]]:
+def _load_csv_rows(path: Path) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8") as handle:
         filtered_lines = [line for line in handle if line.strip()]
     return list(csv.DictReader(filtered_lines))
+
+
+def _sample_id_from_audio_name(audio_name: str) -> str | None:
+    if LEGACY_CHUNK_RE.match(audio_name) or PREPROCESSED_SEGMENT_RE.match(audio_name):
+        return Path(audio_name).stem
+    return None
+
+
+def _subject_id_from_sample_id(sample_id: str) -> str:
+    return sample_id.split("_", 1)[0]
+
+
+def _chunk_id_from_sample_id(sample_id: str) -> str:
+    return sample_id.split("_", 1)[1]
+
+
+def _resolve_transcript_path(base_dir: Path, config: dict[str, Any]) -> Path:
+    configured = str(config.get("transcript_path", "")).strip()
+    candidates: list[Path] = []
+    if configured:
+        candidates.append(Path(configured))
+    candidates.extend(
+        [
+            base_dir / "preprocessed_whisper_transcripts.jsonl",
+            base_dir / "whisper_transcripts.jsonl",
+            base_dir.parent / "preprocessed_whisper_transcripts.jsonl",
+            base_dir.parent / "whisper_transcripts.jsonl",
+        ]
+    )
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.expanduser()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.exists():
+            return resolved
+    raise FileNotFoundError(
+        "Could not locate a DAIC transcript cache. Checked: "
+        + ", ".join(str(candidate) for candidate in candidates)
+    )
 
 
 def _load_whisper_transcripts(path: Path) -> dict[str, dict[str, Any]]:
@@ -29,60 +74,127 @@ def _load_whisper_transcripts(path: Path) -> dict[str, dict[str, Any]]:
             if not line:
                 continue
             row = json.loads(line)
-            audio_name = Path(row["audio_path"]).name
-            match = CHUNK_RE.match(audio_name)
-            if not match:
+            audio_name = Path(str(row["audio_path"])).name
+            sample_id = _sample_id_from_audio_name(audio_name)
+            if sample_id is None:
                 continue
-            sample_id = f"{match.group('subject_id')}_{match.group('chunk_id')}"
             transcripts[sample_id] = {
-                "transcript": row["transcript"].strip(),
+                "transcript": str(row["transcript"]).strip(),
                 "language": row.get("language", ""),
                 "audio_name": audio_name,
             }
     return transcripts
 
 
-def build_daic_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> dict[str, Any]:
-    base_dir = Path(config["dataset_root"])
-    official_dir = base_dir / "minimal_zips"
-    wav_dir = official_dir / "preprocessed_audios"
-    transcript_path = base_dir / "whisper_transcripts.jsonl"
-
-    split_specs = {
-        "train": official_dir / "train_split_Depression_AVEC2017 (1).csv",
-        "dev": official_dir / "dev_split_Depression_AVEC2017.csv",
-        "test": official_dir / "full_test_split (1).csv",
-    }
-    split_rows = {name: _load_official_split_csv(path) for name, path in split_specs.items()}
+def _build_subject_meta_from_rows(split_rows: dict[str, list[dict[str, str]]]) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
     subject_meta: dict[str, dict[str, Any]] = {}
     split_lookup: dict[str, str] = {}
     for split_name, rows in split_rows.items():
         for row in rows:
-            subject_id = row["Participant_ID"]
+            subject_id = str(row["Participant_ID"]).strip()
             label_key = "PHQ8_Binary" if "PHQ8_Binary" in row else "PHQ_Binary"
-            score_key = "PHQ8_Score"
-            label = int(row[label_key])
+            score_value = (
+                row.get("PHQ8_Score")
+                or row.get("PHQ_Score")
+                or row.get("PHQ8_SUM")
+                or row.get("PHQ_SUM")
+                or ""
+            )
+            label = int(str(row[label_key]).strip())
             subject_meta[subject_id] = {
                 "label": label,
                 "label_text": label_text_from_int(label),
-                "score": int(row[score_key]),
+                "score": int(str(score_value).strip()) if str(score_value).strip() else "",
                 "gender": row.get("Gender"),
             }
             split_lookup[subject_id] = split_name
+    return subject_meta, split_lookup
 
-    transcripts = _load_whisper_transcripts(transcript_path)
+
+def _discover_legacy_wavs(wav_dir: Path, subject_meta: dict[str, dict[str, Any]]) -> dict[str, Path]:
     wav_map: dict[str, Path] = {}
     for wav_path in sorted(wav_dir.glob("*.wav")):
-        match = CHUNK_RE.match(wav_path.name)
+        match = LEGACY_CHUNK_RE.match(wav_path.name)
         if not match:
             continue
         subject_id = match.group("subject_id")
         if subject_id not in subject_meta:
             continue
-        sample_id = f"{subject_id}_{match.group('chunk_id')}"
-        wav_map[sample_id] = wav_path
+        wav_map[Path(wav_path.name).stem] = wav_path
+    return wav_map
 
-    sample_ids = sorted(set(wav_map) | {sample_id for sample_id in transcripts if sample_id.split("_", 1)[0] in subject_meta})
+
+def _parse_segment_files(value: str) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    try:
+        parsed = ast.literal_eval(text)
+    except (SyntaxError, ValueError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item).strip() for item in parsed if str(item).strip()]
+
+
+def _discover_preprocessed_wavs(
+    base_dir: Path,
+    split_rows: dict[str, list[dict[str, str]]],
+) -> tuple[dict[str, Path], list[dict[str, Any]]]:
+    split_dirs = {
+        "train": base_dir / "train_audio_segments",
+        "val": base_dir / "dev_audio_segments",
+    }
+    wav_map: dict[str, Path] = {}
+    extra_file_audit: list[dict[str, Any]] = []
+
+    expected_names_by_split: dict[str, set[str]] = {}
+    for split_name, rows in split_rows.items():
+        expected_names: set[str] = set()
+        for row in rows:
+            expected_names.update(_parse_segment_files(row.get("segment_files", "")))
+        expected_names_by_split[split_name] = expected_names
+
+    for split_name, split_dir in split_dirs.items():
+        if not split_dir.exists():
+            raise FileNotFoundError(f"DAIC preprocessed split directory is missing: {split_dir}")
+        expected_names = expected_names_by_split.get(split_name, set())
+        for wav_path in sorted(split_dir.glob("*/*.wav")):
+            sample_id = wav_path.stem
+            if _sample_id_from_audio_name(wav_path.name) is None:
+                extra_file_audit.append(
+                    {
+                        "split": split_name,
+                        "audio_path": str(wav_path),
+                        "reason": "unexpected_filename_format",
+                    }
+                )
+                continue
+            if expected_names and wav_path.name not in expected_names:
+                extra_file_audit.append(
+                    {
+                        "split": split_name,
+                        "audio_path": str(wav_path),
+                        "reason": "not_referenced_by_preprocessing_summary",
+                    }
+                )
+                continue
+            wav_map[sample_id] = wav_path
+    return wav_map, extra_file_audit
+
+
+def _finalize_manifest(
+    *,
+    quarantine: dict[str, Any],
+    transcript_path: Path,
+    transcripts: dict[str, dict[str, Any]],
+    wav_map: dict[str, Path],
+    subject_meta: dict[str, dict[str, Any]],
+    split_lookup: dict[str, str],
+) -> dict[str, Any]:
+    sample_ids = sorted(
+        set(wav_map) | {sample_id for sample_id in transcripts if _subject_id_from_sample_id(sample_id) in subject_meta}
+    )
     manifest_rows: list[dict[str, Any]] = []
     join_audit_rows: list[dict[str, Any]] = []
     missing_audio = 0
@@ -91,7 +203,8 @@ def build_daic_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> d
     per_split_counts = defaultdict(Counter)
 
     for sample_id in sample_ids:
-        subject_id, chunk_id = sample_id.split("_", 1)
+        subject_id = _subject_id_from_sample_id(sample_id)
+        chunk_id = _chunk_id_from_sample_id(sample_id)
         split_name = split_lookup[subject_id]
         meta = subject_meta[subject_id]
         wav_path = wav_map.get(sample_id)
@@ -177,3 +290,67 @@ def build_daic_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> d
         "subject_partition_rows": subject_partition_rows,
     }
 
+
+def _build_preprocessed_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> dict[str, Any]:
+    base_dir = Path(config["dataset_root"])
+    split_rows = {
+        "train": _load_csv_rows(base_dir / "train_preprocessing_summary.csv"),
+        "val": _load_csv_rows(base_dir / "dev_preprocessing_summary.csv"),
+    }
+    subject_meta, split_lookup = _build_subject_meta_from_rows(split_rows)
+    transcript_path = _resolve_transcript_path(base_dir, config)
+    transcripts = _load_whisper_transcripts(transcript_path)
+    wav_map, extra_file_audit = _discover_preprocessed_wavs(base_dir, split_rows)
+    result = _finalize_manifest(
+        quarantine=quarantine,
+        transcript_path=transcript_path,
+        transcripts=transcripts,
+        wav_map=wav_map,
+        subject_meta=subject_meta,
+        split_lookup=split_lookup,
+    )
+    result["extra_file_audit"] = extra_file_audit
+    result["split_source"] = "preprocessed_train_val_only"
+    result["split_source_notes"] = (
+        "Uses train_preprocessing_summary.csv and dev_preprocessing_summary.csv from the "
+        "30-second participant-only DAIC preprocessing output. The repo currently treats "
+        "the dev split as the validation/final-evaluation partition and does not include "
+        "the official DAIC test split in the manifest."
+    )
+    return result
+
+
+def _build_legacy_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> dict[str, Any]:
+    base_dir = Path(config["dataset_root"])
+    official_dir = base_dir / "minimal_zips"
+    wav_dir = official_dir / "preprocessed_audios"
+    transcript_path = _resolve_transcript_path(base_dir, config)
+
+    split_rows = {
+        "train": _load_csv_rows(official_dir / "train_split_Depression_AVEC2017 (1).csv"),
+        "dev": _load_csv_rows(official_dir / "dev_split_Depression_AVEC2017.csv"),
+        "test": _load_csv_rows(official_dir / "full_test_split (1).csv"),
+    }
+    subject_meta, split_lookup = _build_subject_meta_from_rows(split_rows)
+    transcripts = _load_whisper_transcripts(transcript_path)
+    wav_map = _discover_legacy_wavs(wav_dir, subject_meta)
+    result = _finalize_manifest(
+        quarantine=quarantine,
+        transcript_path=transcript_path,
+        transcripts=transcripts,
+        wav_map=wav_map,
+        subject_meta=subject_meta,
+        split_lookup=split_lookup,
+    )
+    result["split_source"] = "official_train_dev_test"
+    result["split_source_notes"] = "Uses the original DAIC split CSV files under minimal_zips."
+    return result
+
+
+def build_daic_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> dict[str, Any]:
+    base_dir = Path(config["dataset_root"])
+    if (base_dir / "train_preprocessing_summary.csv").exists():
+        LOGGER.info("Building DAIC manifest from preprocessed 30-second chunk layout: %s", base_dir)
+        return _build_preprocessed_manifest(config, quarantine)
+    LOGGER.info("Building DAIC manifest from legacy layout: %s", base_dir)
+    return _build_legacy_manifest(config, quarantine)

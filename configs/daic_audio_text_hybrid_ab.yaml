@@ -1,6 +1,7 @@
 dataset: daic
 seed: 1337
-dataset_root: ${DAIC_DATASET_ROOT:-/media/emre/Backup/AudioLLM/Datasets/DAIC-WOZ}
+dataset_root: ${DAIC_DATASET_ROOT:-/media/emre/Backup/AudioLLM/Datasets/DAIC-WOZ/preprocessed}
+transcript_path: ${DAIC_TRANSCRIPT_PATH:-}
 quarantine_path: ${PROJECT_ROOT}/configs/quarantines.yaml
 model_name_or_path: /gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instruct
 output_dirs:
@@ -28,7 +29,7 @@ data:
   transcript_max_chars: 4000
   allow_empty_transcript: false
 split:
-  final_eval_partition: dev
+  final_eval_partition: val
   train_partition: train
   inner_val_ratio: 0.2
   seed: 1337
