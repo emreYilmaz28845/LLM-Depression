@@ -252,6 +252,22 @@ def _predict_sample_original_teacher_forced(
     silence_audio: bool,
     checkpoint_name: str,
 ) -> dict[str, Any]:
+    dep_score = score_candidate_label(
+        model,
+        processor,
+        example,
+        internal_label_text_from_int(example["config"], 1),
+        device,
+        silence_audio,
+    )
+    non_score = score_candidate_label(
+        model,
+        processor,
+        example,
+        internal_label_text_from_int(example["config"], 0),
+        device,
+        silence_audio,
+    )
     prompt_inputs = _processor_inputs(processor, example, example["prompt_text"], device, silence_audio)
     full_text = example["prompt_text"] + example["internal_label_text"]
     full_inputs = _processor_inputs(processor, example, full_text, device, silence_audio)
@@ -281,6 +297,9 @@ def _predict_sample_original_teacher_forced(
             label_text_from_int(parsed_prediction) if parsed_prediction in (0, 1) else "INVALID"
         ),
         "teacher_forced_valid": parsed_prediction in (0, 1),
+        "dep_score": dep_score,
+        "non_score": non_score,
+        "teacher_forced_margin": dep_score - non_score,
     }
 
 

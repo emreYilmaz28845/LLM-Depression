@@ -39,6 +39,23 @@ def _chunk_id_from_sample_id(sample_id: str) -> str:
     return sample_id.split("_", 1)[1]
 
 
+def _first_present_key(row: dict[str, str], *candidates: str) -> str | None:
+    for key in candidates:
+        if key in row:
+            return key
+    return None
+
+
+def _required_row_value(row: dict[str, str], *candidates: str) -> str:
+    key = _first_present_key(row, *candidates)
+    if key is None:
+        raise KeyError(
+            "None of the expected columns were found in DAIC summary row. "
+            f"Expected one of: {', '.join(candidates)} | available: {', '.join(sorted(row.keys()))}"
+        )
+    return str(row[key]).strip()
+
+
 def _resolve_transcript_path(base_dir: Path, config: dict[str, Any]) -> Path:
     configured = str(config.get("transcript_path", "")).strip()
     candidates: list[Path] = []
@@ -91,21 +108,16 @@ def _build_subject_meta_from_rows(split_rows: dict[str, list[dict[str, str]]]) -
     split_lookup: dict[str, str] = {}
     for split_name, rows in split_rows.items():
         for row in rows:
-            subject_id = str(row["Participant_ID"]).strip()
-            label_key = "PHQ8_Binary" if "PHQ8_Binary" in row else "PHQ_Binary"
-            score_value = (
-                row.get("PHQ8_Score")
-                or row.get("PHQ_Score")
-                or row.get("PHQ8_SUM")
-                or row.get("PHQ_SUM")
-                or ""
-            )
-            label = int(str(row[label_key]).strip())
+            subject_id = _required_row_value(row, "Participant_ID", "participant_id", "subject_id", "patient_id")
+            label = int(_required_row_value(row, "PHQ8_Binary", "PHQ_Binary", "is_depressed", "label"))
+            score_key = _first_present_key(row, "PHQ8_Score", "PHQ_Score", "PHQ8_SUM", "PHQ_SUM", "phq8_score", "phq_score")
+            score_value = str(row.get(score_key, "")).strip() if score_key else ""
+            gender_key = _first_present_key(row, "Gender", "gender")
             subject_meta[subject_id] = {
                 "label": label,
                 "label_text": label_text_from_int(label),
-                "score": int(str(score_value).strip()) if str(score_value).strip() else "",
-                "gender": row.get("Gender"),
+                "score": int(score_value) if score_value else "",
+                "gender": row.get(gender_key) if gender_key else None,
             }
             split_lookup[subject_id] = split_name
     return subject_meta, split_lookup

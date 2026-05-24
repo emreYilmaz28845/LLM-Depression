@@ -126,6 +126,8 @@ def _aggregate_majority_vote_predictions(
     backend_name: str,
     invalid_metric_name: str,
     valid_count_field: str,
+    tie_break_positive_score_field: str | None = None,
+    tie_break_negative_score_field: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in sample_rows:
@@ -150,7 +152,20 @@ def _aggregate_majority_vote_predictions(
             elif counts[0] > counts[1]:
                 pred = 0
             else:
-                pred = INVALID_PREDICTION
+                if tie_break_positive_score_field and tie_break_negative_score_field:
+                    dep_margin = sum(
+                        float(row.get(tie_break_positive_score_field, 0.0))
+                        - float(row.get(tie_break_negative_score_field, 0.0))
+                        for row in rows
+                    )
+                    if dep_margin > 0:
+                        pred = 1
+                    elif dep_margin < 0:
+                        pred = 0
+                    else:
+                        pred = INVALID_PREDICTION
+                else:
+                    pred = INVALID_PREDICTION
         pred_text = label_text_from_int(pred) if pred in (0, 1) else "INVALID"
         subject_rows.append(
             {
@@ -247,4 +262,6 @@ def aggregate_original_teacher_forced_predictions(sample_rows: list[dict[str, An
         backend_name=PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
         invalid_metric_name="invalid_teacher_forced_predictions",
         valid_count_field="teacher_forced_num_valid_predictions",
+        tie_break_positive_score_field="dep_score",
+        tie_break_negative_score_field="non_score",
     )
