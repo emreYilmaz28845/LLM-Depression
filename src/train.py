@@ -174,6 +174,34 @@ def _sample_partition_counts(examples: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
+def _move_batch_to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
+    moved: dict[str, Any] = {}
+    for key, value in batch.items():
+        if isinstance(value, torch.Tensor):
+            moved[key] = value.to(device)
+        else:
+            moved[key] = value
+    return moved
+
+
+def _compute_dataset_loss(
+    model,
+    data_loader: DataLoader,
+) -> float:
+    was_training = model.training
+    model.eval()
+    losses: list[float] = []
+    device = next(model.parameters()).device
+    with torch.inference_mode():
+        for batch in data_loader:
+            batch = _move_batch_to_device(batch, device)
+            outputs = model(**batch)
+            losses.append(float(outputs.loss.detach().item()))
+    if was_training:
+        model.train()
+    return sum(losses) / max(1, len(losses))
+
+
 def _save_best_checkpoint(save_strategy: str) -> bool:
     return save_strategy in {"full", "best_only"}
 
@@ -319,6 +347,11 @@ def main() -> None:
         processor_sampling_rate=processor.feature_extractor.sampling_rate,
         silence_audio=bool(config["data"].get("silence_audio", False)),
     )
+    val_dataset = AudioTextDataset(
+        val_examples,
+        processor_sampling_rate=processor.feature_extractor.sampling_rate,
+        silence_audio=bool(config["data"].get("silence_audio", False)),
+    )
     collator = Qwen2AudioSFTCollator(processor=processor, debug=args.label_mask_debug)
     if args.label_mask_debug:
         _emit_label_mask_debug(train_dataset, collator, processor, logs_dir)
@@ -329,6 +362,13 @@ def main() -> None:
         shuffle=True,
         num_workers=int(config["training"]["dataloader_num_workers"]),
         collate_fn=collator,
+    )
+    val_loss_loader = DataLoader(
+        val_dataset,
+        batch_size=int(config["training"]["per_device_eval_batch_size"]),
+        shuffle=False,
+        num_workers=int(config["training"]["dataloader_num_workers"]),
+        collate_fn=Qwen2AudioSFTCollator(processor=processor, debug=False),
     )
 
     model = load_model_for_training(model_name_or_path, config)
@@ -394,6 +434,7 @@ def main() -> None:
         if accelerator.is_main_process:
             unwrapped = accelerator.unwrap_model(model)
             inner_eval_dir = ensure_dir(logs_dir / f"inner_val_epoch_{epoch}")
+            inner_val_loss = _compute_dataset_loss(unwrapped, val_loss_loader)
             LOGGER.info(
                 "Inner validation backend: %s | protocol=%s",
                 sample_prediction_mode,
@@ -413,6 +454,7 @@ def main() -> None:
             history_row = {
                 "epoch": epoch,
                 "train_loss": sum(epoch_losses) / max(1, len(epoch_losses)),
+                "inner_val_loss": inner_val_loss,
                 "inner_val_prediction_backend": sample_prediction_mode,
                 "inner_val_evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
                 "inner_val_positive_f1": metric_value,
@@ -423,8 +465,9 @@ def main() -> None:
             }
             history.append(history_row)
             LOGGER.info(
-                "Validation epoch=%s | ACC=%.6f F1=%.6f Precision=%.6f Recall=%.6f",
+                "Validation epoch=%s | loss=%.6f ACC=%.6f F1=%.6f Precision=%.6f Recall=%.6f",
                 epoch,
+                inner_val_loss,
                 float(subject_metrics["accuracy"]),
                 float(subject_metrics["positive_f1"]),
                 float(subject_metrics["precision"]),
