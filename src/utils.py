@@ -31,6 +31,24 @@ PREDICTION_MODE_PROTOCOLS = {
 SUPPORTED_PREDICTION_MODES = tuple(PREDICTION_MODE_PROTOCOLS.keys())
 ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}")
 PROJECT_PATH_ANCHORS = ("outputs", "output_model", "configs", "scripts", "src")
+GENERATION_PARSE_PREFIXES = (
+    "answer:",
+    "answer is",
+    "label:",
+    "label is",
+    "prediction:",
+    "prediction is",
+    "predicted label:",
+    "the label is",
+    "the subject is",
+    "subject is",
+    "the speaker is",
+    "speaker is",
+    "it is",
+    "it's",
+    "classified as",
+    "classification:",
+)
 
 
 def project_root() -> Path:
@@ -361,6 +379,10 @@ def _normalized_label_text(text: str) -> str:
     return " ".join(str(text).strip().split()).lower()
 
 
+def _compact_label_text(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(text).lower())
+
+
 def parse_internal_label_text(text: str, config: dict[str, Any]) -> int | None:
     normalized = _normalized_label_text(text)
     if not normalized:
@@ -372,6 +394,110 @@ def parse_internal_label_text(text: str, config: dict[str, Any]) -> int | None:
         return 1
     if normalized == negative:
         return 0
+    return None
+
+
+def _candidate_generation_fragments(text: str) -> list[str]:
+    normalized = _normalized_label_text(text)
+    if not normalized:
+        return []
+
+    candidates: list[str] = [normalized]
+    for prefix in GENERATION_PARSE_PREFIXES:
+        if normalized.startswith(prefix):
+            stripped = normalized[len(prefix) :].strip()
+            if stripped:
+                candidates.append(stripped)
+
+    words = re.findall(r"[a-z0-9]+(?:-[a-z0-9]+)?", normalized)
+    for width in range(1, min(6, len(words)) + 1):
+        candidates.append(" ".join(words[-width:]))
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        candidate = candidate.strip()
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        deduped.append(candidate)
+    return deduped
+
+
+def _prefix_match_label(candidate: str, label: str) -> bool:
+    candidate_compact = _compact_label_text(candidate)
+    label_compact = _compact_label_text(label)
+    if not candidate_compact or not label_compact:
+        return False
+    if len(label_compact) <= 2:
+        return candidate_compact == label_compact
+    min_prefix_len = min(len(label_compact), max(4, len(label_compact) // 2))
+    return len(candidate_compact) >= min_prefix_len and label_compact.startswith(candidate_compact)
+
+
+def _first_regex_match(text: str, patterns: tuple[str, ...]) -> re.Match[str] | None:
+    earliest: re.Match[str] | None = None
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match is None:
+            continue
+        if earliest is None or match.start() < earliest.start():
+            earliest = match
+    return earliest
+
+
+def parse_generated_label_text(text: str, config: dict[str, Any]) -> int | None:
+    labels_cfg = resolve_label_config(config)
+    version = labels_cfg["label_vocab_version"]
+    positive_label = labels_cfg["internal_positive_label"]
+    negative_label = labels_cfg["internal_negative_label"]
+    positive_norm = _normalized_label_text(positive_label)
+    negative_norm = _normalized_label_text(negative_label)
+    positive_compact = _compact_label_text(positive_label)
+    negative_compact = _compact_label_text(negative_label)
+    normalized_full = _normalized_label_text(text)
+
+    if not normalized_full:
+        return None
+
+    if version == LABEL_VOCAB_VERSION_LEGACY:
+        negative_patterns = (
+            r"\bnon[\s-]*depressed\b",
+            r"\bnondepressed\b",
+            r"\bnot depressed\b",
+            r"\bno depression\b",
+            r"\bwithout depression\b",
+        )
+        positive_patterns = (
+            r"\bdepressed\b",
+            r"\bhas depression\b",
+            r"\bwith depression\b",
+        )
+
+        negative_match = _first_regex_match(normalized_full, negative_patterns)
+        positive_match = _first_regex_match(normalized_full, positive_patterns)
+        if negative_match and (not positive_match or negative_match.start() <= positive_match.start()):
+            return 0
+        if positive_match:
+            return 1
+
+    candidates = _candidate_generation_fragments(text)
+    for candidate in candidates:
+        normalized = _normalized_label_text(candidate)
+        compact = _compact_label_text(candidate)
+        if normalized == positive_norm or compact == positive_compact:
+            return 1
+        if normalized == negative_norm or compact == negative_compact:
+            return 0
+
+    for candidate in candidates:
+        pos_prefix = _prefix_match_label(candidate, positive_label)
+        neg_prefix = _prefix_match_label(candidate, negative_label)
+        if pos_prefix and not neg_prefix:
+            return 1
+        if neg_prefix and not pos_prefix:
+            return 0
+
     return None
 
 

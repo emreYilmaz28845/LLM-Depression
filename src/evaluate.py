@@ -45,6 +45,7 @@ from src.utils import (
     label_text_from_int,
     load_yaml_with_overrides,
     log_resolved_config,
+    parse_generated_label_text,
     parse_internal_label_text,
     read_json,
     resolve_label_config,
@@ -59,6 +60,31 @@ from src.utils import (
 
 
 LOGGER = get_logger(__name__)
+
+
+def _recommended_generation_max_new_tokens(processor, config: dict[str, Any]) -> int:
+    labels_cfg = resolve_label_config(config)
+    label_texts = (
+        labels_cfg["internal_positive_label"],
+        labels_cfg["internal_negative_label"],
+    )
+    candidate_prefixes = (
+        "",
+        "Answer: ",
+        "Label: ",
+        "Prediction: ",
+        "The subject is ",
+    )
+    token_lengths: list[int] = []
+    for prefix in candidate_prefixes:
+        for label_text in label_texts:
+            token_ids = processor.tokenizer(
+                f"{prefix}{label_text}",
+                add_special_tokens=False,
+                return_attention_mask=False,
+            )["input_ids"]
+            token_lengths.append(len(token_ids))
+    return max(token_lengths, default=0) + 1
 
 
 def _metadata_artifacts_are_usable(metadata: dict[str, Any]) -> tuple[bool, str]:
@@ -185,6 +211,10 @@ def generate_label_text(
     inputs = _processor_inputs(processor, example, example["prompt_text"], device, silence_audio)
     input_len = inputs["input_ids"].shape[1]
     generation_config = build_generation_config(config)
+    generation_config.max_new_tokens = max(
+        int(generation_config.max_new_tokens),
+        _recommended_generation_max_new_tokens(processor, config),
+    )
     with torch.no_grad():
         generated = model.generate(
             **inputs,
@@ -235,7 +265,7 @@ def _predict_sample_generation(
     checkpoint_name: str,
 ) -> dict[str, Any]:
     generation_text = generate_label_text(model, processor, example, config, device, silence_audio)
-    parsed_generation = parse_internal_label_text(generation_text, config)
+    parsed_generation = parse_generated_label_text(generation_text, config)
     return {
         **_base_sample_row(example, checkpoint_name, PREDICTION_MODE_GENERATION),
         "generation_text": generation_text,
