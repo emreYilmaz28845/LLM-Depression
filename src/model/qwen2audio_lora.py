@@ -64,12 +64,21 @@ def _load_torch_state(path: Path) -> dict[str, Any]:
         return torch.load(path, map_location="cpu")
 
 
+def _reference_parameter(module: nn.Module) -> torch.nn.Parameter | None:
+    for parameter in module.parameters():
+        return parameter
+    return None
+
+
 def attach_dep_adapter(model, adapter_cfg: dict[str, Any], adapter_state_dict: dict[str, Any] | None = None):
     base_model = _unwrap_base_model(model)
     encoder = base_model.audio_tower
     if getattr(encoder, "_dep_adapter_attached", False):
         if adapter_state_dict is not None and hasattr(encoder, "audio_adapter"):
             encoder.audio_adapter.load_state_dict(adapter_state_dict)
+            reference = _reference_parameter(encoder)
+            if reference is not None:
+                encoder.audio_adapter.to(device=reference.device, dtype=reference.dtype)
         return model
 
     adapter = DepAdapter(
@@ -79,6 +88,9 @@ def attach_dep_adapter(model, adapter_cfg: dict[str, Any], adapter_state_dict: d
     )
     if adapter_state_dict is not None:
         adapter.load_state_dict(adapter_state_dict)
+    reference = _reference_parameter(encoder)
+    if reference is not None:
+        adapter.to(device=reference.device, dtype=reference.dtype)
 
     original_forward = encoder.forward
 
