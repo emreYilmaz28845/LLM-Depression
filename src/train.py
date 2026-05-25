@@ -431,6 +431,21 @@ def main() -> None:
         "split_metadata_hash": sha256_file(metadata.get("folds_path") or metadata.get("subject_partition_path")),
         "fold": int(args.fold),
         "save_strategy": args.save_strategy,
+        "selection_protocol": {
+            "metric_name": "inner_val_positive_f1",
+            "selection_split_name": "val_inner",
+            "selection_subject_count": len(inner_split["val_inner_subject_ids"]),
+            "selection_sample_count": len(val_examples),
+            "selection_prediction_backend": sample_prediction_mode,
+            "selection_evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
+        },
+        "final_eval_protocol": {
+            "final_eval_split_name": "final_eval",
+            "final_eval_partition": str(config["split"]["final_eval_partition"]),
+            "final_eval_subject_count": len(outer_partitions["final_eval_subject_ids"]),
+            "final_eval_sample_count": len(final_eval_examples),
+            "run_final_eval_in_train": bool(config["training"].get("run_final_eval_in_train", False)),
+        },
     }
     if accelerator.is_main_process:
         save_yaml(run_config, run_root / "run_config.yaml")
@@ -663,6 +678,8 @@ def main() -> None:
                 "stop_reason": stop_reason,
                 "config_overrides": list(args.config_overrides),
                 "sample_prediction_mode": sample_prediction_mode,
+                "selection_protocol": run_config["selection_protocol"],
+                "final_eval_protocol": run_config["final_eval_protocol"],
                 "history": history,
             },
         )
