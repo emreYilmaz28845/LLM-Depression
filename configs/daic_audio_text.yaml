@@ -45,6 +45,11 @@ lora:
     - gate_proj
     - up_proj
     - down_proj
+audio_adapter:
+  enabled: false
+  adapter_dim: 512
+  dropout: 0.1
+  train_projector: false
 training:
   num_train_epochs: 3
   learning_rate: 2.0e-4

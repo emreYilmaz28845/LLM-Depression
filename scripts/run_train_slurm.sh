@@ -109,6 +109,7 @@ print("dataset", dataset)
 print("effective_batch_size", effective_batch_size)
 print("dataset_root", config["dataset_root"])
 print("sample_prediction_mode", config["evaluation"]["sample_prediction_mode"])
+print("audio_adapter", json.dumps(config.get("audio_adapter", {}), sort_keys=True))
 
 split_dir = resolve_project_path(config["output_dirs"]["split_dir"])
 metadata_path = split_dir / f"{dataset}_manifest_metadata.json"

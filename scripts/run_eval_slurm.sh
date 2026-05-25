@@ -94,13 +94,15 @@ import json
 import sys
 from pathlib import Path
 sys.path.insert(0, "$PROJECT_ROOT")
-from src.utils import load_yaml, resolve_project_path
+from src.utils import load_yaml_with_overrides, resolve_project_path
 
-config = load_yaml(Path("$CONFIG"))
+override_args = """$EXTRA_EVAL_ARGS""".split()
+config = load_yaml_with_overrides(Path("$CONFIG"), override_args)
 dataset = config["dataset"]
 
 print("dataset", dataset)
 print("dataset_root", config["dataset_root"])
+print("audio_adapter", json.dumps(config.get("audio_adapter", {}), sort_keys=True))
 
 split_dir = resolve_project_path(config["output_dirs"]["split_dir"])
 metadata_path = split_dir / f"{dataset}_manifest_metadata.json"

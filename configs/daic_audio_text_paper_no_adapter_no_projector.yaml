@@ -19,26 +19,20 @@ prompt:
     Answer with exactly one label: Depressed or Non-depressed.
   prompt_language: english
 labels:
-  # Paper output labels are Depressed / Non-depressed.
   label_vocab_version: legacy_english_labels
 data:
   use_audio: true
   use_text: true
   silence_audio: false
-  # DAIC preprocessing in this repo already uses participant-only chunked audio.
   sample_mode: chunk
   transcript_max_chars: 4000
   allow_empty_transcript: false
 split:
   final_eval_partition: val
   train_partition: train
-  # Closest repo approximation to the paper's train-only CV model selection.
   inner_val_ratio: 0.2
   seed: 1337
 lora:
-  # Paper implementation details: rank=16, alpha=32.
-  # The paper reports freezing the Whisper encoder and projection, so keep
-  # LoRA on the text attention stack only.
   rank: 16
   alpha: 32
   dropout: 0.05
@@ -55,7 +49,6 @@ audio_adapter:
   dropout: 0.1
   train_projector: false
 training:
-  # Paper implementation details: trained for 20 epochs.
   num_train_epochs: 20
   learning_rate: 2.0e-4
   weight_decay: 0.0
@@ -69,8 +62,6 @@ training:
   run_final_eval_in_train: false
   dataloader_num_workers: 0
   max_grad_norm: 1.0
-  # Keep disabled by default, but define the subtree so CLI overrides such as
-  # --set training.early_stopping.enabled=true are valid.
   early_stopping:
     enabled: false
     metric: inner_val_positive_f1
@@ -78,7 +69,6 @@ training:
     patience: 3
     min_delta: 0.0
 evaluation:
-  # Closest stable proxy in this repo to paper-style generative label evaluation.
   sample_prediction_mode: original_teacher_forced
   generation_max_new_tokens: 8
   num_beams: 1

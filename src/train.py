@@ -38,6 +38,7 @@ from src.model.qwen2audio_lora import (
     load_model_for_training,
     load_processor,
     prepare_model_for_evaluation,
+    resolve_audio_adapter_config,
     save_adapter_and_processor,
 )
 from src.utils import (
@@ -305,6 +306,7 @@ def main() -> None:
         resolved_config=config,
     )
     set_seed(int(config["seed"]))
+    audio_adapter_cfg = resolve_audio_adapter_config(config)
     sample_prediction_mode = resolve_prediction_mode(config)
     metadata = _load_metadata_or_build(args.config, config, args.config_overrides)
     manifest_rows = load_manifest_rows(metadata["manifest_path"])
@@ -424,6 +426,7 @@ def main() -> None:
             "sample_prediction_mode": sample_prediction_mode,
             "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
         },
+        "audio_adapter": audio_adapter_cfg,
         "resolved_model_name_or_path": model_name_or_path,
         "manifest_path": metadata["manifest_path"],
         "manifest_hash": metadata["manifest_hash"],
@@ -530,7 +533,7 @@ def main() -> None:
                 if _save_best_checkpoint(args.save_strategy):
                     if best_dir.exists():
                         shutil.rmtree(best_dir)
-                    save_adapter_and_processor(unwrapped, processor, best_dir)
+                    save_adapter_and_processor(unwrapped, processor, best_dir, config=config)
             _write_trial_progress(
                 args.trial_progress_file,
                 epoch=epoch,
@@ -589,7 +592,7 @@ def main() -> None:
         if _save_last_checkpoint(args.save_strategy):
             if last_dir.exists():
                 shutil.rmtree(last_dir)
-            save_adapter_and_processor(unwrapped, processor, last_dir)
+            save_adapter_and_processor(unwrapped, processor, last_dir, config=config)
         run_final_eval_in_train = bool(config["training"].get("run_final_eval_in_train", False))
         if run_final_eval_in_train and not _save_best_checkpoint(args.save_strategy):
             LOGGER.info(
@@ -678,6 +681,7 @@ def main() -> None:
                 "stop_reason": stop_reason,
                 "config_overrides": list(args.config_overrides),
                 "sample_prediction_mode": sample_prediction_mode,
+                "audio_adapter": audio_adapter_cfg,
                 "selection_protocol": run_config["selection_protocol"],
                 "final_eval_protocol": run_config["final_eval_protocol"],
                 "history": history,

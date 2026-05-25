@@ -68,6 +68,18 @@ python src/evaluate.py \
   --checkpoint_dir output_model/audio_text/daic/daic_reproduction/fold_0/best_model
 ```
 
+Enable `DepAdapter` from CLI overrides:
+
+```bash
+sbatch --export=ALL,CONFIG=$PWD/configs/daic_audio_text_paper_audio_text.yaml,FOLD=0,RUN_NAME=daic_dep_adapter,EXTRA_TRAIN_ARGS="--set audio_adapter.enabled=true --set audio_adapter.adapter_dim=512 --set audio_adapter.dropout=0.1 --set audio_adapter.train_projector=false" scripts/run_train_slurm.sh
+```
+
+Enable `DepAdapter` and train `multi_modal_projector` too:
+
+```bash
+sbatch --export=ALL,CONFIG=$PWD/configs/daic_audio_text_paper_audio_text.yaml,FOLD=0,RUN_NAME=daic_dep_adapter_projector,EXTRA_TRAIN_ARGS="--set audio_adapter.enabled=true --set audio_adapter.adapter_dim=512 --set audio_adapter.dropout=0.1 --set audio_adapter.train_projector=true" scripts/run_train_slurm.sh
+```
+
 ## CMDC 5-Fold Training / Eval
 
 ```bash
