@@ -45,6 +45,10 @@ def _strict_binary_prediction(gold: int, pred: int) -> int:
     return 1 - int(gold)
 
 
+def _wrong_vote_for_gold(gold: int) -> int:
+    return 1 - int(gold)
+
+
 def _diagnostic_payload(subject_rows: list[dict[str, Any]]) -> dict[str, Any]:
     y_true = [int(row["label"]) for row in subject_rows]
     y_pred = [int(row["prediction"]) for row in subject_rows]
@@ -128,6 +132,7 @@ def _aggregate_majority_vote_predictions(
     valid_count_field: str,
     tie_break_positive_score_field: str | None = None,
     tie_break_negative_score_field: str | None = None,
+    count_invalid_as_wrong_vote: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in sample_rows:
@@ -139,14 +144,19 @@ def _aggregate_majority_vote_predictions(
     invalid_subjects = 0
     total_invalid_predictions = 0
     for subject_id, rows in sorted(grouped.items()):
-        valid_predictions = [int(row[prediction_field]) for row in rows if row[prediction_field] in (0, 1)]
-        total_invalid_predictions += sum(1 for row in rows if row[prediction_field] not in (0, 1))
         gold = int(rows[0]["label"])
-        if not valid_predictions:
-            invalid_subjects += 1
+        valid_predictions = [int(row[prediction_field]) for row in rows if row[prediction_field] in (0, 1)]
+        invalid_prediction_count = sum(1 for row in rows if row[prediction_field] not in (0, 1))
+        total_invalid_predictions += invalid_prediction_count
+        majority_predictions = list(valid_predictions)
+        if count_invalid_as_wrong_vote and invalid_prediction_count:
+            # For teacher-forced decoding we evaluate malformed labels as
+            # explicit wrong votes instead of silently dropping them.
+            majority_predictions.extend([_wrong_vote_for_gold(gold)] * invalid_prediction_count)
+        if not majority_predictions:
             pred = INVALID_PREDICTION
         else:
-            counts = Counter(valid_predictions)
+            counts = Counter(majority_predictions)
             if counts[1] > counts[0]:
                 pred = 1
             elif counts[0] > counts[1]:
@@ -166,6 +176,8 @@ def _aggregate_majority_vote_predictions(
                         pred = INVALID_PREDICTION
                 else:
                     pred = INVALID_PREDICTION
+        if pred not in (0, 1):
+            invalid_subjects += 1
         pred_text = label_text_from_int(pred) if pred in (0, 1) else "INVALID"
         subject_rows.append(
             {
@@ -264,4 +276,5 @@ def aggregate_original_teacher_forced_predictions(sample_rows: list[dict[str, An
         valid_count_field="teacher_forced_num_valid_predictions",
         tie_break_positive_score_field="dep_score",
         tie_break_negative_score_field="non_score",
+        count_invalid_as_wrong_vote=True,
     )
