@@ -2,7 +2,6 @@ dataset: daic
 seed: 1337
 dataset_root: ${DAIC_DATASET_ROOT:-/media/emre/Backup/AudioLLM/Datasets/DAIC-WOZ/preprocessed}
 transcript_path: ${DAIC_TRANSCRIPT_PATH:-}
-manifest_variant: preprocessed_train_dev
 quarantine_path: ${PROJECT_ROOT}/configs/quarantines.yaml
 model_name_or_path: /gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instruct
 output_dirs:
@@ -20,7 +19,7 @@ prompt:
     Answer with exactly one label: Depressed or Non-depressed.
   prompt_language: english
 labels:
-  label_vocab_version: legacy_english_labels
+  label_vocab_version: short_internal_ab_labels
 data:
   use_audio: true
   use_text: true
@@ -43,16 +42,14 @@ lora:
     - k_proj
     - v_proj
     - o_proj
-    - gate_proj
-    - up_proj
-    - down_proj
+  exclude_modules: ".*audio_tower.*|.*multi_modal_projector.*"
 audio_adapter:
-  enabled: false
+  enabled: true
   adapter_dim: 512
   dropout: 0.1
-  train_projector: false
+  train_projector: true
 training:
-  num_train_epochs: 3
+  num_train_epochs: 20
   learning_rate: 2.0e-4
   weight_decay: 0.0
   warmup_ratio: 0.03
@@ -65,9 +62,15 @@ training:
   run_final_eval_in_train: false
   dataloader_num_workers: 0
   max_grad_norm: 1.0
+  early_stopping:
+    enabled: false
+    metric: inner_val_positive_f1
+    mode: max
+    patience: 3
+    min_delta: 0.0
 evaluation:
-  sample_prediction_mode: likelihood
+  sample_prediction_mode: original_teacher_forced
   generation_max_new_tokens: 8
   num_beams: 1
   do_sample: false
-  headline_mode: likelihood
+  headline_mode: original_teacher_forced

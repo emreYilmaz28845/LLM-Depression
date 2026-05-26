@@ -17,6 +17,8 @@ LEGACY_CHUNK_RE = re.compile(r"^(?P<subject_id>\d+)_(?P<chunk_id>\d+)\.wav$")
 PREPROCESSED_SEGMENT_RE = re.compile(
     r"^(?P<subject_id>\d+)_(?P<segment_kind>random_segment|segment)_(?P<chunk_id>\d+)\.wav$"
 )
+PREPROCESSED_TRAIN_DEV_VARIANT = "preprocessed_train_dev"
+PREPROCESSED_TEST_FULL_TRANSCRIPT_VARIANT = "preprocessed_test_full_transcript"
 
 
 def _load_csv_rows(path: Path) -> list[dict[str, str]]:
@@ -195,6 +197,65 @@ def _discover_preprocessed_wavs(
     return wav_map, extra_file_audit
 
 
+def _build_full_transcript_rows(
+    rows: list[dict[str, str]],
+    transcript_source_path: Path,
+) -> dict[str, dict[str, Any]]:
+    transcripts: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        subject_id = _required_row_value(row, "Participant_ID", "participant_id", "subject_id", "patient_id")
+        transcript = _required_row_value(row, "full_transcript")
+        for segment_name in _parse_segment_files(row.get("segment_files", "")):
+            sample_id = _sample_id_from_audio_name(segment_name)
+            if sample_id is None:
+                continue
+            transcripts[sample_id] = {
+                "transcript": transcript,
+                "language": "",
+                "audio_name": segment_name,
+                "transcript_source_path": str(transcript_source_path),
+            }
+    return transcripts
+
+
+def _discover_preprocessed_test_wavs(
+    base_dir: Path,
+    rows: list[dict[str, str]],
+) -> tuple[dict[str, Path], list[dict[str, Any]]]:
+    split_dir = base_dir / "test_audio_segments"
+    if not split_dir.exists():
+        raise FileNotFoundError(f"DAIC preprocessed split directory is missing: {split_dir}")
+
+    expected_names: set[str] = set()
+    for row in rows:
+        expected_names.update(_parse_segment_files(row.get("segment_files", "")))
+
+    wav_map: dict[str, Path] = {}
+    extra_file_audit: list[dict[str, Any]] = []
+    for wav_path in sorted(split_dir.glob("*/*.wav")):
+        sample_id = wav_path.stem
+        if _sample_id_from_audio_name(wav_path.name) is None:
+            extra_file_audit.append(
+                {
+                    "split": "test",
+                    "audio_path": str(wav_path),
+                    "reason": "unexpected_filename_format",
+                }
+            )
+            continue
+        if expected_names and wav_path.name not in expected_names:
+            extra_file_audit.append(
+                {
+                    "split": "test",
+                    "audio_path": str(wav_path),
+                    "reason": "not_referenced_by_preprocessing_summary",
+                }
+            )
+            continue
+        wav_map[sample_id] = wav_path
+    return wav_map, extra_file_audit
+
+
 def _finalize_manifest(
     *,
     quarantine: dict[str, Any],
@@ -332,6 +393,33 @@ def _build_preprocessed_manifest(config: dict[str, Any], quarantine: dict[str, A
     return result
 
 
+def _build_preprocessed_test_full_transcript_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> dict[str, Any]:
+    base_dir = Path(config["dataset_root"])
+    transcript_path = base_dir / "test_preprocessing_summary.csv"
+    split_rows = {
+        "test": _load_csv_rows(transcript_path),
+    }
+    subject_meta, split_lookup = _build_subject_meta_from_rows(split_rows)
+    transcripts = _build_full_transcript_rows(split_rows["test"], transcript_path)
+    wav_map, extra_file_audit = _discover_preprocessed_test_wavs(base_dir, split_rows["test"])
+    result = _finalize_manifest(
+        quarantine=quarantine,
+        transcript_path=transcript_path,
+        transcripts=transcripts,
+        wav_map=wav_map,
+        subject_meta=subject_meta,
+        split_lookup=split_lookup,
+    )
+    result["extra_file_audit"] = extra_file_audit
+    result["split_source"] = PREPROCESSED_TEST_FULL_TRANSCRIPT_VARIANT
+    result["split_source_notes"] = (
+        "Uses test_preprocessing_summary.csv and preprocessed/test_audio_segments. "
+        "Each test chunk is paired with the participant's full_transcript rather than "
+        "a segment-aligned transcript."
+    )
+    return result
+
+
 def _build_legacy_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> dict[str, Any]:
     base_dir = Path(config["dataset_root"])
     official_dir = base_dir / "minimal_zips"
@@ -361,6 +449,19 @@ def _build_legacy_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -
 
 def build_daic_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> dict[str, Any]:
     base_dir = Path(config["dataset_root"])
+    manifest_variant = str(config.get("manifest_variant", "")).strip().lower()
+    if manifest_variant == PREPROCESSED_TRAIN_DEV_VARIANT:
+        LOGGER.info("Building DAIC manifest from preprocessed train/dev layout: %s", base_dir)
+        return _build_preprocessed_manifest(config, quarantine)
+    if manifest_variant == PREPROCESSED_TEST_FULL_TRANSCRIPT_VARIANT:
+        LOGGER.info("Building DAIC manifest from preprocessed test layout with repeated full transcripts: %s", base_dir)
+        return _build_preprocessed_test_full_transcript_manifest(config, quarantine)
+    if manifest_variant:
+        raise ValueError(
+            f"Unsupported DAIC manifest_variant={manifest_variant!r}. "
+            f"Expected one of: {PREPROCESSED_TRAIN_DEV_VARIANT!r}, "
+            f"{PREPROCESSED_TEST_FULL_TRANSCRIPT_VARIANT!r}, or empty for auto-detect."
+        )
     if (base_dir / "train_preprocessing_summary.csv").exists():
         LOGGER.info("Building DAIC manifest from preprocessed 30-second chunk layout: %s", base_dir)
         return _build_preprocessed_manifest(config, quarantine)

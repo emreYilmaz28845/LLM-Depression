@@ -68,6 +68,15 @@ python src/evaluate.py \
   --checkpoint_dir output_model/audio_text/daic/daic_reproduction/fold_0/best_model
 ```
 
+Standalone DAIC test-only evaluation with repeated participant full transcripts per chunk:
+
+```bash
+python src/evaluate.py \
+  --config configs/daic_audio_text_test_eval_full_transcript.yaml \
+  --fold 0 \
+  --checkpoint_dir output_model/audio_text/daic/daic_reproduction/fold_0/best_model
+```
+
 Enable `DepAdapter` from CLI overrides:
 
 ```bash

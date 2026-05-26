@@ -20,7 +20,7 @@ prompt:
     Answer with exactly one label: Depressed or Non-depressed.
   prompt_language: english
 labels:
-  label_vocab_version: legacy_english_labels
+  label_vocab_version: short_internal_ab_labels
 data:
   use_audio: true
   use_text: true
@@ -43,16 +43,14 @@ lora:
     - k_proj
     - v_proj
     - o_proj
-    - gate_proj
-    - up_proj
-    - down_proj
+  exclude_modules: ".*audio_tower.*|.*multi_modal_projector.*"
 audio_adapter:
-  enabled: false
+  enabled: true
   adapter_dim: 512
   dropout: 0.1
   train_projector: false
 training:
-  num_train_epochs: 3
+  num_train_epochs: 20
   learning_rate: 2.0e-4
   weight_decay: 0.0
   warmup_ratio: 0.03
@@ -65,9 +63,15 @@ training:
   run_final_eval_in_train: false
   dataloader_num_workers: 0
   max_grad_norm: 1.0
+  early_stopping:
+    enabled: false
+    metric: inner_val_positive_f1
+    mode: max
+    patience: 3
+    min_delta: 0.0
 evaluation:
-  sample_prediction_mode: likelihood
+  sample_prediction_mode: original_teacher_forced
   generation_max_new_tokens: 8
   num_beams: 1
   do_sample: false
-  headline_mode: likelihood
+  headline_mode: original_teacher_forced
