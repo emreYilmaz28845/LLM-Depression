@@ -551,8 +551,7 @@ def _load_metadata_or_build(config_path: str | Path, config: dict[str, Any], con
 
 
 def _resolve_final_eval_subject_ids(config: dict[str, Any], metadata: dict[str, Any], fold: int) -> list[str]:
-    dataset_name = str(config["dataset"]).lower()
-    if dataset_name == "daic":
+    if metadata.get("subject_partition_path"):
         partition_rows = read_json(metadata["subject_partition_path"])
         return sorted([row["subject_id"] for row in partition_rows if row["partition"] == config["split"]["final_eval_partition"]])
     folds = read_json(metadata["folds_path"])

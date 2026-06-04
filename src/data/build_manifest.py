@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.data.cmdc import build_cmdc_manifest
 from src.data.daic import build_daic_manifest
+from src.data.edaic import build_edaic_manifest
 from src.data.eatd import build_eatd_manifest
 from src.data.validation import (
     assert_audio_exists,
@@ -74,6 +75,8 @@ def build_for_config(config_path: str | Path, config_overrides: list[str] | None
 
     if dataset_name == "daic":
         result = build_daic_manifest(config, quarantine)
+    elif dataset_name == "edaic":
+        result = build_edaic_manifest(config, quarantine)
     elif dataset_name == "cmdc":
         result = build_cmdc_manifest(config, quarantine)
     elif dataset_name == "eatd":

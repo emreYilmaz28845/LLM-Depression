@@ -15,5 +15,6 @@ run_python() {
 run_python "$PROJECT_ROOT/src/data/build_manifest.py" \
   --config \
   "$PROJECT_ROOT/configs/daic_audio_text.yaml" \
+  "$PROJECT_ROOT/configs/edaic_audio_text.yaml" \
   "$PROJECT_ROOT/configs/cmdc_audio_text.yaml" \
   "$PROJECT_ROOT/configs/eatd_audio_text.yaml"

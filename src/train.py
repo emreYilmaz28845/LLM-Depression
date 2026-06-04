@@ -123,12 +123,15 @@ def _load_metadata_or_build(config_path: str | Path, config: dict[str, Any], con
 
 
 def _resolve_outer_partitions(config: dict[str, Any], metadata: dict[str, Any], fold: int) -> dict[str, list[str]]:
-    dataset_name = str(config["dataset"]).lower()
-    if dataset_name == "daic":
+    if metadata.get("subject_partition_path"):
         partition_rows = read_json(metadata["subject_partition_path"])
-        train_partition = str(config["split"]["train_partition"])
+        train_partitions_cfg = config["split"].get("train_partitions")
+        if train_partitions_cfg:
+            train_partitions = {str(item) for item in train_partitions_cfg}
+        else:
+            train_partitions = {str(config["split"]["train_partition"])}
         final_eval_partition = str(config["split"]["final_eval_partition"])
-        outer_train_subject_ids = sorted([row["subject_id"] for row in partition_rows if row["partition"] == train_partition])
+        outer_train_subject_ids = sorted([row["subject_id"] for row in partition_rows if row["partition"] in train_partitions])
         final_eval_subject_ids = sorted([row["subject_id"] for row in partition_rows if row["partition"] == final_eval_partition])
         return {
             "outer_train_subject_ids": outer_train_subject_ids,
