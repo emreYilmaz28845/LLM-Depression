@@ -61,8 +61,8 @@ training:
   dataloader_num_workers: 0
   max_grad_norm: 1.0
 evaluation:
-  sample_prediction_mode: likelihood
+  sample_prediction_mode: original_teacher_forced
   generation_max_new_tokens: 8
   num_beams: 1
   do_sample: false
-  headline_mode: likelihood
+  headline_mode: original_teacher_forced
