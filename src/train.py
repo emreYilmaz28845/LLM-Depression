@@ -50,6 +50,7 @@ from src.utils import (
     log_resolved_config,
     read_json,
     resolve_metadata_paths,
+    resolve_aggregation_level,
     resolve_model_name_or_path,
     resolve_prediction_mode,
     resolve_project_path,
@@ -311,6 +312,7 @@ def main() -> None:
     set_seed(int(config["seed"]))
     audio_adapter_cfg = resolve_audio_adapter_config(config)
     sample_prediction_mode = resolve_prediction_mode(config)
+    aggregation_level = resolve_aggregation_level(config)
     metadata = _load_metadata_or_build(args.config, config, args.config_overrides)
     manifest_rows = load_manifest_rows(metadata["manifest_path"])
     subject_labels = build_subject_label_map(manifest_rows)
@@ -427,6 +429,7 @@ def main() -> None:
         "config_overrides": list(args.config_overrides),
         "evaluation": {
             "sample_prediction_mode": sample_prediction_mode,
+            "aggregation_level": aggregation_level,
             "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
         },
         "audio_adapter": audio_adapter_cfg,
@@ -443,6 +446,7 @@ def main() -> None:
             "selection_subject_count": len(inner_split["val_inner_subject_ids"]),
             "selection_sample_count": len(val_examples),
             "selection_prediction_backend": sample_prediction_mode,
+            "selection_aggregation_level": aggregation_level,
             "selection_evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
         },
         "final_eval_protocol": {
@@ -450,6 +454,7 @@ def main() -> None:
             "final_eval_partition": str(config["split"]["final_eval_partition"]),
             "final_eval_subject_count": len(outer_partitions["final_eval_subject_ids"]),
             "final_eval_sample_count": len(final_eval_examples),
+            "final_eval_aggregation_level": aggregation_level,
             "run_final_eval_in_train": bool(config["training"].get("run_final_eval_in_train", False)),
         },
     }
@@ -489,8 +494,9 @@ def main() -> None:
             inner_eval_dir = ensure_dir(logs_dir / f"inner_val_epoch_{epoch}")
             inner_val_loss = _compute_dataset_loss(unwrapped, val_loss_loader)
             LOGGER.info(
-                "Inner validation backend: %s | protocol=%s",
+                "Inner validation backend: %s | aggregation_level=%s | protocol=%s",
                 sample_prediction_mode,
+                aggregation_level,
                 evaluation_protocol_name(sample_prediction_mode),
             )
             metrics = evaluate_examples(
@@ -502,14 +508,14 @@ def main() -> None:
                 checkpoint_name=f"epoch_{epoch}",
                 sample_prediction_mode=sample_prediction_mode,
             )
-            subject_metrics = metrics["backend_results"][sample_prediction_mode]["subject_metrics"]
-            metric_value = float(subject_metrics["positive_f1"])
+            headline_metrics = metrics["backend_results"][sample_prediction_mode]["headline_metrics"]
+            metric_value = float(headline_metrics["positive_f1"])
             metric_values = {
                 "inner_val_positive_f1": metric_value,
-                "inner_val_macro_f1": float(subject_metrics["macro_f1"]),
-                "inner_val_accuracy": float(subject_metrics["accuracy"]),
-                "inner_val_precision": float(subject_metrics["precision"]),
-                "inner_val_recall": float(subject_metrics["recall"]),
+                "inner_val_macro_f1": float(headline_metrics["macro_f1"]),
+                "inner_val_accuracy": float(headline_metrics["accuracy"]),
+                "inner_val_precision": float(headline_metrics["precision"]),
+                "inner_val_recall": float(headline_metrics["recall"]),
                 "inner_val_loss": inner_val_loss,
             }
             history_row = {
@@ -517,18 +523,20 @@ def main() -> None:
                 "train_loss": sum(epoch_losses) / max(1, len(epoch_losses)),
                 "inner_val_loss": inner_val_loss,
                 "inner_val_prediction_backend": sample_prediction_mode,
+                "inner_val_aggregation_level": aggregation_level,
                 "inner_val_evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
                 **metric_values,
             }
             history.append(history_row)
             LOGGER.info(
-                "Validation epoch=%s | loss=%.6f ACC=%.6f F1=%.6f Precision=%.6f Recall=%.6f",
+                "Validation epoch=%s | aggregation_level=%s | loss=%.6f ACC=%.6f F1=%.6f Precision=%.6f Recall=%.6f",
                 epoch,
+                aggregation_level,
                 inner_val_loss,
-                float(subject_metrics["accuracy"]),
-                float(subject_metrics["positive_f1"]),
-                float(subject_metrics["precision"]),
-                float(subject_metrics["recall"]),
+                float(headline_metrics["accuracy"]),
+                float(headline_metrics["positive_f1"]),
+                float(headline_metrics["precision"]),
+                float(headline_metrics["recall"]),
             )
             if metric_value > best_metric:
                 best_metric = metric_value
@@ -606,8 +614,9 @@ def main() -> None:
         if run_final_eval_in_train:
             ensure_dir(eval_dir)
             LOGGER.info(
-                "Final held-out evaluation backend: %s | protocol=%s",
+                "Final held-out evaluation backend: %s | aggregation_level=%s | protocol=%s",
                 sample_prediction_mode,
+                aggregation_level,
                 evaluation_protocol_name(sample_prediction_mode),
             )
             LOGGER.info("Starting final held-out evaluation for last_checkpoint")
@@ -647,14 +656,15 @@ def main() -> None:
             save_json(
                 {
                     "prediction_backend": sample_prediction_mode,
+                    "aggregation_level": aggregation_level,
                     "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
                     "selected_best_checkpoint": {
                         "epoch": best_epoch,
-                        "active_backend_metrics": best_metrics["backend_results"][sample_prediction_mode]["subject_metrics"],
+                        "active_backend_metrics": best_metrics["backend_results"][sample_prediction_mode]["headline_metrics"],
                     },
                     "last_checkpoint": {
                         "epoch": completed_epochs,
-                        "active_backend_metrics": last_metrics["backend_results"][sample_prediction_mode]["subject_metrics"],
+                        "active_backend_metrics": last_metrics["backend_results"][sample_prediction_mode]["headline_metrics"],
                     },
                 },
                 eval_dir / "best_vs_last_checkpoint_metrics.json",
@@ -684,6 +694,7 @@ def main() -> None:
                 "stop_reason": stop_reason,
                 "config_overrides": list(args.config_overrides),
                 "sample_prediction_mode": sample_prediction_mode,
+                "aggregation_level": aggregation_level,
                 "audio_adapter": audio_adapter_cfg,
                 "selection_protocol": run_config["selection_protocol"],
                 "final_eval_protocol": run_config["final_eval_protocol"],

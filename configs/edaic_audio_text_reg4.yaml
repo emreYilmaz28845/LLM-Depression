@@ -1,13 +1,12 @@
-dataset: daic
+dataset: edaic
 seed: 1337
-dataset_root: ${DAIC_DATASET_ROOT:-/media/emre/Backup/AudioLLM/Datasets/DAIC-WOZ/preprocessed}
-transcript_path: ${DAIC_TRANSCRIPT_PATH:-}
+dataset_root: ${EDAIC_DATASET_ROOT:-/media/emre/Backup/AudioLLM/Datasets/EDAIC-WOZ/preprocessed}
 quarantine_path: ${PROJECT_ROOT}/configs/quarantines.yaml
 model_name_or_path: /gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instruct
 output_dirs:
   manifest_dir: ${PROJECT_ROOT}/outputs/manifests
   split_dir: ${PROJECT_ROOT}/outputs/splits
-  run_root: ${PROJECT_ROOT}/output_model/audio_text/daic
+  run_root: ${PROJECT_ROOT}/output_model/audio_text/edaic
 prompt:
   system: You are a psychologist analyzing speech and transcript information for depression screening.
   user_template: |-
@@ -19,7 +18,7 @@ prompt:
     Answer with exactly one label: Depressed or Non-depressed.
   prompt_language: english
 labels:
-  label_vocab_version: short_internal_ab_labels
+  label_vocab_version: legacy_english_labels
 data:
   use_audio: true
   use_text: true
@@ -28,29 +27,27 @@ data:
   transcript_max_chars: 4000
   allow_empty_transcript: false
 split:
-  final_eval_partition: val
-  train_partition: train
+  train_partitions:
+    - train
+    - val
+  final_eval_partition: test
   inner_val_ratio: 0.2
   seed: 1337
 lora:
-  rank: 16
-  alpha: 32
-  dropout: 0.1
+  rank: 8
+  alpha: 16
+  dropout: 0.25
   bias: none
   target_modules:
     - q_proj
     - k_proj
     - v_proj
     - o_proj
-    - gate_proj
-    - up_proj
-    - down_proj
-  exclude_modules: ".*audio_tower.*|.*multi_modal_projector.*"
 training:
-  num_train_epochs: 8
-  learning_rate: 1.0e-4
-  weight_decay: 0.01
-  warmup_ratio: 0.03
+  num_train_epochs: 20
+  learning_rate: 3.0e-5
+  weight_decay: 0.08
+  warmup_ratio: 0.12
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 1
   gradient_accumulation_steps: 8
@@ -59,16 +56,15 @@ training:
   gradient_checkpointing: true
   run_final_eval_in_train: false
   dataloader_num_workers: 0
-  max_grad_norm: 1.0
+  max_grad_norm: 0.4
   early_stopping:
     enabled: true
     metric: inner_val_positive_f1
     mode: max
-    patience: 3
+    patience: 2
     min_delta: 0.0
 evaluation:
   sample_prediction_mode: original_teacher_forced
-  aggregation_level: subject
   generation_max_new_tokens: 8
   num_beams: 1
   do_sample: false

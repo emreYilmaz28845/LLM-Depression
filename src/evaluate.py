@@ -15,11 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import torch
 
-from src.aggregate import (
-    aggregate_generation_predictions,
-    aggregate_likelihood_predictions,
-    aggregate_original_teacher_forced_predictions,
-)
+from src.aggregate import aggregate_predictions
 from src.data.build_manifest import build_for_config
 from src.data.runtime import (
     build_examples,
@@ -34,6 +30,7 @@ from src.model.qwen2audio_lora import (
     prepare_model_for_evaluation,
 )
 from src.utils import (
+    AGGREGATION_LEVEL_SUBJECT,
     PREDICTION_MODE_GENERATION,
     PREDICTION_MODE_LIKELIHOOD,
     PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
@@ -50,6 +47,7 @@ from src.utils import (
     read_json,
     resolve_label_config,
     resolve_metadata_paths,
+    resolve_aggregation_level,
     resolve_model_name_or_path,
     resolve_prediction_mode,
     resolve_project_path,
@@ -343,16 +341,6 @@ def _prediction_backend(mode: str):
     raise ValueError(f"Unsupported prediction backend: {mode}")
 
 
-def _aggregate_predictions(mode: str, sample_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    if mode == PREDICTION_MODE_LIKELIHOOD:
-        return aggregate_likelihood_predictions(sample_rows)
-    if mode == PREDICTION_MODE_GENERATION:
-        return aggregate_generation_predictions(sample_rows)
-    if mode == PREDICTION_MODE_ORIGINAL_TEACHER_FORCED:
-        return aggregate_original_teacher_forced_predictions(sample_rows)
-    raise ValueError(f"Unsupported prediction backend: {mode}")
-
-
 def _metrics_filename_for_mode(mode: str) -> str:
     if mode == PREDICTION_MODE_LIKELIHOOD:
         return "metrics_likelihood.json"
@@ -361,6 +349,10 @@ def _metrics_filename_for_mode(mode: str) -> str:
     if mode == PREDICTION_MODE_ORIGINAL_TEACHER_FORCED:
         return "metrics_original_teacher_forced.json"
     raise ValueError(f"Unsupported prediction backend: {mode}")
+
+
+def _subject_metrics_filename_for_mode(mode: str) -> str:
+    return f"metrics_subject_level_{mode}.json"
 
 
 def _log_invalid_prediction_preview(mode: str, subject_rows: list[dict[str, Any]], sample_rows: list[dict[str, Any]]) -> None:
@@ -414,6 +406,7 @@ def evaluate_examples(
     sample_prediction_mode: str | None = None,
 ) -> dict[str, Any]:
     mode = resolve_prediction_mode(config, sample_prediction_mode)
+    aggregation_level = resolve_aggregation_level(config)
     protocol_name = evaluation_protocol_name(mode)
     output_dir = ensure_dir(output_dir)
     prepare_model_for_evaluation(model)
@@ -425,10 +418,11 @@ def evaluate_examples(
     predict_sample = _prediction_backend(mode)
 
     LOGGER.info(
-        "Starting evaluation checkpoint=%s | samples=%s | backend=%s | protocol=%s",
+        "Starting evaluation checkpoint=%s | samples=%s | backend=%s | aggregation_level=%s | protocol=%s",
         checkpoint_name,
         total_examples,
         mode,
+        aggregation_level,
         protocol_name,
     )
     for example_index, example in enumerate(examples, start=1):
@@ -450,87 +444,112 @@ def evaluate_examples(
                 total_examples,
             )
 
-    subject_rows, subject_metrics = _aggregate_predictions(mode, sample_rows)
-    metrics_payload = dict(subject_metrics)
-    metrics_payload["checkpoint_name"] = checkpoint_name
+    headline_rows, headline_metrics, subject_rows, subject_metrics = aggregate_predictions(
+        sample_rows,
+        mode=mode,
+        aggregation_level=aggregation_level,
+    )
+    headline_metrics_payload = dict(headline_metrics)
+    headline_metrics_payload["checkpoint_name"] = checkpoint_name
+    subject_metrics_payload = dict(subject_metrics)
+    subject_metrics_payload["checkpoint_name"] = checkpoint_name
 
     sample_csv_path = output_dir / "predictions_sample_level.csv"
+    headline_csv_path = output_dir / "predictions_headline_level.csv"
     subject_csv_path = output_dir / "predictions_subject_level.csv"
     sample_jsonl_path = output_dir / "predictions_sample_level.jsonl"
     invalid_jsonl_path = output_dir / "predictions_invalid_sample_level.jsonl"
     _write_csv(sample_rows, sample_csv_path)
+    _write_csv(headline_rows, headline_csv_path)
     _write_csv(subject_rows, subject_csv_path)
     write_jsonl(sample_rows, sample_jsonl_path)
     invalid_rows = _invalid_sample_rows(mode, sample_rows)
     write_jsonl(invalid_rows, invalid_jsonl_path)
-    save_json(metrics_payload, output_dir / _metrics_filename_for_mode(mode))
+    save_json(headline_metrics_payload, output_dir / _metrics_filename_for_mode(mode))
+    if aggregation_level != AGGREGATION_LEVEL_SUBJECT:
+        save_json(subject_metrics_payload, output_dir / _subject_metrics_filename_for_mode(mode))
     save_json(
         {
             "prediction_backend": mode,
             "evaluation_protocol_name": protocol_name,
-            "aggregation_level": "subject",
-            "binary_strict_confusion_matrix": metrics_payload["binary_strict_confusion_matrix"],
-            "diagnostic_three_class_labels": metrics_payload["diagnostic_three_class_labels"],
-            "diagnostic_three_class_confusion_matrix": metrics_payload["diagnostic_three_class_confusion_matrix"],
+            "aggregation_level": aggregation_level,
+            "binary_strict_confusion_matrix": headline_metrics_payload["binary_strict_confusion_matrix"],
+            "diagnostic_three_class_labels": headline_metrics_payload["diagnostic_three_class_labels"],
+            "diagnostic_three_class_confusion_matrix": headline_metrics_payload["diagnostic_three_class_confusion_matrix"],
         },
         output_dir / "confusion_matrix.json",
     )
 
     LOGGER.info(
-        "Finished evaluation checkpoint=%s | backend=%s | ACC=%.6f F1=%.6f Precision=%.6f Recall=%.6f",
+        "Finished evaluation checkpoint=%s | backend=%s | aggregation_level=%s | ACC=%.6f F1=%.6f Precision=%.6f Recall=%.6f",
         checkpoint_name,
         mode,
-        float(metrics_payload["accuracy"]),
-        float(metrics_payload["positive_f1"]),
-        float(metrics_payload["precision"]),
-        float(metrics_payload["recall"]),
+        aggregation_level,
+        float(headline_metrics_payload["accuracy"]),
+        float(headline_metrics_payload["positive_f1"]),
+        float(headline_metrics_payload["precision"]),
+        float(headline_metrics_payload["recall"]),
+    )
+    unit_suffix = "subjects" if aggregation_level == AGGREGATION_LEVEL_SUBJECT else "segments"
+    LOGGER.info(
+        "Validation predicted counts checkpoint=%s | backend=%s | aggregation_level=%s | predicted_depressed=%s predicted_non_depressed=%s predicted_invalid=%s",
+        checkpoint_name,
+        mode,
+        aggregation_level,
+        int(headline_metrics_payload[f"predicted_depressed_{unit_suffix}"]),
+        int(headline_metrics_payload[f"predicted_non_depressed_{unit_suffix}"]),
+        int(headline_metrics_payload[f"predicted_invalid_{unit_suffix}"]),
     )
     LOGGER.info(
-        "Validation subject counts checkpoint=%s | backend=%s | predicted_depressed=%s predicted_non_depressed=%s predicted_invalid=%s",
+        "Validation true counts checkpoint=%s | backend=%s | aggregation_level=%s | true_depressed=%s true_non_depressed=%s",
         checkpoint_name,
         mode,
-        int(metrics_payload["predicted_depressed_subjects"]),
-        int(metrics_payload["predicted_non_depressed_subjects"]),
-        int(metrics_payload["predicted_invalid_subjects"]),
+        aggregation_level,
+        int(headline_metrics_payload[f"true_depressed_{unit_suffix}"]),
+        int(headline_metrics_payload[f"true_non_depressed_{unit_suffix}"]),
     )
     LOGGER.info(
-        "Validation true subject counts checkpoint=%s | backend=%s | true_depressed=%s true_non_depressed=%s",
+        "Validation output files checkpoint=%s | backend=%s | aggregation_level=%s | headline_csv=%s subject_csv=%s sample_csv=%s sample_jsonl=%s invalid_sample_jsonl=%s invalid_sample_count=%s",
         checkpoint_name,
         mode,
-        int(metrics_payload["true_depressed_subjects"]),
-        int(metrics_payload["true_non_depressed_subjects"]),
-    )
-    LOGGER.info(
-        "Validation output files checkpoint=%s | backend=%s | subject_csv=%s sample_csv=%s sample_jsonl=%s invalid_sample_jsonl=%s invalid_sample_count=%s",
-        checkpoint_name,
-        mode,
+        aggregation_level,
+        headline_csv_path,
         subject_csv_path,
         sample_csv_path,
         sample_jsonl_path,
         invalid_jsonl_path,
         len(invalid_rows),
     )
-    if int(metrics_payload.get("invalid_subjects", 0)) > 0:
+    invalid_units_key = f"invalid_{unit_suffix}"
+    valid_units_key = f"num_valid_{aggregation_level}_predictions"
+    if int(headline_metrics_payload.get(invalid_units_key, 0)) > 0:
         LOGGER.info(
-            "Validation valid-only metrics checkpoint=%s | backend=%s | valid_subjects=%s ACC=%.6f F1=%.6f Precision=%.6f Recall=%.6f",
+            "Validation valid-only metrics checkpoint=%s | backend=%s | aggregation_level=%s | valid_units=%s ACC=%.6f F1=%.6f Precision=%.6f Recall=%.6f",
             checkpoint_name,
             mode,
-            int(metrics_payload["num_valid_subject_predictions"]),
-            float(metrics_payload["valid_only_accuracy"]),
-            float(metrics_payload["valid_only_positive_f1"]),
-            float(metrics_payload["valid_only_precision"]),
-            float(metrics_payload["valid_only_recall"]),
+            aggregation_level,
+            int(headline_metrics_payload[valid_units_key]),
+            float(headline_metrics_payload["valid_only_accuracy"]),
+            float(headline_metrics_payload["valid_only_positive_f1"]),
+            float(headline_metrics_payload["valid_only_precision"]),
+            float(headline_metrics_payload["valid_only_recall"]),
         )
     _log_invalid_prediction_preview(mode, subject_rows, sample_rows)
     return {
         "active_backend": mode,
+        "active_aggregation_level": aggregation_level,
         "evaluation_protocol_name": protocol_name,
         "sample_rows": sample_rows,
+        "headline_rows": headline_rows,
+        "headline_metrics": headline_metrics_payload,
         "subject_rows": subject_rows,
+        "subject_metrics": subject_metrics_payload,
         "backend_results": {
             mode: {
+                "headline_rows": headline_rows,
+                "headline_metrics": headline_metrics_payload,
                 "subject_rows": subject_rows,
-                "subject_metrics": metrics_payload,
+                "subject_metrics": subject_metrics_payload,
             }
         },
     }
@@ -588,9 +607,11 @@ def main() -> None:
         resolved_config=config,
     )
     sample_prediction_mode = resolve_prediction_mode(config, args.sample_prediction_mode)
+    aggregation_level = resolve_aggregation_level(config)
     LOGGER.info(
-        "Standalone evaluation backend selected: %s | protocol=%s",
+        "Standalone evaluation backend selected: %s | aggregation_level=%s | protocol=%s",
         sample_prediction_mode,
+        aggregation_level,
         evaluation_protocol_name(sample_prediction_mode),
     )
     metadata = _load_metadata_or_build(args.config, config, args.config_overrides)
@@ -610,6 +631,7 @@ def main() -> None:
             "base_config_path": str(Path(args.config)),
             "config_overrides": list(args.config_overrides),
             "sample_prediction_mode": sample_prediction_mode,
+            "aggregation_level": aggregation_level,
             "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
             "resolved_model_name_or_path": model_name_or_path,
             "checkpoint_dir": str(Path(args.checkpoint_dir)),
@@ -627,7 +649,7 @@ def main() -> None:
         sample_prediction_mode=sample_prediction_mode,
     )
     active_backend = metrics["active_backend"]
-    LOGGER.info("Standalone evaluation complete: %s", metrics["backend_results"][active_backend]["subject_metrics"])
+    LOGGER.info("Standalone evaluation complete: %s", metrics["backend_results"][active_backend]["headline_metrics"])
 
 
 if __name__ == "__main__":

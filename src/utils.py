@@ -29,6 +29,12 @@ PREDICTION_MODE_PROTOCOLS = {
     PREDICTION_MODE_ORIGINAL_TEACHER_FORCED: "teacher_forced_label_span",
 }
 SUPPORTED_PREDICTION_MODES = tuple(PREDICTION_MODE_PROTOCOLS.keys())
+AGGREGATION_LEVEL_SUBJECT = "subject"
+AGGREGATION_LEVEL_SEGMENT = "segment"
+SUPPORTED_AGGREGATION_LEVELS = (
+    AGGREGATION_LEVEL_SUBJECT,
+    AGGREGATION_LEVEL_SEGMENT,
+)
 ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}")
 PROJECT_PATH_ANCHORS = ("outputs", "output_model", "configs", "scripts", "src")
 GENERATION_PARSE_PREFIXES = (
@@ -588,6 +594,23 @@ def resolve_prediction_mode(config: dict[str, Any], override: str | None = None)
         return normalize_prediction_mode(override)
     evaluation_cfg = config.get("evaluation", {})
     return normalize_prediction_mode(evaluation_cfg.get("sample_prediction_mode"))
+
+
+def normalize_aggregation_level(value: str | None) -> str:
+    normalized = (value or AGGREGATION_LEVEL_SUBJECT).strip().lower()
+    if normalized not in SUPPORTED_AGGREGATION_LEVELS:
+        raise ValueError(
+            f"Unsupported evaluation.aggregation_level={value!r}. "
+            f"Expected one of {', '.join(SUPPORTED_AGGREGATION_LEVELS)}."
+        )
+    return normalized
+
+
+def resolve_aggregation_level(config: dict[str, Any], override: str | None = None) -> str:
+    if override is not None:
+        return normalize_aggregation_level(override)
+    evaluation_cfg = config.get("evaluation", {})
+    return normalize_aggregation_level(evaluation_cfg.get("aggregation_level"))
 
 
 def evaluation_protocol_name(mode: str) -> str:

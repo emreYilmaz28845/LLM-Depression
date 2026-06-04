@@ -5,11 +5,15 @@ from typing import Any
 
 from src.metrics import classification_metrics, multiclass_macro_f1
 from src.utils import (
+    AGGREGATION_LEVEL_SEGMENT,
+    AGGREGATION_LEVEL_SUBJECT,
     PREDICTION_MODE_GENERATION,
     PREDICTION_MODE_LIKELIHOOD,
     PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
     evaluation_protocol_name,
     label_text_from_int,
+    normalize_aggregation_level,
+    normalize_prediction_mode,
 )
 
 
@@ -22,23 +26,6 @@ DIAGNOSTIC_LABEL_NAMES = {
 }
 
 
-def _prediction_count_payload(subject_rows: list[dict[str, Any]]) -> dict[str, int]:
-    counts = Counter(int(row["prediction"]) for row in subject_rows)
-    return {
-        "predicted_non_depressed_subjects": int(counts[0]),
-        "predicted_depressed_subjects": int(counts[1]),
-        "predicted_invalid_subjects": int(counts[INVALID_PREDICTION]),
-    }
-
-
-def _true_count_payload(subject_rows: list[dict[str, Any]]) -> dict[str, int]:
-    counts = Counter(int(row["label"]) for row in subject_rows)
-    return {
-        "true_non_depressed_subjects": int(counts[0]),
-        "true_depressed_subjects": int(counts[1]),
-    }
-
-
 def _strict_binary_prediction(gold: int, pred: int) -> int:
     if pred in (0, 1):
         return pred
@@ -49,9 +36,26 @@ def _wrong_vote_for_gold(gold: int) -> int:
     return 1 - int(gold)
 
 
-def _diagnostic_payload(subject_rows: list[dict[str, Any]]) -> dict[str, Any]:
-    y_true = [int(row["label"]) for row in subject_rows]
-    y_pred = [int(row["prediction"]) for row in subject_rows]
+def _unit_suffix(aggregation_level: str) -> str:
+    return "subjects" if aggregation_level == AGGREGATION_LEVEL_SUBJECT else "segments"
+
+
+def _count_payload(rows: list[dict[str, Any]], aggregation_level: str) -> dict[str, int]:
+    suffix = _unit_suffix(aggregation_level)
+    prediction_counts = Counter(int(row["prediction"]) for row in rows)
+    label_counts = Counter(int(row["label"]) for row in rows)
+    return {
+        f"predicted_non_depressed_{suffix}": int(prediction_counts[0]),
+        f"predicted_depressed_{suffix}": int(prediction_counts[1]),
+        f"predicted_invalid_{suffix}": int(prediction_counts[INVALID_PREDICTION]),
+        f"true_non_depressed_{suffix}": int(label_counts[0]),
+        f"true_depressed_{suffix}": int(label_counts[1]),
+    }
+
+
+def _diagnostic_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    y_true = [int(row["label"]) for row in rows]
+    y_pred = [int(row["prediction"]) for row in rows]
     diagnostic = multiclass_macro_f1(y_true, y_pred, DIAGNOSTIC_LABELS)
     return {
         "diagnostic_three_class_labels": [DIAGNOSTIC_LABEL_NAMES[label] for label in DIAGNOSTIC_LABELS],
@@ -60,6 +64,88 @@ def _diagnostic_payload(subject_rows: list[dict[str, Any]]) -> dict[str, Any]:
         "diagnostic_three_class_per_class": {
             DIAGNOSTIC_LABEL_NAMES[label]: stats for label, stats in diagnostic["per_class"].items()
         },
+    }
+
+
+def _zero_binary_metrics() -> dict[str, Any]:
+    return {
+        "accuracy": 0.0,
+        "precision": 0.0,
+        "recall": 0.0,
+        "positive_f1": 0.0,
+        "macro_f1": 0.0,
+        "weighted_f1": 0.0,
+        "macro_precision": 0.0,
+        "macro_recall": 0.0,
+        "weighted_precision": 0.0,
+        "weighted_recall": 0.0,
+        "support_negative": 0,
+        "support_positive": 0,
+        "confusion_matrix": [[0, 0], [0, 0]],
+    }
+
+
+def _metrics_from_prediction_rows(
+    rows: list[dict[str, Any]],
+    *,
+    backend_name: str,
+    aggregation_level: str,
+    invalid_metric_name: str | None = None,
+    invalid_prediction_count: int = 0,
+) -> dict[str, Any]:
+    aggregation_level = normalize_aggregation_level(aggregation_level)
+    valid_rows = [row for row in rows if int(row["prediction"]) in (0, 1)]
+    valid_y_true = [int(row["label"]) for row in valid_rows]
+    valid_y_pred = [int(row["prediction"]) for row in valid_rows]
+    valid_only_metrics = classification_metrics(valid_y_true, valid_y_pred) if valid_y_true else _zero_binary_metrics()
+
+    strict_y_true = [int(row["label"]) for row in rows]
+    strict_y_pred = [_strict_binary_prediction(int(row["label"]), int(row["prediction"])) for row in rows]
+    strict_metrics = classification_metrics(strict_y_true, strict_y_pred) if strict_y_true else _zero_binary_metrics()
+
+    unit_suffix = _unit_suffix(aggregation_level)
+    invalid_units = sum(1 for row in rows if int(row["prediction"]) not in (0, 1))
+    metrics = {
+        **strict_metrics,
+        "binary_strict_accuracy": strict_metrics["accuracy"],
+        "binary_strict_precision": strict_metrics["precision"],
+        "binary_strict_recall": strict_metrics["recall"],
+        "binary_strict_positive_f1": strict_metrics["positive_f1"],
+        "binary_strict_macro_f1": strict_metrics["macro_f1"],
+        "binary_strict_weighted_f1": strict_metrics["weighted_f1"],
+        "binary_strict_confusion_matrix": strict_metrics["confusion_matrix"],
+        "prediction_backend": backend_name,
+        "evaluation_protocol_name": evaluation_protocol_name(backend_name),
+        "aggregation_level": aggregation_level,
+        "unit_label": aggregation_level,
+        "num_units": len(rows),
+        f"num_{unit_suffix}": len(rows),
+        f"invalid_{unit_suffix}": invalid_units,
+        f"num_valid_{aggregation_level}_predictions": len(valid_rows),
+        "valid_only_accuracy": valid_only_metrics["accuracy"],
+        "valid_only_precision": valid_only_metrics["precision"],
+        "valid_only_recall": valid_only_metrics["recall"],
+        "valid_only_positive_f1": valid_only_metrics["positive_f1"],
+        "valid_only_macro_f1": valid_only_metrics["macro_f1"],
+        "valid_only_weighted_f1": valid_only_metrics["weighted_f1"],
+    }
+    if invalid_metric_name:
+        metrics[invalid_metric_name] = int(invalid_prediction_count)
+    metrics.update(_count_payload(rows, aggregation_level))
+    metrics.update(_diagnostic_payload(rows))
+    return metrics
+
+
+def _subject_level_alias_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "num_subjects": metrics["num_subjects"],
+        "invalid_subjects": metrics["invalid_subjects"],
+        "num_valid_subject_predictions": metrics["num_valid_subject_predictions"],
+        "predicted_non_depressed_subjects": metrics["predicted_non_depressed_subjects"],
+        "predicted_depressed_subjects": metrics["predicted_depressed_subjects"],
+        "predicted_invalid_subjects": metrics["predicted_invalid_subjects"],
+        "true_non_depressed_subjects": metrics["true_non_depressed_subjects"],
+        "true_depressed_subjects": metrics["true_depressed_subjects"],
     }
 
 
@@ -94,6 +180,7 @@ def aggregate_likelihood_predictions(sample_rows: list[dict[str, Any]]) -> tuple
         )
         y_true.append(gold)
         y_pred.append(pred)
+
     binary_metrics = classification_metrics(y_true, y_pred)
     metrics = {
         **binary_metrics,
@@ -104,21 +191,22 @@ def aggregate_likelihood_predictions(sample_rows: list[dict[str, Any]]) -> tuple
         "binary_strict_macro_f1": binary_metrics["macro_f1"],
         "binary_strict_weighted_f1": binary_metrics["weighted_f1"],
         "binary_strict_confusion_matrix": binary_metrics["confusion_matrix"],
+        "prediction_backend": PREDICTION_MODE_LIKELIHOOD,
+        "evaluation_protocol_name": evaluation_protocol_name(PREDICTION_MODE_LIKELIHOOD),
+        "aggregation_level": AGGREGATION_LEVEL_SUBJECT,
+        "unit_label": AGGREGATION_LEVEL_SUBJECT,
+        "num_units": len(subject_rows),
+        "num_subjects": len(subject_rows),
+        "invalid_subjects": 0,
+        "num_valid_subject_predictions": len(subject_rows),
+        "valid_only_accuracy": binary_metrics["accuracy"],
+        "valid_only_precision": binary_metrics["precision"],
+        "valid_only_recall": binary_metrics["recall"],
+        "valid_only_positive_f1": binary_metrics["positive_f1"],
+        "valid_only_macro_f1": binary_metrics["macro_f1"],
+        "valid_only_weighted_f1": binary_metrics["weighted_f1"],
     }
-    metrics["num_subjects"] = len(subject_rows)
-    metrics["invalid_subjects"] = 0
-    metrics["prediction_backend"] = PREDICTION_MODE_LIKELIHOOD
-    metrics["evaluation_protocol_name"] = evaluation_protocol_name(PREDICTION_MODE_LIKELIHOOD)
-    metrics["aggregation_level"] = "subject"
-    metrics["num_valid_subject_predictions"] = len(subject_rows)
-    metrics["valid_only_accuracy"] = binary_metrics["accuracy"]
-    metrics["valid_only_precision"] = binary_metrics["precision"]
-    metrics["valid_only_recall"] = binary_metrics["recall"]
-    metrics["valid_only_positive_f1"] = binary_metrics["positive_f1"]
-    metrics["valid_only_macro_f1"] = binary_metrics["macro_f1"]
-    metrics["valid_only_weighted_f1"] = binary_metrics["weighted_f1"]
-    metrics.update(_prediction_count_payload(subject_rows))
-    metrics.update(_true_count_payload(subject_rows))
+    metrics.update(_count_payload(subject_rows, AGGREGATION_LEVEL_SUBJECT))
     metrics.update(_diagnostic_payload(subject_rows))
     return subject_rows, metrics
 
@@ -139,8 +227,6 @@ def _aggregate_majority_vote_predictions(
         grouped[row["subject_id"]].append(row)
 
     subject_rows: list[dict[str, Any]] = []
-    y_true_valid: list[int] = []
-    y_pred_valid: list[int] = []
     invalid_subjects = 0
     total_invalid_predictions = 0
     for subject_id, rows in sorted(grouped.items()):
@@ -150,8 +236,6 @@ def _aggregate_majority_vote_predictions(
         total_invalid_predictions += invalid_prediction_count
         majority_predictions = list(valid_predictions)
         if count_invalid_as_wrong_vote and invalid_prediction_count:
-            # For teacher-forced decoding we evaluate malformed labels as
-            # explicit wrong votes instead of silently dropping them.
             majority_predictions.extend([_wrong_vote_for_gold(gold)] * invalid_prediction_count)
         if not majority_predictions:
             pred = INVALID_PREDICTION
@@ -178,7 +262,6 @@ def _aggregate_majority_vote_predictions(
                     pred = INVALID_PREDICTION
         if pred not in (0, 1):
             invalid_subjects += 1
-        pred_text = label_text_from_int(pred) if pred in (0, 1) else "INVALID"
         subject_rows.append(
             {
                 "subject_id": subject_id,
@@ -187,73 +270,20 @@ def _aggregate_majority_vote_predictions(
                 "prediction_backend": backend_name,
                 "evaluation_protocol_name": evaluation_protocol_name(backend_name),
                 "prediction": pred,
-                "prediction_text": pred_text,
+                "prediction_text": label_text_from_int(pred) if pred in (0, 1) else "INVALID",
                 "num_samples": len(rows),
                 valid_count_field: len(valid_predictions),
             }
         )
-        if pred in (0, 1):
-            y_true_valid.append(gold)
-            y_pred_valid.append(pred)
 
-    valid_only_metrics = classification_metrics(y_true_valid, y_pred_valid) if y_true_valid else {
-        "accuracy": 0.0,
-        "precision": 0.0,
-        "recall": 0.0,
-        "positive_f1": 0.0,
-        "macro_f1": 0.0,
-        "weighted_f1": 0.0,
-        "macro_precision": 0.0,
-        "macro_recall": 0.0,
-        "weighted_precision": 0.0,
-        "weighted_recall": 0.0,
-        "support_negative": 0,
-        "support_positive": 0,
-        "confusion_matrix": [[0, 0], [0, 0]],
-    }
-    strict_y_true = [int(row["label"]) for row in subject_rows]
-    strict_y_pred = [_strict_binary_prediction(int(row["label"]), int(row["prediction"])) for row in subject_rows]
-    strict_metrics = classification_metrics(strict_y_true, strict_y_pred) if strict_y_true else {
-        "accuracy": 0.0,
-        "precision": 0.0,
-        "recall": 0.0,
-        "positive_f1": 0.0,
-        "macro_f1": 0.0,
-        "weighted_f1": 0.0,
-        "macro_precision": 0.0,
-        "macro_recall": 0.0,
-        "weighted_precision": 0.0,
-        "weighted_recall": 0.0,
-        "support_negative": 0,
-        "support_positive": 0,
-        "confusion_matrix": [[0, 0], [0, 0]],
-    }
-    metrics = {
-        **strict_metrics,
-        "binary_strict_accuracy": strict_metrics["accuracy"],
-        "binary_strict_precision": strict_metrics["precision"],
-        "binary_strict_recall": strict_metrics["recall"],
-        "binary_strict_positive_f1": strict_metrics["positive_f1"],
-        "binary_strict_macro_f1": strict_metrics["macro_f1"],
-        "binary_strict_weighted_f1": strict_metrics["weighted_f1"],
-        "binary_strict_confusion_matrix": strict_metrics["confusion_matrix"],
-    }
-    metrics["num_subjects"] = len(subject_rows)
+    metrics = _metrics_from_prediction_rows(
+        subject_rows,
+        backend_name=backend_name,
+        aggregation_level=AGGREGATION_LEVEL_SUBJECT,
+        invalid_metric_name=invalid_metric_name,
+        invalid_prediction_count=total_invalid_predictions,
+    )
     metrics["invalid_subjects"] = invalid_subjects
-    metrics["num_valid_subject_predictions"] = len(y_true_valid)
-    metrics[invalid_metric_name] = total_invalid_predictions
-    metrics["prediction_backend"] = backend_name
-    metrics["evaluation_protocol_name"] = evaluation_protocol_name(backend_name)
-    metrics["aggregation_level"] = "subject"
-    metrics["valid_only_accuracy"] = valid_only_metrics["accuracy"]
-    metrics["valid_only_precision"] = valid_only_metrics["precision"]
-    metrics["valid_only_recall"] = valid_only_metrics["recall"]
-    metrics["valid_only_positive_f1"] = valid_only_metrics["positive_f1"]
-    metrics["valid_only_macro_f1"] = valid_only_metrics["macro_f1"]
-    metrics["valid_only_weighted_f1"] = valid_only_metrics["weighted_f1"]
-    metrics.update(_prediction_count_payload(subject_rows))
-    metrics.update(_true_count_payload(subject_rows))
-    metrics.update(_diagnostic_payload(subject_rows))
     return subject_rows, metrics
 
 
@@ -278,3 +308,131 @@ def aggregate_original_teacher_forced_predictions(sample_rows: list[dict[str, An
         tie_break_negative_score_field="non_score",
         count_invalid_as_wrong_vote=True,
     )
+
+
+def aggregate_likelihood_predictions_segment_level(sample_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    segment_rows = [
+        {
+            "subject_id": row["subject_id"],
+            "sample_id": row["sample_id"],
+            "label": int(row["label"]),
+            "label_text": row["label_text"],
+            "prediction_backend": PREDICTION_MODE_LIKELIHOOD,
+            "evaluation_protocol_name": evaluation_protocol_name(PREDICTION_MODE_LIKELIHOOD),
+            "prediction": int(row["likelihood_prediction"]),
+            "prediction_text": row["likelihood_prediction_text"],
+            "dep_score": float(row["dep_score"]),
+            "non_score": float(row["non_score"]),
+        }
+        for row in sample_rows
+    ]
+    metrics = _metrics_from_prediction_rows(
+        segment_rows,
+        backend_name=PREDICTION_MODE_LIKELIHOOD,
+        aggregation_level=AGGREGATION_LEVEL_SEGMENT,
+    )
+    return segment_rows, metrics
+
+
+def aggregate_generation_predictions_segment_level(sample_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    segment_rows = []
+    invalid_generations = 0
+    for row in sample_rows:
+        prediction = int(row["parsed_prediction"]) if row["parsed_prediction"] in (0, 1) else INVALID_PREDICTION
+        if prediction == INVALID_PREDICTION:
+            invalid_generations += 1
+        segment_rows.append(
+            {
+                "subject_id": row["subject_id"],
+                "sample_id": row["sample_id"],
+                "label": int(row["label"]),
+                "label_text": row["label_text"],
+                "prediction_backend": PREDICTION_MODE_GENERATION,
+                "evaluation_protocol_name": evaluation_protocol_name(PREDICTION_MODE_GENERATION),
+                "prediction": prediction,
+                "prediction_text": label_text_from_int(prediction) if prediction in (0, 1) else "INVALID",
+                "generation_text": row["generation_text"],
+            }
+        )
+    metrics = _metrics_from_prediction_rows(
+        segment_rows,
+        backend_name=PREDICTION_MODE_GENERATION,
+        aggregation_level=AGGREGATION_LEVEL_SEGMENT,
+        invalid_metric_name="invalid_generations",
+        invalid_prediction_count=invalid_generations,
+    )
+    return segment_rows, metrics
+
+
+def aggregate_original_teacher_forced_predictions_segment_level(
+    sample_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    segment_rows = []
+    invalid_predictions = 0
+    for row in sample_rows:
+        prediction = (
+            int(row["teacher_forced_prediction"])
+            if row["teacher_forced_prediction"] in (0, 1)
+            else INVALID_PREDICTION
+        )
+        if prediction == INVALID_PREDICTION:
+            invalid_predictions += 1
+        segment_rows.append(
+            {
+                "subject_id": row["subject_id"],
+                "sample_id": row["sample_id"],
+                "label": int(row["label"]),
+                "label_text": row["label_text"],
+                "prediction_backend": PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
+                "evaluation_protocol_name": evaluation_protocol_name(PREDICTION_MODE_ORIGINAL_TEACHER_FORCED),
+                "prediction": prediction,
+                "prediction_text": label_text_from_int(prediction) if prediction in (0, 1) else "INVALID",
+                "teacher_forced_decoded_text": row["teacher_forced_decoded_text"],
+                "dep_score": float(row["dep_score"]),
+                "non_score": float(row["non_score"]),
+            }
+        )
+    metrics = _metrics_from_prediction_rows(
+        segment_rows,
+        backend_name=PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
+        aggregation_level=AGGREGATION_LEVEL_SEGMENT,
+        invalid_metric_name="invalid_teacher_forced_predictions",
+        invalid_prediction_count=invalid_predictions,
+    )
+    return segment_rows, metrics
+
+
+def aggregate_predictions(
+    sample_rows: list[dict[str, Any]],
+    *,
+    mode: str,
+    aggregation_level: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    mode = normalize_prediction_mode(mode)
+    aggregation_level = normalize_aggregation_level(aggregation_level)
+
+    if mode == PREDICTION_MODE_LIKELIHOOD:
+        subject_rows, subject_metrics = aggregate_likelihood_predictions(sample_rows)
+        if aggregation_level == AGGREGATION_LEVEL_SEGMENT:
+            headline_rows, headline_metrics = aggregate_likelihood_predictions_segment_level(sample_rows)
+        else:
+            headline_rows, headline_metrics = subject_rows, subject_metrics
+    elif mode == PREDICTION_MODE_GENERATION:
+        subject_rows, subject_metrics = aggregate_generation_predictions(sample_rows)
+        if aggregation_level == AGGREGATION_LEVEL_SEGMENT:
+            headline_rows, headline_metrics = aggregate_generation_predictions_segment_level(sample_rows)
+        else:
+            headline_rows, headline_metrics = subject_rows, subject_metrics
+    elif mode == PREDICTION_MODE_ORIGINAL_TEACHER_FORCED:
+        subject_rows, subject_metrics = aggregate_original_teacher_forced_predictions(sample_rows)
+        if aggregation_level == AGGREGATION_LEVEL_SEGMENT:
+            headline_rows, headline_metrics = aggregate_original_teacher_forced_predictions_segment_level(sample_rows)
+        else:
+            headline_rows, headline_metrics = subject_rows, subject_metrics
+    else:
+        raise ValueError(f"Unsupported prediction backend: {mode}")
+
+    if aggregation_level == AGGREGATION_LEVEL_SUBJECT:
+        subject_metrics.update(_subject_level_alias_metrics(subject_metrics))
+
+    return headline_rows, headline_metrics, subject_rows, subject_metrics

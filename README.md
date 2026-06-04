@@ -8,7 +8,7 @@ Leakage-safe Qwen2-Audio reproduction pipeline for binary depression detection w
 - Original transcript language
 - Fixed labels: `Depressed` and `Non-depressed`
 - No SECap
-- Subject-level leakage-safe reporting
+- Subject-level leakage-safe splits with configurable subject/segment evaluation reporting
 - Likelihood is the headline evaluation; generation is secondary
 
 ## Environment
@@ -57,6 +57,8 @@ torchrun --nproc_per_node=4 src/train.py \
   --run_name daic_reproduction
 ```
 
+Use `--set evaluation.aggregation_level=segment` to switch checkpoint selection and held-out headline metrics to segment-level evaluation while still writing subject-level aggregate outputs.
+
 Final evaluation is on the official DAIC dev partition only.
 
 Standalone checkpoint evaluation:
@@ -66,6 +68,16 @@ python src/evaluate.py \
   --config configs/daic_audio_text.yaml \
   --fold 0 \
   --checkpoint_dir output_model/audio_text/daic/daic_reproduction/fold_0/best_model
+```
+
+Segment-level override:
+
+```bash
+python src/evaluate.py \
+  --config configs/edaic_audio_text_reg3.yaml \
+  --fold 0 \
+  --checkpoint_dir output_model/audio_text/edaic/edaic_reproduction/fold_0/best_model \
+  --set evaluation.aggregation_level=segment
 ```
 
 Standalone DAIC test-only evaluation with repeated participant full transcripts per chunk:

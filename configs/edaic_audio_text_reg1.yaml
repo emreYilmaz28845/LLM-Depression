@@ -68,6 +68,7 @@ training:
     min_delta: 0.0
 evaluation:
   sample_prediction_mode: original_teacher_forced
+  aggregation_level: subject
   generation_max_new_tokens: 8
   num_beams: 1
   do_sample: false

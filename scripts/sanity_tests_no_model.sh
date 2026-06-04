@@ -12,10 +12,10 @@ run_python() {
   fi
 }
 
-echo "[1/4] Building manifests and split metadata"
+echo "[1/5] Building manifests and split metadata"
 "$PROJECT_ROOT/scripts/validate_manifests.sh"
 
-echo "[2/4] Verifying expected audit/split files and EDAIC invariants"
+echo "[2/5] Verifying expected audit/split files and EDAIC invariants"
 run_python - <<'PY'
 import csv
 import json
@@ -125,7 +125,267 @@ print("All expected manifest/split outputs are present.")
 print("EDAIC manifest invariants passed.")
 PY
 
-echo "[3/4] Validating DepAdapter helper round-trip"
+echo "[3/5] Verifying configurable evaluation aggregation"
+run_python - <<'PY'
+import tempfile
+from pathlib import Path
+
+import torch
+
+from src.aggregate import aggregate_predictions
+import src.evaluate as evaluate_mod
+from src.utils import (
+    PREDICTION_MODE_GENERATION,
+    PREDICTION_MODE_LIKELIHOOD,
+    PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
+    load_yaml_with_overrides,
+    resolve_aggregation_level,
+)
+
+root = Path("/home/emre/Projects/AudioLLM/LLM-Depression")
+config_paths = sorted(path for path in (root / "configs").glob("*.yaml") if path.name != "quarantines.yaml")
+missing_key = []
+for path in config_paths:
+    config = load_yaml_with_overrides(path, [])
+    evaluation_cfg = config.get("evaluation", {})
+    if "sample_prediction_mode" in evaluation_cfg and "aggregation_level" not in evaluation_cfg:
+        missing_key.append(path.name)
+    if "aggregation_level" in evaluation_cfg:
+        assert resolve_aggregation_level(config) == "subject", path.name
+if missing_key:
+    raise SystemExit(f"Configs missing evaluation.aggregation_level: {missing_key}")
+
+segment_config = load_yaml_with_overrides(root / "configs/edaic_audio_text.yaml", ["evaluation.aggregation_level=segment"])
+if resolve_aggregation_level(segment_config) != "segment":
+    raise SystemExit("Config override for evaluation.aggregation_level=segment did not resolve correctly.")
+invalid_config = load_yaml_with_overrides(root / "configs/edaic_audio_text.yaml", ["evaluation.aggregation_level=bad_level"])
+try:
+    resolve_aggregation_level(invalid_config)
+except ValueError:
+    pass
+else:
+    raise SystemExit("Invalid evaluation.aggregation_level value did not raise ValueError.")
+
+likelihood_rows = [
+    {
+        "subject_id": "S1",
+        "sample_id": "S1_1",
+        "label": 1,
+        "label_text": "Depressed",
+        "likelihood_prediction": 1,
+        "likelihood_prediction_text": "Depressed",
+        "dep_score": 0.9,
+        "non_score": 0.1,
+    },
+    {
+        "subject_id": "S1",
+        "sample_id": "S1_2",
+        "label": 1,
+        "label_text": "Depressed",
+        "likelihood_prediction": 0,
+        "likelihood_prediction_text": "Non-depressed",
+        "dep_score": 0.8,
+        "non_score": 0.2,
+    },
+    {
+        "subject_id": "S2",
+        "sample_id": "S2_1",
+        "label": 0,
+        "label_text": "Non-depressed",
+        "likelihood_prediction": 0,
+        "likelihood_prediction_text": "Non-depressed",
+        "dep_score": 0.1,
+        "non_score": 0.9,
+    },
+    {
+        "subject_id": "S2",
+        "sample_id": "S2_2",
+        "label": 0,
+        "label_text": "Non-depressed",
+        "likelihood_prediction": 1,
+        "likelihood_prediction_text": "Depressed",
+        "dep_score": 0.2,
+        "non_score": 0.8,
+    },
+]
+headline_rows, headline_metrics, subject_rows, subject_metrics = aggregate_predictions(
+    likelihood_rows,
+    mode=PREDICTION_MODE_LIKELIHOOD,
+    aggregation_level="subject",
+)
+assert headline_rows == subject_rows
+assert headline_metrics["aggregation_level"] == "subject"
+assert headline_metrics["num_subjects"] == 2
+assert headline_metrics["predicted_depressed_subjects"] == 1
+assert headline_metrics["predicted_non_depressed_subjects"] == 1
+assert subject_metrics["num_valid_subject_predictions"] == 2
+
+headline_rows, headline_metrics, subject_rows, subject_metrics = aggregate_predictions(
+    likelihood_rows,
+    mode=PREDICTION_MODE_LIKELIHOOD,
+    aggregation_level="segment",
+)
+assert headline_metrics["aggregation_level"] == "segment"
+assert headline_metrics["num_segments"] == 4
+assert headline_metrics["num_units"] == 4
+assert headline_metrics["predicted_depressed_segments"] == 2
+assert headline_metrics["predicted_non_depressed_segments"] == 2
+assert subject_metrics["num_subjects"] == 2
+
+generation_rows = [
+    {
+        "subject_id": "G1",
+        "sample_id": "G1_1",
+        "label": 1,
+        "label_text": "Depressed",
+        "parsed_prediction": 1,
+        "generation_text": "Depressed",
+    },
+    {
+        "subject_id": "G1",
+        "sample_id": "G1_2",
+        "label": 1,
+        "label_text": "Depressed",
+        "parsed_prediction": "",
+        "generation_text": "maybe",
+    },
+    {
+        "subject_id": "G2",
+        "sample_id": "G2_1",
+        "label": 0,
+        "label_text": "Non-depressed",
+        "parsed_prediction": 0,
+        "generation_text": "Non-depressed",
+    },
+]
+headline_rows, headline_metrics, _, _ = aggregate_predictions(
+    generation_rows,
+    mode=PREDICTION_MODE_GENERATION,
+    aggregation_level="segment",
+)
+assert headline_metrics["invalid_generations"] == 1
+assert headline_metrics["invalid_segments"] == 1
+assert abs(headline_metrics["valid_only_accuracy"] - 1.0) < 1e-9
+assert abs(headline_metrics["accuracy"] - (2 / 3)) < 1e-9
+
+teacher_rows = [
+    {
+        "subject_id": "T1",
+        "sample_id": "T1_1",
+        "label": 1,
+        "label_text": "Depressed",
+        "teacher_forced_prediction": "",
+        "teacher_forced_decoded_text": "INVALID",
+        "dep_score": 0.4,
+        "non_score": 0.6,
+    },
+    {
+        "subject_id": "T2",
+        "sample_id": "T2_1",
+        "label": 0,
+        "label_text": "Non-depressed",
+        "teacher_forced_prediction": 0,
+        "teacher_forced_decoded_text": "B",
+        "dep_score": 0.1,
+        "non_score": 0.9,
+    },
+]
+headline_rows, headline_metrics, _, _ = aggregate_predictions(
+    teacher_rows,
+    mode=PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
+    aggregation_level="segment",
+)
+assert headline_metrics["invalid_teacher_forced_predictions"] == 1
+assert headline_metrics["invalid_segments"] == 1
+assert abs(headline_metrics["accuracy"] - 0.5) < 1e-9
+assert abs(headline_metrics["valid_only_accuracy"] - 1.0) < 1e-9
+
+
+class DummyModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.zeros(1))
+        self.config = type("Config", (), {"use_cache": True})()
+
+
+def fake_generation_predict(model, processor, example, config, device, silence_audio, checkpoint_name):
+    return {
+        **evaluate_mod._base_sample_row(example, checkpoint_name, PREDICTION_MODE_GENERATION),
+        "generation_text": "Depressed" if example["label"] == 1 else "INVALID",
+        "parsed_prediction": 1 if example["label"] == 1 else "",
+        "generation_prediction_text": "Depressed" if example["label"] == 1 else "INVALID",
+    }
+
+
+examples = [
+    {
+        "subject_id": "E1",
+        "sample_id": "E1_1",
+        "label": 1,
+        "label_text": "Depressed",
+        "internal_label_text": "A",
+        "prompt_text": "prompt",
+        "audio_paths": [],
+        "audio_clip_seconds": [],
+    },
+    {
+        "subject_id": "E1",
+        "sample_id": "E1_2",
+        "label": 1,
+        "label_text": "Depressed",
+        "internal_label_text": "A",
+        "prompt_text": "prompt",
+        "audio_paths": [],
+        "audio_clip_seconds": [],
+    },
+    {
+        "subject_id": "E2",
+        "sample_id": "E2_1",
+        "label": 0,
+        "label_text": "Non-depressed",
+        "internal_label_text": "B",
+        "prompt_text": "prompt",
+        "audio_paths": [],
+        "audio_clip_seconds": [],
+    },
+]
+config = load_yaml_with_overrides(
+    root / "configs/edaic_audio_text.yaml",
+    [
+        "evaluation.sample_prediction_mode=generation",
+        "evaluation.aggregation_level=segment",
+    ],
+)
+original_backend = evaluate_mod._prediction_backend
+evaluate_mod._prediction_backend = lambda mode: fake_generation_predict
+try:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        payload = evaluate_mod.evaluate_examples(
+            DummyModel(),
+            processor=None,
+            examples=examples,
+            config=config,
+            output_dir=tmpdir,
+            checkpoint_name="dummy_checkpoint",
+            sample_prediction_mode=PREDICTION_MODE_GENERATION,
+        )
+        assert payload["active_backend"] == PREDICTION_MODE_GENERATION
+        assert payload["active_aggregation_level"] == "segment"
+        assert payload["headline_metrics"]["aggregation_level"] == "segment"
+        assert payload["subject_metrics"]["aggregation_level"] == "subject"
+        assert len(payload["headline_rows"]) == 3
+        assert len(payload["subject_rows"]) == 2
+        assert (Path(tmpdir) / "predictions_headline_level.csv").exists()
+        assert (Path(tmpdir) / "predictions_subject_level.csv").exists()
+        assert (Path(tmpdir) / "metrics_generation.json").exists()
+        assert (Path(tmpdir) / "metrics_subject_level_generation.json").exists()
+finally:
+    evaluate_mod._prediction_backend = original_backend
+
+print("Evaluation aggregation checks passed.")
+PY
+
+echo "[4/5] Validating DepAdapter helper round-trip"
 run_python - <<'PY'
 import tempfile
 import types
@@ -211,7 +471,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
 print("DepAdapter helper round-trip passed.")
 PY
 
-echo "[4/4] Printing split source summary"
+echo "[5/5] Printing split source summary"
 run_python - <<'PY'
 import json
 from pathlib import Path

@@ -39,6 +39,7 @@ def summarize_run(run_root: Path) -> None:
     for fold_dir in sorted(run_root.glob("fold_*")):
         run_config_path = fold_dir / "run_config.yaml"
         active_backend = "likelihood"
+        active_aggregation_level = "subject"
         if run_config_path.exists():
             with run_config_path.open("r", encoding="utf-8") as handle:
                 run_config = yaml.safe_load(handle)
@@ -47,13 +48,23 @@ def summarize_run(run_root: Path) -> None:
                 or run_config.get("config", {}).get("evaluation", {}).get("sample_prediction_mode")
                 or active_backend
             )
-        row = {"fold": fold_dir.name, "active_backend": active_backend}
+            active_aggregation_level = (
+                run_config.get("evaluation", {}).get("aggregation_level")
+                or run_config.get("config", {}).get("evaluation", {}).get("aggregation_level")
+                or active_aggregation_level
+            )
+        row = {
+            "fold": fold_dir.name,
+            "active_backend": active_backend,
+            "active_aggregation_level": active_aggregation_level,
+        }
         for backend_name, filename in BACKEND_METRIC_FILES.items():
             metrics_path = fold_dir / "eval" / "best_checkpoint" / filename
             if not metrics_path.exists():
                 continue
             backend_metrics = read_json(metrics_path)
             row[f"{backend_name}_prediction_backend"] = backend_metrics.get("prediction_backend", backend_name)
+            row[f"{backend_name}_aggregation_level"] = backend_metrics.get("aggregation_level", "")
             row[f"{backend_name}_evaluation_protocol_name"] = backend_metrics.get("evaluation_protocol_name", "")
             for key in METRIC_KEYS:
                 row[f"{backend_name}_{key}"] = backend_metrics[key]
