@@ -38,6 +38,7 @@ from src.model.qwen2audio_lora import (
     load_model_for_training,
     load_processor,
     prepare_model_for_evaluation,
+    resolved_lora_layer_selection,
     resolve_audio_adapter_config,
     save_adapter_and_processor,
 )
@@ -404,6 +405,7 @@ def main() -> None:
     )
 
     model = load_model_for_training(model_name_or_path, config)
+    lora_layer_selection = resolved_lora_layer_selection(model)
     optimizer = AdamW(
         params=[parameter for parameter in model.parameters() if parameter.requires_grad],
         lr=float(config["training"]["learning_rate"]),
@@ -433,6 +435,7 @@ def main() -> None:
             "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
         },
         "audio_adapter": audio_adapter_cfg,
+        "lora_resolution": lora_layer_selection,
         "resolved_model_name_or_path": model_name_or_path,
         "manifest_path": metadata["manifest_path"],
         "manifest_hash": metadata["manifest_hash"],
@@ -696,6 +699,7 @@ def main() -> None:
                 "sample_prediction_mode": sample_prediction_mode,
                 "aggregation_level": aggregation_level,
                 "audio_adapter": audio_adapter_cfg,
+                "lora_resolution": lora_layer_selection,
                 "selection_protocol": run_config["selection_protocol"],
                 "final_eval_protocol": run_config["final_eval_protocol"],
                 "history": history,

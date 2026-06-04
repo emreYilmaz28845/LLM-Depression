@@ -59,6 +59,8 @@ torchrun --nproc_per_node=4 src/train.py \
 
 Use `--set evaluation.aggregation_level=segment` to switch checkpoint selection and held-out headline metrics to segment-level evaluation while still writing subject-level aggregate outputs.
 
+Use `--set lora.last_n_layers=2` to restrict LoRA to the final two language-model decoder layers.
+
 Final evaluation is on the official DAIC dev partition only.
 
 Standalone checkpoint evaluation:
@@ -78,6 +80,16 @@ python src/evaluate.py \
   --fold 0 \
   --checkpoint_dir output_model/audio_text/edaic/edaic_reproduction/fold_0/best_model \
   --set evaluation.aggregation_level=segment
+```
+
+Example training override for last-two-layer LoRA:
+
+```bash
+torchrun --nproc_per_node=4 src/train.py \
+  --config configs/edaic_audio_text_reg3.yaml \
+  --fold 0 \
+  --run_name edaic_last2_lora \
+  --set lora.last_n_layers=2
 ```
 
 Standalone DAIC test-only evaluation with repeated participant full transcripts per chunk:

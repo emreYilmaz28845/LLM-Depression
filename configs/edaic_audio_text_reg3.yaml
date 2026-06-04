@@ -38,6 +38,7 @@ lora:
   alpha: 16
   dropout: 0.20
   bias: none
+  last_n_layers: 2
   target_modules:
     - q_proj
     - k_proj

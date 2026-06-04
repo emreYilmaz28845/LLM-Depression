@@ -129,11 +129,13 @@ echo "[3/5] Verifying configurable evaluation aggregation"
 run_python - <<'PY'
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import torch
 
 from src.aggregate import aggregate_predictions
 import src.evaluate as evaluate_mod
+from src.model.qwen2audio_lora import build_lora_config, resolve_lora_layer_selection
 from src.utils import (
     PREDICTION_MODE_GENERATION,
     PREDICTION_MODE_LIKELIHOOD,
@@ -165,6 +167,34 @@ except ValueError:
     pass
 else:
     raise SystemExit("Invalid evaluation.aggregation_level value did not raise ValueError.")
+
+last2_config = load_yaml_with_overrides(root / "configs/edaic_audio_text_reg3.yaml", [])
+if int(last2_config["lora"]["last_n_layers"]) != 2:
+    raise SystemExit("Expected configs/edaic_audio_text_reg3.yaml to set lora.last_n_layers=2.")
+
+dummy_model = SimpleNamespace(config=SimpleNamespace(text_config=SimpleNamespace(num_hidden_layers=32)))
+base_lora_config = load_yaml_with_overrides(root / "configs/edaic_audio_text.yaml", [])
+base_peft_cfg, base_layer_selection = build_lora_config(base_lora_config, dummy_model)
+assert getattr(base_peft_cfg, "layers_to_transform", None) is None
+assert base_layer_selection["requested_last_n_layers"] is None
+assert base_layer_selection["decoder_hidden_layer_count"] == 32
+assert base_layer_selection["layers_to_transform"] is None
+
+last2_override = load_yaml_with_overrides(root / "configs/edaic_audio_text.yaml", ["lora.last_n_layers=2"])
+last2_peft_cfg, last2_layer_selection = build_lora_config(last2_override, dummy_model)
+assert last2_layer_selection["requested_last_n_layers"] == 2
+assert last2_layer_selection["decoder_hidden_layer_count"] == 32
+assert last2_layer_selection["layers_to_transform"] == [30, 31]
+assert list(last2_peft_cfg.layers_to_transform) == [30, 31]
+
+for override in ["lora.last_n_layers=0", "lora.last_n_layers=-1", "lora.last_n_layers=40", "lora.last_n_layers=two"]:
+    bad_lora_cfg = load_yaml_with_overrides(root / "configs/edaic_audio_text.yaml", [override])
+    try:
+        resolve_lora_layer_selection(bad_lora_cfg, dummy_model)
+    except ValueError:
+        pass
+    else:
+        raise SystemExit(f"Invalid {override} did not raise ValueError.")
 
 likelihood_rows = [
     {

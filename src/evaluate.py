@@ -28,6 +28,7 @@ from src.model.qwen2audio_lora import (
     load_model_for_inference,
     load_processor,
     prepare_model_for_evaluation,
+    resolve_lora_layer_selection,
 )
 from src.utils import (
     AGGREGATION_LEVEL_SUBJECT,
@@ -623,6 +624,7 @@ def main() -> None:
     model_name_or_path = resolve_model_name_or_path(args.model_name_or_path, config)
     processor = load_processor(args.checkpoint_dir)
     model = load_model_for_inference(model_name_or_path, args.checkpoint_dir)
+    lora_layer_selection = resolve_lora_layer_selection(config, model)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     output_dir = args.output_dir or (Path(args.checkpoint_dir) / "standalone_eval")
@@ -633,6 +635,7 @@ def main() -> None:
             "sample_prediction_mode": sample_prediction_mode,
             "aggregation_level": aggregation_level,
             "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
+            "lora_resolution": lora_layer_selection,
             "resolved_model_name_or_path": model_name_or_path,
             "checkpoint_dir": str(Path(args.checkpoint_dir)),
             "config": config,
