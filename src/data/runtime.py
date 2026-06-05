@@ -321,27 +321,40 @@ class AudioTextDataset(Dataset):
 
 def save_partition_subjects(
     output_path: str | Path,
-    train_inner_subject_ids: list[str],
-    val_inner_subject_ids: list[str],
+    train_subject_ids: list[str],
+    selection_subject_ids: list[str],
     final_eval_subject_ids: list[str],
     subject_labels: dict[str, int],
+    train_split_name: str = "train_inner",
+    selection_split_name: str = "val_inner",
+    final_eval_split_name: str = "final_eval",
 ) -> dict[str, Any]:
+    train_depressed = sum(subject_labels[subject_id] for subject_id in train_subject_ids)
+    selection_depressed = sum(subject_labels[subject_id] for subject_id in selection_subject_ids)
+    final_eval_depressed = sum(subject_labels[subject_id] for subject_id in final_eval_subject_ids)
     payload = {
-        "train_inner_subject_ids": train_inner_subject_ids,
-        "val_inner_subject_ids": val_inner_subject_ids,
+        "split_names": {
+            "train": train_split_name,
+            "selection": selection_split_name,
+            "final_eval": final_eval_split_name,
+        },
+        "train_subject_ids": train_subject_ids,
+        "selection_subject_ids": selection_subject_ids,
         "final_eval_subject_ids": final_eval_subject_ids,
+        "train_inner_subject_ids": train_subject_ids,
+        "val_inner_subject_ids": selection_subject_ids,
         "class_counts": {
-            "train_inner": {
-                "depressed": sum(subject_labels[subject_id] for subject_id in train_inner_subject_ids),
-                "non_depressed": len(train_inner_subject_ids) - sum(subject_labels[subject_id] for subject_id in train_inner_subject_ids),
+            train_split_name: {
+                "depressed": train_depressed,
+                "non_depressed": len(train_subject_ids) - train_depressed,
             },
-            "val_inner": {
-                "depressed": sum(subject_labels[subject_id] for subject_id in val_inner_subject_ids),
-                "non_depressed": len(val_inner_subject_ids) - sum(subject_labels[subject_id] for subject_id in val_inner_subject_ids),
+            selection_split_name: {
+                "depressed": selection_depressed,
+                "non_depressed": len(selection_subject_ids) - selection_depressed,
             },
-            "final_eval": {
-                "depressed": sum(subject_labels[subject_id] for subject_id in final_eval_subject_ids),
-                "non_depressed": len(final_eval_subject_ids) - sum(subject_labels[subject_id] for subject_id in final_eval_subject_ids),
+            final_eval_split_name: {
+                "depressed": final_eval_depressed,
+                "non_depressed": len(final_eval_subject_ids) - final_eval_depressed,
             },
         },
     }

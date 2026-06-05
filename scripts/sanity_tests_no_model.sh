@@ -17,12 +17,14 @@ echo "[1/5] Building manifests and split metadata"
 
 echo "[2/5] Verifying expected audit/split files and EDAIC invariants"
 run_python - <<'PY'
+import ast
 import csv
 import json
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from src.train import _resolve_outer_partitions
+from src.evaluate import _resolve_final_eval_subject_ids
+from src.train import _resolve_outer_partitions, _resolve_training_subject_splits
 from src.utils import load_yaml_with_overrides, resolve_metadata_paths
 
 root = Path("/home/emre/Projects/AudioLLM/LLM-Depression")
@@ -32,6 +34,8 @@ required = [
     root / "outputs/manifests/cmdc_manifest.jsonl",
     root / "outputs/manifests/eatd_manifest.jsonl",
     root / "outputs/splits/daic_join_audit.csv",
+    root / "outputs/splits/daic_subject_partitions.json",
+    root / "outputs/splits/daic_manifest_metadata.json",
     root / "outputs/splits/edaic_join_audit.csv",
     root / "outputs/splits/edaic_subject_partitions.json",
     root / "outputs/splits/edaic_manifest_metadata.json",
@@ -41,6 +45,126 @@ required = [
 missing = [str(path) for path in required if not path.exists()]
 if missing:
     raise SystemExit(f"Missing expected outputs: {missing}")
+
+daic_config_path = root / "configs/daic_audio_text.yaml"
+daic_config = load_yaml_with_overrides(daic_config_path, [])
+daic_base = Path(str(daic_config["dataset_root"]))
+daic_summary_specs = [
+    ("train", daic_base / "train_preprocessing_summary.csv"),
+    ("val", daic_base / "dev_preprocessing_summary.csv"),
+    ("test", daic_base / "test_preprocessing_summary.csv"),
+]
+expected_daic_sample_partition_counts = {}
+expected_daic_subject_partition_counts = {}
+expected_daic_transcript_paths = set()
+for partition, summary_path in daic_summary_specs:
+    with summary_path.open("r", encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(line for line in handle if line.strip()))
+    expected_daic_subject_partition_counts[partition] = len(rows)
+    expected_daic_sample_partition_counts[partition] = 0
+    expected_daic_transcript_paths.add(str(summary_path))
+    for row in rows:
+        segment_files = ast.literal_eval(row["segment_files"])
+        if len(segment_files) != int(row["num_segments"]):
+            raise SystemExit(
+                f"DAIC num_segments mismatch in {summary_path.name} for participant "
+                f"{row.get('Participant_ID') or row.get('participant_id')}"
+            )
+        expected_daic_sample_partition_counts[partition] += len(segment_files)
+
+daic_metadata = resolve_metadata_paths(
+    json.loads((root / "outputs/splits/daic_manifest_metadata.json").read_text(encoding="utf-8"))
+)
+if daic_metadata.get("split_source") != "preprocessed_full_transcript_all_splits":
+    raise SystemExit(f"Unexpected DAIC split source: {daic_metadata.get('split_source')}")
+
+daic_manifest_rows = [
+    json.loads(line)
+    for line in (root / "outputs/manifests/daic_manifest.jsonl").read_text(encoding="utf-8").splitlines()
+    if line.strip()
+]
+if len(daic_manifest_rows) != sum(expected_daic_sample_partition_counts.values()):
+    raise SystemExit(f"Unexpected DAIC sample count: {len(daic_manifest_rows)}")
+
+daic_sample_partition_counts = Counter(row["split_original"] for row in daic_manifest_rows)
+if dict(daic_sample_partition_counts) != expected_daic_sample_partition_counts:
+    raise SystemExit(
+        f"Unexpected DAIC sample partition counts: {dict(daic_sample_partition_counts)} "
+        f"expected={expected_daic_sample_partition_counts}"
+    )
+
+daic_subject_partition_rows = json.loads((root / "outputs/splits/daic_subject_partitions.json").read_text(encoding="utf-8"))
+daic_subject_partition_counts = Counter(row["partition"] for row in daic_subject_partition_rows)
+if dict(daic_subject_partition_counts) != expected_daic_subject_partition_counts:
+    raise SystemExit(
+        f"Unexpected DAIC subject partition counts: {dict(daic_subject_partition_counts)} "
+        f"expected={expected_daic_subject_partition_counts}"
+    )
+
+daic_partitions_by_subject = defaultdict(set)
+for row in daic_subject_partition_rows:
+    daic_partitions_by_subject[row["subject_id"]].add(row["partition"])
+daic_overlaps = {subject_id: sorted(parts) for subject_id, parts in daic_partitions_by_subject.items() if len(parts) > 1}
+if daic_overlaps:
+    raise SystemExit(f"DAIC subject partition overlap detected: {list(daic_overlaps.items())[:5]}")
+
+with (root / "outputs/splits/daic_join_audit.csv").open("r", encoding="utf-8", newline="") as handle:
+    daic_join_audit_rows = list(csv.DictReader(handle))
+if len(daic_join_audit_rows) != len(daic_manifest_rows):
+    raise SystemExit(f"Unexpected DAIC join audit row count: {len(daic_join_audit_rows)}")
+daic_missing_join_rows = [
+    row["sample_id"]
+    for row in daic_join_audit_rows
+    if row["audio_found"] != "True" or row["transcript_found"] != "True"
+]
+if daic_missing_join_rows:
+    raise SystemExit(f"DAIC join audit has missing pairs: {daic_missing_join_rows[:10]}")
+
+daic_transcripts_by_subject = defaultdict(set)
+daic_transcript_paths = set()
+for row in daic_manifest_rows:
+    daic_transcripts_by_subject[row["subject_id"]].add(row["transcript"])
+    daic_transcript_paths.add(row["transcript_path"])
+    if not row["transcript"].strip():
+        raise SystemExit(f"DAIC manifest has empty transcript for sample_id={row['sample_id']}")
+    if "whisper" in row["transcript_path"].lower():
+        raise SystemExit(f"DAIC manifest unexpectedly used Whisper transcript cache: {row['transcript_path']}")
+bad_daic_transcript_subjects = [
+    subject_id for subject_id, transcripts in daic_transcripts_by_subject.items() if len(transcripts) != 1
+]
+if bad_daic_transcript_subjects:
+    raise SystemExit(f"DAIC subjects have inconsistent repeated full transcripts: {bad_daic_transcript_subjects[:10]}")
+if daic_transcript_paths != expected_daic_transcript_paths:
+    raise SystemExit(
+        f"Unexpected DAIC transcript paths: {sorted(daic_transcript_paths)} "
+        f"expected={sorted(expected_daic_transcript_paths)}"
+    )
+
+daic_training_plan = _resolve_training_subject_splits(
+    daic_config,
+    daic_metadata,
+    {row["subject_id"]: int(row["label"]) for row in daic_manifest_rows},
+    0,
+)
+if daic_training_plan["uses_inner_split"]:
+    raise SystemExit("DAIC main config unexpectedly used deterministic inner split.")
+if len(daic_training_plan["train_subject_ids"]) != expected_daic_subject_partition_counts["train"]:
+    raise SystemExit(
+        f"Unexpected DAIC train subject count from train.py logic: {len(daic_training_plan['train_subject_ids'])}"
+    )
+if len(daic_training_plan["selection_subject_ids"]) != expected_daic_subject_partition_counts["val"]:
+    raise SystemExit(
+        f"Unexpected DAIC selection subject count from train.py logic: {len(daic_training_plan['selection_subject_ids'])}"
+    )
+if len(daic_training_plan["final_eval_subject_ids"]) != expected_daic_subject_partition_counts["test"]:
+    raise SystemExit(
+        f"Unexpected DAIC final-eval subject count from train.py logic: {len(daic_training_plan['final_eval_subject_ids'])}"
+    )
+daic_final_eval_subject_ids = _resolve_final_eval_subject_ids(daic_config, daic_metadata, 0)
+if len(daic_final_eval_subject_ids) != expected_daic_subject_partition_counts["test"]:
+    raise SystemExit(
+        f"Unexpected DAIC final eval partition resolution from evaluate.py: {len(daic_final_eval_subject_ids)}"
+    )
 
 edaic_manifest_rows = [
     json.loads(line)
@@ -122,6 +246,7 @@ if len(outer_partitions["final_eval_subject_ids"]) != 56:
     )
 
 print("All expected manifest/split outputs are present.")
+print("DAIC manifest invariants passed.")
 print("EDAIC manifest invariants passed.")
 PY
 

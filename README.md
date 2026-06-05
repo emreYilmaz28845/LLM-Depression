@@ -45,6 +45,7 @@ Or:
 This runs:
 - manifest creation
 - DAIC join audit generation
+- DAIC official train/val/test split proof with repeated full transcripts
 - CMDC fold proof output
 - EATD SDS consistency and pooled class-count recovery
 
@@ -57,11 +58,11 @@ torchrun --nproc_per_node=4 src/train.py \
   --run_name daic_reproduction
 ```
 
-Use `--set evaluation.aggregation_level=segment` to switch checkpoint selection and held-out headline metrics to segment-level evaluation while still writing subject-level aggregate outputs.
+Use `--set evaluation.aggregation_level=segment` to switch checkpoint selection on official `val` and held-out headline metrics on official `test` to segment-level evaluation while still writing subject-level aggregate outputs.
 
 Use `--set lora.last_n_layers=2` to restrict LoRA to the final two language-model decoder layers.
 
-Final evaluation is on the official DAIC dev partition only.
+Training fits on official `train`, selects checkpoints on official `val`, and evaluates held-out results on official `test`. All three splits use repeated participant `full_transcript` values from the preprocessing summary CSVs.
 
 Standalone checkpoint evaluation:
 
@@ -90,15 +91,6 @@ torchrun --nproc_per_node=4 src/train.py \
   --fold 0 \
   --run_name edaic_last2_lora \
   --set lora.last_n_layers=2
-```
-
-Standalone DAIC test-only evaluation with repeated participant full transcripts per chunk:
-
-```bash
-python src/evaluate.py \
-  --config configs/daic_audio_text_test_eval_full_transcript.yaml \
-  --fold 0 \
-  --checkpoint_dir output_model/audio_text/daic/daic_reproduction/fold_0/best_model
 ```
 
 Enable `DepAdapter` from CLI overrides:

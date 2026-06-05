@@ -132,18 +132,70 @@ def _resolve_outer_partitions(config: dict[str, Any], metadata: dict[str, Any], 
             train_partitions = {str(item) for item in train_partitions_cfg}
         else:
             train_partitions = {str(config["split"]["train_partition"])}
+        selection_partition = str(config["split"].get("selection_partition", "")).strip()
         final_eval_partition = str(config["split"]["final_eval_partition"])
         outer_train_subject_ids = sorted([row["subject_id"] for row in partition_rows if row["partition"] in train_partitions])
+        selection_subject_ids = sorted(
+            [row["subject_id"] for row in partition_rows if selection_partition and row["partition"] == selection_partition]
+        )
         final_eval_subject_ids = sorted([row["subject_id"] for row in partition_rows if row["partition"] == final_eval_partition])
-        return {
+        payload = {
             "outer_train_subject_ids": outer_train_subject_ids,
             "final_eval_subject_ids": final_eval_subject_ids,
         }
+        if selection_partition:
+            payload["selection_subject_ids"] = selection_subject_ids
+        return payload
     folds = read_json(metadata["folds_path"])
     fold_payload = folds[str(fold)] if str(fold) in folds else folds[fold]
     return {
         "outer_train_subject_ids": sorted(fold_payload["outer_train_subject_ids"]),
         "final_eval_subject_ids": sorted(fold_payload["final_eval_subject_ids"]),
+    }
+
+
+def _resolve_training_subject_splits(
+    config: dict[str, Any],
+    metadata: dict[str, Any],
+    subject_labels: dict[str, int],
+    fold: int,
+) -> dict[str, Any]:
+    outer_partitions = _resolve_outer_partitions(config, metadata, fold)
+    selection_partition = str(config["split"].get("selection_partition", "")).strip()
+    if selection_partition:
+        selection_subject_ids = outer_partitions.get("selection_subject_ids") or []
+        if not selection_subject_ids:
+            raise ValueError(
+                "split.selection_partition was configured, but no subject ids were resolved for that partition."
+            )
+        return {
+            "uses_inner_split": False,
+            "outer_partitions": outer_partitions,
+            "train_subject_ids": outer_partitions["outer_train_subject_ids"],
+            "selection_subject_ids": selection_subject_ids,
+            "final_eval_subject_ids": outer_partitions["final_eval_subject_ids"],
+            "train_split_name": str(config["split"].get("train_partition", "train")),
+            "selection_split_name": selection_partition,
+            "final_eval_split_name": str(config["split"]["final_eval_partition"]),
+            "selection_log_dir_name": selection_partition,
+        }
+
+    inner_split = deterministic_inner_split(
+        subject_labels,
+        outer_partitions["outer_train_subject_ids"],
+        seed=int(config["split"]["seed"]) + int(fold),
+        val_ratio=float(config["split"]["inner_val_ratio"]),
+    )
+    return {
+        "uses_inner_split": True,
+        "outer_partitions": outer_partitions,
+        "train_subject_ids": inner_split["train_inner_subject_ids"],
+        "selection_subject_ids": inner_split["val_inner_subject_ids"],
+        "final_eval_subject_ids": outer_partitions["final_eval_subject_ids"],
+        "train_split_name": "train_inner",
+        "selection_split_name": "val_inner",
+        "final_eval_split_name": "final_eval",
+        "selection_log_dir_name": "inner_val",
     }
 
 
@@ -235,6 +287,28 @@ def _resolve_early_stopping(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _selection_metric_values(metric_value: float, headline_metrics: dict[str, Any], selection_loss: float) -> dict[str, float]:
+    values = {
+        "selection_positive_f1": metric_value,
+        "selection_macro_f1": float(headline_metrics["macro_f1"]),
+        "selection_accuracy": float(headline_metrics["accuracy"]),
+        "selection_precision": float(headline_metrics["precision"]),
+        "selection_recall": float(headline_metrics["recall"]),
+        "selection_loss": selection_loss,
+    }
+    values.update(
+        {
+            "inner_val_positive_f1": values["selection_positive_f1"],
+            "inner_val_macro_f1": values["selection_macro_f1"],
+            "inner_val_accuracy": values["selection_accuracy"],
+            "inner_val_precision": values["selection_precision"],
+            "inner_val_recall": values["selection_recall"],
+            "inner_val_loss": values["selection_loss"],
+        }
+    )
+    return values
+
+
 def _metric_improved(metric_value: float, best_value: float, mode: str, min_delta: float) -> bool:
     if mode == "min":
         return metric_value < (best_value - min_delta)
@@ -317,13 +391,7 @@ def main() -> None:
     metadata = _load_metadata_or_build(args.config, config, args.config_overrides)
     manifest_rows = load_manifest_rows(metadata["manifest_path"])
     subject_labels = build_subject_label_map(manifest_rows)
-    outer_partitions = _resolve_outer_partitions(config, metadata, args.fold)
-    inner_split = deterministic_inner_split(
-        subject_labels,
-        outer_partitions["outer_train_subject_ids"],
-        seed=int(config["split"]["seed"]) + int(args.fold),
-        val_ratio=float(config["split"]["inner_val_ratio"]),
-    )
+    partition_plan = _resolve_training_subject_splits(config, metadata, subject_labels, args.fold)
 
     run_root = Path(config["output_dirs"]["run_root"]) / args.run_name / f"fold_{args.fold}"
     logs_dir = ensure_dir(run_root / "logs")
@@ -333,37 +401,40 @@ def main() -> None:
 
     split_payload = save_partition_subjects(
         logs_dir / "split_used.json",
-        train_inner_subject_ids=inner_split["train_inner_subject_ids"],
-        val_inner_subject_ids=inner_split["val_inner_subject_ids"],
-        final_eval_subject_ids=outer_partitions["final_eval_subject_ids"],
+        train_subject_ids=partition_plan["train_subject_ids"],
+        selection_subject_ids=partition_plan["selection_subject_ids"],
+        final_eval_subject_ids=partition_plan["final_eval_subject_ids"],
         subject_labels=subject_labels,
+        train_split_name=partition_plan["train_split_name"],
+        selection_split_name=partition_plan["selection_split_name"],
+        final_eval_split_name=partition_plan["final_eval_split_name"],
     )
     _print_partition_counts(split_payload)
 
     model_name_or_path = resolve_model_name_or_path(args.model_name_or_path, config)
     processor = load_processor(model_name_or_path)
     train_examples = build_examples(
-        filter_rows_by_subjects(manifest_rows, inner_split["train_inner_subject_ids"]),
+        filter_rows_by_subjects(manifest_rows, partition_plan["train_subject_ids"]),
         config,
-        partition_name="train_inner",
+        partition_name=partition_plan["train_split_name"],
         truncation_log_path=logs_dir / "train_truncation.jsonl",
     )
-    val_examples = build_examples(
-        filter_rows_by_subjects(manifest_rows, inner_split["val_inner_subject_ids"]),
+    selection_examples = build_examples(
+        filter_rows_by_subjects(manifest_rows, partition_plan["selection_subject_ids"]),
         config,
-        partition_name="val_inner",
+        partition_name=partition_plan["selection_split_name"],
         truncation_log_path=logs_dir / "val_truncation.jsonl",
     )
     final_eval_examples = build_examples(
-        filter_rows_by_subjects(manifest_rows, outer_partitions["final_eval_subject_ids"]),
+        filter_rows_by_subjects(manifest_rows, partition_plan["final_eval_subject_ids"]),
         config,
-        partition_name="final_eval",
+        partition_name=partition_plan["final_eval_split_name"],
         truncation_log_path=logs_dir / "final_eval_truncation.jsonl",
     )
     sample_count_payload = {
-        "train_inner": _sample_partition_counts(train_examples),
-        "val_inner": _sample_partition_counts(val_examples),
-        "final_eval": _sample_partition_counts(final_eval_examples),
+        partition_plan["train_split_name"]: _sample_partition_counts(train_examples),
+        partition_plan["selection_split_name"]: _sample_partition_counts(selection_examples),
+        partition_plan["final_eval_split_name"]: _sample_partition_counts(final_eval_examples),
     }
     save_json(sample_count_payload, logs_dir / "sample_partition_counts.json")
     for partition_name, counts in sample_count_payload.items():
@@ -380,8 +451,8 @@ def main() -> None:
         processor_sampling_rate=processor.feature_extractor.sampling_rate,
         silence_audio=bool(config["data"].get("silence_audio", False)),
     )
-    val_dataset = AudioTextDataset(
-        val_examples,
+    selection_dataset = AudioTextDataset(
+        selection_examples,
         processor_sampling_rate=processor.feature_extractor.sampling_rate,
         silence_audio=bool(config["data"].get("silence_audio", False)),
     )
@@ -396,8 +467,8 @@ def main() -> None:
         num_workers=int(config["training"]["dataloader_num_workers"]),
         collate_fn=collator,
     )
-    val_loss_loader = DataLoader(
-        val_dataset,
+    selection_loss_loader = DataLoader(
+        selection_dataset,
         batch_size=int(config["training"]["per_device_eval_batch_size"]),
         shuffle=False,
         num_workers=int(config["training"]["dataloader_num_workers"]),
@@ -444,18 +515,18 @@ def main() -> None:
         "fold": int(args.fold),
         "save_strategy": args.save_strategy,
         "selection_protocol": {
-            "metric_name": "inner_val_positive_f1",
-            "selection_split_name": "val_inner",
-            "selection_subject_count": len(inner_split["val_inner_subject_ids"]),
-            "selection_sample_count": len(val_examples),
+            "metric_name": "selection_positive_f1",
+            "selection_split_name": partition_plan["selection_split_name"],
+            "selection_subject_count": len(partition_plan["selection_subject_ids"]),
+            "selection_sample_count": len(selection_examples),
             "selection_prediction_backend": sample_prediction_mode,
             "selection_aggregation_level": aggregation_level,
             "selection_evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
         },
         "final_eval_protocol": {
-            "final_eval_split_name": "final_eval",
+            "final_eval_split_name": partition_plan["final_eval_split_name"],
             "final_eval_partition": str(config["split"]["final_eval_partition"]),
-            "final_eval_subject_count": len(outer_partitions["final_eval_subject_ids"]),
+            "final_eval_subject_count": len(partition_plan["final_eval_subject_ids"]),
             "final_eval_sample_count": len(final_eval_examples),
             "final_eval_aggregation_level": aggregation_level,
             "run_final_eval_in_train": bool(config["training"].get("run_final_eval_in_train", False)),
@@ -494,10 +565,11 @@ def main() -> None:
         accelerator.wait_for_everyone()
         if accelerator.is_main_process:
             unwrapped = accelerator.unwrap_model(model)
-            inner_eval_dir = ensure_dir(logs_dir / f"inner_val_epoch_{epoch}")
-            inner_val_loss = _compute_dataset_loss(unwrapped, val_loss_loader)
+            selection_eval_dir = ensure_dir(logs_dir / f"{partition_plan['selection_log_dir_name']}_epoch_{epoch}")
+            selection_loss = _compute_dataset_loss(unwrapped, selection_loss_loader)
             LOGGER.info(
-                "Inner validation backend: %s | aggregation_level=%s | protocol=%s",
+                "Selection evaluation split=%s | backend=%s | aggregation_level=%s | protocol=%s",
+                partition_plan["selection_split_name"],
                 sample_prediction_mode,
                 aggregation_level,
                 evaluation_protocol_name(sample_prediction_mode),
@@ -505,26 +577,24 @@ def main() -> None:
             metrics = evaluate_examples(
                 unwrapped,
                 processor,
-                val_examples,
+                selection_examples,
                 config,
-                inner_eval_dir,
+                selection_eval_dir,
                 checkpoint_name=f"epoch_{epoch}",
                 sample_prediction_mode=sample_prediction_mode,
             )
             headline_metrics = metrics["backend_results"][sample_prediction_mode]["headline_metrics"]
             metric_value = float(headline_metrics["positive_f1"])
-            metric_values = {
-                "inner_val_positive_f1": metric_value,
-                "inner_val_macro_f1": float(headline_metrics["macro_f1"]),
-                "inner_val_accuracy": float(headline_metrics["accuracy"]),
-                "inner_val_precision": float(headline_metrics["precision"]),
-                "inner_val_recall": float(headline_metrics["recall"]),
-                "inner_val_loss": inner_val_loss,
-            }
+            metric_values = _selection_metric_values(metric_value, headline_metrics, selection_loss)
             history_row = {
                 "epoch": epoch,
                 "train_loss": sum(epoch_losses) / max(1, len(epoch_losses)),
-                "inner_val_loss": inner_val_loss,
+                "selection_split_name": partition_plan["selection_split_name"],
+                "selection_loss": selection_loss,
+                "selection_prediction_backend": sample_prediction_mode,
+                "selection_aggregation_level": aggregation_level,
+                "selection_evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
+                "inner_val_loss": selection_loss,
                 "inner_val_prediction_backend": sample_prediction_mode,
                 "inner_val_aggregation_level": aggregation_level,
                 "inner_val_evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
@@ -532,10 +602,11 @@ def main() -> None:
             }
             history.append(history_row)
             LOGGER.info(
-                "Validation epoch=%s | aggregation_level=%s | loss=%.6f ACC=%.6f F1=%.6f Precision=%.6f Recall=%.6f",
+                "Selection epoch=%s | split=%s | aggregation_level=%s | loss=%.6f ACC=%.6f F1=%.6f Precision=%.6f Recall=%.6f",
                 epoch,
+                partition_plan["selection_split_name"],
                 aggregation_level,
-                inner_val_loss,
+                selection_loss,
                 float(headline_metrics["accuracy"]),
                 float(headline_metrics["positive_f1"]),
                 float(headline_metrics["precision"]),
@@ -551,7 +622,7 @@ def main() -> None:
             _write_trial_progress(
                 args.trial_progress_file,
                 epoch=epoch,
-                metric_name="inner_val_positive_f1",
+                metric_name="selection_positive_f1",
                 metric_value=metric_value,
                 best_metric=best_metric,
                 best_epoch=best_epoch,
@@ -685,7 +756,7 @@ def main() -> None:
                 "run_name": args.run_name,
                 "run_root": str(run_root),
                 "save_strategy": args.save_strategy,
-                "metric_name": "inner_val_positive_f1",
+                "metric_name": "selection_positive_f1",
                 "best_metric": float(best_metric),
                 "best_epoch": int(best_epoch),
                 "completed_epochs": int(completed_epochs),
