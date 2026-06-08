@@ -8,6 +8,7 @@ CV_RUN_NAME="${CV_RUN_NAME:-cv_reproduction}"
 FINAL_RUN_NAME="${FINAL_RUN_NAME:-fulltrain_reproduction}"
 FOLDS="${FOLDS:-0 1 2 3 4}"
 FINAL_FOLD="${FINAL_FOLD:-0}"
+CURRENT_STAGE_INDEX="${CURRENT_STAGE_INDEX:-0}"
 CV_EXTRA_TRAIN_ARGS="${CV_EXTRA_TRAIN_ARGS:-}"
 CV_EXTRA_EVAL_ARGS="${CV_EXTRA_EVAL_ARGS:-}"
 FINAL_EXTRA_TRAIN_ARGS="${FINAL_EXTRA_TRAIN_ARGS:-}"
@@ -18,9 +19,15 @@ FINAL_SUBMIT_BEST_EVAL="${FINAL_SUBMIT_BEST_EVAL:-0}"
 FINAL_SUBMIT_LAST_EVAL="${FINAL_SUBMIT_LAST_EVAL:-1}"
 CV_SEQUENTIAL="${CV_SEQUENTIAL:-1}"
 SUBMIT_SCRIPT="${SUBMIT_SCRIPT:-$PROJECT_ROOT/scripts/submit_train_and_eval.sh}"
+CHAIN_RUNNER_SCRIPT="${CHAIN_RUNNER_SCRIPT:-$PROJECT_ROOT/scripts/run_chain_submit_slurm.sh}"
 
 if [ ! -f "$SUBMIT_SCRIPT" ]; then
     echo "Submit helper not found: $SUBMIT_SCRIPT"
+    exit 1
+fi
+
+if [ ! -f "$CHAIN_RUNNER_SCRIPT" ]; then
+    echo "Chain runner script not found: $CHAIN_RUNNER_SCRIPT"
     exit 1
 fi
 
@@ -44,14 +51,28 @@ extract_job_id() {
     printf '%s\n' "$output" | awk -v pattern="$pattern" '$0 ~ pattern {print $NF; exit}'
 }
 
-TERMINAL_JOB_IDS=()
-PREVIOUS_CV_DEPENDENCY=""
+submit_next_stage() {
+    local dependency="$1"
+    local next_stage_index="$2"
+    local export_args=""
+    local next_job_raw=""
+    local next_job_id=""
 
-echo "Submitting CV folds"
+    export_args="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$CONFIG,CV_RUN_NAME=$CV_RUN_NAME,FINAL_RUN_NAME=$FINAL_RUN_NAME,FOLDS=$FOLDS,FINAL_FOLD=$FINAL_FOLD,CURRENT_STAGE_INDEX=$next_stage_index,CV_EXTRA_TRAIN_ARGS=$CV_EXTRA_TRAIN_ARGS,CV_EXTRA_EVAL_ARGS=$CV_EXTRA_EVAL_ARGS,FINAL_EXTRA_TRAIN_ARGS=$FINAL_EXTRA_TRAIN_ARGS,FINAL_EXTRA_EVAL_ARGS=$FINAL_EXTRA_EVAL_ARGS,CV_SUBMIT_BEST_EVAL=$CV_SUBMIT_BEST_EVAL,CV_SUBMIT_LAST_EVAL=$CV_SUBMIT_LAST_EVAL,FINAL_SUBMIT_BEST_EVAL=$FINAL_SUBMIT_BEST_EVAL,FINAL_SUBMIT_LAST_EVAL=$FINAL_SUBMIT_LAST_EVAL,CV_SEQUENTIAL=$CV_SEQUENTIAL,SUBMIT_SCRIPT=$SUBMIT_SCRIPT,CHAIN_RUNNER_SCRIPT=$CHAIN_RUNNER_SCRIPT,CHAIN_SCRIPT=$PROJECT_ROOT/scripts/submit_cv_then_fulltrain.sh"
+
+    next_job_raw="$(sbatch --parsable --dependency="$dependency" --export="$export_args" "$CHAIN_RUNNER_SCRIPT")"
+    next_job_id="${next_job_raw%%;*}"
+    echo "Submitted chain continuation job: $next_job_id"
+    echo "  next_stage_index: $next_stage_index"
+    echo "  dependency: $dependency"
+}
+
+echo "Submitting CV/full-train stage"
 echo "  config: $CONFIG"
 echo "  cv_run_name: $CV_RUN_NAME"
 echo "  folds: $FOLDS"
 echo "  cv_sequential: $CV_SEQUENTIAL"
+echo "  current_stage_index: $CURRENT_STAGE_INDEX"
 echo "  cv_submit_best_eval: $CV_SUBMIT_BEST_EVAL"
 echo "  cv_submit_last_eval: $CV_SUBMIT_LAST_EVAL"
 echo "  final_run_name: $FINAL_RUN_NAME"
@@ -59,6 +80,81 @@ echo "  final_fold: $FINAL_FOLD"
 echo "  final_submit_best_eval: $FINAL_SUBMIT_BEST_EVAL"
 echo "  final_submit_last_eval: $FINAL_SUBMIT_LAST_EVAL"
 
+read -r -a FOLD_ARRAY <<< "$FOLDS"
+FOLD_COUNT="${#FOLD_ARRAY[@]}"
+
+if [ "$CV_SEQUENTIAL" = "1" ]; then
+    if [ "$CURRENT_STAGE_INDEX" -lt "$FOLD_COUNT" ]; then
+        FOLD="${FOLD_ARRAY[$CURRENT_STAGE_INDEX]}"
+        echo "Submitting CV fold $FOLD ($((CURRENT_STAGE_INDEX + 1))/$FOLD_COUNT)"
+
+        CV_TRAIN_ARGS="$(join_args "--set split.mode=cv" "$CV_EXTRA_TRAIN_ARGS")"
+        CV_EVAL_ARGS="$(join_args "--set split.mode=cv" "$CV_EXTRA_EVAL_ARGS")"
+        OUTPUT="$(
+            env \
+                PROJECT_ROOT="$PROJECT_ROOT" \
+                CONFIG="$CONFIG" \
+                FOLD="$FOLD" \
+                RUN_NAME="$CV_RUN_NAME" \
+                SUBMIT_BEST_EVAL="$CV_SUBMIT_BEST_EVAL" \
+                SUBMIT_LAST_EVAL="$CV_SUBMIT_LAST_EVAL" \
+                EXTRA_TRAIN_ARGS="$CV_TRAIN_ARGS" \
+                EXTRA_EVAL_ARGS="$CV_EVAL_ARGS" \
+                bash "$SUBMIT_SCRIPT"
+        )"
+        printf '%s\n' "$OUTPUT"
+
+        TRAIN_JOB_ID="$(extract_job_id "$OUTPUT" "Submitted training job:")"
+        BEST_EVAL_JOB_ID="$(extract_job_id "$OUTPUT" "Submitted best-checkpoint eval job:")"
+        LAST_EVAL_JOB_ID="$(extract_job_id "$OUTPUT" "Submitted last-checkpoint eval job:")"
+
+        FOLD_TERMINAL_IDS=()
+        if [ -n "$BEST_EVAL_JOB_ID" ]; then
+            FOLD_TERMINAL_IDS+=("$BEST_EVAL_JOB_ID")
+        fi
+        if [ -n "$LAST_EVAL_JOB_ID" ]; then
+            FOLD_TERMINAL_IDS+=("$LAST_EVAL_JOB_ID")
+        fi
+        if [ ${#FOLD_TERMINAL_IDS[@]} -eq 0 ]; then
+            if [ -z "$TRAIN_JOB_ID" ]; then
+                echo "Could not parse the training job id for fold $FOLD."
+                exit 1
+            fi
+            FOLD_TERMINAL_IDS+=("$TRAIN_JOB_ID")
+        fi
+
+        submit_next_stage "afterok:$(IFS=:; printf '%s' "${FOLD_TERMINAL_IDS[*]}")" "$((CURRENT_STAGE_INDEX + 1))"
+        exit 0
+    fi
+
+    if [ "$CURRENT_STAGE_INDEX" -eq "$FOLD_COUNT" ]; then
+        FINAL_TRAIN_ARGS="$(join_args "--set split.mode=full_train" "$FINAL_EXTRA_TRAIN_ARGS")"
+        FINAL_EVAL_ARGS="$(join_args "--set split.mode=full_train" "$FINAL_EXTRA_EVAL_ARGS")"
+
+        echo "Submitting final full-train workflow"
+        FINAL_OUTPUT="$(
+            env \
+                PROJECT_ROOT="$PROJECT_ROOT" \
+                CONFIG="$CONFIG" \
+                FOLD="$FINAL_FOLD" \
+                RUN_NAME="$FINAL_RUN_NAME" \
+                SUBMIT_BEST_EVAL="$FINAL_SUBMIT_BEST_EVAL" \
+                SUBMIT_LAST_EVAL="$FINAL_SUBMIT_LAST_EVAL" \
+                EXTRA_TRAIN_ARGS="$FINAL_TRAIN_ARGS" \
+                EXTRA_EVAL_ARGS="$FINAL_EVAL_ARGS" \
+                bash "$SUBMIT_SCRIPT"
+        )"
+        printf '%s\n' "$FINAL_OUTPUT"
+        exit 0
+    fi
+
+    echo "Current stage index $CURRENT_STAGE_INDEX is out of range for folds '$FOLDS'."
+    exit 1
+fi
+
+TERMINAL_JOB_IDS=()
+PREVIOUS_CV_DEPENDENCY=""
+echo "Submitting all CV folds in parallel/dependency mode"
 for FOLD in $FOLDS; do
     CV_TRAIN_ARGS="$(join_args "--set split.mode=cv" "$CV_EXTRA_TRAIN_ARGS")"
     CV_EVAL_ARGS="$(join_args "--set split.mode=cv" "$CV_EXTRA_EVAL_ARGS")"
