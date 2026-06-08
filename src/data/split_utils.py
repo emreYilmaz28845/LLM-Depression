@@ -6,15 +6,24 @@ import re
 import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
+from typing import Any
 from zipfile import ZipFile
 
-from src.utils import save_json
+from src.utils import read_json, save_json
 
 
 XML_NS = {
     "a": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
     "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
 }
+SPLIT_MODE_FIXED = "fixed"
+SPLIT_MODE_CV = "cv"
+SPLIT_MODE_FULL_TRAIN = "full_train"
+SUPPORTED_SPLIT_MODES = (
+    SPLIT_MODE_FIXED,
+    SPLIT_MODE_CV,
+    SPLIT_MODE_FULL_TRAIN,
+)
 
 
 def expand_integer_ranges(spec: str) -> list[int]:
@@ -163,6 +172,139 @@ def validate_non_overlapping_folds(
         missing = sorted(expected_subject_set - heldout_coverage)
         extra = sorted(heldout_coverage - expected_subject_set)
         raise ValueError(f"CMDC held-out fold coverage mismatch | missing={missing} extra={extra}")
+
+
+def resolve_requested_split_mode(config: dict[str, Any]) -> str:
+    raw_mode = str(config.get("split", {}).get("mode", "")).strip().lower()
+    if not raw_mode:
+        return ""
+    if raw_mode not in SUPPORTED_SPLIT_MODES:
+        raise ValueError(
+            f"Unsupported split.mode={raw_mode!r}. Expected one of {', '.join(SUPPORTED_SPLIT_MODES)}."
+        )
+    return raw_mode
+
+
+def resolve_split_mode(config: dict[str, Any], metadata: dict[str, Any] | None = None) -> str:
+    requested_mode = resolve_requested_split_mode(config)
+    if requested_mode:
+        return requested_mode
+    if metadata and metadata.get("subject_partition_path"):
+        return SPLIT_MODE_FIXED
+    if metadata and metadata.get("folds_path"):
+        return SPLIT_MODE_CV
+    split_cfg = config.get("split", {})
+    if any(key in split_cfg for key in ("train_partition", "train_partitions", "selection_partition", "dev_pool_partitions")):
+        return SPLIT_MODE_FIXED
+    if "outer_folds" in split_cfg:
+        return SPLIT_MODE_CV
+    return SPLIT_MODE_FIXED
+
+
+def resolve_dev_pool_partitions(config: dict[str, Any]) -> list[str]:
+    split_cfg = config.get("split", {})
+    explicit = split_cfg.get("dev_pool_partitions")
+    if explicit:
+        partitions = [str(item).strip() for item in explicit if str(item).strip()]
+        if partitions:
+            return partitions
+    train_partitions = split_cfg.get("train_partitions")
+    if train_partitions:
+        partitions = [str(item).strip() for item in train_partitions if str(item).strip()]
+        if partitions:
+            return partitions
+    partitions: list[str] = []
+    train_partition = str(split_cfg.get("train_partition", "")).strip()
+    selection_partition = str(split_cfg.get("selection_partition", "")).strip()
+    if train_partition:
+        partitions.append(train_partition)
+    if selection_partition and selection_partition not in partitions:
+        partitions.append(selection_partition)
+    if not partitions:
+        raise ValueError("Could not resolve development-pool partitions from the split config.")
+    return partitions
+
+
+def resolve_outer_fold_count(config: dict[str, Any], default: int = 5) -> int:
+    return int(config.get("split", {}).get("outer_folds", default))
+
+
+def read_fold_payload(metadata: dict[str, Any], fold: int) -> dict[str, Any]:
+    if not metadata.get("folds_path"):
+        raise ValueError("Split metadata does not include folds_path.")
+    folds = read_json(metadata["folds_path"])
+    return folds[str(fold)] if str(fold) in folds else folds[fold]
+
+
+def subject_ids_for_partitions(
+    partition_rows: list[dict[str, Any]],
+    partitions: list[str] | set[str] | tuple[str, ...],
+) -> list[str]:
+    partition_set = {str(item) for item in partitions}
+    return sorted([row["subject_id"] for row in partition_rows if str(row["partition"]) in partition_set])
+
+
+def subject_fold_report(
+    folds: dict[int, dict[str, list[str]]],
+    subject_labels: dict[str, int],
+) -> list[dict[str, Any]]:
+    report: list[dict[str, Any]] = []
+    for fold_idx, payload in sorted(folds.items()):
+        heldout_ids = sorted(payload["final_eval_subject_ids"])
+        train_ids = sorted(payload["outer_train_subject_ids"])
+        heldout_depressed_ids = [subject_id for subject_id in heldout_ids if int(subject_labels[subject_id]) == 1]
+        heldout_non_depressed_ids = [subject_id for subject_id in heldout_ids if int(subject_labels[subject_id]) == 0]
+        outer_train_depressed_ids = [subject_id for subject_id in train_ids if int(subject_labels[subject_id]) == 1]
+        outer_train_non_depressed_ids = [subject_id for subject_id in train_ids if int(subject_labels[subject_id]) == 0]
+        report.append(
+            {
+                "fold": int(fold_idx),
+                "heldout_subject_ids": heldout_ids,
+                "heldout_depressed_subject_ids": heldout_depressed_ids,
+                "heldout_non_depressed_subject_ids": heldout_non_depressed_ids,
+                "heldout_depressed_count": len(heldout_depressed_ids),
+                "heldout_non_depressed_count": len(heldout_non_depressed_ids),
+                "heldout_class_counts": {
+                    "Depressed": len(heldout_depressed_ids),
+                    "Non-depressed": len(heldout_non_depressed_ids),
+                },
+                "outer_train_subject_ids": train_ids,
+                "outer_train_count": len(train_ids),
+                "outer_train_depressed_subject_ids": outer_train_depressed_ids,
+                "outer_train_non_depressed_subject_ids": outer_train_non_depressed_ids,
+                "outer_train_class_counts": {
+                    "Depressed": len(outer_train_depressed_ids),
+                    "Non-depressed": len(outer_train_non_depressed_ids),
+                },
+            }
+        )
+    return report
+
+
+def build_partition_scoped_stratified_folds(
+    *,
+    partition_rows: list[dict[str, Any]],
+    subject_labels: dict[str, int],
+    dev_pool_partitions: list[str],
+    final_eval_partition: str,
+    n_splits: int,
+    seed: int,
+) -> dict[int, dict[str, list[str]]]:
+    dev_subject_ids = subject_ids_for_partitions(partition_rows, dev_pool_partitions)
+    final_eval_subject_ids = subject_ids_for_partitions(partition_rows, [final_eval_partition])
+    overlap = sorted(set(dev_subject_ids).intersection(final_eval_subject_ids))
+    if overlap:
+        raise ValueError(
+            f"Development-pool partitions overlap with final eval partition {final_eval_partition!r}: {overlap[:10]}"
+        )
+    dev_subject_labels = {subject_id: int(subject_labels[subject_id]) for subject_id in dev_subject_ids}
+    folds = assign_stratified_group_folds(dev_subject_labels, n_splits=n_splits, seed=seed)
+    validate_non_overlapping_folds(folds, dev_subject_ids)
+    for fold_idx, payload in sorted(folds.items()):
+        heldout_overlap = sorted(set(payload["final_eval_subject_ids"]).intersection(final_eval_subject_ids))
+        if heldout_overlap:
+            raise ValueError(f"Fold {fold_idx} unexpectedly includes final-eval subjects: {heldout_overlap[:10]}")
+    return folds
 
 
 def assign_stratified_group_folds(subject_labels: dict[str, int], n_splits: int, seed: int) -> dict[int, dict[str, list[str]]]:

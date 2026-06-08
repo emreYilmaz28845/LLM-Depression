@@ -23,6 +23,15 @@ from src.data.runtime import (
     load_audio_array,
     load_manifest_rows,
 )
+from src.data.split_utils import (
+    SPLIT_MODE_CV,
+    SPLIT_MODE_FIXED,
+    SPLIT_MODE_FULL_TRAIN,
+    read_fold_payload,
+    resolve_requested_split_mode,
+    resolve_split_mode,
+    subject_ids_for_partitions,
+)
 from src.model.qwen2audio_lora import (
     build_generation_config,
     load_model_for_inference,
@@ -128,6 +137,18 @@ def _wait_for_usable_metadata(metadata_path: Path, timeout_seconds: int = 600) -
             last_reason = reason
         time.sleep(2)
     raise RuntimeError(f"Timed out waiting for usable metadata at {metadata_path}. Last reason: {last_reason}")
+
+
+def _required_split_metadata_keys(config: dict[str, Any]) -> list[str]:
+    requested_mode = resolve_requested_split_mode(config)
+    if requested_mode == SPLIT_MODE_CV:
+        return ["folds_path"]
+    if requested_mode in {SPLIT_MODE_FIXED, SPLIT_MODE_FULL_TRAIN}:
+        return ["subject_partition_path"]
+    split_cfg = config.get("split", {})
+    if any(key in split_cfg for key in ("train_partition", "train_partitions", "selection_partition", "dev_pool_partitions")):
+        return ["subject_partition_path"]
+    return ["folds_path"]
 
 
 def _write_csv(rows: list[dict[str, Any]], path: str | Path) -> None:
@@ -562,6 +583,10 @@ def _load_metadata_or_build(config_path: str | Path, config: dict[str, Any], con
     if metadata_path.exists():
         metadata = resolve_metadata_paths(read_json(metadata_path))
         usable, reason = _metadata_artifacts_are_usable(metadata)
+        missing_split_keys = [key for key in _required_split_metadata_keys(config) if not metadata.get(key)]
+        if usable and missing_split_keys:
+            usable = False
+            reason = f"split_metadata_missing:{','.join(missing_split_keys)}"
         if usable:
             return metadata
         LOGGER.warning("Refreshing stale metadata for %s: %s", config["dataset"], reason)
@@ -571,12 +596,14 @@ def _load_metadata_or_build(config_path: str | Path, config: dict[str, Any], con
 
 
 def _resolve_final_eval_subject_ids(config: dict[str, Any], metadata: dict[str, Any], fold: int) -> list[str]:
-    if metadata.get("subject_partition_path"):
-        partition_rows = read_json(metadata["subject_partition_path"])
-        return sorted([row["subject_id"] for row in partition_rows if row["partition"] == config["split"]["final_eval_partition"]])
-    folds = read_json(metadata["folds_path"])
-    fold_payload = folds[str(fold)] if str(fold) in folds else folds[fold]
-    return sorted(fold_payload["final_eval_subject_ids"])
+    split_mode = resolve_split_mode(config, metadata)
+    if split_mode == SPLIT_MODE_CV:
+        fold_payload = read_fold_payload(metadata, fold)
+        return sorted(fold_payload["final_eval_subject_ids"])
+    if not metadata.get("subject_partition_path"):
+        raise ValueError("Split metadata does not include subject_partition_path for fixed/full_train evaluation.")
+    partition_rows = read_json(metadata["subject_partition_path"])
+    return subject_ids_for_partitions(partition_rows, [str(config["split"]["final_eval_partition"])])
 
 
 def parse_args() -> argparse.Namespace:
@@ -632,6 +659,7 @@ def main() -> None:
         {
             "base_config_path": str(Path(args.config)),
             "config_overrides": list(args.config_overrides),
+            "split_mode": resolve_split_mode(config, metadata),
             "sample_prediction_mode": sample_prediction_mode,
             "aggregation_level": aggregation_level,
             "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),

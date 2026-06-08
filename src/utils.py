@@ -37,6 +37,11 @@ SUPPORTED_AGGREGATION_LEVELS = (
 )
 ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}")
 PROJECT_PATH_ANCHORS = ("outputs", "output_model", "configs", "scripts", "src")
+OPTIONAL_OVERRIDE_PATHS = {
+    ("split", "mode"),
+    ("split", "dev_pool_partitions"),
+    ("split", "outer_folds"),
+}
 GENERATION_PARSE_PREFIXES = (
     "answer:",
     "answer is",
@@ -223,7 +228,9 @@ def apply_config_overrides(config: dict[str, Any], overrides: list[str] | None) 
                 raise ValueError(f"Unknown config override path: {'.'.join(path)}")
             cursor = cursor[part]
         leaf_key = path[-1]
-        if not isinstance(cursor, dict) or leaf_key not in cursor:
+        if not isinstance(cursor, dict):
+            raise ValueError(f"Unknown config override path: {'.'.join(path)}")
+        if leaf_key not in cursor and tuple(path) not in OPTIONAL_OVERRIDE_PATHS:
             raise ValueError(f"Unknown config override path: {'.'.join(path)}")
         cursor[leaf_key] = expand_env_vars(value)
     return resolved

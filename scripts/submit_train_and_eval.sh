@@ -6,8 +6,18 @@ PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depre
 CONFIG="${CONFIG:-$PROJECT_ROOT/configs/daic_audio_text.yaml}"
 FOLD="${FOLD:-0}"
 RUN_NAME="${RUN_NAME:-mn5_reproduction}"
-SUBMIT_BEST_EVAL="${SUBMIT_BEST_EVAL:-1}"
-SUBMIT_LAST_EVAL="${SUBMIT_LAST_EVAL:-1}"
+SUBMIT_BEST_EVAL_SPECIFIED=0
+if [ -n "${SUBMIT_BEST_EVAL+x}" ]; then
+    SUBMIT_BEST_EVAL_SPECIFIED=1
+else
+    SUBMIT_BEST_EVAL=1
+fi
+SUBMIT_LAST_EVAL_SPECIFIED=0
+if [ -n "${SUBMIT_LAST_EVAL+x}" ]; then
+    SUBMIT_LAST_EVAL_SPECIFIED=1
+else
+    SUBMIT_LAST_EVAL=1
+fi
 EXTRA_TRAIN_ARGS="${EXTRA_TRAIN_ARGS:-}"
 EXTRA_EVAL_ARGS="${EXTRA_EVAL_ARGS:-}"
 ENV_ACTIVATE="${ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate}"
@@ -28,15 +38,16 @@ echo "  run_name: $RUN_NAME"
 echo "  extra_train_args: ${EXTRA_TRAIN_ARGS:-<none>}"
 echo "  extra_eval_args: ${EXTRA_EVAL_ARGS:-<none>}"
 
-extract_sample_prediction_mode() {
+extract_set_override() {
     local args="$1"
+    local target_key="$2"
     local prev=""
     local token=""
     for token in $args; do
         if [ "$prev" = "--set" ]; then
             case "$token" in
-                evaluation.sample_prediction_mode=*)
-                    printf '%s\n' "${token#evaluation.sample_prediction_mode=}"
+                "$target_key"=*)
+                    printf '%s\n' "${token#"$target_key"=}"
                     return 0
                     ;;
             esac
@@ -70,6 +81,15 @@ RUN_ROOT_REL="$(awk '
     exit
   }
 ' "$CONFIG" | tr -d '"' | tr -d "'")"
+CONFIG_SPLIT_MODE="$(awk '
+  /^split:/ {in_block=1; next}
+  in_block && /^[^[:space:]]/ {in_block=0}
+  in_block && /^[[:space:]]+mode:/ {
+    sub(/^[[:space:]]+mode:[[:space:]]*/, "", $0)
+    print $0
+    exit
+  }
+' "$CONFIG" | tr -d '"' | tr -d "'")"
 
 if [ -z "$DATASET_NAME" ]; then
     echo "Could not parse dataset from config: $CONFIG"
@@ -86,12 +106,21 @@ FOLD_DIR="$RUN_ROOT/$RUN_NAME/fold_$FOLD"
 BEST_CHECKPOINT_DIR="$FOLD_DIR/best_model"
 LAST_CHECKPOINT_DIR="$FOLD_DIR/last_model"
 
-TRAIN_SAMPLE_PREDICTION_MODE="$(extract_sample_prediction_mode "$EXTRA_TRAIN_ARGS" || true)"
-EVAL_SAMPLE_PREDICTION_MODE="$(extract_sample_prediction_mode "$EXTRA_EVAL_ARGS" || true)"
+TRAIN_SAMPLE_PREDICTION_MODE="$(extract_set_override "$EXTRA_TRAIN_ARGS" "evaluation.sample_prediction_mode" || true)"
+EVAL_SAMPLE_PREDICTION_MODE="$(extract_set_override "$EXTRA_EVAL_ARGS" "evaluation.sample_prediction_mode" || true)"
+TRAIN_SPLIT_MODE="$(extract_set_override "$EXTRA_TRAIN_ARGS" "split.mode" || true)"
+TRAIN_SPLIT_MODE="${TRAIN_SPLIT_MODE:-$CONFIG_SPLIT_MODE}"
+if [ -z "$TRAIN_SPLIT_MODE" ]; then
+    TRAIN_SPLIT_MODE="fixed"
+fi
 
 if [ -n "$TRAIN_SAMPLE_PREDICTION_MODE" ] && [ -z "$EVAL_SAMPLE_PREDICTION_MODE" ]; then
     EXTRA_EVAL_ARGS="${EXTRA_EVAL_ARGS:+$EXTRA_EVAL_ARGS }--set evaluation.sample_prediction_mode=$TRAIN_SAMPLE_PREDICTION_MODE"
     EVAL_SAMPLE_PREDICTION_MODE="$TRAIN_SAMPLE_PREDICTION_MODE"
+fi
+
+if [ "$TRAIN_SPLIT_MODE" = "full_train" ] && [ "$SUBMIT_BEST_EVAL_SPECIFIED" = "0" ]; then
+    SUBMIT_BEST_EVAL=0
 fi
 
 EXPORT_ARGS="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$CONFIG,FOLD=$FOLD,RUN_NAME=$RUN_NAME,EXTRA_TRAIN_ARGS=$EXTRA_TRAIN_ARGS,EXTRA_EVAL_ARGS=$EXTRA_EVAL_ARGS"
@@ -102,6 +131,7 @@ echo "  config: $CONFIG"
 echo "  fold: $FOLD"
 echo "  run_name: $RUN_NAME"
 echo "  fold_dir: $FOLD_DIR"
+echo "  train_split_mode: $TRAIN_SPLIT_MODE"
 echo "  best_checkpoint_dir: $BEST_CHECKPOINT_DIR"
 echo "  last_checkpoint_dir: $LAST_CHECKPOINT_DIR"
 echo "  train_sample_prediction_mode: ${TRAIN_SAMPLE_PREDICTION_MODE:-<from config>}"

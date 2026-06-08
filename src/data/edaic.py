@@ -7,6 +7,12 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+from src.data.split_utils import (
+    build_partition_scoped_stratified_folds,
+    resolve_dev_pool_partitions,
+    resolve_outer_fold_count,
+    subject_fold_report,
+)
 from src.data.validation import is_quarantined_missing
 from src.utils import get_logger, label_text_from_int
 
@@ -259,7 +265,7 @@ def build_edaic_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> 
         for subject_id, split_name in sorted(split_lookup.items())
     ]
 
-    return {
+    result = {
         "manifest_rows": manifest_rows,
         "subject_partition_rows": subject_partition_rows,
         "join_audit_rows": join_audit_rows,
@@ -272,3 +278,27 @@ def build_edaic_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> 
             "the corresponding summary row."
         ),
     }
+    dev_pool_partitions = resolve_dev_pool_partitions(config)
+    final_eval_partition = str(config["split"]["final_eval_partition"])
+    dev_subject_ids = sorted([row["subject_id"] for row in subject_partition_rows if row["partition"] in set(dev_pool_partitions)])
+    final_eval_subject_ids = sorted([row["subject_id"] for row in subject_partition_rows if row["partition"] == final_eval_partition])
+    overlap = sorted(set(dev_subject_ids).intersection(final_eval_subject_ids))
+    if overlap:
+        LOGGER.warning(
+            "Skipping EDAIC CV fold generation because development-pool partitions %s overlap final_eval_partition=%s.",
+            dev_pool_partitions,
+            final_eval_partition,
+        )
+        return result
+    subject_labels = {row["subject_id"]: int(row["label"]) for row in subject_partition_rows}
+    folds = build_partition_scoped_stratified_folds(
+        partition_rows=subject_partition_rows,
+        subject_labels=subject_labels,
+        dev_pool_partitions=dev_pool_partitions,
+        final_eval_partition=final_eval_partition,
+        n_splits=resolve_outer_fold_count(config),
+        seed=int(config["split"]["seed"]),
+    )
+    result["folds"] = folds
+    result["fold_report"] = subject_fold_report(folds, subject_labels)
+    return result

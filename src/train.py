@@ -30,7 +30,17 @@ from src.data.runtime import (
     load_manifest_rows,
     save_partition_subjects,
 )
-from src.data.split_utils import deterministic_inner_split
+from src.data.split_utils import (
+    SPLIT_MODE_CV,
+    SPLIT_MODE_FIXED,
+    SPLIT_MODE_FULL_TRAIN,
+    deterministic_inner_split,
+    read_fold_payload,
+    resolve_dev_pool_partitions,
+    resolve_requested_split_mode,
+    resolve_split_mode,
+    subject_ids_for_partitions,
+)
 from src.evaluate import evaluate_examples
 from src.model.collator import Qwen2AudioSFTCollator
 from src.model.qwen2audio_lora import (
@@ -110,12 +120,28 @@ def _wait_for_usable_metadata(metadata_path: Path, timeout_seconds: int = 600) -
     raise RuntimeError(f"Timed out waiting for usable metadata at {metadata_path}. Last reason: {last_reason}")
 
 
+def _required_split_metadata_keys(config: dict[str, Any]) -> list[str]:
+    requested_mode = resolve_requested_split_mode(config)
+    if requested_mode == SPLIT_MODE_CV:
+        return ["folds_path"]
+    if requested_mode in {SPLIT_MODE_FIXED, SPLIT_MODE_FULL_TRAIN}:
+        return ["subject_partition_path"]
+    split_cfg = config.get("split", {})
+    if any(key in split_cfg for key in ("train_partition", "train_partitions", "selection_partition", "dev_pool_partitions")):
+        return ["subject_partition_path"]
+    return ["folds_path"]
+
+
 def _load_metadata_or_build(config_path: str | Path, config: dict[str, Any], config_overrides: list[str] | None = None) -> dict[str, Any]:
     metadata_path = resolve_project_path(Path(config["output_dirs"]["split_dir"]) / f"{config['dataset']}_manifest_metadata.json")
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     if metadata_path.exists():
         metadata = resolve_metadata_paths(read_json(metadata_path))
         usable, reason = _metadata_artifacts_are_usable(metadata)
+        missing_split_keys = [key for key in _required_split_metadata_keys(config) if not metadata.get(key)]
+        if usable and missing_split_keys:
+            usable = False
+            reason = f"split_metadata_missing:{','.join(missing_split_keys)}"
         if usable:
             return metadata
         LOGGER.warning("Refreshing stale metadata for %s: %s", config["dataset"], reason)
@@ -124,34 +150,64 @@ def _load_metadata_or_build(config_path: str | Path, config: dict[str, Any], con
     return _wait_for_usable_metadata(metadata_path)
 
 
-def _resolve_outer_partitions(config: dict[str, Any], metadata: dict[str, Any], fold: int) -> dict[str, list[str]]:
-    if metadata.get("subject_partition_path"):
-        partition_rows = read_json(metadata["subject_partition_path"])
-        train_partitions_cfg = config["split"].get("train_partitions")
-        if train_partitions_cfg:
-            train_partitions = {str(item) for item in train_partitions_cfg}
-        else:
-            train_partitions = {str(config["split"]["train_partition"])}
-        selection_partition = str(config["split"].get("selection_partition", "")).strip()
-        final_eval_partition = str(config["split"]["final_eval_partition"])
-        outer_train_subject_ids = sorted([row["subject_id"] for row in partition_rows if row["partition"] in train_partitions])
-        selection_subject_ids = sorted(
-            [row["subject_id"] for row in partition_rows if selection_partition and row["partition"] == selection_partition]
-        )
-        final_eval_subject_ids = sorted([row["subject_id"] for row in partition_rows if row["partition"] == final_eval_partition])
-        payload = {
-            "outer_train_subject_ids": outer_train_subject_ids,
-            "final_eval_subject_ids": final_eval_subject_ids,
-        }
-        if selection_partition:
-            payload["selection_subject_ids"] = selection_subject_ids
-        return payload
-    folds = read_json(metadata["folds_path"])
-    fold_payload = folds[str(fold)] if str(fold) in folds else folds[fold]
+def _load_subject_partition_rows(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    if not metadata.get("subject_partition_path"):
+        raise ValueError("Split metadata does not include subject_partition_path.")
+    return read_json(metadata["subject_partition_path"])
+
+
+def _resolve_fixed_outer_partitions(config: dict[str, Any], metadata: dict[str, Any]) -> dict[str, list[str]]:
+    partition_rows = _load_subject_partition_rows(metadata)
+    train_partitions_cfg = config["split"].get("train_partitions")
+    if train_partitions_cfg:
+        train_partitions = [str(item) for item in train_partitions_cfg]
+    else:
+        train_partitions = [str(config["split"]["train_partition"])]
+    selection_partition = str(config["split"].get("selection_partition", "")).strip()
+    final_eval_partition = str(config["split"]["final_eval_partition"])
+    payload = {
+        "outer_train_subject_ids": subject_ids_for_partitions(partition_rows, train_partitions),
+        "final_eval_subject_ids": subject_ids_for_partitions(partition_rows, [final_eval_partition]),
+    }
+    if selection_partition:
+        payload["selection_subject_ids"] = subject_ids_for_partitions(partition_rows, [selection_partition])
+    return payload
+
+
+def _resolve_cv_outer_partitions(metadata: dict[str, Any], fold: int) -> dict[str, list[str]]:
+    fold_payload = read_fold_payload(metadata, fold)
     return {
         "outer_train_subject_ids": sorted(fold_payload["outer_train_subject_ids"]),
         "final_eval_subject_ids": sorted(fold_payload["final_eval_subject_ids"]),
     }
+
+
+def _resolve_full_train_outer_partitions(config: dict[str, Any], metadata: dict[str, Any]) -> dict[str, list[str]]:
+    partition_rows = _load_subject_partition_rows(metadata)
+    final_eval_partition = str(config["split"]["final_eval_partition"])
+    train_subject_ids = subject_ids_for_partitions(partition_rows, resolve_dev_pool_partitions(config))
+    final_eval_subject_ids = subject_ids_for_partitions(partition_rows, [final_eval_partition])
+    overlap = sorted(set(train_subject_ids).intersection(final_eval_subject_ids))
+    if overlap:
+        raise ValueError(
+            "split.mode=full_train requires dev_pool_partitions to be disjoint from final_eval_partition. "
+            f"Overlap detected with final_eval_partition={final_eval_partition!r}: {overlap[:10]}"
+        )
+    return {
+        "outer_train_subject_ids": train_subject_ids,
+        "final_eval_subject_ids": final_eval_subject_ids,
+    }
+
+
+def _resolve_outer_partitions(config: dict[str, Any], metadata: dict[str, Any], fold: int) -> dict[str, list[str]]:
+    split_mode = resolve_split_mode(config, metadata)
+    if split_mode == SPLIT_MODE_FIXED:
+        return _resolve_fixed_outer_partitions(config, metadata)
+    if split_mode == SPLIT_MODE_CV:
+        return _resolve_cv_outer_partitions(metadata, fold)
+    if split_mode == SPLIT_MODE_FULL_TRAIN:
+        return _resolve_full_train_outer_partitions(config, metadata)
+    raise ValueError(f"Unsupported split mode: {split_mode}")
 
 
 def _resolve_training_subject_splits(
@@ -160,15 +216,35 @@ def _resolve_training_subject_splits(
     subject_labels: dict[str, int],
     fold: int,
 ) -> dict[str, Any]:
+    split_mode = resolve_split_mode(config, metadata)
     outer_partitions = _resolve_outer_partitions(config, metadata, fold)
+    if split_mode == SPLIT_MODE_FULL_TRAIN:
+        return {
+            "split_mode": split_mode,
+            "selection_mode": "none",
+            "selection_enabled": False,
+            "uses_inner_split": False,
+            "outer_partitions": outer_partitions,
+            "train_subject_ids": outer_partitions["outer_train_subject_ids"],
+            "selection_subject_ids": [],
+            "final_eval_subject_ids": outer_partitions["final_eval_subject_ids"],
+            "train_split_name": "train_full",
+            "selection_split_name": "none",
+            "final_eval_split_name": str(config["split"]["final_eval_partition"]),
+            "selection_log_dir_name": "selection_disabled",
+        }
+
     selection_partition = str(config["split"].get("selection_partition", "")).strip()
-    if selection_partition:
+    if split_mode == SPLIT_MODE_FIXED and selection_partition:
         selection_subject_ids = outer_partitions.get("selection_subject_ids") or []
         if not selection_subject_ids:
             raise ValueError(
                 "split.selection_partition was configured, but no subject ids were resolved for that partition."
             )
         return {
+            "split_mode": split_mode,
+            "selection_mode": "fixed_partition",
+            "selection_enabled": True,
             "uses_inner_split": False,
             "outer_partitions": outer_partitions,
             "train_subject_ids": outer_partitions["outer_train_subject_ids"],
@@ -187,6 +263,9 @@ def _resolve_training_subject_splits(
         val_ratio=float(config["split"]["inner_val_ratio"]),
     )
     return {
+        "split_mode": split_mode,
+        "selection_mode": "inner_split",
+        "selection_enabled": True,
         "uses_inner_split": True,
         "outer_partitions": outer_partitions,
         "train_subject_ids": inner_split["train_inner_subject_ids"],
@@ -194,7 +273,7 @@ def _resolve_training_subject_splits(
         "final_eval_subject_ids": outer_partitions["final_eval_subject_ids"],
         "train_split_name": "train_inner",
         "selection_split_name": "val_inner",
-        "final_eval_split_name": "final_eval",
+        "final_eval_split_name": "fold_holdout" if split_mode == SPLIT_MODE_CV else "final_eval",
         "selection_log_dir_name": "inner_val",
     }
 
@@ -392,6 +471,13 @@ def main() -> None:
     manifest_rows = load_manifest_rows(metadata["manifest_path"])
     subject_labels = build_subject_label_map(manifest_rows)
     partition_plan = _resolve_training_subject_splits(config, metadata, subject_labels, args.fold)
+    split_mode = str(partition_plan["split_mode"])
+    selection_enabled = bool(partition_plan["selection_enabled"])
+    active_split_metadata_path = (
+        metadata.get("folds_path")
+        if split_mode == SPLIT_MODE_CV
+        else metadata.get("subject_partition_path") or metadata.get("folds_path")
+    )
 
     run_root = Path(config["output_dirs"]["run_root"]) / args.run_name / f"fold_{args.fold}"
     logs_dir = ensure_dir(run_root / "logs")
@@ -419,12 +505,14 @@ def main() -> None:
         partition_name=partition_plan["train_split_name"],
         truncation_log_path=logs_dir / "train_truncation.jsonl",
     )
-    selection_examples = build_examples(
-        filter_rows_by_subjects(manifest_rows, partition_plan["selection_subject_ids"]),
-        config,
-        partition_name=partition_plan["selection_split_name"],
-        truncation_log_path=logs_dir / "val_truncation.jsonl",
-    )
+    selection_examples: list[dict[str, Any]] = []
+    if selection_enabled:
+        selection_examples = build_examples(
+            filter_rows_by_subjects(manifest_rows, partition_plan["selection_subject_ids"]),
+            config,
+            partition_name=partition_plan["selection_split_name"],
+            truncation_log_path=logs_dir / "val_truncation.jsonl",
+        )
     final_eval_examples = build_examples(
         filter_rows_by_subjects(manifest_rows, partition_plan["final_eval_subject_ids"]),
         config,
@@ -433,9 +521,9 @@ def main() -> None:
     )
     sample_count_payload = {
         partition_plan["train_split_name"]: _sample_partition_counts(train_examples),
-        partition_plan["selection_split_name"]: _sample_partition_counts(selection_examples),
         partition_plan["final_eval_split_name"]: _sample_partition_counts(final_eval_examples),
     }
+    sample_count_payload[partition_plan["selection_split_name"]] = _sample_partition_counts(selection_examples)
     save_json(sample_count_payload, logs_dir / "sample_partition_counts.json")
     for partition_name, counts in sample_count_payload.items():
         LOGGER.info(
@@ -451,11 +539,13 @@ def main() -> None:
         processor_sampling_rate=processor.feature_extractor.sampling_rate,
         silence_audio=bool(config["data"].get("silence_audio", False)),
     )
-    selection_dataset = AudioTextDataset(
-        selection_examples,
-        processor_sampling_rate=processor.feature_extractor.sampling_rate,
-        silence_audio=bool(config["data"].get("silence_audio", False)),
-    )
+    selection_dataset = None
+    if selection_enabled:
+        selection_dataset = AudioTextDataset(
+            selection_examples,
+            processor_sampling_rate=processor.feature_extractor.sampling_rate,
+            silence_audio=bool(config["data"].get("silence_audio", False)),
+        )
     collator = Qwen2AudioSFTCollator(processor=processor, debug=args.label_mask_debug)
     if args.label_mask_debug:
         _emit_label_mask_debug(train_dataset, collator, processor, logs_dir)
@@ -467,13 +557,15 @@ def main() -> None:
         num_workers=int(config["training"]["dataloader_num_workers"]),
         collate_fn=collator,
     )
-    selection_loss_loader = DataLoader(
-        selection_dataset,
-        batch_size=int(config["training"]["per_device_eval_batch_size"]),
-        shuffle=False,
-        num_workers=int(config["training"]["dataloader_num_workers"]),
-        collate_fn=Qwen2AudioSFTCollator(processor=processor, debug=False),
-    )
+    selection_loss_loader = None
+    if selection_enabled and selection_dataset is not None:
+        selection_loss_loader = DataLoader(
+            selection_dataset,
+            batch_size=int(config["training"]["per_device_eval_batch_size"]),
+            shuffle=False,
+            num_workers=int(config["training"]["dataloader_num_workers"]),
+            collate_fn=Qwen2AudioSFTCollator(processor=processor, debug=False),
+        )
 
     model = load_model_for_training(model_name_or_path, config)
     lora_layer_selection = resolved_lora_layer_selection(model)
@@ -510,22 +602,24 @@ def main() -> None:
         "resolved_model_name_or_path": model_name_or_path,
         "manifest_path": metadata["manifest_path"],
         "manifest_hash": metadata["manifest_hash"],
-        "split_metadata_path": metadata.get("folds_path") or metadata.get("subject_partition_path"),
-        "split_metadata_hash": sha256_file(metadata.get("folds_path") or metadata.get("subject_partition_path")),
+        "split_metadata_path": active_split_metadata_path,
+        "split_metadata_hash": sha256_file(active_split_metadata_path),
+        "split_mode": split_mode,
         "fold": int(args.fold),
         "save_strategy": args.save_strategy,
         "selection_protocol": {
-            "metric_name": "selection_positive_f1",
+            "mode": partition_plan["selection_mode"],
+            "metric_name": "selection_positive_f1" if selection_enabled else None,
             "selection_split_name": partition_plan["selection_split_name"],
             "selection_subject_count": len(partition_plan["selection_subject_ids"]),
             "selection_sample_count": len(selection_examples),
-            "selection_prediction_backend": sample_prediction_mode,
-            "selection_aggregation_level": aggregation_level,
-            "selection_evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
+            "selection_prediction_backend": sample_prediction_mode if selection_enabled else None,
+            "selection_aggregation_level": aggregation_level if selection_enabled else None,
+            "selection_evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode) if selection_enabled else None,
         },
         "final_eval_protocol": {
             "final_eval_split_name": partition_plan["final_eval_split_name"],
-            "final_eval_partition": str(config["split"]["final_eval_partition"]),
+            "final_eval_partition": None if split_mode == SPLIT_MODE_CV else str(config["split"]["final_eval_partition"]),
             "final_eval_subject_count": len(partition_plan["final_eval_subject_ids"]),
             "final_eval_sample_count": len(final_eval_examples),
             "final_eval_aggregation_level": aggregation_level,
@@ -535,9 +629,12 @@ def main() -> None:
     if accelerator.is_main_process:
         save_yaml(run_config, run_root / "run_config.yaml")
 
-    best_metric = float("-inf")
-    best_epoch = -1
+    best_metric: float | None = float("-inf") if selection_enabled else None
+    best_epoch = -1 if selection_enabled else 0
     early_stop_cfg = _resolve_early_stopping(config)
+    if not selection_enabled and early_stop_cfg["enabled"]:
+        LOGGER.info("Disabling early stopping because split.mode=%s does not create a selection split.", split_mode)
+        early_stop_cfg["enabled"] = False
     early_stop_best = float("inf") if early_stop_cfg["mode"] == "min" else float("-inf")
     early_stop_best_epoch = -1
     early_stop_bad_epochs = 0
@@ -565,95 +662,105 @@ def main() -> None:
         accelerator.wait_for_everyone()
         if accelerator.is_main_process:
             unwrapped = accelerator.unwrap_model(model)
-            selection_eval_dir = ensure_dir(logs_dir / f"{partition_plan['selection_log_dir_name']}_epoch_{epoch}")
-            selection_loss = _compute_dataset_loss(unwrapped, selection_loss_loader)
-            LOGGER.info(
-                "Selection evaluation split=%s | backend=%s | aggregation_level=%s | protocol=%s",
-                partition_plan["selection_split_name"],
-                sample_prediction_mode,
-                aggregation_level,
-                evaluation_protocol_name(sample_prediction_mode),
-            )
-            metrics = evaluate_examples(
-                unwrapped,
-                processor,
-                selection_examples,
-                config,
-                selection_eval_dir,
-                checkpoint_name=f"epoch_{epoch}",
-                sample_prediction_mode=sample_prediction_mode,
-            )
-            headline_metrics = metrics["backend_results"][sample_prediction_mode]["headline_metrics"]
-            metric_value = float(headline_metrics["positive_f1"])
-            metric_values = _selection_metric_values(metric_value, headline_metrics, selection_loss)
-            history_row = {
-                "epoch": epoch,
-                "train_loss": sum(epoch_losses) / max(1, len(epoch_losses)),
-                "selection_split_name": partition_plan["selection_split_name"],
-                "selection_loss": selection_loss,
-                "selection_prediction_backend": sample_prediction_mode,
-                "selection_aggregation_level": aggregation_level,
-                "selection_evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
-                "inner_val_loss": selection_loss,
-                "inner_val_prediction_backend": sample_prediction_mode,
-                "inner_val_aggregation_level": aggregation_level,
-                "inner_val_evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
-                **metric_values,
-            }
-            history.append(history_row)
-            LOGGER.info(
-                "Selection epoch=%s | split=%s | aggregation_level=%s | loss=%.6f ACC=%.6f F1=%.6f Precision=%.6f Recall=%.6f",
-                epoch,
-                partition_plan["selection_split_name"],
-                aggregation_level,
-                selection_loss,
-                float(headline_metrics["accuracy"]),
-                float(headline_metrics["positive_f1"]),
-                float(headline_metrics["precision"]),
-                float(headline_metrics["recall"]),
-            )
-            if metric_value > best_metric:
-                best_metric = metric_value
-                best_epoch = epoch
-                if _save_best_checkpoint(args.save_strategy):
-                    if best_dir.exists():
-                        shutil.rmtree(best_dir)
-                    save_adapter_and_processor(unwrapped, processor, best_dir, config=config)
-            _write_trial_progress(
-                args.trial_progress_file,
-                epoch=epoch,
-                metric_name="selection_positive_f1",
-                metric_value=metric_value,
-                best_metric=best_metric,
-                best_epoch=best_epoch,
-                run_root=run_root,
-                config_overrides=args.config_overrides,
-            )
-            if early_stop_cfg["enabled"]:
-                monitor_value = float(metric_values[early_stop_cfg["metric"]])
-                if _metric_improved(
-                    monitor_value,
-                    early_stop_best,
-                    early_stop_cfg["mode"],
-                    early_stop_cfg["min_delta"],
-                ):
-                    early_stop_best = monitor_value
-                    early_stop_best_epoch = epoch
-                    early_stop_bad_epochs = 0
-                else:
-                    early_stop_bad_epochs += 1
+            if selection_enabled:
+                selection_eval_dir = ensure_dir(logs_dir / f"{partition_plan['selection_log_dir_name']}_epoch_{epoch}")
+                selection_loss = _compute_dataset_loss(unwrapped, selection_loss_loader)
                 LOGGER.info(
-                    "Early stopping monitor=%s mode=%s epoch=%s value=%.6f best=%.6f best_epoch=%s bad_epochs=%s patience=%s",
-                    early_stop_cfg["metric"],
-                    early_stop_cfg["mode"],
-                    epoch,
-                    monitor_value,
-                    early_stop_best,
-                    early_stop_best_epoch,
-                    early_stop_bad_epochs,
-                    early_stop_cfg["patience"],
+                    "Selection evaluation split=%s | backend=%s | aggregation_level=%s | protocol=%s",
+                    partition_plan["selection_split_name"],
+                    sample_prediction_mode,
+                    aggregation_level,
+                    evaluation_protocol_name(sample_prediction_mode),
                 )
-            LOGGER.info("Finished epoch=%s | best_epoch=%s best_metric=%.6f", epoch, best_epoch, best_metric)
+                metrics = evaluate_examples(
+                    unwrapped,
+                    processor,
+                    selection_examples,
+                    config,
+                    selection_eval_dir,
+                    checkpoint_name=f"epoch_{epoch}",
+                    sample_prediction_mode=sample_prediction_mode,
+                )
+                headline_metrics = metrics["backend_results"][sample_prediction_mode]["headline_metrics"]
+                metric_value = float(headline_metrics["positive_f1"])
+                metric_values = _selection_metric_values(metric_value, headline_metrics, selection_loss)
+                history_row = {
+                    "epoch": epoch,
+                    "train_loss": sum(epoch_losses) / max(1, len(epoch_losses)),
+                    "selection_split_name": partition_plan["selection_split_name"],
+                    "selection_loss": selection_loss,
+                    "selection_prediction_backend": sample_prediction_mode,
+                    "selection_aggregation_level": aggregation_level,
+                    "selection_evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
+                    "inner_val_loss": selection_loss,
+                    "inner_val_prediction_backend": sample_prediction_mode,
+                    "inner_val_aggregation_level": aggregation_level,
+                    "inner_val_evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
+                    **metric_values,
+                }
+                history.append(history_row)
+                LOGGER.info(
+                    "Selection epoch=%s | split=%s | aggregation_level=%s | loss=%.6f ACC=%.6f F1=%.6f Precision=%.6f Recall=%.6f",
+                    epoch,
+                    partition_plan["selection_split_name"],
+                    aggregation_level,
+                    selection_loss,
+                    float(headline_metrics["accuracy"]),
+                    float(headline_metrics["positive_f1"]),
+                    float(headline_metrics["precision"]),
+                    float(headline_metrics["recall"]),
+                )
+                if metric_value > best_metric:
+                    best_metric = metric_value
+                    best_epoch = epoch
+                    if _save_best_checkpoint(args.save_strategy):
+                        if best_dir.exists():
+                            shutil.rmtree(best_dir)
+                        save_adapter_and_processor(unwrapped, processor, best_dir, config=config)
+                _write_trial_progress(
+                    args.trial_progress_file,
+                    epoch=epoch,
+                    metric_name="selection_positive_f1",
+                    metric_value=metric_value,
+                    best_metric=best_metric,
+                    best_epoch=best_epoch,
+                    run_root=run_root,
+                    config_overrides=args.config_overrides,
+                )
+                if early_stop_cfg["enabled"]:
+                    monitor_value = float(metric_values[early_stop_cfg["metric"]])
+                    if _metric_improved(
+                        monitor_value,
+                        early_stop_best,
+                        early_stop_cfg["mode"],
+                        early_stop_cfg["min_delta"],
+                    ):
+                        early_stop_best = monitor_value
+                        early_stop_best_epoch = epoch
+                        early_stop_bad_epochs = 0
+                    else:
+                        early_stop_bad_epochs += 1
+                    LOGGER.info(
+                        "Early stopping monitor=%s mode=%s epoch=%s value=%.6f best=%.6f best_epoch=%s bad_epochs=%s patience=%s",
+                        early_stop_cfg["metric"],
+                        early_stop_cfg["mode"],
+                        epoch,
+                        monitor_value,
+                        early_stop_best,
+                        early_stop_best_epoch,
+                        early_stop_bad_epochs,
+                        early_stop_cfg["patience"],
+                    )
+                LOGGER.info("Finished epoch=%s | best_epoch=%s best_metric=%.6f", epoch, best_epoch, best_metric)
+            else:
+                history.append(
+                    {
+                        "epoch": epoch,
+                        "train_loss": sum(epoch_losses) / max(1, len(epoch_losses)),
+                        "selection_protocol_mode": "none",
+                    }
+                )
+                LOGGER.info("Finished epoch=%s | selection disabled | train_loss=%.6f", epoch, sum(epoch_losses) / max(1, len(epoch_losses)))
         stop_training_tensor = torch.tensor(0, device=accelerator.device, dtype=torch.int32)
         if accelerator.is_main_process and early_stop_cfg["enabled"] and early_stop_bad_epochs >= early_stop_cfg["patience"]:
             stopped_early = True
@@ -674,12 +781,20 @@ def main() -> None:
         unwrapped = accelerator.unwrap_model(model)
         completed_epochs = len(history)
         save_json(history, logs_dir / "training_history.json")
-        if _save_last_checkpoint(args.save_strategy):
+        if selection_enabled and _save_last_checkpoint(args.save_strategy):
             if last_dir.exists():
                 shutil.rmtree(last_dir)
             save_adapter_and_processor(unwrapped, processor, last_dir, config=config)
+        if not selection_enabled:
+            if last_dir.exists():
+                shutil.rmtree(last_dir)
+            save_adapter_and_processor(unwrapped, processor, last_dir, config=config)
+            if best_dir.exists():
+                shutil.rmtree(best_dir)
+            shutil.copytree(last_dir, best_dir)
+            best_epoch = completed_epochs
         run_final_eval_in_train = bool(config["training"].get("run_final_eval_in_train", False))
-        if run_final_eval_in_train and not _save_best_checkpoint(args.save_strategy):
+        if selection_enabled and run_final_eval_in_train and not _save_best_checkpoint(args.save_strategy):
             LOGGER.info(
                 "Skipping final held-out evaluation inside training because save_strategy=%s does not keep best checkpoints.",
                 args.save_strategy,
@@ -704,7 +819,7 @@ def main() -> None:
                 checkpoint_name="last_checkpoint",
                 sample_prediction_mode=sample_prediction_mode,
             )
-            if best_epoch == completed_epochs:
+            if not selection_enabled or best_epoch == completed_epochs:
                 best_metrics = last_metrics
                 if not (eval_dir / "best_checkpoint").exists():
                     shutil.copytree(eval_dir / "last_checkpoint", eval_dir / "best_checkpoint")
@@ -729,6 +844,7 @@ def main() -> None:
 
             save_json(
                 {
+                    "split_mode": split_mode,
                     "prediction_backend": sample_prediction_mode,
                     "aggregation_level": aggregation_level,
                     "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
@@ -752,12 +868,13 @@ def main() -> None:
             args.trial_result_file,
             {
                 "status": "completed",
+                "split_mode": split_mode,
                 "fold": int(args.fold),
                 "run_name": args.run_name,
                 "run_root": str(run_root),
                 "save_strategy": args.save_strategy,
-                "metric_name": "selection_positive_f1",
-                "best_metric": float(best_metric),
+                "metric_name": "selection_positive_f1" if selection_enabled else None,
+                "best_metric": None if best_metric is None else float(best_metric),
                 "best_epoch": int(best_epoch),
                 "completed_epochs": int(completed_epochs),
                 "history_path": str(logs_dir / "training_history.json"),

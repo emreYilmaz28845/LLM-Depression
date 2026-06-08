@@ -28,8 +28,13 @@ data:
   transcript_max_chars: 4000
   allow_empty_transcript: false
 split:
+  mode: fixed
   train_partition: train
   selection_partition: val
+  dev_pool_partitions:
+    - train
+    - val
+  outer_folds: 5
   final_eval_partition: test
   inner_val_ratio: 0.2
   seed: 1337

@@ -8,6 +8,12 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+from src.data.split_utils import (
+    build_partition_scoped_stratified_folds,
+    resolve_dev_pool_partitions,
+    resolve_outer_fold_count,
+    subject_fold_report,
+)
 from src.data.validation import is_quarantined_missing
 from src.utils import get_logger, label_text_from_int
 
@@ -422,21 +428,58 @@ def _build_legacy_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -
 def build_daic_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> dict[str, Any]:
     base_dir = Path(config["dataset_root"])
     manifest_variant = str(config.get("manifest_variant", "")).strip().lower()
+    result: dict[str, Any]
     if manifest_variant in {PREPROCESSED_TRAIN_DEV_VARIANT, PREPROCESSED_FULL_TRANSCRIPT_ALL_SPLITS_VARIANT}:
         LOGGER.info("Building DAIC manifest from preprocessed train/dev/test full-transcript layout: %s", base_dir)
-        return _build_preprocessed_manifest(config, quarantine)
-    if manifest_variant == PREPROCESSED_TEST_FULL_TRANSCRIPT_VARIANT:
+        result = _build_preprocessed_manifest(config, quarantine)
+    elif manifest_variant == PREPROCESSED_TEST_FULL_TRANSCRIPT_VARIANT:
         LOGGER.info("Building DAIC manifest from preprocessed test layout with repeated full transcripts: %s", base_dir)
-        return _build_preprocessed_test_full_transcript_manifest(config, quarantine)
-    if manifest_variant:
+        result = _build_preprocessed_test_full_transcript_manifest(config, quarantine)
+    elif manifest_variant:
         raise ValueError(
             f"Unsupported DAIC manifest_variant={manifest_variant!r}. "
             f"Expected one of: {PREPROCESSED_TRAIN_DEV_VARIANT!r}, "
             f"{PREPROCESSED_FULL_TRANSCRIPT_ALL_SPLITS_VARIANT!r}, "
             f"{PREPROCESSED_TEST_FULL_TRANSCRIPT_VARIANT!r}, or empty for auto-detect."
         )
-    if (base_dir / "train_preprocessing_summary.csv").exists():
+    elif (base_dir / "train_preprocessing_summary.csv").exists():
         LOGGER.info("Building DAIC manifest from preprocessed full-transcript all-splits layout: %s", base_dir)
-        return _build_preprocessed_manifest(config, quarantine)
-    LOGGER.info("Building DAIC manifest from legacy layout: %s", base_dir)
-    return _build_legacy_manifest(config, quarantine)
+        result = _build_preprocessed_manifest(config, quarantine)
+    else:
+        LOGGER.info("Building DAIC manifest from legacy layout: %s", base_dir)
+        result = _build_legacy_manifest(config, quarantine)
+
+    partition_rows = result.get("subject_partition_rows") or []
+    if not partition_rows:
+        return result
+    dev_pool_partitions = resolve_dev_pool_partitions(config)
+    dev_partition_set = set(dev_pool_partitions)
+    dev_subject_ids = sorted([row["subject_id"] for row in partition_rows if row["partition"] in dev_partition_set])
+    if not dev_subject_ids:
+        LOGGER.info(
+            "Skipping DAIC CV fold generation because no subjects were found in development-pool partitions: %s",
+            dev_pool_partitions,
+        )
+        return result
+    final_eval_partition = str(config["split"]["final_eval_partition"])
+    final_eval_subject_ids = sorted([row["subject_id"] for row in partition_rows if row["partition"] == final_eval_partition])
+    overlap = sorted(set(dev_subject_ids).intersection(final_eval_subject_ids))
+    if overlap:
+        LOGGER.warning(
+            "Skipping DAIC CV fold generation because development-pool partitions %s overlap final_eval_partition=%s.",
+            dev_pool_partitions,
+            final_eval_partition,
+        )
+        return result
+    subject_labels = {row["subject_id"]: int(row["label"]) for row in partition_rows}
+    folds = build_partition_scoped_stratified_folds(
+        partition_rows=partition_rows,
+        subject_labels=subject_labels,
+        dev_pool_partitions=dev_pool_partitions,
+        final_eval_partition=final_eval_partition,
+        n_splits=resolve_outer_fold_count(config),
+        seed=int(config["split"]["seed"]),
+    )
+    result["folds"] = folds
+    result["fold_report"] = subject_fold_report(folds, subject_labels)
+    return result

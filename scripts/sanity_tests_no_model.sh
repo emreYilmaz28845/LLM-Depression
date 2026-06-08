@@ -24,6 +24,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from src.evaluate import _resolve_final_eval_subject_ids
+from src.hpo import validate_hpo_split_mode
 from src.train import _resolve_outer_partitions, _resolve_training_subject_splits
 from src.utils import load_yaml_with_overrides, resolve_metadata_paths
 
@@ -34,9 +35,13 @@ required = [
     root / "outputs/manifests/cmdc_manifest.jsonl",
     root / "outputs/manifests/eatd_manifest.jsonl",
     root / "outputs/splits/daic_join_audit.csv",
+    root / "outputs/splits/daic_folds.json",
+    root / "outputs/splits/daic_fold_report.json",
     root / "outputs/splits/daic_subject_partitions.json",
     root / "outputs/splits/daic_manifest_metadata.json",
     root / "outputs/splits/edaic_join_audit.csv",
+    root / "outputs/splits/edaic_folds.json",
+    root / "outputs/splits/edaic_fold_report.json",
     root / "outputs/splits/edaic_subject_partitions.json",
     root / "outputs/splits/edaic_manifest_metadata.json",
     root / "outputs/splits/cmdc_fold_report.json",
@@ -45,6 +50,25 @@ required = [
 missing = [str(path) for path in required if not path.exists()]
 if missing:
     raise SystemExit(f"Missing expected outputs: {missing}")
+
+def assert_fold_coverage(label, folds, expected_subject_ids, forbidden_subject_ids):
+    expected_subject_set = set(expected_subject_ids)
+    forbidden_subject_set = set(forbidden_subject_ids)
+    heldout_coverage = set()
+    for fold_key, payload in sorted(folds.items(), key=lambda item: int(item[0])):
+        heldout_ids = set(payload["final_eval_subject_ids"])
+        outer_train_ids = set(payload["outer_train_subject_ids"])
+        if heldout_ids & forbidden_subject_set:
+            raise SystemExit(f"{label} fold {fold_key} unexpectedly includes forbidden subjects.")
+        if heldout_ids & heldout_coverage:
+            raise SystemExit(f"{label} held-out fold overlap detected for fold {fold_key}.")
+        if heldout_ids & outer_train_ids:
+            raise SystemExit(f"{label} fold {fold_key} overlaps outer train and held-out subjects.")
+        if heldout_ids | outer_train_ids != expected_subject_set:
+            raise SystemExit(f"{label} fold {fold_key} does not partition the expected development pool.")
+        heldout_coverage.update(heldout_ids)
+    if heldout_coverage != expected_subject_set:
+        raise SystemExit(f"{label} held-out fold coverage mismatch.")
 
 daic_config_path = root / "configs/daic_audio_text.yaml"
 daic_config = load_yaml_with_overrides(daic_config_path, [])
@@ -107,6 +131,15 @@ for row in daic_subject_partition_rows:
 daic_overlaps = {subject_id: sorted(parts) for subject_id, parts in daic_partitions_by_subject.items() if len(parts) > 1}
 if daic_overlaps:
     raise SystemExit(f"DAIC subject partition overlap detected: {list(daic_overlaps.items())[:5]}")
+daic_dev_subject_ids = sorted(
+    [row["subject_id"] for row in daic_subject_partition_rows if row["partition"] in {"train", "val"}]
+)
+daic_test_subject_ids = sorted([row["subject_id"] for row in daic_subject_partition_rows if row["partition"] == "test"])
+daic_folds = json.loads((root / "outputs/splits/daic_folds.json").read_text(encoding="utf-8"))
+daic_fold_report = json.loads((root / "outputs/splits/daic_fold_report.json").read_text(encoding="utf-8"))
+if len(daic_fold_report) != 5:
+    raise SystemExit(f"Unexpected DAIC fold report length: {len(daic_fold_report)}")
+assert_fold_coverage("DAIC", daic_folds, daic_dev_subject_ids, daic_test_subject_ids)
 
 with (root / "outputs/splits/daic_join_audit.csv").open("r", encoding="utf-8", newline="") as handle:
     daic_join_audit_rows = list(csv.DictReader(handle))
@@ -166,6 +199,41 @@ if len(daic_final_eval_subject_ids) != expected_daic_subject_partition_counts["t
         f"Unexpected DAIC final eval partition resolution from evaluate.py: {len(daic_final_eval_subject_ids)}"
     )
 
+daic_cv_config = load_yaml_with_overrides(daic_config_path, ["split.mode=cv"])
+daic_cv_training_plan = _resolve_training_subject_splits(
+    daic_cv_config,
+    daic_metadata,
+    {row["subject_id"]: int(row["label"]) for row in daic_manifest_rows},
+    0,
+)
+expected_daic_cv_holdout_ids = sorted(daic_folds["0"]["final_eval_subject_ids"])
+if not daic_cv_training_plan["uses_inner_split"]:
+    raise SystemExit("DAIC CV mode unexpectedly skipped the deterministic inner split.")
+if daic_cv_training_plan["final_eval_subject_ids"] != expected_daic_cv_holdout_ids:
+    raise SystemExit("DAIC CV mode final-eval subjects do not match fold_0 held-out ids.")
+if set(daic_cv_training_plan["train_subject_ids"]) & set(expected_daic_cv_holdout_ids):
+    raise SystemExit("DAIC CV mode leaked held-out fold subjects into train_inner.")
+if set(daic_cv_training_plan["selection_subject_ids"]) & set(expected_daic_cv_holdout_ids):
+    raise SystemExit("DAIC CV mode leaked held-out fold subjects into val_inner.")
+if _resolve_final_eval_subject_ids(daic_cv_config, daic_metadata, 0) != expected_daic_cv_holdout_ids:
+    raise SystemExit("DAIC CV mode evaluate.py resolution does not match fold_0 held-out ids.")
+
+daic_full_train_config = load_yaml_with_overrides(daic_config_path, ["split.mode=full_train"])
+daic_full_train_plan = _resolve_training_subject_splits(
+    daic_full_train_config,
+    daic_metadata,
+    {row["subject_id"]: int(row["label"]) for row in daic_manifest_rows},
+    0,
+)
+if daic_full_train_plan["selection_subject_ids"]:
+    raise SystemExit("DAIC full_train mode unexpectedly created selection subjects.")
+if len(daic_full_train_plan["train_subject_ids"]) != len(daic_dev_subject_ids):
+    raise SystemExit("DAIC full_train mode did not train on the full pooled train+val subject pool.")
+if daic_full_train_plan["final_eval_subject_ids"] != daic_test_subject_ids:
+    raise SystemExit("DAIC full_train mode did not keep official test as the final eval split.")
+if _resolve_final_eval_subject_ids(daic_full_train_config, daic_metadata, 0) != daic_test_subject_ids:
+    raise SystemExit("DAIC full_train evaluate.py resolution did not keep official test.")
+
 edaic_manifest_rows = [
     json.loads(line)
     for line in (root / "outputs/manifests/edaic_manifest.jsonl").read_text(encoding="utf-8").splitlines()
@@ -201,6 +269,13 @@ for row in subject_partition_rows:
 overlaps = {subject_id: sorted(parts) for subject_id, parts in partitions_by_subject.items() if len(parts) > 1}
 if overlaps:
     raise SystemExit(f"EDAIC subject partition overlap detected: {list(overlaps.items())[:5]}")
+edaic_dev_subject_ids = sorted([row["subject_id"] for row in subject_partition_rows if row["partition"] in {"train", "val"}])
+edaic_test_subject_ids = sorted([row["subject_id"] for row in subject_partition_rows if row["partition"] == "test"])
+edaic_folds = json.loads((root / "outputs/splits/edaic_folds.json").read_text(encoding="utf-8"))
+edaic_fold_report = json.loads((root / "outputs/splits/edaic_fold_report.json").read_text(encoding="utf-8"))
+if len(edaic_fold_report) != 5:
+    raise SystemExit(f"Unexpected EDAIC fold report length: {len(edaic_fold_report)}")
+assert_fold_coverage("EDAIC", edaic_folds, edaic_dev_subject_ids, edaic_test_subject_ids)
 
 with (root / "outputs/splits/edaic_join_audit.csv").open("r", encoding="utf-8", newline="") as handle:
     join_audit_rows = list(csv.DictReader(handle))
@@ -244,6 +319,58 @@ if len(outer_partitions["final_eval_subject_ids"]) != 56:
         f"Unexpected EDAIC final-eval subject count from train.py logic: "
         f"{len(outer_partitions['final_eval_subject_ids'])}"
     )
+edaic_training_plan = _resolve_training_subject_splits(
+    edaic_config,
+    edaic_metadata,
+    {row["subject_id"]: int(row["label"]) for row in edaic_manifest_rows},
+    0,
+)
+if not edaic_training_plan["uses_inner_split"]:
+    raise SystemExit("EDAIC fixed mode unexpectedly skipped the deterministic inner split.")
+if len(edaic_training_plan["selection_subject_ids"]) == 0:
+    raise SystemExit("EDAIC fixed mode unexpectedly produced an empty inner validation split.")
+
+edaic_cv_config = load_yaml_with_overrides(edaic_config_path, ["split.mode=cv"])
+edaic_cv_training_plan = _resolve_training_subject_splits(
+    edaic_cv_config,
+    edaic_metadata,
+    {row["subject_id"]: int(row["label"]) for row in edaic_manifest_rows},
+    0,
+)
+expected_edaic_cv_holdout_ids = sorted(edaic_folds["0"]["final_eval_subject_ids"])
+if not edaic_cv_training_plan["uses_inner_split"]:
+    raise SystemExit("EDAIC CV mode unexpectedly skipped the deterministic inner split.")
+if edaic_cv_training_plan["final_eval_subject_ids"] != expected_edaic_cv_holdout_ids:
+    raise SystemExit("EDAIC CV mode final-eval subjects do not match fold_0 held-out ids.")
+if set(edaic_cv_training_plan["train_subject_ids"]) & set(expected_edaic_cv_holdout_ids):
+    raise SystemExit("EDAIC CV mode leaked held-out fold subjects into train_inner.")
+if set(edaic_cv_training_plan["selection_subject_ids"]) & set(expected_edaic_cv_holdout_ids):
+    raise SystemExit("EDAIC CV mode leaked held-out fold subjects into val_inner.")
+if _resolve_final_eval_subject_ids(edaic_cv_config, edaic_metadata, 0) != expected_edaic_cv_holdout_ids:
+    raise SystemExit("EDAIC CV mode evaluate.py resolution does not match fold_0 held-out ids.")
+
+edaic_full_train_config = load_yaml_with_overrides(edaic_config_path, ["split.mode=full_train"])
+edaic_full_train_plan = _resolve_training_subject_splits(
+    edaic_full_train_config,
+    edaic_metadata,
+    {row["subject_id"]: int(row["label"]) for row in edaic_manifest_rows},
+    0,
+)
+if edaic_full_train_plan["selection_subject_ids"]:
+    raise SystemExit("EDAIC full_train mode unexpectedly created selection subjects.")
+if len(edaic_full_train_plan["train_subject_ids"]) != len(edaic_dev_subject_ids):
+    raise SystemExit("EDAIC full_train mode did not train on the full pooled train+val subject pool.")
+if edaic_full_train_plan["final_eval_subject_ids"] != edaic_test_subject_ids:
+    raise SystemExit("EDAIC full_train mode did not keep official test as the final eval split.")
+if _resolve_final_eval_subject_ids(edaic_full_train_config, edaic_metadata, 0) != edaic_test_subject_ids:
+    raise SystemExit("EDAIC full_train evaluate.py resolution did not keep official test.")
+
+try:
+    validate_hpo_split_mode(load_yaml_with_overrides(daic_config_path, ["split.mode=full_train"]))
+except ValueError:
+    pass
+else:
+    raise SystemExit("hpo.py did not reject split.mode=full_train.")
 
 print("All expected manifest/split outputs are present.")
 print("DAIC manifest invariants passed.")

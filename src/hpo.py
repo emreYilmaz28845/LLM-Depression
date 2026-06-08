@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import optuna
 
+from src.data.split_utils import SPLIT_MODE_FULL_TRAIN, resolve_split_mode
 from src.utils import (
     configure_logging,
     ensure_dir,
@@ -42,6 +43,12 @@ TRIAL_TABLE_COLUMNS = [
     "max_grad_norm",
     "gradient_accumulation_steps",
 ]
+
+
+def validate_hpo_split_mode(config: dict[str, Any]) -> None:
+    split_mode = resolve_split_mode(config)
+    if split_mode == SPLIT_MODE_FULL_TRAIN:
+        raise ValueError("split.mode=full_train is not supported by hpo.py because HPO requires a selection metric.")
 
 
 def _parse_int_list(raw_value: str) -> list[int]:
@@ -442,6 +449,7 @@ def main() -> None:
     configure_logging()
     args = parse_args()
     config = load_yaml_with_overrides(args.config, args.config_overrides)
+    validate_hpo_split_mode(config)
 
     dataset_name = str(config["dataset"])
     study_name = args.study_name or f"{dataset_name}_fold{args.fold}_optuna"
