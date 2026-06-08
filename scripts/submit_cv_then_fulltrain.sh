@@ -5,21 +5,16 @@ set -euo pipefail
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
 CONFIG="${CONFIG:-$PROJECT_ROOT/configs/edaic_audio_text.yaml}"
 CV_RUN_NAME="${CV_RUN_NAME:-cv_reproduction}"
-FINAL_RUN_NAME="${FINAL_RUN_NAME:-fulltrain_reproduction}"
 FOLDS="${FOLDS:-0 1 2 3 4}"
-FINAL_FOLD="${FINAL_FOLD:-0}"
 CURRENT_STAGE_INDEX="${CURRENT_STAGE_INDEX:-0}"
 CV_EXTRA_TRAIN_ARGS="${CV_EXTRA_TRAIN_ARGS:-}"
 CV_EXTRA_EVAL_ARGS="${CV_EXTRA_EVAL_ARGS:-}"
-FINAL_EXTRA_TRAIN_ARGS="${FINAL_EXTRA_TRAIN_ARGS:-}"
-FINAL_EXTRA_EVAL_ARGS="${FINAL_EXTRA_EVAL_ARGS:-}"
 CV_SUBMIT_BEST_EVAL="${CV_SUBMIT_BEST_EVAL:-1}"
 CV_SUBMIT_LAST_EVAL="${CV_SUBMIT_LAST_EVAL:-0}"
-FINAL_SUBMIT_BEST_EVAL="${FINAL_SUBMIT_BEST_EVAL:-0}"
-FINAL_SUBMIT_LAST_EVAL="${FINAL_SUBMIT_LAST_EVAL:-0}"
 CV_SEQUENTIAL="${CV_SEQUENTIAL:-1}"
 SUBMIT_SCRIPT="${SUBMIT_SCRIPT:-$PROJECT_ROOT/scripts/submit_train_and_eval.sh}"
 CHAIN_RUNNER_SCRIPT="${CHAIN_RUNNER_SCRIPT:-$PROJECT_ROOT/scripts/run_chain_submit_slurm.sh}"
+SUMMARIZE_SCRIPT="${SUMMARIZE_SCRIPT:-$PROJECT_ROOT/src/summarize_runs.py}"
 
 if [ ! -f "$SUBMIT_SCRIPT" ]; then
     echo "Submit helper not found: $SUBMIT_SCRIPT"
@@ -28,6 +23,11 @@ fi
 
 if [ ! -f "$CHAIN_RUNNER_SCRIPT" ]; then
     echo "Chain runner script not found: $CHAIN_RUNNER_SCRIPT"
+    exit 1
+fi
+
+if [ ! -f "$SUMMARIZE_SCRIPT" ]; then
+    echo "Summarize script not found: $SUMMARIZE_SCRIPT"
     exit 1
 fi
 
@@ -51,6 +51,27 @@ extract_job_id() {
     printf '%s\n' "$output" | awk -v pattern="$pattern" '$0 ~ pattern {print $NF; exit}'
 }
 
+resolve_run_root() {
+    local config_path="$1"
+    local run_name="$2"
+    local run_root_rel=""
+    run_root_rel="$(awk '
+      /^output_dirs:/ {in_block=1; next}
+      in_block && /^[^[:space:]]/ {in_block=0}
+      in_block && /^[[:space:]]+run_root:/ {
+        sub(/^[[:space:]]+run_root:[[:space:]]*/, "", $0)
+        print $0
+        exit
+      }
+    ' "$config_path" | tr -d '"' | tr -d "'")"
+    if [ -z "$run_root_rel" ]; then
+        echo "Could not parse output_dirs.run_root from config: $config_path" >&2
+        exit 1
+    fi
+    run_root_rel="${run_root_rel//\$\{PROJECT_ROOT\}/$PROJECT_ROOT}"
+    printf '%s/%s\n' "$run_root_rel" "$run_name"
+}
+
 submit_next_stage() {
     local dependency="$1"
     local next_stage_index="$2"
@@ -58,7 +79,7 @@ submit_next_stage() {
     local next_job_raw=""
     local next_job_id=""
 
-    export_args="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$CONFIG,CV_RUN_NAME=$CV_RUN_NAME,FINAL_RUN_NAME=$FINAL_RUN_NAME,FOLDS=$FOLDS,FINAL_FOLD=$FINAL_FOLD,CURRENT_STAGE_INDEX=$next_stage_index,CV_EXTRA_TRAIN_ARGS=$CV_EXTRA_TRAIN_ARGS,CV_EXTRA_EVAL_ARGS=$CV_EXTRA_EVAL_ARGS,FINAL_EXTRA_TRAIN_ARGS=$FINAL_EXTRA_TRAIN_ARGS,FINAL_EXTRA_EVAL_ARGS=$FINAL_EXTRA_EVAL_ARGS,CV_SUBMIT_BEST_EVAL=$CV_SUBMIT_BEST_EVAL,CV_SUBMIT_LAST_EVAL=$CV_SUBMIT_LAST_EVAL,FINAL_SUBMIT_BEST_EVAL=$FINAL_SUBMIT_BEST_EVAL,FINAL_SUBMIT_LAST_EVAL=$FINAL_SUBMIT_LAST_EVAL,CV_SEQUENTIAL=$CV_SEQUENTIAL,SUBMIT_SCRIPT=$SUBMIT_SCRIPT,CHAIN_RUNNER_SCRIPT=$CHAIN_RUNNER_SCRIPT,CHAIN_SCRIPT=$PROJECT_ROOT/scripts/submit_cv_then_fulltrain.sh"
+    export_args="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$CONFIG,CV_RUN_NAME=$CV_RUN_NAME,FOLDS=$FOLDS,CURRENT_STAGE_INDEX=$next_stage_index,CV_EXTRA_TRAIN_ARGS=$CV_EXTRA_TRAIN_ARGS,CV_EXTRA_EVAL_ARGS=$CV_EXTRA_EVAL_ARGS,CV_SUBMIT_BEST_EVAL=$CV_SUBMIT_BEST_EVAL,CV_SUBMIT_LAST_EVAL=$CV_SUBMIT_LAST_EVAL,CV_SEQUENTIAL=$CV_SEQUENTIAL,SUBMIT_SCRIPT=$SUBMIT_SCRIPT,CHAIN_RUNNER_SCRIPT=$CHAIN_RUNNER_SCRIPT,SUMMARIZE_SCRIPT=$SUMMARIZE_SCRIPT,CHAIN_SCRIPT=$PROJECT_ROOT/scripts/submit_cv_then_fulltrain.sh"
 
     next_job_raw="$(sbatch --parsable --dependency="$dependency" --export="$export_args" "$CHAIN_RUNNER_SCRIPT")"
     next_job_id="${next_job_raw%%;*}"
@@ -67,7 +88,7 @@ submit_next_stage() {
     echo "  dependency: $dependency"
 }
 
-echo "Submitting CV/full-train stage"
+echo "Submitting CV stage"
 echo "  config: $CONFIG"
 echo "  cv_run_name: $CV_RUN_NAME"
 echo "  folds: $FOLDS"
@@ -75,13 +96,10 @@ echo "  cv_sequential: $CV_SEQUENTIAL"
 echo "  current_stage_index: $CURRENT_STAGE_INDEX"
 echo "  cv_submit_best_eval: $CV_SUBMIT_BEST_EVAL"
 echo "  cv_submit_last_eval: $CV_SUBMIT_LAST_EVAL"
-echo "  final_run_name: $FINAL_RUN_NAME"
-echo "  final_fold: $FINAL_FOLD"
-echo "  final_submit_best_eval: $FINAL_SUBMIT_BEST_EVAL"
-echo "  final_submit_last_eval: $FINAL_SUBMIT_LAST_EVAL"
 
 read -r -a FOLD_ARRAY <<< "$FOLDS"
 FOLD_COUNT="${#FOLD_ARRAY[@]}"
+CV_RUN_ROOT="$(resolve_run_root "$CONFIG" "$CV_RUN_NAME")"
 
 if [ "$CV_SEQUENTIAL" = "1" ]; then
     if [ "$CURRENT_STAGE_INDEX" -lt "$FOLD_COUNT" ]; then
@@ -128,23 +146,12 @@ if [ "$CV_SEQUENTIAL" = "1" ]; then
     fi
 
     if [ "$CURRENT_STAGE_INDEX" -eq "$FOLD_COUNT" ]; then
-        FINAL_TRAIN_ARGS="$(join_args "--set split.mode=full_train" "$FINAL_EXTRA_TRAIN_ARGS")"
-        FINAL_EVAL_ARGS="$(join_args "--set split.mode=full_train" "$FINAL_EXTRA_EVAL_ARGS")"
-
-        echo "Submitting final full-train workflow"
-        FINAL_OUTPUT="$(
-            env \
-                PROJECT_ROOT="$PROJECT_ROOT" \
-                CONFIG="$CONFIG" \
-                FOLD="$FINAL_FOLD" \
-                RUN_NAME="$FINAL_RUN_NAME" \
-                SUBMIT_BEST_EVAL="$FINAL_SUBMIT_BEST_EVAL" \
-                SUBMIT_LAST_EVAL="$FINAL_SUBMIT_LAST_EVAL" \
-                EXTRA_TRAIN_ARGS="$FINAL_TRAIN_ARGS" \
-                EXTRA_EVAL_ARGS="$FINAL_EVAL_ARGS" \
-                bash "$SUBMIT_SCRIPT"
-        )"
-        printf '%s\n' "$FINAL_OUTPUT"
+        echo "Summarizing CV results"
+        echo "  run_root: $CV_RUN_ROOT"
+        python "$SUMMARIZE_SCRIPT" --run_root "$CV_RUN_ROOT"
+        echo "Wrote CV summary to:"
+        echo "  $CV_RUN_ROOT/final_summary.json"
+        echo "  $CV_RUN_ROOT/final_summary.csv"
         exit 0
     fi
 
@@ -206,26 +213,6 @@ if [ ${#TERMINAL_JOB_IDS[@]} -eq 0 ]; then
 fi
 
 DEPENDENCY="afterok:$(IFS=:; printf '%s' "${TERMINAL_JOB_IDS[*]}")"
-if [ "$CV_SEQUENTIAL" = "1" ] && [ -n "$PREVIOUS_CV_DEPENDENCY" ]; then
-    DEPENDENCY="$PREVIOUS_CV_DEPENDENCY"
-fi
-FINAL_TRAIN_ARGS="$(join_args "--set split.mode=full_train" "$FINAL_EXTRA_TRAIN_ARGS")"
-FINAL_EVAL_ARGS="$(join_args "--set split.mode=full_train" "$FINAL_EXTRA_EVAL_ARGS")"
-
-echo "Submitting final full-train workflow"
+echo "Summarizing CV results after all folds finish"
 echo "  dependency: $DEPENDENCY"
-
-FINAL_OUTPUT="$(
-    env \
-        PROJECT_ROOT="$PROJECT_ROOT" \
-        CONFIG="$CONFIG" \
-        FOLD="$FINAL_FOLD" \
-        RUN_NAME="$FINAL_RUN_NAME" \
-        SUBMIT_BEST_EVAL="$FINAL_SUBMIT_BEST_EVAL" \
-        SUBMIT_LAST_EVAL="$FINAL_SUBMIT_LAST_EVAL" \
-        EXTRA_TRAIN_ARGS="$FINAL_TRAIN_ARGS" \
-        EXTRA_EVAL_ARGS="$FINAL_EVAL_ARGS" \
-        SBATCH_DEPENDENCY="$DEPENDENCY" \
-        bash "$SUBMIT_SCRIPT"
-)"
-printf '%s\n' "$FINAL_OUTPUT"
+submit_next_stage "$DEPENDENCY" "$FOLD_COUNT"
