@@ -1,6 +1,6 @@
 dataset: edaic
 seed: 1337
-dataset_root: ${EDAIC_DATASET_ROOT:-/media/emre/Backup/AudioLLM/Datasets/EDAIC-WOZ/preprocessed}
+dataset_root: ${EDAIC_DATASET_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/EDAIC-WOZ/preprocessed}
 quarantine_path: ${PROJECT_ROOT}/configs/quarantines.yaml
 model_name_or_path: /gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instruct
 output_dirs:

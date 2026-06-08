@@ -1,6 +1,6 @@
 dataset: daic
 seed: 1337
-dataset_root: ${DAIC_DATASET_ROOT:-/media/emre/Backup/AudioLLM/Datasets/DAIC-WOZ/preprocessed}
+dataset_root: ${DAIC_DATASET_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/DAIC-WOZ/preprocessed}
 manifest_variant: preprocessed_full_transcript_all_splits
 quarantine_path: ${PROJECT_ROOT}/configs/quarantines.yaml
 model_name_or_path: /gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instruct

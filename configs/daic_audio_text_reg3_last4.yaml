@@ -1,6 +1,6 @@
 dataset: daic
 seed: 1337
-dataset_root: ${DAIC_DATASET_ROOT:-/media/emre/Backup/AudioLLM/Datasets/DAIC-WOZ/preprocessed}
+dataset_root: ${DAIC_DATASET_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/DAIC-WOZ/preprocessed}
 transcript_path: ${DAIC_TRANSCRIPT_PATH:-}
 manifest_variant: preprocessed_train_dev
 quarantine_path: ${PROJECT_ROOT}/configs/quarantines.yaml
