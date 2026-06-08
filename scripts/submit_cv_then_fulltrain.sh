@@ -16,6 +16,7 @@ CV_SUBMIT_BEST_EVAL="${CV_SUBMIT_BEST_EVAL:-1}"
 CV_SUBMIT_LAST_EVAL="${CV_SUBMIT_LAST_EVAL:-1}"
 FINAL_SUBMIT_BEST_EVAL="${FINAL_SUBMIT_BEST_EVAL:-0}"
 FINAL_SUBMIT_LAST_EVAL="${FINAL_SUBMIT_LAST_EVAL:-1}"
+CV_SEQUENTIAL="${CV_SEQUENTIAL:-1}"
 SUBMIT_SCRIPT="${SUBMIT_SCRIPT:-$PROJECT_ROOT/scripts/submit_train_and_eval.sh}"
 
 if [ ! -f "$SUBMIT_SCRIPT" ]; then
@@ -44,11 +45,13 @@ extract_job_id() {
 }
 
 TERMINAL_JOB_IDS=()
+PREVIOUS_CV_DEPENDENCY=""
 
 echo "Submitting CV folds"
 echo "  config: $CONFIG"
 echo "  cv_run_name: $CV_RUN_NAME"
 echo "  folds: $FOLDS"
+echo "  cv_sequential: $CV_SEQUENTIAL"
 echo "  cv_submit_best_eval: $CV_SUBMIT_BEST_EVAL"
 echo "  cv_submit_last_eval: $CV_SUBMIT_LAST_EVAL"
 echo "  final_run_name: $FINAL_RUN_NAME"
@@ -59,6 +62,10 @@ echo "  final_submit_last_eval: $FINAL_SUBMIT_LAST_EVAL"
 for FOLD in $FOLDS; do
     CV_TRAIN_ARGS="$(join_args "--set split.mode=cv" "$CV_EXTRA_TRAIN_ARGS")"
     CV_EVAL_ARGS="$(join_args "--set split.mode=cv" "$CV_EXTRA_EVAL_ARGS")"
+    CV_SCHED_DEPENDENCY=""
+    if [ "$CV_SEQUENTIAL" = "1" ] && [ -n "$PREVIOUS_CV_DEPENDENCY" ]; then
+        CV_SCHED_DEPENDENCY="$PREVIOUS_CV_DEPENDENCY"
+    fi
     OUTPUT="$(
         env \
             PROJECT_ROOT="$PROJECT_ROOT" \
@@ -69,6 +76,7 @@ for FOLD in $FOLDS; do
             SUBMIT_LAST_EVAL="$CV_SUBMIT_LAST_EVAL" \
             EXTRA_TRAIN_ARGS="$CV_TRAIN_ARGS" \
             EXTRA_EVAL_ARGS="$CV_EVAL_ARGS" \
+            SBATCH_DEPENDENCY="$CV_SCHED_DEPENDENCY" \
             bash "$SUBMIT_SCRIPT"
     )"
     printf '%s\n' "$OUTPUT"
@@ -93,6 +101,7 @@ for FOLD in $FOLDS; do
     fi
 
     TERMINAL_JOB_IDS+=("${FOLD_TERMINAL_IDS[@]}")
+    PREVIOUS_CV_DEPENDENCY="afterok:$(IFS=:; printf '%s' "${FOLD_TERMINAL_IDS[*]}")"
 done
 
 if [ ${#TERMINAL_JOB_IDS[@]} -eq 0 ]; then
@@ -101,6 +110,9 @@ if [ ${#TERMINAL_JOB_IDS[@]} -eq 0 ]; then
 fi
 
 DEPENDENCY="afterok:$(IFS=:; printf '%s' "${TERMINAL_JOB_IDS[*]}")"
+if [ "$CV_SEQUENTIAL" = "1" ] && [ -n "$PREVIOUS_CV_DEPENDENCY" ]; then
+    DEPENDENCY="$PREVIOUS_CV_DEPENDENCY"
+fi
 FINAL_TRAIN_ARGS="$(join_args "--set split.mode=full_train" "$FINAL_EXTRA_TRAIN_ARGS")"
 FINAL_EVAL_ARGS="$(join_args "--set split.mode=full_train" "$FINAL_EXTRA_EVAL_ARGS")"
 
