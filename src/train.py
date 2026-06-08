@@ -862,7 +862,7 @@ def main() -> None:
         else:
             LOGGER.info(
                 "Skipping final held-out evaluation inside training to avoid multi-GPU NCCL timeout. "
-                "Run scripts/run_eval_slurm.sh separately on best_model and last_model."
+                "Run scripts/run_eval_slurm.sh separately on best_model if you need a standalone held-out evaluation job."
             )
         _write_trial_result(
             args.trial_result_file,
