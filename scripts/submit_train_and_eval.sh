@@ -21,6 +21,7 @@ fi
 EXTRA_TRAIN_ARGS="${EXTRA_TRAIN_ARGS:-}"
 EXTRA_EVAL_ARGS="${EXTRA_EVAL_ARGS:-}"
 ENV_ACTIVATE="${ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate}"
+SBATCH_DEPENDENCY="${SBATCH_DEPENDENCY:-}"
 
 TRAIN_SCRIPT="${TRAIN_SCRIPT:-$PROJECT_ROOT/scripts/run_train_slurm.sh}"
 EVAL_SCRIPT="${EVAL_SCRIPT:-$PROJECT_ROOT/scripts/run_eval_slurm.sh}"
@@ -37,6 +38,7 @@ echo "  fold: $FOLD"
 echo "  run_name: $RUN_NAME"
 echo "  extra_train_args: ${EXTRA_TRAIN_ARGS:-<none>}"
 echo "  extra_eval_args: ${EXTRA_EVAL_ARGS:-<none>}"
+echo "  sbatch_dependency: ${SBATCH_DEPENDENCY:-<none>}"
 
 extract_set_override() {
     local args="$1"
@@ -124,6 +126,10 @@ if [ "$TRAIN_SPLIT_MODE" = "full_train" ] && [ "$SUBMIT_BEST_EVAL_SPECIFIED" = "
 fi
 
 EXPORT_ARGS="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$CONFIG,FOLD=$FOLD,RUN_NAME=$RUN_NAME,EXTRA_TRAIN_ARGS=$EXTRA_TRAIN_ARGS,EXTRA_EVAL_ARGS=$EXTRA_EVAL_ARGS"
+SBATCH_BASE_ARGS=()
+if [ -n "$SBATCH_DEPENDENCY" ]; then
+    SBATCH_BASE_ARGS+=(--dependency="$SBATCH_DEPENDENCY")
+fi
 
 echo "Submitting workflow"
 echo "  dataset: $DATASET_NAME"
@@ -138,7 +144,7 @@ echo "  train_sample_prediction_mode: ${TRAIN_SAMPLE_PREDICTION_MODE:-<from conf
 echo "  eval_sample_prediction_mode: ${EVAL_SAMPLE_PREDICTION_MODE:-<from config>}"
 echo "  synced_extra_eval_args: ${EXTRA_EVAL_ARGS:-<none>}"
 
-TRAIN_JOB_RAW="$(sbatch --parsable --export="$EXPORT_ARGS" "$TRAIN_SCRIPT")"
+TRAIN_JOB_RAW="$(sbatch --parsable "${SBATCH_BASE_ARGS[@]}" --export="$EXPORT_ARGS" "$TRAIN_SCRIPT")"
 TRAIN_JOB_ID="${TRAIN_JOB_RAW%%;*}"
 echo "Submitted training job: $TRAIN_JOB_ID"
 
