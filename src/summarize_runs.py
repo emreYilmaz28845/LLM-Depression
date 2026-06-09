@@ -22,6 +22,13 @@ BACKEND_METRIC_FILES = {
 }
 
 
+def _candidate_metric_paths(fold_dir: Path, filename: str) -> list[Path]:
+    return [
+        fold_dir / "eval" / "best_checkpoint" / filename,
+        fold_dir / "best_model" / "standalone_eval" / filename,
+    ]
+
+
 def _summary_stats(values: list[float]) -> dict[str, float]:
     if not values:
         return {"mean": 0.0, "std": 0.0}
@@ -59,13 +66,14 @@ def summarize_run(run_root: Path) -> None:
             "active_aggregation_level": active_aggregation_level,
         }
         for backend_name, filename in BACKEND_METRIC_FILES.items():
-            metrics_path = fold_dir / "eval" / "best_checkpoint" / filename
-            if not metrics_path.exists():
+            metrics_path = next((path for path in _candidate_metric_paths(fold_dir, filename) if path.exists()), None)
+            if metrics_path is None:
                 continue
             backend_metrics = read_json(metrics_path)
             row[f"{backend_name}_prediction_backend"] = backend_metrics.get("prediction_backend", backend_name)
             row[f"{backend_name}_aggregation_level"] = backend_metrics.get("aggregation_level", "")
             row[f"{backend_name}_evaluation_protocol_name"] = backend_metrics.get("evaluation_protocol_name", "")
+            row[f"{backend_name}_metrics_path"] = str(metrics_path)
             for key in METRIC_KEYS:
                 row[f"{backend_name}_{key}"] = backend_metrics[key]
                 metrics_by_backend[backend_name][key].append(float(backend_metrics[key]))
