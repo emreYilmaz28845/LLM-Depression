@@ -29,8 +29,13 @@ data:
   transcript_max_chars: 4000
   allow_empty_transcript: false
 split:
-  final_eval_partition: val
   train_partition: train
+  selection_partition: val
+  dev_pool_partitions:
+    - train
+    - val
+  final_eval_partition: test
+  outer_folds: 5
   inner_val_ratio: 0.2
   seed: 1337
 lora:
