@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import math
 import os
@@ -957,6 +958,14 @@ def main() -> None:
         accelerator.wait_for_everyone()
         if int(stop_training_tensor.item()) == 1:
             break
+        # Release the per-epoch selection-eval allocations (run on rank 0 only)
+        # before the next epoch's training step. Without this, the fragmented
+        # cached blocks left by evaluation can prevent the next training forward
+        # from finding a contiguous block for the fp32 logits, OOMing on the
+        # heaviest LoRA configs even though epoch 1 fit.
+        if torch.cuda.is_available():
+            gc.collect()
+            torch.cuda.empty_cache()
 
     if accelerator.is_main_process:
         unwrapped = accelerator.unwrap_model(model)
