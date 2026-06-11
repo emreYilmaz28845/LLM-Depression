@@ -544,10 +544,18 @@ def main() -> None:
             counts["total_samples"],
         )
 
+    # Training is the only place stochastic per-epoch chunk sampling is allowed.
+    # Selection/eval datasets stay deterministic (baked audio_paths) so reported
+    # validation/test metrics never depend on random sampling.
+    train_chunk_sampling = (
+        "random" if str(config["data"].get("sample_mode", "")).lower() == "subject_audio" else None
+    )
     train_dataset = AudioTextDataset(
         train_examples,
         processor_sampling_rate=processor_sampling_rate,
         silence_audio=bool(config["data"].get("silence_audio", False)),
+        chunk_sampling=train_chunk_sampling,
+        chunk_sampling_seed=int(config["seed"]),
     )
     selection_dataset = None
     if selection_enabled:
@@ -555,6 +563,7 @@ def main() -> None:
             selection_examples,
             processor_sampling_rate=processor_sampling_rate,
             silence_audio=bool(config["data"].get("silence_audio", False)),
+            chunk_sampling="deterministic",
         )
     collator = Qwen2AudioSFTCollator(processor=processor, debug=args.label_mask_debug)
     if args.label_mask_debug:

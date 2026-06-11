@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -101,13 +102,19 @@ def render_user_prompt_text(
     transcript: str,
     *,
     is_subject_bundle: bool = False,
+    audio_context_override: str | None = None,
 ) -> str:
     input_modality = resolve_input_modality(config)
     use_audio, use_text = _modality_flags(input_modality)
     template = _user_prompt_template(config, is_subject_bundle)
+    audio_context_block = (
+        audio_context_override
+        if audio_context_override is not None
+        else _audio_context_block(use_audio, is_subject_bundle)
+    )
     placeholder_values = {
         "transcript": transcript,
-        "audio_context_block": _audio_context_block(use_audio, is_subject_bundle),
+        "audio_context_block": audio_context_block,
         "transcript_block": _transcript_block(use_text, transcript),
         "decision_basis": _decision_basis(input_modality),
         "label_descriptor": prompt_label_descriptor(config),
@@ -281,6 +288,153 @@ def _build_subject_level_text_only_examples(
     return examples
 
 
+def _evenly_spaced_indices(total: int, count: int) -> list[int]:
+    """Deterministic, reproducible selection of `count` indices spread across `total`.
+
+    Used to pick the held-out evaluation view of a subject's chunks so that
+    validation/test never depend on random sampling.
+    """
+    if total <= 0 or count <= 0:
+        return []
+    if count >= total:
+        return list(range(total))
+    if count == 1:
+        return [0]
+    step = (total - 1) / (count - 1)
+    indices = [int(round(i * step)) for i in range(count)]
+    # Guard against rounding collisions at the boundaries.
+    deduped: list[int] = []
+    for idx in indices:
+        if idx not in deduped:
+            deduped.append(idx)
+    fallback = 0
+    while len(deduped) < count and fallback < total:
+        if fallback not in deduped:
+            deduped.append(fallback)
+        fallback += 1
+    return sorted(deduped)
+
+
+def _build_subject_level_audio_examples(
+    manifest_rows: list[dict[str, Any]],
+    config: dict[str, Any],
+    partition_name: str,
+    transcript_max_chars: int,
+    truncation_log_path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """One example per subject with a FIXED number of audio chunks (K).
+
+    The example carries both:
+      - ``audio_paths``: a deterministic evenly-spaced K-chunk view used verbatim
+        by the (deterministic) evaluation path, and
+      - ``subject_chunk_paths``: the subject's full chunk list, from which the
+        training dataset samples K chunks stochastically per epoch.
+
+    ``chunks_per_subject`` is fixed per subject so the number of ``<|AUDIO|>``
+    placeholders in the prompt always matches the number of audio arrays, whether
+    the view is the deterministic eval view or a random training view.
+    """
+    input_modality = resolve_input_modality(config)
+    use_audio, use_text = _modality_flags(input_modality)
+    if not use_audio:
+        raise ValueError("sample_mode=subject_audio requires data.use_audio=true.")
+    data_cfg = config["data"]
+    chunks_per_subject = int(data_cfg.get("chunks_per_subject", 4))
+    if chunks_per_subject < 1:
+        raise ValueError("data.chunks_per_subject must be >= 1 for subject_audio mode.")
+    raw_cap = data_cfg.get("max_audio_seconds_per_chunk", 30.0)
+    max_seconds_per_chunk = float(raw_cap) if raw_cap else None
+
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in manifest_rows:
+        grouped[row["subject_id"]].append(row)
+
+    examples: list[dict[str, Any]] = []
+    truncation_logs: list[dict[str, Any]] = []
+    for subject_id in sorted(grouped):
+        rows = sorted(grouped[subject_id], key=lambda item: item["sample_id"])
+        label_values = {int(row["label"]) for row in rows}
+        if len(label_values) != 1:
+            raise ValueError(
+                f"subject_audio mode expects exactly one label per subject. "
+                f"Found {len(label_values)} labels for subject_id={subject_id}."
+            )
+        canonical_row = rows[0]
+        chunk_paths = [row["audio_path"] for row in rows]
+
+        transcript = ""
+        transcript_log: dict[str, Any] | None = None
+        if use_text:
+            transcript_values = {str(row["transcript"]).strip() for row in rows}
+            if len(transcript_values) != 1:
+                raise ValueError(
+                    f"subject_audio mode with use_text expects exactly one transcript per subject. "
+                    f"Found {len(transcript_values)} transcripts for subject_id={subject_id}."
+                )
+            transcript, transcript_log = _truncate_text(canonical_row["transcript"], transcript_max_chars)
+
+        effective_k = min(chunks_per_subject, len(chunk_paths))
+        deterministic_indices = _evenly_spaced_indices(len(chunk_paths), effective_k)
+        deterministic_paths = [chunk_paths[index] for index in deterministic_indices]
+        clip_seconds = [max_seconds_per_chunk] * effective_k
+
+        audio_context = (
+            f"The subject's speech audio is provided in {effective_k} "
+            f"segment{'s' if effective_k != 1 else ''} sampled from the interview."
+        )
+        user_text = render_user_prompt_text(
+            config,
+            transcript,
+            is_subject_bundle=True,
+            audio_context_override=audio_context,
+        )
+        internal_label_text = canonical_row.get("internal_label_text") or internal_label_text_from_int(
+            config,
+            int(canonical_row["label"]),
+        )
+        prompt_text = build_prompt_text(
+            system_prompt=config["prompt"]["system"],
+            user_text=user_text,
+            num_audios=effective_k,
+            use_audio=True,
+        )
+        examples.append(
+            {
+                "dataset": canonical_row["dataset"],
+                "subject_id": subject_id,
+                "sample_id": subject_id,
+                "label": int(canonical_row["label"]),
+                "label_text": canonical_row["label_text"],
+                "internal_label_text": internal_label_text,
+                "transcript": transcript,
+                "audio_paths": deterministic_paths,
+                "audio_clip_seconds": clip_seconds,
+                "subject_chunk_paths": chunk_paths,
+                "chunks_per_subject": effective_k,
+                "input_modality": input_modality,
+                "prompt_text": prompt_text,
+                "training_text": build_training_text(prompt_text, internal_label_text),
+                "question_id": "subject_audio_bundle",
+            }
+        )
+        log_row = {
+            "partition": partition_name,
+            "subject_id": subject_id,
+            "sample_id": subject_id,
+            "num_chunks_available": len(chunk_paths),
+            "chunks_per_subject": effective_k,
+            "deterministic_eval_chunk_indices": deterministic_indices,
+            "max_audio_seconds_per_chunk": max_seconds_per_chunk,
+        }
+        if transcript_log:
+            log_row.update(transcript_log)
+        truncation_logs.append(log_row)
+
+    if truncation_log_path:
+        write_jsonl(truncation_logs, truncation_log_path)
+    return examples
+
+
 def build_examples(
     manifest_rows: list[dict[str, Any]],
     config: dict[str, Any],
@@ -296,6 +450,15 @@ def build_examples(
 
     if input_modality == INPUT_MODALITY_TEXT_ONLY and dataset_name in {"daic", "edaic"}:
         return _build_subject_level_text_only_examples(
+            manifest_rows,
+            config,
+            partition_name,
+            transcript_max_chars,
+            truncation_log_path=truncation_log_path,
+        )
+
+    if sample_mode == "subject_audio" and dataset_name in {"daic", "edaic"}:
+        return _build_subject_level_audio_examples(
             manifest_rows,
             config,
             partition_name,
@@ -406,22 +569,56 @@ class AudioTextDataset(Dataset):
         examples: list[dict[str, Any]],
         processor_sampling_rate: int | None = None,
         silence_audio: bool = False,
+        chunk_sampling: str | None = None,
+        chunk_sampling_seed: int = 1337,
     ):
+        """``chunk_sampling`` controls subject_audio chunk selection.
+
+        - ``None`` / ``"deterministic"`` (default): use the example's baked
+          ``audio_paths`` verbatim. This MUST be used for validation/test so
+          reported metrics never depend on random sampling.
+        - ``"random"``: for subject_audio examples, draw ``chunks_per_subject``
+          chunks from the subject's full ``subject_chunk_paths`` on every access,
+          giving a fresh view each epoch. Training-only.
+        """
+        if chunk_sampling not in (None, "deterministic", "random"):
+            raise ValueError(f"Unsupported chunk_sampling={chunk_sampling!r}.")
         self.examples = examples
         self.processor_sampling_rate = int(processor_sampling_rate) if processor_sampling_rate is not None else None
         self.silence_audio = bool(silence_audio)
+        self.chunk_sampling = chunk_sampling
+        self._rng = random.Random(int(chunk_sampling_seed))
 
     def __len__(self) -> int:
         return len(self.examples)
 
+    def _resolve_audio_plan(self, example: dict[str, Any]) -> tuple[list[str], list[Any]]:
+        audio_paths = example["audio_paths"]
+        clip_seconds = example["audio_clip_seconds"]
+        if (
+            self.chunk_sampling == "random"
+            and example.get("subject_chunk_paths")
+            and example.get("chunks_per_subject")
+        ):
+            k = int(example["chunks_per_subject"])
+            pool = list(example["subject_chunk_paths"])
+            if len(pool) >= k:
+                audio_paths = self._rng.sample(pool, k)
+            else:
+                audio_paths = pool + self._rng.choices(pool, k=k - len(pool))
+            cap = clip_seconds[0] if clip_seconds else None
+            clip_seconds = [cap] * len(audio_paths)
+        return audio_paths, clip_seconds
+
     def __getitem__(self, index: int) -> dict[str, Any]:
         example = self.examples[index]
-        if example["audio_paths"]:
+        audio_paths, clip_seconds = self._resolve_audio_plan(example)
+        if audio_paths:
             if self.processor_sampling_rate is None:
                 raise ValueError("Audio examples require a processor sampling rate.")
             audio_arrays = [
                 load_audio_array(audio_path, self.processor_sampling_rate, max_seconds, self.silence_audio)
-                for audio_path, max_seconds in zip(example["audio_paths"], example["audio_clip_seconds"])
+                for audio_path, max_seconds in zip(audio_paths, clip_seconds)
             ]
         else:
             audio_arrays = []
