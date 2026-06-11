@@ -127,6 +127,29 @@ def prepare_model_for_evaluation(model) -> None:
     _set_use_cache(model, enabled=True)
 
 
+def restore_model_for_training(model, config: dict[str, Any]) -> None:
+    """Re-apply training-time memory config (gradient checkpointing, use_cache=False)
+    after an evaluation pass, which otherwise leaves checkpointing disabled. Safe to
+    call every epoch (disable-then-enable keeps the input-require-grads hook clean)."""
+    _set_use_cache(model, enabled=False)
+    if not bool(config["training"].get("gradient_checkpointing", False)):
+        return
+    if hasattr(model, "gradient_checkpointing_disable"):
+        try:
+            model.gradient_checkpointing_disable()
+        except Exception:
+            pass
+    if hasattr(model, "enable_input_require_grads"):
+        try:
+            model.enable_input_require_grads()
+        except Exception:
+            pass
+    try:
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+    except TypeError:
+        model.gradient_checkpointing_enable()
+
+
 def save_adapter_and_processor(model, processor, output_dir: str | Path, config: dict[str, Any] | None = None) -> None:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

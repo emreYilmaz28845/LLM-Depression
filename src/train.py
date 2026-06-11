@@ -51,6 +51,7 @@ from src.model.runtime import (
     load_processor,
     resolve_processor_sampling_rate,
     prepare_model_for_evaluation,
+    restore_model_for_training,
     resolve_audio_adapter_config,
     save_adapter_and_processor,
 )
@@ -825,6 +826,10 @@ def main() -> None:
 
     for epoch in range(1, int(config["training"]["num_train_epochs"]) + 1):
         model.train()
+        # The previous epoch's selection eval disables gradient checkpointing and
+        # enables use_cache; restore the training-time memory config before this
+        # epoch's forward, or activations balloon and OOM the heaviest configs.
+        restore_model_for_training(accelerator.unwrap_model(model), config)
         epoch_losses: list[float] = []
         for step, batch in enumerate(train_loader, start=1):
             with accelerator.accumulate(model):

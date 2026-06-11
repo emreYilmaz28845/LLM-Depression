@@ -322,6 +322,38 @@ def prepare_model_for_evaluation(model) -> None:
         model.config.use_cache = True
 
 
+def restore_model_for_training(model, config: dict[str, Any]) -> None:
+    """Re-apply the training-time memory config after an evaluation pass.
+
+    ``prepare_model_for_evaluation`` disables gradient checkpointing and turns on
+    ``use_cache``; ``model.train()`` does not undo either. Without restoring them,
+    every epoch after the first selection eval trains with full activations (no
+    checkpointing), which OOMs the heaviest LoRA configs. Disable-then-enable
+    keeps the input-require-grads hook clean, so this is safe to call every epoch.
+    """
+    base_model = _unwrap_base_model(model)
+    if hasattr(base_model, "config"):
+        base_model.config.use_cache = False
+    if hasattr(model, "config"):
+        model.config.use_cache = False
+    if not bool(config["training"].get("gradient_checkpointing", False)):
+        return
+    if hasattr(base_model, "gradient_checkpointing_disable"):
+        try:
+            base_model.gradient_checkpointing_disable()
+        except Exception:
+            pass
+    if hasattr(base_model, "enable_input_require_grads"):
+        try:
+            base_model.enable_input_require_grads()
+        except Exception:
+            pass
+    try:
+        base_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+    except TypeError:
+        base_model.gradient_checkpointing_enable()
+
+
 def build_generation_config(config: dict[str, Any]) -> GenerationConfig:
     do_sample = bool(config["evaluation"]["do_sample"])
     generation_kwargs = {

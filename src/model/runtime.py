@@ -38,6 +38,10 @@ def prepare_model_for_evaluation(model, config: dict[str, Any]) -> None:
     _backend(config).prepare_model_for_evaluation(model)
 
 
+def restore_model_for_training(model, config: dict[str, Any]) -> None:
+    _backend(config).restore_model_for_training(model, config)
+
+
 def save_adapter_and_processor(model, processor, output_dir: str | Path, config: dict[str, Any]) -> None:
     _backend(config).save_adapter_and_processor(model, processor, output_dir, config=config)
 
