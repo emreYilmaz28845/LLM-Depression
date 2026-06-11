@@ -377,15 +377,18 @@ print("DAIC manifest invariants passed.")
 print("EDAIC manifest invariants passed.")
 PY
 
-echo "[3/5] Verifying configurable evaluation aggregation"
+echo "[3/5] Verifying configurable evaluation aggregation and modality rendering"
 run_python - <<'PY'
+import json
 import tempfile
+from collections import defaultdict
 from pathlib import Path
 from types import SimpleNamespace
 
 import torch
 
 from src.aggregate import aggregate_predictions
+from src.data.runtime import build_examples
 import src.evaluate as evaluate_mod
 from src.model.qwen2audio_lora import build_lora_config, resolve_lora_layer_selection
 from src.utils import (
@@ -394,6 +397,7 @@ from src.utils import (
     PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
     load_yaml_with_overrides,
     resolve_aggregation_level,
+    resolve_input_modality,
 )
 
 root = Path("/home/emre/Projects/AudioLLM/LLM-Depression")
@@ -419,6 +423,73 @@ except ValueError:
     pass
 else:
     raise SystemExit("Invalid evaluation.aggregation_level value did not raise ValueError.")
+
+audio_only_config = load_yaml_with_overrides(root / "configs/daic_audio_only.yaml", [])
+if resolve_input_modality(audio_only_config) != "audio_only":
+    raise SystemExit("configs/daic_audio_only.yaml did not resolve to audio_only modality.")
+single_row = {
+    "dataset": "daic",
+    "subject_id": "smoke_subject",
+    "sample_id": "smoke_subject_0",
+    "audio_path": "/tmp/fake.wav",
+    "transcript": "This transcript should be dropped in audio-only mode.",
+    "label": 1,
+    "label_text": "Depressed",
+    "question_id": "",
+}
+audio_only_example = build_examples([single_row], audio_only_config, partition_name="smoke")[0]
+assert audio_only_example["input_modality"] == "audio_only"
+assert audio_only_example["transcript"] == ""
+assert "Audio 1: <|audio_bos|><|AUDIO|><|audio_eos|>" in audio_only_example["prompt_text"]
+assert "The transcript of the subject's speech is:" not in audio_only_example["prompt_text"]
+assert audio_only_example["training_text"] == (
+    f"{audio_only_example['prompt_text']}{audio_only_example['internal_label_text']}<|im_end|>\n"
+)
+
+ab_config = load_yaml_with_overrides(root / "configs/daic_audio_text_hybrid_ab.yaml", [])
+ab_example = build_examples([single_row], ab_config, partition_name="smoke")[0]
+assert "Use this label legend:" in ab_example["prompt_text"]
+assert "A = Depressed" in ab_example["prompt_text"]
+assert "B = Non-depressed" in ab_example["prompt_text"]
+assert "Answer with exactly one label: A or B." in ab_example["prompt_text"]
+
+eatd_audio_only_config = load_yaml_with_overrides(root / "configs/eatd_audio_only.yaml", [])
+if resolve_input_modality(eatd_audio_only_config) != "audio_only":
+    raise SystemExit("configs/eatd_audio_only.yaml did not resolve to audio_only modality.")
+eatd_manifest_rows = [
+    json.loads(line)
+    for line in (root / "outputs/manifests/eatd_manifest.jsonl").read_text(encoding="utf-8").splitlines()
+    if line.strip()
+]
+rows_by_subject = defaultdict(list)
+for row in eatd_manifest_rows:
+    rows_by_subject[row["subject_id"]].append(row)
+eatd_subject_rows = next(
+    rows
+    for _, rows in sorted(rows_by_subject.items())
+    if {row["question_id"] for row in rows} == {"negative", "neutral", "positive"}
+)
+eatd_audio_only_example = build_examples(eatd_subject_rows, eatd_audio_only_config, partition_name="smoke")[0]
+assert eatd_audio_only_example["input_modality"] == "audio_only"
+assert eatd_audio_only_example["transcript"] == ""
+assert "Audio 1: <|audio_bos|><|AUDIO|><|audio_eos|>" in eatd_audio_only_example["prompt_text"]
+assert "Audio 3: <|audio_bos|><|AUDIO|><|audio_eos|>" in eatd_audio_only_example["prompt_text"]
+assert "The transcript of the subject's speech is:" not in eatd_audio_only_example["prompt_text"]
+assert "three responses: negative, neutral, and positive." in eatd_audio_only_example["prompt_text"]
+assert eatd_audio_only_example["training_text"] == (
+    f"{eatd_audio_only_example['prompt_text']}{eatd_audio_only_example['internal_label_text']}<|im_end|>\n"
+)
+
+invalid_modality_config = load_yaml_with_overrides(
+    root / "configs/daic_audio_text.yaml",
+    ["data.use_audio=false", "data.use_text=false"],
+)
+try:
+    resolve_input_modality(invalid_modality_config)
+except ValueError:
+    pass
+else:
+    raise SystemExit("Invalid data.use_audio/data.use_text combination did not raise ValueError.")
 
 last2_config = load_yaml_with_overrides(root / "configs/edaic_audio_text_reg3.yaml", [])
 if int(last2_config["lora"]["last_n_layers"]) != 2:
@@ -665,6 +736,7 @@ finally:
     evaluate_mod._prediction_backend = original_backend
 
 print("Evaluation aggregation checks passed.")
+print("Audio-only prompt rendering checks passed.")
 PY
 
 echo "[4/5] Validating DepAdapter helper round-trip"

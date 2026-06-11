@@ -10,19 +10,13 @@ output_dirs:
 prompt:
   system: You are a psychologist analyzing speech and transcript information for depression screening.
   user_template: |-
-    The subject's speech audio is provided.
-    The transcript of the subject's speech is:
-    {transcript}
-
-    Based on the audio and transcript, determine whether the subject is Depressed or Non-depressed.
-    Answer with exactly one label: Depressed or Non-depressed.
+    {audio_context_block}
+    {transcript_block}Based on the {decision_basis}, determine whether the subject is {label_descriptor}.
+    {label_instruction}
   subject_user_template: |-
-    The subject's speech audio is provided in three responses: negative, neutral, and positive.
-    The transcript of the subject's speech is:
-    {transcript}
-
-    Based on the audio and transcript, determine whether the subject is Depressed or Non-depressed.
-    Answer with exactly one label: Depressed or Non-depressed.
+    {audio_context_block}
+    {transcript_block}Based on the {decision_basis}, determine whether the subject is {label_descriptor}.
+    {label_instruction}
   prompt_language: english
 labels:
   label_vocab_version: legacy_english_labels

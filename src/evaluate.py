@@ -56,6 +56,7 @@ from src.utils import (
     parse_internal_label_text,
     read_json,
     resolve_label_config,
+    resolve_input_modality,
     resolve_metadata_paths,
     resolve_aggregation_level,
     resolve_model_name_or_path,
@@ -636,11 +637,13 @@ def main() -> None:
     )
     sample_prediction_mode = resolve_prediction_mode(config, args.sample_prediction_mode)
     aggregation_level = resolve_aggregation_level(config)
+    input_modality = resolve_input_modality(config)
     LOGGER.info(
-        "Standalone evaluation backend selected: %s | aggregation_level=%s | protocol=%s",
+        "Standalone evaluation backend selected: %s | aggregation_level=%s | protocol=%s | input_modality=%s",
         sample_prediction_mode,
         aggregation_level,
         evaluation_protocol_name(sample_prediction_mode),
+        input_modality,
     )
     metadata = _load_metadata_or_build(args.config, config, args.config_overrides)
     manifest_rows = load_manifest_rows(metadata["manifest_path"])
@@ -663,6 +666,7 @@ def main() -> None:
             "sample_prediction_mode": sample_prediction_mode,
             "aggregation_level": aggregation_level,
             "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
+            "input_modality": input_modality,
             "lora_resolution": lora_layer_selection,
             "resolved_model_name_or_path": model_name_or_path,
             "checkpoint_dir": str(Path(args.checkpoint_dir)),

@@ -1,12 +1,12 @@
 # LLM-Depression
 
-Leakage-safe Qwen2-Audio reproduction pipeline for binary depression detection with audio + text only.
+Leakage-safe Qwen2-Audio reproduction pipeline for binary depression detection with audio+text and audio-only input modes.
 
 ## Core Rules
-- Audio + text only
+- Audio+text and audio-only input modes
 - English prompts
 - Original transcript language
-- Fixed labels: `Depressed` and `Non-depressed`
+- External diagnosis labels remain `Depressed` and `Non-depressed`
 - No SECap
 - Subject-level leakage-safe splits with configurable subject/segment evaluation reporting
 - Likelihood is the headline evaluation; generation is secondary
@@ -26,6 +26,7 @@ Capture commands:
 ```bash
 python src/data/build_manifest.py --config \
   configs/daic_audio_text.yaml \
+  configs/edaic_audio_text.yaml \
   configs/cmdc_audio_text.yaml \
   configs/eatd_audio_text.yaml
 ```
@@ -35,6 +36,8 @@ Or:
 ```bash
 ./scripts/validate_manifests.sh
 ```
+
+Manifest building is shared across modalities. Audio-only training/evaluation presets still reuse these manifest and split artifacts, and the preprocessing inputs must still include transcripts even when `data.use_text=false`.
 
 ## Validation / No-Model Checks
 
@@ -91,6 +94,51 @@ torchrun --nproc_per_node=4 src/train.py \
   --fold 0 \
   --run_name edaic_last2_lora \
   --set lora.last_n_layers=2
+```
+
+## Audio-Only Presets
+
+Available preset configs:
+- `configs/daic_audio_only.yaml`
+- `configs/edaic_audio_only.yaml`
+- `configs/cmdc_audio_only.yaml`
+- `configs/eatd_audio_only.yaml`
+- `configs/edaic_audio_only_reg3.yaml`
+
+Example DAIC audio-only training:
+
+```bash
+torchrun --nproc_per_node=4 src/train.py \
+  --config configs/daic_audio_only.yaml \
+  --fold 0 \
+  --run_name daic_audio_only
+```
+
+Example DAIC audio-only standalone evaluation:
+
+```bash
+python src/evaluate.py \
+  --config configs/daic_audio_only.yaml \
+  --fold 0 \
+  --checkpoint_dir output_model/audio_only/daic/daic_audio_only/fold_0/best_model
+```
+
+Example EDAIC audio-only `reg3` training:
+
+```bash
+torchrun --nproc_per_node=4 src/train.py \
+  --config configs/edaic_audio_only_reg3.yaml \
+  --fold 0 \
+  --run_name edaic_audio_only_reg3
+```
+
+Example EDAIC audio-only `reg3` standalone evaluation:
+
+```bash
+python src/evaluate.py \
+  --config configs/edaic_audio_only_reg3.yaml \
+  --fold 0 \
+  --checkpoint_dir output_model/audio_only/edaic/edaic_audio_only_reg3/fold_0/best_model
 ```
 
 Enable `DepAdapter` from CLI overrides:
@@ -160,11 +208,15 @@ MODEL_PATH=/home/emre/models/Qwen2-Audio-7B-Instruct ./scripts/sanity_tests_with
 This checks:
 - processor/tokenizer load
 - model + LoRA load
-- one collated batch
+- one audio+text collated batch
+- one audio-only collated batch
 - label-mask debug
 - one forward pass
+- one audio-only forward pass
 - one generation
+- one audio-only generation
 - one likelihood score pass
+- one audio-only likelihood score pass
 
 ## Slurm
 

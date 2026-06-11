@@ -12,10 +12,14 @@ from torch.utils.data import Dataset
 from src.data.eatd import CANONICAL_RESPONSES
 from src.utils import (
     get_logger,
+    INPUT_MODALITY_AUDIO_ONLY,
+    INPUT_MODALITY_AUDIO_TEXT,
+    INPUT_MODALITY_TEXT_ONLY,
     internal_label_text_from_int,
     prompt_label_descriptor,
     prompt_label_instruction,
     read_jsonl,
+    resolve_input_modality,
     save_json,
     write_jsonl,
 )
@@ -23,6 +27,8 @@ from src.utils import (
 
 LOGGER = get_logger(__name__)
 AUDIO_PLACEHOLDER = "<|audio_bos|><|AUDIO|><|audio_eos|>"
+DEFAULT_SINGLE_AUDIO_CONTEXT = "The subject's speech audio is provided."
+DEFAULT_SUBJECT_AUDIO_CONTEXT = "The subject's speech audio is provided in three responses: negative, neutral, and positive."
 
 
 def load_manifest_rows(path: str | Path) -> list[dict[str, Any]]:
@@ -45,64 +51,76 @@ def _audio_prompt_block(num_audios: int) -> str:
     return "\n".join(f"Audio {index}: {AUDIO_PLACEHOLDER}" for index in range(1, num_audios + 1))
 
 
-def _single_example_user_text_with_config(
-    config: dict[str, Any],
-    use_audio: bool,
-    use_text: bool,
-    transcript: str,
-) -> str:
-    label_descriptor = prompt_label_descriptor(config)
-    label_instruction = prompt_label_instruction(config)
-    if use_audio and use_text:
-        return (
-            "The subject's speech audio is provided.\n"
-            f"The transcript of the subject's speech is:\n{transcript}\n\n"
-            f"Based on the audio and transcript, determine whether the subject is {label_descriptor}.\n"
-            f"{label_instruction}"
-        )
-    if use_audio:
-        return (
-            "The subject's speech audio is provided.\n\n"
-            f"Based on the audio, determine whether the subject is {label_descriptor}.\n"
-            f"{label_instruction}"
-        )
-    if use_text:
-        return (
-            f"The transcript of the subject's speech is:\n{transcript}\n\n"
-            f"Based on the transcript, determine whether the subject is {label_descriptor}.\n"
-            f"{label_instruction}"
-        )
-    raise ValueError("At least one of use_audio or use_text must be enabled.")
+def _modality_flags(input_modality: str) -> tuple[bool, bool]:
+    return (
+        input_modality in {INPUT_MODALITY_AUDIO_TEXT, INPUT_MODALITY_AUDIO_ONLY},
+        input_modality in {INPUT_MODALITY_AUDIO_TEXT, INPUT_MODALITY_TEXT_ONLY},
+    )
 
 
-def _subject_example_user_text_with_config(
+def _decision_basis(input_modality: str) -> str:
+    if input_modality == INPUT_MODALITY_AUDIO_TEXT:
+        return "audio and transcript"
+    if input_modality == INPUT_MODALITY_AUDIO_ONLY:
+        return "audio"
+    if input_modality == INPUT_MODALITY_TEXT_ONLY:
+        return "transcript"
+    raise ValueError(f"Unsupported input modality: {input_modality}")
+
+
+def _audio_context_block(use_audio: bool, is_subject_bundle: bool) -> str:
+    if not use_audio:
+        return ""
+    if is_subject_bundle:
+        return DEFAULT_SUBJECT_AUDIO_CONTEXT
+    return DEFAULT_SINGLE_AUDIO_CONTEXT
+
+
+def _transcript_block(use_text: bool, transcript: str) -> str:
+    if not use_text:
+        return ""
+    return f"The transcript of the subject's speech is:\n{transcript}\n\n"
+
+
+def _user_prompt_template(config: dict[str, Any], is_subject_bundle: bool) -> str:
+    prompt_cfg = config.get("prompt", {})
+    if is_subject_bundle:
+        template = str(prompt_cfg.get("subject_user_template", "")).strip()
+        if template:
+            return template
+    template = str(prompt_cfg.get("user_template", "")).strip()
+    if template:
+        return template
+    if is_subject_bundle:
+        raise ValueError("Missing prompt.user_template or prompt.subject_user_template in config.")
+    raise ValueError("Missing prompt.user_template in config.")
+
+
+def render_user_prompt_text(
     config: dict[str, Any],
-    use_audio: bool,
-    use_text: bool,
     transcript: str,
+    *,
+    is_subject_bundle: bool = False,
 ) -> str:
-    label_descriptor = prompt_label_descriptor(config)
-    label_instruction = prompt_label_instruction(config)
-    if use_audio and use_text:
-        return (
-            "The subject's speech audio is provided in three responses: negative, neutral, and positive.\n"
-            f"The transcript of the subject's speech is:\n{transcript}\n\n"
-            f"Based on the audio and transcript, determine whether the subject is {label_descriptor}.\n"
-            f"{label_instruction}"
-        )
-    if use_audio:
-        return (
-            "The subject's speech audio is provided in three responses: negative, neutral, and positive.\n\n"
-            f"Based on the audio, determine whether the subject is {label_descriptor}.\n"
-            f"{label_instruction}"
-        )
-    if use_text:
-        return (
-            f"The transcript of the subject's speech is:\n{transcript}\n\n"
-            f"Based on the transcript, determine whether the subject is {label_descriptor}.\n"
-            f"{label_instruction}"
-        )
-    raise ValueError("At least one of use_audio or use_text must be enabled.")
+    input_modality = resolve_input_modality(config)
+    use_audio, use_text = _modality_flags(input_modality)
+    template = _user_prompt_template(config, is_subject_bundle)
+    placeholder_values = {
+        "transcript": transcript,
+        "audio_context_block": _audio_context_block(use_audio, is_subject_bundle),
+        "transcript_block": _transcript_block(use_text, transcript),
+        "decision_basis": _decision_basis(input_modality),
+        "label_descriptor": prompt_label_descriptor(config),
+        "label_instruction": prompt_label_instruction(config),
+    }
+    try:
+        return template.format_map(placeholder_values).strip()
+    except KeyError as exc:
+        available = ", ".join(sorted(placeholder_values))
+        raise ValueError(
+            f"Unknown placeholder {exc.args[0]!r} in prompt template. "
+            f"Available placeholders: {available}."
+        ) from exc
 
 
 def build_prompt_text(
@@ -160,11 +178,11 @@ def _base_example_from_row(
     config: dict[str, Any],
     transcript_max_chars: int,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    use_audio = bool(config["data"]["use_audio"])
-    use_text = bool(config["data"]["use_text"])
+    input_modality = resolve_input_modality(config)
+    use_audio, use_text = _modality_flags(input_modality)
     transcript = row["transcript"] if use_text else ""
     transcript, transcript_log = _truncate_text(transcript, transcript_max_chars)
-    user_text = _single_example_user_text_with_config(config, use_audio, use_text, transcript)
+    user_text = render_user_prompt_text(config, transcript, is_subject_bundle=False)
     example_internal_label = row.get("internal_label_text") or internal_label_text_from_int(config, int(row["label"]))
     prompt_text = build_prompt_text(
         system_prompt=config["prompt"]["system"],
@@ -182,6 +200,7 @@ def _base_example_from_row(
         "transcript": transcript,
         "audio_paths": [row["audio_path"]] if use_audio else [],
         "audio_clip_seconds": [None] if use_audio else [],
+        "input_modality": input_modality,
         "prompt_text": prompt_text,
         "training_text": build_training_text(prompt_text, example_internal_label),
         "question_id": row.get("question_id", ""),
@@ -197,6 +216,7 @@ def build_examples(
 ) -> list[dict[str, Any]]:
     dataset_name = str(config["dataset"]).lower()
     sample_mode = str(config["data"].get("sample_mode", "response")).lower()
+    input_modality = resolve_input_modality(config)
     transcript_max_chars = int(config["data"].get("transcript_max_chars", 0) or 0)
     truncation_logs: list[dict[str, Any]] = []
     examples: list[dict[str, Any]] = []
@@ -215,8 +235,7 @@ def build_examples(
                 )
             examples.append(example)
     else:
-        use_audio = bool(config["data"]["use_audio"])
-        use_text = bool(config["data"]["use_text"])
+        use_audio, use_text = _modality_flags(input_modality)
         max_per_response = float(config["data"]["max_audio_seconds_per_response"])
         max_total = float(config["data"]["max_total_audio_seconds"])
         grouped: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
@@ -240,7 +259,7 @@ def build_examples(
                 "audio_total_kept_seconds": 0.0,
                 "audio_truncated": False,
             }
-            user_text = _subject_example_user_text_with_config(config, use_audio, use_text, combined_transcript)
+            user_text = render_user_prompt_text(config, combined_transcript, is_subject_bundle=True)
             internal_label_text = internal_label_text_from_int(config, int(ordered_rows[0]["label"]))
             prompt_text = build_prompt_text(
                 system_prompt=config["prompt"]["system"],
@@ -258,6 +277,7 @@ def build_examples(
                 "transcript": combined_transcript,
                 "audio_paths": audio_paths,
                 "audio_clip_seconds": audio_plan["audio_kept_seconds"],
+                "input_modality": input_modality,
                 "prompt_text": prompt_text,
                 "training_text": build_training_text(prompt_text, internal_label_text),
                 "question_id": "subject_bundle",

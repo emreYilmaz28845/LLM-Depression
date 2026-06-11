@@ -20,6 +20,14 @@ LABEL_INT_BY_TEXT = {value: key for key, value in LABEL_TEXT_BY_INT.items()}
 LABEL_VOCAB_VERSION_LEGACY = "legacy_english_labels"
 LABEL_VOCAB_VERSION_SHORT_AB = "short_internal_ab_labels"
 SUPPORTED_LABEL_VOCAB_VERSIONS = (LABEL_VOCAB_VERSION_LEGACY, LABEL_VOCAB_VERSION_SHORT_AB)
+INPUT_MODALITY_AUDIO_TEXT = "audio_text"
+INPUT_MODALITY_AUDIO_ONLY = "audio_only"
+INPUT_MODALITY_TEXT_ONLY = "text_only"
+SUPPORTED_INPUT_MODALITIES = (
+    INPUT_MODALITY_AUDIO_TEXT,
+    INPUT_MODALITY_AUDIO_ONLY,
+    INPUT_MODALITY_TEXT_ONLY,
+)
 PREDICTION_MODE_LIKELIHOOD = "likelihood"
 PREDICTION_MODE_GENERATION = "generation"
 PREDICTION_MODE_ORIGINAL_TEACHER_FORCED = "original_teacher_forced"
@@ -170,6 +178,22 @@ def resolve_label_config(config: dict[str, Any]) -> dict[str, str]:
             raise ValueError(f"Missing labels.{key} in config.")
         resolved[key] = value
     return resolved
+
+
+def resolve_input_modality(config: dict[str, Any]) -> str:
+    data_cfg = config.get("data", {})
+    use_audio = bool(data_cfg.get("use_audio", False))
+    use_text = bool(data_cfg.get("use_text", False))
+    if use_audio and use_text:
+        return INPUT_MODALITY_AUDIO_TEXT
+    if use_audio:
+        return INPUT_MODALITY_AUDIO_ONLY
+    if use_text:
+        return INPUT_MODALITY_TEXT_ONLY
+    raise ValueError(
+        "Invalid data.use_audio/data.use_text configuration. "
+        "At least one modality must be enabled."
+    )
 
 
 def _parse_override_value(raw_value: str) -> Any:

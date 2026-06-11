@@ -60,6 +60,7 @@ from src.utils import (
     load_yaml_with_overrides,
     log_resolved_config,
     read_json,
+    resolve_input_modality,
     resolve_metadata_paths,
     resolve_aggregation_level,
     resolve_model_name_or_path,
@@ -464,6 +465,13 @@ def main() -> None:
         resolved_config=config,
     )
     set_seed(int(config["seed"]))
+    input_modality = resolve_input_modality(config)
+    LOGGER.info(
+        "Resolved input modality=%s | use_audio=%s | use_text=%s",
+        input_modality,
+        bool(config["data"].get("use_audio", False)),
+        bool(config["data"].get("use_text", False)),
+    )
     audio_adapter_cfg = resolve_audio_adapter_config(config)
     sample_prediction_mode = resolve_prediction_mode(config)
     aggregation_level = resolve_aggregation_level(config)
@@ -597,6 +605,7 @@ def main() -> None:
             "aggregation_level": aggregation_level,
             "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
         },
+        "input_modality": input_modality,
         "audio_adapter": audio_adapter_cfg,
         "lora_resolution": lora_layer_selection,
         "resolved_model_name_or_path": model_name_or_path,
@@ -886,6 +895,7 @@ def main() -> None:
                 "config_overrides": list(args.config_overrides),
                 "sample_prediction_mode": sample_prediction_mode,
                 "aggregation_level": aggregation_level,
+                "input_modality": input_modality,
                 "audio_adapter": audio_adapter_cfg,
                 "lora_resolution": lora_layer_selection,
                 "selection_protocol": run_config["selection_protocol"],
