@@ -4,6 +4,7 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 MODEL_PATH="${MODEL_PATH:-/home/emre/models/Qwen2-Audio-7B-Instruct}"
+TEXT_MODEL_PATH="${TEXT_MODEL_PATH:-/media/emre/Backup/AudioLLM/models/Qwen2-7B-Instruct}"
 
 run_python() {
   if [[ -n "${CONDA_ENV:-}" ]]; then
@@ -27,7 +28,7 @@ from src.data.build_manifest import build_for_config
 from src.data.runtime import AudioTextDataset, build_examples, filter_rows_by_subjects, load_manifest_rows
 from src.evaluate import generate_label_text, score_candidate_label
 from src.model.collator import Qwen2AudioSFTCollator
-from src.model.qwen2audio_lora import load_model_for_training, load_processor
+from src.model.runtime import load_model_for_training, load_processor, resolve_processor_sampling_rate
 from src.utils import load_yaml
 
 config_path = project_root / "configs/daic_audio_text.yaml"
@@ -36,6 +37,12 @@ config["model_name_or_path"] = os.environ.get("MODEL_PATH", "/home/emre/models/Q
 audio_only_config_path = project_root / "configs/daic_audio_only.yaml"
 audio_only_config = load_yaml(audio_only_config_path)
 audio_only_config["model_name_or_path"] = config["model_name_or_path"]
+text_only_config_path = project_root / "configs/daic_text_only.yaml"
+text_only_config = load_yaml(text_only_config_path)
+text_only_config["model_name_or_path"] = os.environ.get(
+    "TEXT_MODEL_PATH",
+    "/media/emre/Backup/AudioLLM/models/Qwen2-7B-Instruct",
+)
 metadata_path = project_root / "outputs/splits/daic_manifest_metadata.json"
 if not metadata_path.exists():
     build_for_config(config_path)
@@ -53,9 +60,16 @@ audio_only_examples = build_examples(
     partition_name="smoke_audio_only",
 )
 audio_only_example = audio_only_examples[0]
+text_only_examples = build_examples(
+    filter_rows_by_subjects(train_rows, [subject_id]),
+    text_only_config,
+    partition_name="smoke_text_only",
+)
+text_only_example = text_only_examples[0]
 
-processor = load_processor(config["model_name_or_path"])
-dataset = AudioTextDataset([example], processor_sampling_rate=processor.feature_extractor.sampling_rate, silence_audio=False)
+processor = load_processor(config["model_name_or_path"], config)
+audio_sampling_rate = resolve_processor_sampling_rate(processor)
+dataset = AudioTextDataset([example], processor_sampling_rate=audio_sampling_rate, silence_audio=False)
 collator = Qwen2AudioSFTCollator(processor=processor, debug=True)
 batch = collator([dataset[0]])
 print("Loaded processor and collated one batch.")
@@ -63,13 +77,20 @@ print("Unmasked token ids:", collator.last_debug_example["unmasked_token_ids"])
 
 audio_only_dataset = AudioTextDataset(
     [audio_only_example],
-    processor_sampling_rate=processor.feature_extractor.sampling_rate,
+    processor_sampling_rate=audio_sampling_rate,
     silence_audio=False,
 )
 audio_only_collator = Qwen2AudioSFTCollator(processor=processor, debug=True)
 audio_only_batch = audio_only_collator([audio_only_dataset[0]])
 print("Loaded audio-only processor inputs and collated one batch.")
 print("Audio-only unmasked token ids:", audio_only_collator.last_debug_example["unmasked_token_ids"])
+
+text_processor = load_processor(text_only_config["model_name_or_path"], text_only_config)
+text_only_dataset = AudioTextDataset([text_only_example], processor_sampling_rate=None, silence_audio=False)
+text_only_collator = Qwen2AudioSFTCollator(processor=text_processor, debug=True)
+text_only_batch = text_only_collator([text_only_dataset[0]])
+print("Loaded text-only processor inputs and collated one batch.")
+print("Text-only unmasked token ids:", text_only_collator.last_debug_example["unmasked_token_ids"])
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = load_model_for_training(config["model_name_or_path"], config).to(device)
@@ -111,4 +132,43 @@ audio_only_generation = generate_label_text(
 print("Audio-only Depressed score:", audio_only_dep_score)
 print("Audio-only Non-depressed score:", audio_only_non_score)
 print("Audio-only generation:", audio_only_generation)
+
+del model
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
+
+text_model = load_model_for_training(text_only_config["model_name_or_path"], text_only_config).to(device)
+text_only_batch = {key: value.to(device) for key, value in text_only_batch.items()}
+with torch.no_grad():
+    text_only_outputs = text_model(**text_only_batch)
+print("Text-only forward pass loss:", float(text_only_outputs.loss))
+
+text_model.eval()
+text_only_dep_score = score_candidate_label(
+    text_model,
+    text_processor,
+    text_only_example,
+    "Depressed",
+    device,
+    silence_audio=False,
+)
+text_only_non_score = score_candidate_label(
+    text_model,
+    text_processor,
+    text_only_example,
+    "Non-depressed",
+    device,
+    silence_audio=False,
+)
+text_only_generation = generate_label_text(
+    text_model,
+    text_processor,
+    text_only_example,
+    text_only_config,
+    device,
+    silence_audio=False,
+)
+print("Text-only Depressed score:", text_only_dep_score)
+print("Text-only Non-depressed score:", text_only_non_score)
+print("Text-only generation:", text_only_generation)
 PY

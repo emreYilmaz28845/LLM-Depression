@@ -32,13 +32,14 @@ from src.data.split_utils import (
     resolve_split_mode,
     subject_ids_for_partitions,
 )
-from src.model.qwen2audio_lora import (
+from src.model.runtime import (
     build_generation_config,
     load_model_for_inference,
     load_processor,
+    resolve_processor_sampling_rate,
     prepare_model_for_evaluation,
-    resolve_lora_layer_selection,
 )
+from src.model.lora_common import resolve_lora_layer_selection
 from src.utils import (
     AGGREGATION_LEVEL_SUBJECT,
     PREDICTION_MODE_GENERATION,
@@ -172,16 +173,21 @@ def _load_example_audio(example: dict[str, Any], sampling_rate: int, silence_aud
 
 
 def _processor_inputs(processor, example: dict[str, Any], text: str, device: torch.device, silence_audio: bool):
-    audio_arrays = _load_example_audio(example, processor.feature_extractor.sampling_rate, silence_audio)
+    sampling_rate = resolve_processor_sampling_rate(processor)
+    audio_arrays = []
+    if example["audio_paths"]:
+        if sampling_rate is None:
+            raise ValueError("Audio examples require a processor sampling rate.")
+        audio_arrays = _load_example_audio(example, sampling_rate, silence_audio)
     audio = audio_arrays if audio_arrays else None
     processor_kwargs = {
         "text": text,
-        "audio": audio,
         "return_tensors": "pt",
         "padding": False,
     }
     if audio is not None:
-        processor_kwargs["sampling_rate"] = int(processor.feature_extractor.sampling_rate)
+        processor_kwargs["audio"] = audio
+        processor_kwargs["sampling_rate"] = int(sampling_rate)
     inputs = processor(**processor_kwargs)
     return {key: value.to(device) for key, value in inputs.items()}
 
@@ -432,7 +438,7 @@ def evaluate_examples(
     aggregation_level = resolve_aggregation_level(config)
     protocol_name = evaluation_protocol_name(mode)
     output_dir = ensure_dir(output_dir)
-    prepare_model_for_evaluation(model)
+    prepare_model_for_evaluation(model, config)
     device = next(model.parameters()).device
     silence_audio = bool(config["data"].get("silence_audio", False))
     sample_rows: list[dict[str, Any]] = []
@@ -652,8 +658,8 @@ def main() -> None:
     examples = build_examples(final_eval_rows, config, partition_name="final_eval", truncation_log_path=None)
 
     model_name_or_path = resolve_model_name_or_path(args.model_name_or_path, config)
-    processor = load_processor(args.checkpoint_dir)
-    model = load_model_for_inference(model_name_or_path, args.checkpoint_dir)
+    processor = load_processor(args.checkpoint_dir, config)
+    model = load_model_for_inference(model_name_or_path, args.checkpoint_dir, config)
     lora_layer_selection = resolve_lora_layer_selection(config, model)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)

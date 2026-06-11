@@ -208,6 +208,79 @@ def _base_example_from_row(
     return example, transcript_log
 
 
+def _build_subject_level_text_only_examples(
+    manifest_rows: list[dict[str, Any]],
+    config: dict[str, Any],
+    partition_name: str,
+    transcript_max_chars: int,
+    truncation_log_path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in manifest_rows:
+        grouped[row["subject_id"]].append(row)
+
+    examples: list[dict[str, Any]] = []
+    truncation_logs: list[dict[str, Any]] = []
+    for subject_id in sorted(grouped):
+        rows = sorted(grouped[subject_id], key=lambda item: item["sample_id"])
+        transcript_values = {str(row["transcript"]).strip() for row in rows}
+        if len(transcript_values) != 1:
+            raise ValueError(
+                f"Text-only subject mode expects exactly one transcript per subject. "
+                f"Found {len(transcript_values)} transcripts for subject_id={subject_id}."
+            )
+        label_values = {int(row["label"]) for row in rows}
+        if len(label_values) != 1:
+            raise ValueError(
+                f"Text-only subject mode expects exactly one label per subject. "
+                f"Found {len(label_values)} labels for subject_id={subject_id}."
+            )
+
+        canonical_row = rows[0]
+        transcript, transcript_log = _truncate_text(canonical_row["transcript"], transcript_max_chars)
+        user_text = render_user_prompt_text(config, transcript, is_subject_bundle=False)
+        internal_label_text = canonical_row.get("internal_label_text") or internal_label_text_from_int(
+            config,
+            int(canonical_row["label"]),
+        )
+        prompt_text = build_prompt_text(
+            system_prompt=config["prompt"]["system"],
+            user_text=user_text,
+            num_audios=0,
+            use_audio=False,
+        )
+        examples.append(
+            {
+                "dataset": canonical_row["dataset"],
+                "subject_id": subject_id,
+                "sample_id": subject_id,
+                "label": int(canonical_row["label"]),
+                "label_text": canonical_row["label_text"],
+                "internal_label_text": internal_label_text,
+                "transcript": transcript,
+                "audio_paths": [],
+                "audio_clip_seconds": [],
+                "input_modality": INPUT_MODALITY_TEXT_ONLY,
+                "prompt_text": prompt_text,
+                "training_text": build_training_text(prompt_text, internal_label_text),
+                "question_id": canonical_row.get("question_id", ""),
+            }
+        )
+        if transcript_log:
+            truncation_logs.append(
+                {
+                    "partition": partition_name,
+                    "subject_id": subject_id,
+                    "sample_id": subject_id,
+                    **transcript_log,
+                }
+            )
+
+    if truncation_log_path:
+        write_jsonl(truncation_logs, truncation_log_path)
+    return examples
+
+
 def build_examples(
     manifest_rows: list[dict[str, Any]],
     config: dict[str, Any],
@@ -220,6 +293,15 @@ def build_examples(
     transcript_max_chars = int(config["data"].get("transcript_max_chars", 0) or 0)
     truncation_logs: list[dict[str, Any]] = []
     examples: list[dict[str, Any]] = []
+
+    if input_modality == INPUT_MODALITY_TEXT_ONLY and dataset_name in {"daic", "edaic"}:
+        return _build_subject_level_text_only_examples(
+            manifest_rows,
+            config,
+            partition_name,
+            transcript_max_chars,
+            truncation_log_path=truncation_log_path,
+        )
 
     if dataset_name != "eatd" or sample_mode == "response":
         for row in sorted(manifest_rows, key=lambda item: item["sample_id"]):
@@ -319,9 +401,14 @@ def load_audio_array(audio_path: str, target_sr: int, max_seconds: float | None,
 
 
 class AudioTextDataset(Dataset):
-    def __init__(self, examples: list[dict[str, Any]], processor_sampling_rate: int, silence_audio: bool = False):
+    def __init__(
+        self,
+        examples: list[dict[str, Any]],
+        processor_sampling_rate: int | None = None,
+        silence_audio: bool = False,
+    ):
         self.examples = examples
-        self.processor_sampling_rate = int(processor_sampling_rate)
+        self.processor_sampling_rate = int(processor_sampling_rate) if processor_sampling_rate is not None else None
         self.silence_audio = bool(silence_audio)
 
     def __len__(self) -> int:
@@ -329,10 +416,15 @@ class AudioTextDataset(Dataset):
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         example = self.examples[index]
-        audio_arrays = [
-            load_audio_array(audio_path, self.processor_sampling_rate, max_seconds, self.silence_audio)
-            for audio_path, max_seconds in zip(example["audio_paths"], example["audio_clip_seconds"])
-        ]
+        if example["audio_paths"]:
+            if self.processor_sampling_rate is None:
+                raise ValueError("Audio examples require a processor sampling rate.")
+            audio_arrays = [
+                load_audio_array(audio_path, self.processor_sampling_rate, max_seconds, self.silence_audio)
+                for audio_path, max_seconds in zip(example["audio_paths"], example["audio_clip_seconds"])
+            ]
+        else:
+            audio_arrays = []
         return {
             **example,
             "audio_arrays": audio_arrays,

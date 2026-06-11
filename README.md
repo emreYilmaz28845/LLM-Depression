@@ -1,9 +1,9 @@
 # LLM-Depression
 
-Leakage-safe Qwen2-Audio reproduction pipeline for binary depression detection with audio+text and audio-only input modes.
+Leakage-safe depression-classification pipeline for binary depression detection with audio+text, audio-only, and text-only diagnostic modes.
 
 ## Core Rules
-- Audio+text and audio-only input modes
+- Audio+text, audio-only, and text-only input modes
 - English prompts
 - Original transcript language
 - External diagnosis labels remain `Depressed` and `Non-depressed`
@@ -37,7 +37,7 @@ Or:
 ./scripts/validate_manifests.sh
 ```
 
-Manifest building is shared across modalities. Audio-only training/evaluation presets still reuse these manifest and split artifacts, and the preprocessing inputs must still include transcripts even when `data.use_text=false`.
+Manifest building is shared across modalities. Audio-only and text-only presets still reuse these manifest and split artifacts, and the preprocessing inputs must still include transcripts even when `data.use_text=false` or `data.use_audio=false`.
 
 ## Validation / No-Model Checks
 
@@ -141,6 +141,57 @@ python src/evaluate.py \
   --checkpoint_dir output_model/audio_only/edaic/edaic_audio_only_reg3/fold_0/best_model
 ```
 
+## Text-Only Diagnostic Presets
+
+Available preset configs:
+- `configs/daic_text_only.yaml`
+- `configs/edaic_text_only.yaml`
+- `configs/edaic_text_only_reg3.yaml`
+
+These DAIC/EDAIC diagnostics intentionally bypass chunk-level sample expansion. In text-only mode the runtime groups the shared chunk manifest by subject and builds exactly one example per subject: `1 subject = 1 transcript = 1 example = 1 label`.
+
+Local text-model override:
+
+```bash
+export TEXT_MODEL_PATH=/media/emre/Backup/AudioLLM/models/Qwen2-7B-Instruct
+```
+
+Example DAIC text-only training:
+
+```bash
+torchrun --nproc_per_node=4 src/train.py \
+  --config configs/daic_text_only.yaml \
+  --fold 0 \
+  --run_name daic_text_only_diag
+```
+
+Example DAIC text-only standalone evaluation:
+
+```bash
+python src/evaluate.py \
+  --config configs/daic_text_only.yaml \
+  --fold 0 \
+  --checkpoint_dir output_model/text_only/daic/daic_text_only_diag/fold_0/best_model
+```
+
+Example EDAIC text-only `reg3` training:
+
+```bash
+torchrun --nproc_per_node=4 src/train.py \
+  --config configs/edaic_text_only_reg3.yaml \
+  --fold 0 \
+  --run_name edaic_text_only_reg3_diag
+```
+
+Example EDAIC text-only `reg3` standalone evaluation:
+
+```bash
+python src/evaluate.py \
+  --config configs/edaic_text_only_reg3.yaml \
+  --fold 0 \
+  --checkpoint_dir output_model/text_only/edaic/edaic_text_only_reg3_diag/fold_0/best_model
+```
+
 Enable `DepAdapter` from CLI overrides:
 
 ```bash
@@ -202,7 +253,9 @@ Subject-mode length controls are in `configs/eatd_audio_text.yaml`:
 Default model path:
 
 ```bash
-MODEL_PATH=/home/emre/models/Qwen2-Audio-7B-Instruct ./scripts/sanity_tests_with_model.sh
+MODEL_PATH=/home/emre/models/Qwen2-Audio-7B-Instruct \
+TEXT_MODEL_PATH=/media/emre/Backup/AudioLLM/models/Qwen2-7B-Instruct \
+./scripts/sanity_tests_with_model.sh
 ```
 
 This checks:
@@ -210,13 +263,17 @@ This checks:
 - model + LoRA load
 - one audio+text collated batch
 - one audio-only collated batch
+- one text-only collated batch
 - label-mask debug
 - one forward pass
 - one audio-only forward pass
+- one text-only forward pass
 - one generation
 - one audio-only generation
+- one text-only generation
 - one likelihood score pass
 - one audio-only likelihood score pass
+- one text-only likelihood score pass
 
 ## Slurm
 

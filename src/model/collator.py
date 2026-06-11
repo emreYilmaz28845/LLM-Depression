@@ -12,24 +12,21 @@ class Qwen2AudioSFTCollator:
         self.debug = debug
         self.last_debug_example: dict[str, Any] | None = None
 
-    def _process_single(self, example: dict[str, Any]) -> dict[str, Any]:
-        audio = example["audio_arrays"] if example["audio_arrays"] else None
-        processor_kwargs = {
-            "text": example["training_text"],
-            "audio": audio,
-            "return_tensors": None,
-            "padding": False,
-        }
-        prompt_kwargs = {
-            "text": example["prompt_text"],
-            "audio": audio,
+    def _processor_kwargs(self, text: str, audio: list[np.ndarray] | None) -> dict[str, Any]:
+        kwargs = {
+            "text": text,
             "return_tensors": None,
             "padding": False,
         }
         if audio is not None:
-            sampling_rate = int(self.processor.feature_extractor.sampling_rate)
-            processor_kwargs["sampling_rate"] = sampling_rate
-            prompt_kwargs["sampling_rate"] = sampling_rate
+            kwargs["audio"] = audio
+            kwargs["sampling_rate"] = int(self.processor.feature_extractor.sampling_rate)
+        return kwargs
+
+    def _process_single(self, example: dict[str, Any]) -> dict[str, Any]:
+        audio = example["audio_arrays"] if example["audio_arrays"] else None
+        processor_kwargs = self._processor_kwargs(example["training_text"], audio)
+        prompt_kwargs = self._processor_kwargs(example["prompt_text"], audio)
         processed_full = self.processor(
             **processor_kwargs,
         )
@@ -96,3 +93,6 @@ class Qwen2AudioSFTCollator:
             batch_dict["input_features"] = torch.tensor(all_features, dtype=torch.float32)
             batch_dict["feature_attention_mask"] = torch.tensor(all_feature_masks, dtype=torch.long)
         return batch_dict
+
+
+SFTCollator = Qwen2AudioSFTCollator

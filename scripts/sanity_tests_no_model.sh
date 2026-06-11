@@ -388,6 +388,7 @@ from types import SimpleNamespace
 import torch
 
 from src.aggregate import aggregate_predictions
+from src.data.split_utils import deterministic_inner_split
 from src.data.runtime import build_examples
 import src.evaluate as evaluate_mod
 from src.model.qwen2audio_lora import build_lora_config, resolve_lora_layer_selection
@@ -446,6 +447,32 @@ assert audio_only_example["training_text"] == (
     f"{audio_only_example['prompt_text']}{audio_only_example['internal_label_text']}<|im_end|>\n"
 )
 
+text_only_config = load_yaml_with_overrides(root / "configs/daic_text_only.yaml", [])
+if resolve_input_modality(text_only_config) != "text_only":
+    raise SystemExit("configs/daic_text_only.yaml did not resolve to text_only modality.")
+text_only_example = build_examples([single_row], text_only_config, partition_name="smoke")[0]
+assert text_only_example["input_modality"] == "text_only"
+assert text_only_example["transcript"] == single_row["transcript"]
+assert text_only_example["audio_paths"] == []
+assert text_only_example["audio_clip_seconds"] == []
+assert "Audio 1: <|audio_bos|><|AUDIO|><|audio_eos|>" not in text_only_example["prompt_text"]
+assert "The transcript of the subject's speech is:" in text_only_example["prompt_text"]
+assert text_only_example["training_text"] == (
+    f"{text_only_example['prompt_text']}{text_only_example['internal_label_text']}<|im_end|>\n"
+)
+
+daic_manifest_rows = [
+    json.loads(line)
+    for line in (root / "outputs/manifests/daic_manifest.jsonl").read_text(encoding="utf-8").splitlines()
+    if line.strip()
+]
+daic_train_rows = [row for row in daic_manifest_rows if row["split_original"] == "train"]
+daic_text_only_examples = build_examples(daic_train_rows, text_only_config, partition_name="train")
+daic_train_subject_count = len({row["subject_id"] for row in daic_train_rows})
+assert len(daic_text_only_examples) == daic_train_subject_count
+assert all(example["sample_id"] == example["subject_id"] for example in daic_text_only_examples)
+assert all(example["audio_paths"] == [] for example in daic_text_only_examples)
+
 ab_config = load_yaml_with_overrides(root / "configs/daic_audio_text_hybrid_ab.yaml", [])
 ab_example = build_examples([single_row], ab_config, partition_name="smoke")[0]
 assert "Use this label legend:" in ab_example["prompt_text"]
@@ -478,6 +505,46 @@ assert "The transcript of the subject's speech is:" not in eatd_audio_only_examp
 assert "three responses: negative, neutral, and positive." in eatd_audio_only_example["prompt_text"]
 assert eatd_audio_only_example["training_text"] == (
     f"{eatd_audio_only_example['prompt_text']}{eatd_audio_only_example['internal_label_text']}<|im_end|>\n"
+)
+
+edaic_text_only_config = load_yaml_with_overrides(root / "configs/edaic_text_only.yaml", [])
+if resolve_input_modality(edaic_text_only_config) != "text_only":
+    raise SystemExit("configs/edaic_text_only.yaml did not resolve to text_only modality.")
+edaic_manifest_rows = [
+    json.loads(line)
+    for line in (root / "outputs/manifests/edaic_manifest.jsonl").read_text(encoding="utf-8").splitlines()
+    if line.strip()
+]
+edaic_subject_partition_rows = json.loads((root / "outputs/splits/edaic_subject_partitions.json").read_text(encoding="utf-8"))
+edaic_subject_labels = {row["subject_id"]: int(row["label"]) for row in edaic_subject_partition_rows}
+edaic_dev_subject_ids = sorted(
+    [row["subject_id"] for row in edaic_subject_partition_rows if row["partition"] in {"train", "val"}]
+)
+edaic_test_subject_ids = sorted(
+    [row["subject_id"] for row in edaic_subject_partition_rows if row["partition"] == "test"]
+)
+edaic_inner_split = deterministic_inner_split(
+    edaic_subject_labels,
+    edaic_dev_subject_ids,
+    seed=int(edaic_text_only_config["split"]["seed"]),
+    val_ratio=float(edaic_text_only_config["split"]["inner_val_ratio"]),
+)
+assert len(edaic_inner_split["train_inner_subject_ids"]) == 175
+edaic_train_inner_rows = [
+    row for row in edaic_manifest_rows if row["subject_id"] in set(edaic_inner_split["train_inner_subject_ids"])
+]
+edaic_val_inner_rows = [
+    row for row in edaic_manifest_rows if row["subject_id"] in set(edaic_inner_split["val_inner_subject_ids"])
+]
+edaic_final_eval_rows = [
+    row for row in edaic_manifest_rows if row["subject_id"] in set(edaic_test_subject_ids)
+]
+assert len(build_examples(edaic_train_inner_rows, edaic_text_only_config, partition_name="train_inner")) == 175
+assert len(build_examples(edaic_val_inner_rows, edaic_text_only_config, partition_name="val_inner")) == len(
+    edaic_inner_split["val_inner_subject_ids"]
+)
+assert len(build_examples(edaic_final_eval_rows, edaic_text_only_config, partition_name="final_eval")) == len(
+    edaic_test_subject_ids
 )
 
 invalid_modality_config = load_yaml_with_overrides(

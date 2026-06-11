@@ -43,15 +43,16 @@ from src.data.split_utils import (
 )
 from src.evaluate import evaluate_examples
 from src.model.collator import Qwen2AudioSFTCollator
-from src.model.qwen2audio_lora import (
+from src.model.runtime import (
     load_model_for_inference,
     load_model_for_training,
     load_processor,
+    resolve_processor_sampling_rate,
     prepare_model_for_evaluation,
-    resolved_lora_layer_selection,
     resolve_audio_adapter_config,
     save_adapter_and_processor,
 )
+from src.model.lora_common import resolved_lora_layer_selection
 from src.utils import (
     configure_logging,
     ensure_dir,
@@ -506,7 +507,8 @@ def main() -> None:
     _print_partition_counts(split_payload)
 
     model_name_or_path = resolve_model_name_or_path(args.model_name_or_path, config)
-    processor = load_processor(model_name_or_path)
+    processor = load_processor(model_name_or_path, config)
+    processor_sampling_rate = resolve_processor_sampling_rate(processor)
     train_examples = build_examples(
         filter_rows_by_subjects(manifest_rows, partition_plan["train_subject_ids"]),
         config,
@@ -544,14 +546,14 @@ def main() -> None:
 
     train_dataset = AudioTextDataset(
         train_examples,
-        processor_sampling_rate=processor.feature_extractor.sampling_rate,
+        processor_sampling_rate=processor_sampling_rate,
         silence_audio=bool(config["data"].get("silence_audio", False)),
     )
     selection_dataset = None
     if selection_enabled:
         selection_dataset = AudioTextDataset(
             selection_examples,
-            processor_sampling_rate=processor.feature_extractor.sampling_rate,
+            processor_sampling_rate=processor_sampling_rate,
             silence_audio=bool(config["data"].get("silence_audio", False)),
         )
     collator = Qwen2AudioSFTCollator(processor=processor, debug=args.label_mask_debug)
@@ -818,7 +820,7 @@ def main() -> None:
                 evaluation_protocol_name(sample_prediction_mode),
             )
             LOGGER.info("Starting final held-out evaluation for last_checkpoint")
-            prepare_model_for_evaluation(unwrapped)
+            prepare_model_for_evaluation(unwrapped, config)
             last_metrics = evaluate_examples(
                 unwrapped,
                 processor,
@@ -836,10 +838,10 @@ def main() -> None:
                 unwrapped.to("cpu")
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-                best_model = load_model_for_inference(model_name_or_path, best_dir)
+                best_model = load_model_for_inference(model_name_or_path, best_dir, config)
                 best_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
                 best_model.to(best_device)
-                best_processor = load_processor(best_dir)
+                best_processor = load_processor(best_dir, config)
                 LOGGER.info("Starting final held-out evaluation for best_checkpoint")
                 best_metrics = evaluate_examples(
                     best_model,
