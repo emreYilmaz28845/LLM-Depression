@@ -544,6 +544,19 @@ def build_examples(
     return examples
 
 
+def qwen2audio_audio_token_length(mel_frames: int) -> int:
+    """Number of audio embedding tokens Qwen2-Audio emits for ``mel_frames`` mel frames.
+
+    Mirrors ``Qwen2AudioForConditionalGeneration._get_feat_extract_output_lengths``
+    (two stride-2 convolutions). A full 30s clip = 3000 mel frames -> 750 tokens.
+    Used by the audio-budget audit as a fallback when the processor does not expand
+    the ``<|AUDIO|>`` placeholder in ``input_ids``.
+    """
+    input_lengths = (int(mel_frames) - 1) // 2 + 1
+    output_lengths = (input_lengths - 2) // 2 + 1
+    return max(0, int(output_lengths))
+
+
 def load_audio_array(audio_path: str, target_sr: int, max_seconds: float | None, silence_audio: bool) -> np.ndarray:
     info = sf.info(audio_path)
     keep_seconds = min(max_seconds, float(info.frames / info.samplerate)) if max_seconds else float(info.frames / info.samplerate)

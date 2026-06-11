@@ -58,6 +58,7 @@ training:
   gradient_checkpointing: true
   run_final_eval_in_train: false
   dataloader_num_workers: 0
+  audio_budget_audit: true   # one-time per-example audio seconds/tokens trace for VRAM planning
   max_grad_norm: 0.4
   early_stopping:
     enabled: true

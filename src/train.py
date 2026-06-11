@@ -28,6 +28,7 @@ from src.data.runtime import (
     build_subject_label_map,
     filter_rows_by_subjects,
     load_manifest_rows,
+    qwen2audio_audio_token_length,
     save_partition_subjects,
 )
 from src.data.split_utils import (
@@ -321,6 +322,138 @@ def _move_batch_to_device(batch: dict[str, Any], device: torch.device) -> dict[s
         else:
             moved[key] = value
     return moved
+
+
+AUDIO_TOKEN = "<|AUDIO|>"
+
+
+def _percentile(values: list[float], q: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return float(ordered[0])
+    pos = (len(ordered) - 1) * q
+    low = math.floor(pos)
+    high = math.ceil(pos)
+    if low == high:
+        return float(ordered[int(pos)])
+    return float(ordered[low] + (ordered[high] - ordered[low]) * (pos - low))
+
+
+def _log_peak_gpu_memory(logger, tag: str) -> dict[str, float] | None:
+    """Log the running peak CUDA memory (allocated + reserved) since the last reset."""
+    if not torch.cuda.is_available():
+        return None
+    gib = 1024 ** 3
+    allocated = float(torch.cuda.max_memory_allocated()) / gib
+    reserved = float(torch.cuda.max_memory_reserved()) / gib
+    logger.info(
+        "Peak GPU memory [%s] | max_allocated=%.2f GiB | max_reserved=%.2f GiB",
+        tag,
+        allocated,
+        reserved,
+    )
+    return {"max_allocated_gib": allocated, "max_reserved_gib": reserved}
+
+
+def _audit_audio_budget(
+    dataset: AudioTextDataset,
+    collator: Qwen2AudioSFTCollator,
+    processor,
+    sampling_rate: int | None,
+    partition_name: str,
+    logs_dir: Path,
+    max_examples: int | None = 256,
+) -> dict[str, Any] | None:
+    """One-time per-example audio-budget trace for VRAM planning.
+
+    Reports mean / p95 / max of audio seconds, audio tokens, and total input
+    sequence tokens per example. Audio tokens are read from the expanded
+    ``<|AUDIO|>`` ids in ``input_ids`` (version-matched) when available, falling
+    back to the Qwen2-Audio conv-length formula on ``feature_attention_mask``.
+
+    Runs on a dedicated dataset instance so it never perturbs the training RNG.
+    """
+    if sampling_rate is None:
+        return None
+    try:
+        audio_token_id = int(processor.tokenizer.convert_tokens_to_ids(AUDIO_TOKEN))
+    except Exception:  # pragma: no cover - tokenizer without the audio token
+        audio_token_id = None
+    total = len(dataset)
+    audit_count = total if max_examples is None else min(total, max_examples)
+    seconds: list[float] = []
+    audio_tokens: list[float] = []
+    seq_lengths: list[float] = []
+    for index in range(audit_count):
+        try:
+            item = dataset[index]
+        except Exception as exc:
+            LOGGER.warning("Audio budget audit: failed to load example %s: %s", index, exc)
+            continue
+        audio_arrays = item.get("audio_arrays") or []
+        if not audio_arrays:
+            continue
+        try:
+            batch = collator([item])
+        except Exception as exc:
+            LOGGER.warning("Audio budget audit: collator failed on example %s: %s", index, exc)
+            continue
+        input_ids = batch["input_ids"][0]
+        example_tokens = 0
+        if audio_token_id is not None:
+            audio_id_count = int((input_ids == audio_token_id).sum().item())
+            if audio_id_count > len(audio_arrays):
+                example_tokens = audio_id_count
+        if example_tokens == 0 and "feature_attention_mask" in batch:
+            mel_lengths = batch["feature_attention_mask"].sum(dim=-1).tolist()
+            example_tokens = sum(qwen2audio_audio_token_length(int(length)) for length in mel_lengths)
+        seconds.append(sum(len(arr) / float(sampling_rate) for arr in audio_arrays))
+        audio_tokens.append(float(example_tokens))
+        seq_lengths.append(float(int(input_ids.shape[0])))
+
+    if not seconds:
+        return None
+
+    def _stats(values: list[float]) -> dict[str, float]:
+        return {
+            "mean": sum(values) / len(values),
+            "p95": _percentile(values, 0.95),
+            "max": max(values),
+        }
+
+    payload = {
+        "partition": partition_name,
+        "examples_audited": len(seconds),
+        "examples_total": total,
+        "audited_all": len(seconds) >= total,
+        "sampling_rate": int(sampling_rate),
+        "audio_seconds_per_example": _stats(seconds),
+        "audio_tokens_per_example": _stats(audio_tokens),
+        "total_sequence_tokens_per_example": _stats(seq_lengths),
+    }
+    save_json(payload, logs_dir / f"audio_budget_audit_{partition_name}.json")
+    sec_stats = payload["audio_seconds_per_example"]
+    tok_stats = payload["audio_tokens_per_example"]
+    seq_stats = payload["total_sequence_tokens_per_example"]
+    LOGGER.info(
+        "Audio budget audit [%s] examples=%s/%s | audio_sec/ex mean=%.1f p95=%.1f max=%.1f | "
+        "audio_tok/ex mean=%.0f p95=%.0f max=%.0f | total_seq_tok/ex mean=%.0f p95=%.0f max=%.0f",
+        partition_name,
+        payload["examples_audited"],
+        total,
+        sec_stats["mean"],
+        sec_stats["p95"],
+        sec_stats["max"],
+        tok_stats["mean"],
+        tok_stats["p95"],
+        tok_stats["max"],
+        seq_stats["mean"],
+        seq_stats["p95"],
+        seq_stats["max"],
+    )
+    return payload
 
 
 def _compute_dataset_loss(
@@ -662,6 +795,33 @@ def main() -> None:
     stop_epoch: int | None = None
     stop_reason: str | None = None
     history: list[dict[str, Any]] = []
+
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+    if (
+        accelerator.is_main_process
+        and bool(config["data"].get("use_audio", False))
+        and bool(config["training"].get("audio_budget_audit", True))
+    ):
+        # Dedicated instance with the same seed/sampler as training so the audit
+        # reflects the real (possibly stochastic) training audio path without
+        # advancing the training dataset's RNG.
+        audit_dataset = AudioTextDataset(
+            train_examples,
+            processor_sampling_rate=processor_sampling_rate,
+            silence_audio=bool(config["data"].get("silence_audio", False)),
+            chunk_sampling=train_chunk_sampling,
+            chunk_sampling_seed=int(config["seed"]),
+        )
+        _audit_audio_budget(
+            audit_dataset,
+            Qwen2AudioSFTCollator(processor=processor, debug=False),
+            processor,
+            processor_sampling_rate,
+            partition_plan["train_split_name"],
+            logs_dir,
+        )
+
     for epoch in range(1, int(config["training"]["num_train_epochs"]) + 1):
         model.train()
         epoch_losses: list[float] = []
@@ -781,6 +941,7 @@ def main() -> None:
                     }
                 )
                 LOGGER.info("Finished epoch=%s | selection disabled | train_loss=%.6f", epoch, sum(epoch_losses) / max(1, len(epoch_losses)))
+            _log_peak_gpu_memory(LOGGER, f"epoch_{epoch}")
         stop_training_tensor = torch.tensor(0, device=accelerator.device, dtype=torch.int32)
         if accelerator.is_main_process and early_stop_cfg["enabled"] and early_stop_bad_epochs >= early_stop_cfg["patience"]:
             stopped_early = True
@@ -801,6 +962,9 @@ def main() -> None:
         unwrapped = accelerator.unwrap_model(model)
         completed_epochs = len(history)
         save_json(history, logs_dir / "training_history.json")
+        peak_gpu_memory = _log_peak_gpu_memory(LOGGER, "final")
+        if peak_gpu_memory is not None:
+            save_json(peak_gpu_memory, logs_dir / "peak_gpu_memory.json")
         if selection_enabled and _save_last_checkpoint(args.save_strategy):
             if last_dir.exists():
                 shutil.rmtree(last_dir)
