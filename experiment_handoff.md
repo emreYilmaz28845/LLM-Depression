@@ -32,7 +32,7 @@ Tiny corpora, a 7B backbone, and a leaky audio channel. That combination overfit
 - **Per-epoch stochastic K-chunk sampling** (§3): each epoch the subject is represented by a *different*
   K-subset of its chunks → combinatorial augmentation (C(N,K) views), the model can't memorise a fixed
   audio fingerprint. This is our main **runtime data-augmentation** lever today.
-- **A real regularization sweep** (reg1–4, §6): increasing dropout, weight decay, lower lr, fewer
+- **A real regularization sweep** (reg1–4, §5): increasing dropout, weight decay, lower lr, fewer
   LoRA modules / last-n-layers, lower max_grad_norm, early stopping on inner-val positive-F1.
   reg3/reg4 (heavy reg) are the stable configs; light reg overfits/collapses.
 - **Text is the clean channel.** Transcript length does NOT leak (separability 0.457). Text-only is
@@ -41,11 +41,11 @@ Tiny corpora, a 7B backbone, and a leaky audio channel. That combination overfit
   (`q/k/v_proj`) also match the Whisper `audio_tower` attention, so LoRA was silently being trained
   *on the audio encoder* — exactly the overfit liability DepressInstruct warns about. The legacy
   `hybrid` configs excluded it; the `subject_audio reg1–4` configs did **not**, so the reported
-  subject-level numbers (§7) were produced with a leaking encoder. Fix: `build_lora_config` now
+  subject-level numbers (§6) were produced with a leaking encoder. Fix: `build_lora_config` now
   defaults `exclude_modules=".*audio_tower.*|.*multi_modal_projector.*"` (opt out with
   `lora.tune_audio_encoder: true`), and `enforce_audio_encoder_freeze` (in `qwen2audio_lora.py`)
   verifies/freezes any leaked encoder LoRA each load and logs the count. **Action: re-run the
-  DAIC/EDAIC `subject_audio` + `subject_audio_text` reg sweep with the freeze before trusting §7.**
+  DAIC/EDAIC `subject_audio` + `subject_audio_text` reg sweep with the freeze before trusting §6.**
 
 ### What we could still do (NOT yet implemented — candidate next steps)
 - **Audio data augmentation at runtime** (cheap, high-value): SpecAugment-style time/frequency masking
@@ -100,7 +100,7 @@ contributes the same number of chunks regardless of class.
 - **Larger K → weaker regularization** (more overlap, closer to using everything).
 - So K is a knob: small K = stronger combinatorial augmentation but less audio seen per epoch.
 - **K=all is NOT advisable**: (a) re-introduces the chunk-count leak (depressed subjects expose
-  more chunks), and (b) OOMs — 15 chunks × ~750 tokens/30s is far too long.
+  more chunks), and (b) 15 chunks × ~750 tokens/30s is far too long to fit in memory.
 
 ## 3. The eval-determinism rule (HARD CONSTRAINT — do not violate)
 
@@ -129,9 +129,16 @@ This mode was added as a **new explicit mode**, NOT a replacement of `sample_mod
   - Dispatch in `build_examples`: `if sample_mode == "subject_audio" and dataset_name in {"daic","edaic"}`.
   - `AudioTextDataset` gained `chunk_sampling` (None/"deterministic"/"random") + `chunk_sampling_seed`;
     `_resolve_audio_plan` samples K from the pool when "random".
-- **`src/train.py`** — instrumentation + the OOM fix wiring:
+- **`src/train.py`** — instrumentation + training wiring:
   - `train_dataset` → `chunk_sampling="random"` when subject_audio; `selection_dataset` → `"deterministic"`.
-  - Per-epoch, at top of loop after `model.train()`: `restore_model_for_training(unwrap(model), config)` (see §5).
+  - Per-epoch, at top of loop after `model.train()`: `restore_model_for_training(unwrap(model), config)`
+    re-enables gradient checkpointing + `enable_input_require_grads` + `use_cache=False` (eval flips these).
+  - **Checkpoint selection is configurable** via `_resolve_selection_metric` (`training.selection_metric`,
+    default `inner_val_positive_f1`; `selection_metric_mode: auto` → `min` for `*_loss`). It chooses which
+    epoch is saved as `best_model` and is **independent of `early_stopping.metric`** (which only decides
+    *when* to stop). Before this, selection was hardcoded to `positive_f1` — see §8. Available metric keys:
+    `inner_val_{positive_f1,macro_f1,accuracy,precision,recall,loss}`. NB: `hpo.py` maximizes `best_metric`,
+    so do not pair a `*_loss` selection metric with HPO without flipping its direction.
   - VRAM/audio logging: `_log_peak_gpu_memory` (max_allocated/max_reserved GiB),
     `_audit_audio_budget` (counts `<|AUDIO|>` tokens → `audio_budget_audit_<partition>.json`),
     `_percentile`. `torch.cuda.reset_peak_memory_stats()` before the loop; `peak_gpu_memory.json` at end.
@@ -139,21 +146,7 @@ This mode was added as a **new explicit mode**, NOT a replacement of `sample_mod
 - **`src/model/qwen2audio_lora.py`** & **`src/model/text_lora.py`**: `restore_model_for_training(model, config)`
   (symmetric). **`src/model/runtime.py`**: dispatch wrapper picking backend by `resolve_input_modality`.
 
-## 5. The OOM bug and its real fix (important — easy to regress)
-
-Symptom: OOM on epoch ≥ 2 (not epoch 1), at long sequence lengths (fp32 logits ~1.8 GiB at seq ~3100).
-
-- **First (wrong) diagnosis:** fragmentation → added `empty_cache`. Did NOT fix it.
-- **Real cause:** `prepare_model_for_evaluation` **disables gradient checkpointing** and sets
-  `use_cache=True`. `model.train()` does **not** restore checkpointing, so epoch 2+ trains WITHOUT
-  gradient checkpointing → activation blowup → OOM.
-- **Fix:** `restore_model_for_training(model, config)` (disable-then-enable gradient checkpointing +
-  re-apply `enable_input_require_grads` + `use_cache=False`), called every epoch after `model.train()`.
-  Confirmed: VRAM now flat at ~27.74 GiB across all epochs (reg2 re-run).
-
-**If you see epoch-2 OOM again, check that `restore_model_for_training` is still being called each epoch.**
-
-## 6. Configs (the reg grid)
+## 5. Configs (the reg grid)
 
 Naming: `{dataset}_{modality}_reg{N}.yaml` where modality ∈ {audio_only, text_only, subject_audio,
 subject_audio_text}. Subject configs set `chunks_per_subject: 4`, `max_audio_seconds_per_chunk: 30.0`,
@@ -169,7 +162,7 @@ Reg grid (rank / α / dropout / lr / wd / warmup / max_grad_norm / patience / #t
 **reg3/reg4 are the safe, stable picks for audio paths. reg1/reg2 (light reg) are unstable and
 collapse to all-positive on some datasets — do not trust them blindly.**
 
-## 7. Current results (see `results_subject_level_daic_edaic.md` for full tables)
+## 6. Current results (see `results_subject_level_daic_edaic.md` for full tables)
 
 Best per dataset:
 - **DAIC**: audio+text reg1 — ACC 0.851, F1 0.696 (but reg2 collapsed to all-positive here).
@@ -190,7 +183,7 @@ Key finding (read carefully — the results file is too generous):
   F1 0.552 vs chunk audio_only reg2 F1 0.437). The leak fix + subject aggregation matter; audio-on-top-
   of-text does not.
 
-## 8. Open / suggested next steps
+## 7. Open / suggested next steps
 
 ### IN-FLIGHT — audio-encoder freeze re-run (DepressInstruct, lit-review approach #1)
 LoRA `target_modules` (`q/k/v_proj`) also matched the Whisper `audio_tower`, so the
@@ -207,10 +200,10 @@ by grepping the train log for `Audio-encoder freeze guard`.
   suffix. text_only is excluded (no encoder → freeze is a no-op, its numbers stay valid).
 - **DAIC best-config spot-checks submitted** with the freeze: `daic_subject_audio_reg3_frozenenc`,
   `daic_subject_audio_text_reg1_frozenenc`.
-- **The §7 / results_subject_level_daic_edaic.md `subject_audio*` + `audio+text` numbers are STALE** (leaking
+- **The §6 / results_subject_level_daic_edaic.md `subject_audio*` + `audio+text` numbers are STALE** (leaking
   encoder) — replace them with the frozen-encoder re-run before drawing conclusions.
 - **TODO:** rebuild the results tables from the `_frozenenc` runs; then re-assess the audio-vs-text question
-  (§7) on the clean numbers. Consider generating the missing EDAIC reg1 configs for a paired comparison.
+  (§6) on the clean numbers. Consider generating the missing EDAIC reg1 configs for a paired comparison.
 
 ### Other open items (confirm with user before starting)
 1. **Investigate CMDC 0.987** for corpus artifacts/leakage (recording/site conditions vs label)
@@ -222,6 +215,95 @@ by grepping the train log for `Audio-encoder freeze guard`.
 4. Optional: EDAIC→DAIC cross-corpus eval; a long run with early stopping disabled to confirm the
    overfitting story directly.
 
+## 8. Freeze × selection-metric × decision-rule study (DAIC reg1 audio+text)
+
+Controlled 2×3×2 grid on a single recipe (reg1: rank16/α32/dropout0.05/lr2e-4, 7 LoRA modules),
+DAIC fixed split, **test N=47 (33 non-dep / 14 dep)**. Everything held constant except three axes:
+**audio-encoder freeze** (Yes/No), **checkpoint-selection metric** (positive-F1 / macro-F1 / val-loss),
+and **test decision rule** (`likelihood` / `original_teacher_forced`). `F1` = positive-class F1.
+`(eN)` = epoch saved as `best_model`. TF INVALIDs are scored as **wrong** (strict mapping, see below).
+
+All-negative baseline: ACC 0.702, F1 0.000.
+
+### Frozen encoder (DepressInstruct; 524K trainable LoRA params, decoder-only)
+| selection | eval | ACC | F1 | Precision | Recall | CM [TN,FP / FN,TP] |
+| --------- | ---- | ----- | ----- | --------- | ------ | ------------------ |
+| positive-F1 (e4) | likelihood | 0.766 | 0.718 | 0.560 | 1.000 | 22,11 / 0,14 |
+| positive-F1 (e4) | teacher_forced | 0.745 | 0.700 | 0.538 | 1.000 | 21,12 / 0,14 |
+| macro-F1 (e4) | likelihood | 0.766 | 0.718 | 0.560 | 1.000 | 22,11 / 0,14 |
+| **macro-F1 (e4)** | **teacher_forced** | 0.787 | **0.737** | 0.583 | 1.000 | 23,10 / 0,14 |
+| val-loss (e3) | likelihood | 0.787 | 0.643 | 0.643 | 0.643 | 28,5 / 5,9 |
+| val-loss (e3) | teacher_forced | 0.809 | 0.690 | 0.667 | 0.714 | 28,5 / 4,10 |
+
+### Non-frozen encoder (`lora.tune_audio_encoder: true`; 3.93M trainable LoRA params, ~7.5×)
+| selection | eval | ACC | F1 | Precision | Recall | CM [TN,FP / FN,TP] |
+| --------- | ---- | ----- | ----- | --------- | ------ | ------------------ |
+| positive-F1 (e4) | likelihood | **0.851** | 0.696 | 0.889 | 0.571 | 32,1 / 6,8 |
+| positive-F1 (e6) | teacher_forced | 0.787 | 0.706 | 0.600 | 0.857 | 25,8 / 2,12 |
+| macro-F1 (e3) | likelihood | 0.809 | 0.667 | 0.692 | 0.643 | 29,4 / 5,9 |
+| macro-F1 (e6) | teacher_forced | 0.787 | 0.706 | 0.600 | 0.857 | 25,8 / 2,12 |
+| val-loss (e2) ⚠️ | likelihood | 0.787 | 0.444 | 1.000 | 0.286 | 33,0 / 10,4 |
+| val-loss (e2) ⚠️ | teacher_forced | 0.830 | 0.600 | 1.000 | 0.429 | 33,0 / 8,6 |
+
+### Findings
+- **The famous 0.851 ACC is the NON-frozen (leaky) model, reproduced exactly** ([32,1/6,8]) — it's a
+  conservative, high-precision (0.889) / low-recall (0.571) operating point that misses 43% of depressed.
+  High accuracy by rarely saying "depressed" + the encoder shortcut, not by hearing depression.
+- **Best positive-F1 in the whole grid is a FROZEN cell** (macro-F1 × TF, F1 0.737). Training the audio
+  encoder buys **no defensible F1 gain**; freezing removes the leak, matches/beats F1, and shrinks
+  trainable params ~7.5×. This is the §0 overfitting thesis confirmed on a controlled grid.
+- **val-loss selection is a trap when the encoder is NOT frozen.** The bigger encoder-LoRA capacity
+  overfits fast, so val-loss bottoms at **epoch 2** (underfit) and the model collapses toward all-negative
+  (F1 0.444). Frozen + val-loss was fine (epoch 3). → do **not** pair `selection_metric: inner_val_loss`
+  with the non-frozen encoder.
+- **macro-F1 ≈ positive-F1 when frozen** (both pick epoch 4, identical results); they only diverge under
+  the noisier non-frozen dynamics.
+- **likelihood vs teacher_forced gaps are all 1–3 subjects** — within the single-subject noise floor
+  (±0.03–0.05 F1 on N=47). No decision rule is reliably better; TF is just cheaper.
+- **Inner-val is noisy (N=35 / 12 pos): val-F1 ≈ 0.42–0.56 while test-F1 ≈ 0.64–0.74.** This is the small
+  selection set, not a bug — but it means a single config's single test number has wide error bars; do not
+  rank configs by sub-0.05 F1 deltas.
+
+### Recommended default for all future experiments (DECIDED 2026-06-15)
+> **Audio encoder frozen + `selection_metric: inner_val_macro_f1` + `original_teacher_forced` eval.**
+
+Rationale from the grid above:
+- **Freeze the encoder** — settled best practice. Kills the LoRA-into-Whisper leak, gives the best
+  positive-F1 in the whole grid (0.737), and cuts trainable params ~7.5×. No defensible reason to train it.
+- **macro-F1 selection** — overall the best-balanced choice. It is not strictly dominant: the
+  precision/recall trade-off is real — macro-F1 buys **recall 1.000** (precision 0.583), while val-loss
+  selection gives **better precision (0.667) at recall 0.714**. If a deployment needs precision over
+  recall, val-loss is a defensible alternative (it's safe *when frozen* — epoch 3, no collapse). Default
+  to macro-F1; switch to val-loss only when precision is the priority.
+- **teacher_forced eval** — TF and likelihood are within the noise floor (1–3 subjects); TF is cheaper,
+  so it's the standard verdict. (`likelihood` remains a fine, slightly-lower-variance fallback.)
+
+The canonical config embodying this is `daic_subject_audio_text_reg1_selmacrof1_tf.yaml`; clone it as the
+template for new datasets/regs. Further cells of this grid are **not worth running** — the trade-offs are
+understood.
+
+### Decision-rule mechanics (why `likelihood` is the default; see `src/evaluate.py`, `src/aggregate.py`)
+- `likelihood` — compares teacher-forced log-likelihood of "Depressed" vs "Non-depressed"; a forced
+  2-way choice that **never** yields INVALID. Lowest variance, the principled default.
+- `original_teacher_forced` — feeds `prompt + GOLD label`, takes per-position arg-max. For **multi-token
+  labels with distinct first tokens** (`"Dep…"` vs `"Non…"`) a wrong first token + gold continuation
+  decodes to a corrupted hybrid (`"Non"+"…ressed"`) → parses INVALID. So **INVALID ⟺ wrong first token
+  ⟺ wrong class**; it is a *wrong prediction*, not "model confusion". `_strict_binary_prediction(gold,pred)`
+  maps INVALID → `1 - gold`, so the **headline / `binary_strict_*`** metrics already count it as wrong
+  (read those; **ignore `valid_only_*`**, which drops INVALIDs and over-reports).
+- `generation` — free decode (no gold injection); "what the model says out loud", wrong-is-wrong, can
+  INVALID only on genuine rambling. Use this (not TF) if you want a *decode-based* verdict without the
+  teacher-forcing artifact.
+
+### Configs / artifacts
+- Frozen variants: `daic_subject_audio_text_reg1{,_selloss,_selmacrof1}{,_tf}.yaml`
+  (+ early `_valloss{,_tf}` runs where only early-stopping — not selection — used loss, before the
+  selection fix; those are equivalent to positive-F1 selection).
+- Non-frozen variants: `daic_subject_audio_text_reg1{,_selloss,_selmacrof1}{,_tf}_nofreeze.yaml`
+  (and `_tf_nofreeze` for positive-F1 × TF).
+- Verify freeze state from the train log: `Audio adaptation state | … tune_audio_encoder=<bool>
+  encoder_lora_leaked_params=<n>` (frozen → 0; non-frozen → 3,932,160).
+
 ## 9. Persistent memory pointers
 
 Auto-memory at `/home/emre/.claude/projects/-home-emre-Projects-AudioLLM/memory/`:
@@ -230,3 +312,4 @@ Auto-memory at `/home/emre/.claude/projects/-home-emre-Projects-AudioLLM/memory/
 - `subject-audio-kchunk-mode.md` — how `sample_mode=subject_audio` + per-epoch sampling works.
 - `audio-encoder-lora-leak-freeze.md` — the LoRA-into-Whisper-encoder leak, the freeze fix, and that the
   DAIC/EDAIC audio results need re-running.
+- `selection-metric-and-freeze-grid.md` — `training.selection_metric` knob + the §8 grid conclusions.

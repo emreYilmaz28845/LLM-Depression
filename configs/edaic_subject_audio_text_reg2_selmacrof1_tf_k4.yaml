@@ -1,0 +1,89 @@
+dataset: edaic
+seed: 1337
+dataset_root: ${EDAIC_DATASET_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/EDAIC-WOZ/preprocessed}
+quarantine_path: ${PROJECT_ROOT}/configs/quarantines.yaml
+model_name_or_path: /gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instruct
+output_dirs:
+  manifest_dir: ${PROJECT_ROOT}/outputs/manifests
+  split_dir: ${PROJECT_ROOT}/outputs/splits
+  run_root: ${PROJECT_ROOT}/output_model/audio_text/edaic
+prompt:
+  system: You are a psychologist analyzing speech and transcript information for depression screening.
+  user_template: |-
+    {audio_context_block}
+    {transcript_block}Based on the {decision_basis}, determine whether the subject is {label_descriptor}.
+    {label_instruction}
+  prompt_language: english
+labels:
+  label_vocab_version: legacy_english_labels
+data:
+  use_audio: true
+  use_text: true
+  silence_audio: false
+  # Subject-level audio: one example per subject built from K chunks.
+  # Training samples K chunks stochastically per epoch; validation/test use a
+  # deterministic evenly-spaced K-chunk view (no randomness in reported metrics).
+  #
+  # K=4 baseline for the EDAIC K-ablation. Recipe = EDAIC's tuned reg2 (the safe
+  # pick per handoff §5; reg1 light-reg risks the all-positive collapse), with the
+  # decided default applied: frozen encoder + macro-F1 selection + TF eval. The
+  # _k3/_k2 siblings are identical except chunks_per_subject, so K is the only axis.
+  sample_mode: subject_audio
+  chunks_per_subject: 4
+  max_audio_seconds_per_chunk: 30.0
+  transcript_max_chars: 4000
+  allow_empty_transcript: false
+split:
+  train_partitions:
+    - train
+    - val
+  final_eval_partition: test
+  inner_val_ratio: 0.2
+  seed: 1337
+lora:
+  rank: 16
+  alpha: 32
+  dropout: 0.10
+  bias: none
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+training:
+  num_train_epochs: 20
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 8
+  logging_steps: 5
+  bf16: true
+  gradient_checkpointing: true
+  run_final_eval_in_train: false
+  dataloader_num_workers: 0
+  audio_budget_audit: true   # one-time per-example audio seconds/tokens trace for VRAM planning
+  max_grad_norm: 0.8
+  # Decided default: select best_model on macro-F1 (less jumpy than positive-only
+  # F1 on the small noisy inner-val). mode auto -> max.
+  selection_metric: inner_val_macro_f1
+  selection_metric_mode: auto
+  early_stopping:
+    enabled: true
+    metric: inner_val_macro_f1
+    mode: max
+    patience: 3
+    min_delta: 0.0
+evaluation:
+  # Macro-F1 SELECTION + teacher-forced test verdict (decided default).
+  # Read headline/binary_strict_* (INVALID counted as wrong); ignore valid_only_*.
+  sample_prediction_mode: original_teacher_forced
+  aggregation_level: subject
+  generation_max_new_tokens: 8
+  num_beams: 1
+  do_sample: false
+  headline_mode: original_teacher_forced
