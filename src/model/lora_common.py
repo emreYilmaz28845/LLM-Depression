@@ -74,8 +74,19 @@ def build_lora_config(config: dict[str, Any], model_or_config) -> tuple[LoraConf
     }
     if layer_selection["layers_to_transform"] is not None:
         lora_kwargs["layers_to_transform"] = list(layer_selection["layers_to_transform"])
-    if "exclude_modules" in lora_cfg and lora_cfg["exclude_modules"]:
-        lora_kwargs["exclude_modules"] = lora_cfg["exclude_modules"]
+
+    # Default-on freeze of the Qwen2-Audio front-end (DepressInstruct recipe).
+    # `target_modules` like q/k/v_proj also match the Whisper `audio_tower`
+    # attention, so without this LoRA leaks into the audio encoder and overfits
+    # speaker/channel shortcuts on tiny corpora. An explicit `exclude_modules`
+    # in the config wins; otherwise we exclude the encoder + projector unless the
+    # config opts in with `lora.tune_audio_encoder: true`.
+    explicit_exclude = lora_cfg.get("exclude_modules")
+    tune_audio_encoder = bool(lora_cfg.get("tune_audio_encoder", False))
+    if explicit_exclude:
+        lora_kwargs["exclude_modules"] = explicit_exclude
+    elif not tune_audio_encoder:
+        lora_kwargs["exclude_modules"] = r".*audio_tower.*|.*multi_modal_projector.*"
     return LoraConfig(**lora_kwargs), layer_selection
 
 

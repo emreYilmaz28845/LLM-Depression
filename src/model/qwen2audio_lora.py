@@ -184,6 +184,55 @@ def summarize_trainable_parameter_groups(model) -> dict[str, int]:
     }
 
 
+def enforce_audio_encoder_freeze(model, config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Verify-and-enforce that no trainable LoRA weights live in the audio encoder.
+
+    ``exclude_modules`` in the LoRA config should already keep LoRA out of the
+    Whisper ``audio_tower``, but this is a belt-and-suspenders guard: it scans the
+    actual parameters and freezes anything that still landed under ``audio_tower``.
+    Because LoRA ``B`` is zero-initialised, a frozen-from-the-start encoder LoRA is
+    a no-op, so freezing here keeps the encoder's forward pass unchanged. Returns a
+    summary (and logs a WARNING if it had to intervene) so the freeze is auditable
+    from the run logs.
+    """
+    tune_audio_encoder = bool(((config or {}).get("lora") or {}).get("tune_audio_encoder", False))
+    leaked_params = 0
+    frozen_params = 0
+    leaked_names: list[str] = []
+    for name, parameter in model.named_parameters():
+        if "audio_tower" not in name or "lora_" not in name:
+            continue
+        if not parameter.requires_grad:
+            continue
+        leaked_params += parameter.numel()
+        if len(leaked_names) < 8:
+            leaked_names.append(name)
+        if not tune_audio_encoder:
+            parameter.requires_grad = False
+            frozen_params += parameter.numel()
+    summary = {
+        "tune_audio_encoder": tune_audio_encoder,
+        "leaked_lora_params": int(leaked_params),
+        "frozen_lora_params": int(frozen_params),
+        "leaked_examples": leaked_names,
+    }
+    if leaked_params and not tune_audio_encoder:
+        LOGGER.warning(
+            "Audio-encoder freeze guard: found %s trainable LoRA params under audio_tower "
+            "despite exclude_modules; froze them. Examples: %s",
+            leaked_params,
+            leaked_names,
+        )
+    elif leaked_params and tune_audio_encoder:
+        LOGGER.info(
+            "Audio-encoder freeze guard: %s trainable LoRA params under audio_tower (tune_audio_encoder=true, kept).",
+            leaked_params,
+        )
+    else:
+        LOGGER.info("Audio-encoder freeze guard: 0 trainable LoRA params under audio_tower (encoder frozen).")
+    return summary
+
+
 def load_model_for_training(model_name_or_path: str, config: dict[str, Any]):
     torch_dtype = torch.bfloat16 if bool(config["training"].get("bf16", False)) and torch.cuda.is_available() else None
     audio_adapter_cfg = resolve_audio_adapter_config(config)
@@ -205,6 +254,7 @@ def load_model_for_training(model_name_or_path: str, config: dict[str, Any]):
     model = get_peft_model(model, lora_config)
     model._resolved_lora_layer_selection = dict(lora_layer_selection)
     configure_trainable_audio_modules(model, audio_adapter_cfg)
+    audio_freeze_summary = enforce_audio_encoder_freeze(model, config)
     model.print_trainable_parameters()
     audio_state = summarize_audio_module_state(model)
     trainable_summary = summarize_trainable_parameter_groups(model)
@@ -224,13 +274,17 @@ def load_model_for_training(model_name_or_path: str, config: dict[str, Any]):
     )
     LOGGER.info(
         "Audio adaptation state | adapter_enabled=%s adapter_attached=%s adapter_trainable_params=%s "
-        "train_projector=%s projector_present=%s projector_trainable_params=%s",
+        "train_projector=%s projector_present=%s projector_trainable_params=%s "
+        "tune_audio_encoder=%s encoder_lora_leaked_params=%s encoder_lora_frozen_params=%s",
         audio_adapter_cfg["enabled"],
         audio_state["adapter_attached"],
         audio_state["adapter_trainable_params"],
         audio_adapter_cfg["train_projector"],
         audio_state["projector_present"],
         audio_state["projector_trainable_params"],
+        audio_freeze_summary["tune_audio_encoder"],
+        audio_freeze_summary["leaked_lora_params"],
+        audio_freeze_summary["frozen_lora_params"],
     )
     return model
 
