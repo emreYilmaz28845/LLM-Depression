@@ -47,13 +47,31 @@ Tiny corpora, a 7B backbone, and a leaky audio channel. That combination overfit
   verifies/freezes any leaked encoder LoRA each load and logs the count. **Action: re-run the
   DAIC/EDAIC `subject_audio` + `subject_audio_text` reg sweep with the freeze before trusting §6.**
 
-### What we could still do (NOT yet implemented — candidate next steps)
-- **Audio data augmentation at runtime** (cheap, high-value): SpecAugment-style time/frequency masking
-  on the mel features; additive noise / SNR jitter; speed/tempo perturbation (±5–10%); random gain;
-  light reverb. These attack speaker/channel memorisation directly. Apply **train-only**, keep eval
-  deterministic (same rule as §3).
-- **More aggressive chunk-subset augmentation**: smaller K (K=2–3) for *stronger* combinatorial
-  regularization; or multi-view training (sample several K-subsets per subject per epoch).
+### What we could still do (candidate next steps)
+- **Audio data augmentation at runtime** — **WAVEFORM AUG IMPLEMENTED** (see below); SpecAugment
+  (mel time/freq masking) and reverb still candidate.
+- **More aggressive chunk-subset augmentation**: the K-sweep is DONE (§8 K-ablation) — K=4 is the peak,
+  not beaten by K∈{2,3,5,6}; only the precision↑/recall↓-with-K trend is defensible. Multi-view training
+  (several K-subsets/subject/epoch) and multi-view eval (average probs over views — the sanctioned §3
+  exception) are still open.
+
+#### Waveform acoustic augmentation — IMPLEMENTED (2026-06-15)
+`apply_audio_augment` in `src/data/runtime.py`: train-only waveform aug attacking the speaker/channel/site
+shortcut. Effects (each fires with prob `prob`, magnitude ~U[lo,hi], range=null disables): **pitch shift**,
+**time-stretch**, **gain**, **additive noise (target SNR)**. Routed through the dataset's seeded
+`_rng`/`_np_rng` so the per-epoch view is reproducible for a given `seed`.
+- **Train-only by construction**: passed to `train_dataset` ONLY (not selection/audit); eval loads audio via
+  `src/evaluate.py` backends, NOT `AudioTextDataset`, so the §3 determinism rule holds with no extra guard.
+- **VRAM-safe**: output truncated to ≤ original length, so time-stretch can't inflate the audio-token budget.
+- **Robust**: pitch/time-stretch need `librosa.effects` (→ numba); if unavailable they no-op with a one-time
+  warning while noise/gain (pure NumPy) stay active.
+- **Config**: `data.audio_augment` block; turn-key config `daic_subject_audio_text_reg1_selmacrof1_tf_aug.yaml`
+  (canonical decided default + aug, K=4). Read the train→inner-val gap (overfit signal), not the noisy N=47 test F1.
+
+#### Cross-corpus eval (EDAIC→DAIC) — DEFERRED (planned, do LATER)
+The truest generalization probe and the cleanest place to measure whether waveform aug actually helps. The
+augment levers above are best validated here (in-corpus audio ≈ text at the noise floor, §6). Intentionally
+deferred for now per user; revisit after the in-corpus aug screen.
 - **Class-imbalance handling**: class-balanced / weighted sampling, focal or class-weighted loss,
   threshold calibration on inner-val instead of fixed 0.5. Essential for EATD.
 - **Stronger parameter regularization**: even lower rank (4), higher dropout, LoRA only on attention,
@@ -281,6 +299,34 @@ Rationale from the grid above:
 The canonical config embodying this is `daic_subject_audio_text_reg1_selmacrof1_tf.yaml`; clone it as the
 template for new datasets/regs. Further cells of this grid are **not worth running** — the trade-offs are
 understood.
+
+### K-ablation on the decided default (DAIC, single-seed)
+Held everything at the decided default (frozen encoder + macro-F1 selection + TF eval, reg1 recipe)
+and varied **only** `chunks_per_subject` K ∈ {2,3,4,5,6}. Configs
+`daic_subject_audio_text_reg1_selmacrof1_tf{,_k2,_k3,_k5,_k6}.yaml`. Test N=47 (33 non-dep / 14 dep),
+all-negative baseline ACC 0.702. `INVALID` = TF wrong-first-token (= wrong class).
+
+| K | ACC | posF1 | macroF1 | Prec | Rec | CM [TN,FP / FN,TP] | INVALID |
+| - | ----- | ----- | ----- | ----- | ----- | ------------------ | ------- |
+| 2 | 0.702 | 0.650 | 0.695 | 0.500 | 0.929 | 20,13 / 1,13 | 14 |
+| 3 | 0.723 | 0.683 | 0.719 | 0.519 | 1.000 | 20,13 / 0,14 | 13 |
+| **4** | 0.787 | **0.737** | **0.779** | 0.583 | 1.000 | 23,10 / 0,14 | — |
+| 5 | 0.723 | 0.629 | 0.704 | 0.524 | 0.786 | 23,10 / 3,11 | 13 |
+| 6 | 0.830 | 0.636 | 0.763 | 0.875 | 0.500 | 32,1 / 7,7 | 8 |
+
+(K=4 row is the §8 decided-default run; macroF1 computed from its CM.)
+
+Findings:
+- **K=4 is the peak** on both positive-F1 (0.737) and macro-F1 (0.779) — the sweep validates it, doesn't beat it.
+- **Monotonic operating-point shift**: small K over-predicts depressed (K=2/3 recall 0.93–1.0, precision ≈0.5);
+  large K turns conservative (K=6 precision 0.875, recall 0.500, misses half the depressed). Consistent with the
+  regularization-strength view of K (overlap ≈ K²/N): small K = stronger aug → leans to the minority; large K =
+  weaker reg → reverts to the cautious high-precision shape that mimics the leaky model (K=6 CM 32,1/7,7 echoes
+  the old non-frozen 0.851-ACC operating point). **K=6's ACC 0.830 is a trap** — high only because it rarely says
+  "depressed".
+- **Single-seed caveat**: N=47, one subject ≈ 0.03–0.05 F1; K2/K3/K5 differ by 1–3 subjects (within noise). Only
+  the monotonic precision↑/recall↓ across all 5 points and "K=4 not beaten" are defensible. Multi-seed replicates
+  (seed-variant configs `..._s2024/_s7` + `scripts/run_daic_ksweep.sh`) are built but not yet run.
 
 ### Decision-rule mechanics (why `likelihood` is the default; see `src/evaluate.py`, `src/aggregate.py`)
 - `likelihood` — compares teacher-forced log-likelihood of "Depressed" vs "Non-depressed"; a forced

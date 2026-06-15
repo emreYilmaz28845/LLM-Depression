@@ -576,6 +576,95 @@ def load_audio_array(audio_path: str, target_sr: int, max_seconds: float | None,
     return np.asarray(audio, dtype=np.float32)
 
 
+_LIBROSA_EFFECTS = "unset"
+
+
+def _load_librosa_effects():
+    """Lazily import ``librosa.effects`` (pulls in numba). Returns the module or
+    ``None`` if unavailable, warning once so pitch/time-stretch degrade to a no-op
+    instead of crashing training."""
+    global _LIBROSA_EFFECTS
+    if _LIBROSA_EFFECTS == "unset":
+        try:
+            from librosa import effects
+
+            _LIBROSA_EFFECTS = effects
+        except Exception as exc:  # noqa: BLE001 - any import failure -> skip these effects
+            LOGGER.warning(
+                "librosa.effects unavailable (%s); pitch_shift/time_stretch augmentation disabled, "
+                "noise/gain still active.",
+                exc,
+            )
+            _LIBROSA_EFFECTS = None
+    return _LIBROSA_EFFECTS
+
+
+def apply_audio_augment(
+    audio: np.ndarray,
+    sampling_rate: int,
+    cfg: dict[str, Any],
+    rng: random.Random,
+    np_rng: np.random.Generator,
+) -> np.ndarray:
+    """Train-only waveform acoustic augmentation.
+
+    Attacks the speaker/channel/site shortcut the audio path overfits to. Each
+    effect is applied independently with probability ``cfg["prob"]``; its
+    magnitude is drawn uniformly from the configured ``[lo, hi]`` range. A range
+    set to ``None`` (or absent) disables that effect. Determinism is preserved by
+    routing all randomness through the dataset's seeded ``rng``/``np_rng``, so the
+    per-epoch augmentation view is reproducible for a given ``seed``.
+
+    NOTE: this must only ever run on the TRAIN dataset. Eval loads audio through a
+    separate path (``src/evaluate.py`` backends, not ``AudioTextDataset``), so the
+    determinism rule (handoff §3) holds as long as the augment cfg is passed only
+    to the training dataset.
+    """
+    if not cfg or not cfg.get("enabled", False) or audio.size == 0:
+        return audio
+    prob = float(cfg.get("prob", 0.5))
+    out = np.asarray(audio, dtype=np.float32)
+    orig_len = out.shape[0]
+
+    def _draw(key: str) -> float | None:
+        rng_range = cfg.get(key)
+        if rng_range is None or rng.random() >= prob:
+            return None
+        lo, hi = float(rng_range[0]), float(rng_range[1])
+        return rng.uniform(lo, hi)
+
+    # Spectral/temporal first (change content), then level, then channel noise.
+    # pitch_shift/time_stretch need librosa.effects (-> numba); if that stack is
+    # unavailable we skip them with a one-time warning rather than crash training.
+    # Noise/gain below are pure-NumPy and always available.
+    n_steps = _draw("pitch_semitones")
+    rate = _draw("time_stretch")
+    if n_steps is not None or (rate is not None and rate > 0):
+        effects = _load_librosa_effects()
+        if effects is not None:
+            if n_steps is not None:
+                out = effects.pitch_shift(out, sr=sampling_rate, n_steps=n_steps)
+            if rate is not None and rate > 0:
+                out = effects.time_stretch(out, rate=rate)
+    gain_db = _draw("gain_db")
+    if gain_db is not None:
+        out = out * float(10.0 ** (gain_db / 20.0))
+    snr_db = _draw("noise_snr_db")
+    if snr_db is not None:
+        signal_power = float(np.mean(out**2))
+        if signal_power > 0:
+            noise_power = signal_power / (10.0 ** (snr_db / 10.0))
+            noise = np_rng.standard_normal(out.shape[0]).astype(np.float32) * float(np.sqrt(noise_power))
+            out = out + noise
+
+    # Keep length <= original so the audio-token budget (and VRAM) stays bounded
+    # even when time_stretch lengthens the clip.
+    if out.shape[0] > orig_len:
+        out = out[:orig_len]
+    np.clip(out, -1.0, 1.0, out=out)
+    return np.asarray(out, dtype=np.float32)
+
+
 class AudioTextDataset(Dataset):
     def __init__(
         self,
@@ -584,6 +673,7 @@ class AudioTextDataset(Dataset):
         silence_audio: bool = False,
         chunk_sampling: str | None = None,
         chunk_sampling_seed: int = 1337,
+        audio_augment: dict[str, Any] | None = None,
     ):
         """``chunk_sampling`` controls subject_audio chunk selection.
 
@@ -593,6 +683,10 @@ class AudioTextDataset(Dataset):
         - ``"random"``: for subject_audio examples, draw ``chunks_per_subject``
           chunks from the subject's full ``subject_chunk_paths`` on every access,
           giving a fresh view each epoch. Training-only.
+
+        ``audio_augment`` (train-only) applies waveform acoustic augmentation to
+        each loaded chunk; see ``apply_audio_augment``. Leave ``None`` for
+        selection/eval datasets.
         """
         if chunk_sampling not in (None, "deterministic", "random"):
             raise ValueError(f"Unsupported chunk_sampling={chunk_sampling!r}.")
@@ -600,7 +694,9 @@ class AudioTextDataset(Dataset):
         self.processor_sampling_rate = int(processor_sampling_rate) if processor_sampling_rate is not None else None
         self.silence_audio = bool(silence_audio)
         self.chunk_sampling = chunk_sampling
+        self.audio_augment = audio_augment if (audio_augment and audio_augment.get("enabled")) else None
         self._rng = random.Random(int(chunk_sampling_seed))
+        self._np_rng = np.random.default_rng(int(chunk_sampling_seed))
 
     def __len__(self) -> int:
         return len(self.examples)
@@ -633,6 +729,13 @@ class AudioTextDataset(Dataset):
                 load_audio_array(audio_path, self.processor_sampling_rate, max_seconds, self.silence_audio)
                 for audio_path, max_seconds in zip(audio_paths, clip_seconds)
             ]
+            if self.audio_augment and not self.silence_audio:
+                audio_arrays = [
+                    apply_audio_augment(
+                        array, self.processor_sampling_rate, self.audio_augment, self._rng, self._np_rng
+                    )
+                    for array in audio_arrays
+                ]
         else:
             audio_arrays = []
         return {

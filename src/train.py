@@ -707,12 +707,19 @@ def main() -> None:
     train_chunk_sampling = (
         "random" if str(config["data"].get("sample_mode", "")).lower() == "subject_audio" else None
     )
+    # Train-only waveform acoustic augmentation. Passed ONLY to the train dataset;
+    # selection/audit stay clean and eval never touches AudioTextDataset, so the
+    # eval-determinism rule (handoff §3) holds.
+    audio_augment_cfg = config["data"].get("audio_augment")
+    if audio_augment_cfg and audio_augment_cfg.get("enabled") and accelerator.is_main_process:
+        LOGGER.info("Train audio augmentation enabled | cfg=%s", audio_augment_cfg)
     train_dataset = AudioTextDataset(
         train_examples,
         processor_sampling_rate=processor_sampling_rate,
         silence_audio=bool(config["data"].get("silence_audio", False)),
         chunk_sampling=train_chunk_sampling,
         chunk_sampling_seed=int(config["seed"]),
+        audio_augment=audio_augment_cfg,
     )
     selection_dataset = None
     if selection_enabled:
