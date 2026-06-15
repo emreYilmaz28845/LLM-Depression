@@ -711,7 +711,7 @@ def main() -> None:
     # selection/audit stay clean and eval never touches AudioTextDataset, so the
     # eval-determinism rule (handoff §3) holds.
     audio_augment_cfg = config["data"].get("audio_augment")
-    if audio_augment_cfg and audio_augment_cfg.get("enabled") and accelerator.is_main_process:
+    if audio_augment_cfg and audio_augment_cfg.get("enabled"):
         LOGGER.info("Train audio augmentation enabled | cfg=%s", audio_augment_cfg)
     train_dataset = AudioTextDataset(
         train_examples,
