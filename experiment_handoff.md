@@ -190,8 +190,29 @@ Key finding (read carefully — the results file is too generous):
   F1 0.552 vs chunk audio_only reg2 F1 0.437). The leak fix + subject aggregation matter; audio-on-top-
   of-text does not.
 
-## 8. Open / suggested next steps (none in-flight; confirm with user before starting)
+## 8. Open / suggested next steps
 
+### IN-FLIGHT — audio-encoder freeze re-run (DepressInstruct, lit-review approach #1)
+LoRA `target_modules` (`q/k/v_proj`) also matched the Whisper `audio_tower`, so the
+`subject_audio*` runs were silently LoRA-tuning the audio encoder — the overfit liability. **Fixed:**
+`build_lora_config` (`src/model/lora_common.py`) now defaults
+`exclude_modules=".*audio_tower.*|.*multi_modal_projector.*"` (opt out with `lora.tune_audio_encoder: true`);
+`enforce_audio_encoder_freeze` (`src/model/qwen2audio_lora.py`) verifies/freezes any leaked encoder LoRA
+at load and logs `encoder_lora_leaked_params` / `encoder_lora_frozen_params`. Verify a run actually froze
+by grepping the train log for `Audio-encoder freeze guard`.
+
+- **Re-run driver:** `scripts/run_frozenenc_daic_edaic.sh` — chains all 14 DAIC/EDAIC audio configs
+  (`subject_audio*` reg1–4; EDAIC has no reg1) sequentially via `SBATCH_DEPENDENCY=afterany:<prev_train_id>`
+  (one 4×H100 node at a time). `--no-chain` for parallel; `RUN_SUFFIX` overrides the `_frozenenc` run-name
+  suffix. text_only is excluded (no encoder → freeze is a no-op, its numbers stay valid).
+- **DAIC best-config spot-checks submitted** with the freeze: `daic_subject_audio_reg3_frozenenc`,
+  `daic_subject_audio_text_reg1_frozenenc`.
+- **The §7 / results_subject_level_daic_edaic.md `subject_audio*` + `audio+text` numbers are STALE** (leaking
+  encoder) — replace them with the frozen-encoder re-run before drawing conclusions.
+- **TODO:** rebuild the results tables from the `_frozenenc` runs; then re-assess the audio-vs-text question
+  (§7) on the clean numbers. Consider generating the missing EDAIC reg1 configs for a paired comparison.
+
+### Other open items (confirm with user before starting)
 1. **Investigate CMDC 0.987** for corpus artifacts/leakage (recording/site conditions vs label)
    before trusting or reporting it.
 2. **Fix EATD**: it only has the single default (light) config. Port the **reg3 recipe + class
@@ -207,3 +228,5 @@ Auto-memory at `/home/emre/.claude/projects/-home-emre-Projects-AudioLLM/memory/
 - `eval-determinism-rule.md` — the §3 hard constraint.
 - `edaic-overfitting-investigation.md` — audio-vs-text ablation; audio is the overfit liability.
 - `subject-audio-kchunk-mode.md` — how `sample_mode=subject_audio` + per-epoch sampling works.
+- `audio-encoder-lora-leak-freeze.md` — the LoRA-into-Whisper-encoder leak, the freeze fix, and that the
+  DAIC/EDAIC audio results need re-running.

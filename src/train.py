@@ -503,6 +503,28 @@ def _resolve_early_stopping(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_SELECTION_METRIC_DEFAULT = "inner_val_positive_f1"
+
+
+def _resolve_selection_metric(config: dict[str, Any]) -> dict[str, Any]:
+    """Which inner-val metric chooses the saved ``best_model`` checkpoint.
+
+    Independent of ``early_stopping`` (that only decides *when* to stop). Defaults to
+    ``inner_val_positive_f1`` (max) so existing configs behave exactly as before; a
+    config may set ``training.selection_metric`` (e.g. ``inner_val_loss``) to pick the
+    checkpoint on a smoother, lower-variance signal. ``mode: auto`` resolves to ``min``
+    for ``*_loss`` metrics, else ``max``.
+    """
+    training_cfg = config["training"]
+    metric_name = str(training_cfg.get("selection_metric", _SELECTION_METRIC_DEFAULT))
+    mode = str(training_cfg.get("selection_metric_mode", "auto")).lower()
+    if mode == "auto":
+        mode = "min" if metric_name.endswith("_loss") else "max"
+    if mode not in {"min", "max"}:
+        raise ValueError(f"Unsupported training.selection_metric_mode={mode!r}. Expected 'min', 'max', or 'auto'.")
+    return {"metric": metric_name, "mode": mode}
+
+
 def _selection_metric_values(metric_value: float, headline_metrics: dict[str, Any], selection_loss: float) -> dict[str, float]:
     values = {
         "selection_positive_f1": metric_value,
@@ -784,8 +806,19 @@ def main() -> None:
     if accelerator.is_main_process:
         save_yaml(run_config, run_root / "run_config.yaml")
 
-    best_metric: float | None = float("-inf") if selection_enabled else None
+    selection_metric_cfg = _resolve_selection_metric(config)
+    best_metric: float | None = (
+        None
+        if not selection_enabled
+        else (float("inf") if selection_metric_cfg["mode"] == "min" else float("-inf"))
+    )
     best_epoch = -1 if selection_enabled else 0
+    if selection_enabled:
+        LOGGER.info(
+            "Checkpoint selection metric=%s mode=%s (early_stopping metric handled separately).",
+            selection_metric_cfg["metric"],
+            selection_metric_cfg["mode"],
+        )
     early_stop_cfg = _resolve_early_stopping(config)
     if not selection_enabled and early_stop_cfg["enabled"]:
         LOGGER.info("Disabling early stopping because split.mode=%s does not create a selection split.", split_mode)
@@ -870,6 +903,13 @@ def main() -> None:
                 headline_metrics = metrics["backend_results"][sample_prediction_mode]["headline_metrics"]
                 metric_value = float(headline_metrics["positive_f1"])
                 metric_values = _selection_metric_values(metric_value, headline_metrics, selection_loss)
+                selection_metric_name = selection_metric_cfg["metric"]
+                if selection_metric_name not in metric_values:
+                    raise ValueError(
+                        f"Unknown training.selection_metric={selection_metric_name!r}. "
+                        f"Available: {sorted(metric_values)}"
+                    )
+                selection_value = float(metric_values[selection_metric_name])
                 history_row = {
                     "epoch": epoch,
                     "train_loss": sum(epoch_losses) / max(1, len(epoch_losses)),
@@ -896,8 +936,8 @@ def main() -> None:
                     float(headline_metrics["precision"]),
                     float(headline_metrics["recall"]),
                 )
-                if metric_value > best_metric:
-                    best_metric = metric_value
+                if _metric_improved(selection_value, best_metric, selection_metric_cfg["mode"], 0.0):
+                    best_metric = selection_value
                     best_epoch = epoch
                     if _save_best_checkpoint(args.save_strategy):
                         if best_dir.exists():
@@ -906,8 +946,8 @@ def main() -> None:
                 _write_trial_progress(
                     args.trial_progress_file,
                     epoch=epoch,
-                    metric_name="selection_positive_f1",
-                    metric_value=metric_value,
+                    metric_name=selection_metric_name,
+                    metric_value=selection_value,
                     best_metric=best_metric,
                     best_epoch=best_epoch,
                     run_root=run_root,
