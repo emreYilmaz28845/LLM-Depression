@@ -229,6 +229,67 @@ def _install_generation_mixin_for_secap_llama() -> None:
         setattr(LlamaForCausalLM, name, value)
 
 
+def _is_empty_generation_cache(past_key_values) -> bool:
+    if past_key_values is None:
+        return False
+    try:
+        first_layer = past_key_values[0]
+        first_key = first_layer[0] if isinstance(first_layer, (tuple, list)) else first_layer
+    except Exception:
+        return False
+    return first_key is None
+
+
+def _patch_secap_llama_empty_cache_compat() -> None:
+    """Normalize modern empty-cache sentinels for SECap's old LLaMA code."""
+    try:
+        from module.modeling_llama import LlamaForCausalLM  # type: ignore
+    except Exception:
+        return
+
+    if getattr(LlamaForCausalLM, "_secap_empty_cache_compat", False):
+        return
+
+    original_forward = LlamaForCausalLM.forward
+    original_prepare = LlamaForCausalLM.prepare_inputs_for_generation
+
+    def forward(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        if _is_empty_generation_cache(kwargs.get("past_key_values")):
+            kwargs["past_key_values"] = None
+        return original_forward(self, *args, **kwargs)
+
+    def prepare_inputs_for_generation(  # noqa: ANN001
+        self, input_ids, past_key_values=None, attention_mask=None, inputs_embeds=None, **kwargs
+    ):
+        if _is_empty_generation_cache(past_key_values):
+            past_key_values = None
+        return original_prepare(
+            self,
+            input_ids,
+            past_key_values=past_key_values,
+            attention_mask=attention_mask,
+            inputs_embeds=inputs_embeds,
+            **kwargs,
+        )
+
+    LlamaForCausalLM.forward = forward
+    LlamaForCausalLM.prepare_inputs_for_generation = prepare_inputs_for_generation
+    LlamaForCausalLM._secap_empty_cache_compat = True
+
+
+def _ensure_generation_config(model) -> None:
+    """Initialize generation config for legacy SECap LLaMA in newer Transformers."""
+    llama_model = getattr(model, "llama_model", None)
+    if llama_model is None or getattr(llama_model, "generation_config", None) is not None:
+        return
+    try:
+        from transformers import GenerationConfig
+    except Exception:
+        from transformers.generation import GenerationConfig  # type: ignore
+
+    llama_model.generation_config = GenerationConfig.from_model_config(llama_model.config)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True, type=Path)
@@ -274,9 +335,11 @@ def main(argv: list[str] | None = None) -> int:
     _allow_trusted_local_torch_checkpoints()
     from model2 import MotionAudio  # type: ignore
     _install_generation_mixin_for_secap_llama()
+    _patch_secap_llama_empty_cache_compat()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = MotionAudio()
+    _ensure_generation_config(model)
     _load_secap_checkpoint(model, ckpt_path)
     model = model.to(torch.device(device))
     model.eval()

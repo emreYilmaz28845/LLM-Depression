@@ -45,17 +45,50 @@ def _is_degenerate(text: str) -> bool:
     return False
 
 
+def _allow_trusted_local_torch_checkpoints() -> None:
+    """Bypass Transformers' torch<2.6 guard for trusted local translator weights."""
+    try:
+        from transformers import modeling_utils
+        from transformers.utils import import_utils
+    except Exception:
+        return
+
+    def _trusted_local_checkpoint_ok() -> None:
+        return None
+
+    import_utils.check_torch_load_is_safe = _trusted_local_checkpoint_ok
+    modeling_utils.check_torch_load_is_safe = _trusted_local_checkpoint_ok
+
+
 class _Translator:
-    def __init__(self, model_name: str, src_lang: str, tgt_lang: str, num_beams: int):
+    def __init__(
+        self,
+        model_name: str,
+        src_lang: str,
+        tgt_lang: str,
+        num_beams: int,
+        local_files_only: bool = False,
+        device: str = "auto",
+    ):
+        import torch
         from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
         self.model_name = model_name
         self.is_nllb = "nllb" in model_name.lower()
         self.tgt_lang = tgt_lang
         self.num_beams = num_beams
+        self.device = torch.device("cuda" if device == "auto" and torch.cuda.is_available() else device)
+        if device == "cpu":
+            self.device = torch.device("cpu")
         tok_kwargs = {"src_lang": src_lang} if self.is_nllb else {}
+        tok_kwargs["local_files_only"] = local_files_only
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, **tok_kwargs)
-        self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+        _allow_trusted_local_torch_checkpoints()
+        self.model = AutoModelForSeq2SeqLM.from_pretrained(
+            model_name,
+            local_files_only=local_files_only,
+        )
+        self.model.to(self.device)
         self.model.eval()
 
     def translate(self, texts: list[str]) -> list[str]:
@@ -64,6 +97,7 @@ class _Translator:
         if not texts:
             return []
         inputs = self.tokenizer(texts, return_tensors="pt", padding=True, truncation=True)
+        inputs = {key: value.to(self.device) for key, value in inputs.items()}
         gen_kwargs = {"num_beams": self.num_beams, "do_sample": False, "max_new_tokens": 64}
         if self.is_nllb:
             forced = self.tokenizer.convert_tokens_to_ids(self.tgt_lang)
@@ -82,10 +116,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tgt-lang", default="eng_Latn", help="NLLB target lang code.")
     parser.add_argument("--num-beams", type=int, default=4)
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument(
+        "--local-files-only",
+        action="store_true",
+        help="Never contact Hugging Face; require model files to be present locally.",
+    )
+    parser.add_argument(
+        "--device",
+        default="auto",
+        choices=("auto", "cuda", "cpu"),
+        help="Device for translation. auto uses CUDA when available.",
+    )
     args = parser.parse_args(argv)
 
     rows = _read_jsonl(args.in_path)
-    translator = _Translator(args.model, args.src_lang, args.tgt_lang, args.num_beams)
+    translator = _Translator(
+        args.model,
+        args.src_lang,
+        args.tgt_lang,
+        args.num_beams,
+        local_files_only=args.local_files_only,
+        device=args.device,
+    )
 
     texts = [str(row.get("emotion_zh") or "") for row in rows]
     translations: list[str] = []

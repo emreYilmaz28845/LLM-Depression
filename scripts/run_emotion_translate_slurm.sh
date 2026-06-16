@@ -45,11 +45,13 @@ fi
 DATASET="${DATASET:-daic}"
 IN_ZH="${IN_ZH:-$PROJECT_ROOT/outputs/emotion/${DATASET}_secap_zh.jsonl}"
 OUT_EN="${OUT_EN:-$PROJECT_ROOT/outputs/emotion/${DATASET}_secap_en.jsonl}"
-TRANSLATE_MODEL="${TRANSLATE_MODEL:-facebook/nllb-200-distilled-600M}"
+TRANSLATE_MODEL="${TRANSLATE_MODEL:-/gpfs/projects/etur92/ozu647717/models/nllb-200-distilled-600M}"
 SRC_LANG="${SRC_LANG:-zho_Hans}"
 TGT_LANG="${TGT_LANG:-eng_Latn}"
 NUM_BEAMS="${NUM_BEAMS:-4}"
 BATCH_SIZE="${BATCH_SIZE:-16}"
+LOCAL_FILES_ONLY="${LOCAL_FILES_ONLY:-1}"
+TRANSLATE_DEVICE="${TRANSLATE_DEVICE:-auto}"
 
 LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/slurm_emotion/$DATASET}"
 mkdir -p "$LOG_ROOT" "$(dirname "$OUT_EN")"
@@ -59,6 +61,7 @@ exec 2> >(tee -a "$LOG_ROOT/translate-${SLURM_JOB_ID}.err" >&2)
 echo "========================================"
 echo "Translate  dataset=$DATASET  model=$TRANSLATE_MODEL"
 echo "in_zh=$IN_ZH  out_en=$OUT_EN"
+echo "local_files_only=$LOCAL_FILES_ONLY  device=$TRANSLATE_DEVICE"
 echo "========================================"
 python -V
 
@@ -71,6 +74,8 @@ CMD=(
     --tgt-lang "$TGT_LANG"
     --num-beams "$NUM_BEAMS"
     --batch-size "$BATCH_SIZE"
+    --device "$TRANSLATE_DEVICE"
 )
+if [ "$LOCAL_FILES_ONLY" = "1" ]; then CMD+=(--local-files-only); fi
 printf 'Launch: '; printf '%q ' "${CMD[@]}"; printf '\n'
 PYTHONPATH="$PROJECT_ROOT" "${CMD[@]}"
