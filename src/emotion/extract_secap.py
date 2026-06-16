@@ -202,6 +202,33 @@ def _load_secap_checkpoint(model, ckpt_path: Path) -> None:
         )
 
 
+def _install_generation_mixin_for_secap_llama() -> None:
+    """Restore ``generate`` for SECap's legacy custom LLaMA class.
+
+    Transformers >=4.50 no longer makes every ``PreTrainedModel`` inherit
+    ``GenerationMixin``. SECap's vendored ``module.modeling_llama.LlamaForCausalLM``
+    is an older custom class that defines ``prepare_inputs_for_generation`` but no
+    longer receives ``generate`` from Transformers in newer envs. Copying the
+    mixin methods onto that class keeps the workaround local to this process.
+    """
+    try:
+        from transformers.generation import GenerationMixin
+    except Exception:
+        from transformers.generation.utils import GenerationMixin  # type: ignore
+
+    try:
+        from module.modeling_llama import LlamaForCausalLM  # type: ignore
+    except Exception:
+        return
+
+    for name, value in GenerationMixin.__dict__.items():
+        if name.startswith("__"):
+            continue
+        if hasattr(LlamaForCausalLM, name):
+            continue
+        setattr(LlamaForCausalLM, name, value)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True, type=Path)
@@ -246,6 +273,7 @@ def main(argv: list[str] | None = None) -> int:
     _install_lightning_compat_inference_shim()
     _allow_trusted_local_torch_checkpoints()
     from model2 import MotionAudio  # type: ignore
+    _install_generation_mixin_for_secap_llama()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = MotionAudio()
