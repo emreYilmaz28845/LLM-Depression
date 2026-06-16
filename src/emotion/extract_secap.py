@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import types
 from pathlib import Path
 
 import numpy as np
@@ -119,6 +120,37 @@ def _locate_secap_dir(secap_root: Path) -> Path:
     )
 
 
+def _install_lightning_compat_inference_shim() -> None:
+    """Provide the tiny Lightning surface SECap needs for offline inference.
+
+    The cluster ``lightning`` package can import optional app/web dependencies
+    (FastAPI/Pydantic) before exposing ``lightning.pytorch``. That is unnecessary
+    for this script: we only instantiate ``MotionAudio``, load a checkpoint, move
+    it to a device, and call ``inference``. A ``torch.nn.Module``-backed
+    ``LightningModule`` shim avoids the fragile dependency chain while preserving
+    the parts of the API used by SECap model classes.
+    """
+    import torch
+
+    class InferenceLightningModule(torch.nn.Module):
+        @property
+        def device(self) -> torch.device:
+            try:
+                return next(self.parameters()).device
+            except StopIteration:
+                return torch.device("cpu")
+
+        def save_hyperparameters(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            return None
+
+        def log(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            return None
+
+    shim = types.ModuleType("lightning_compat")
+    shim.pl = types.SimpleNamespace(LightningModule=InferenceLightningModule)
+    sys.modules["lightning_compat"] = shim
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True, type=Path)
@@ -160,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     import torch
+    _install_lightning_compat_inference_shim()
     from model2 import MotionAudio  # type: ignore
 
     device = "cuda" if torch.cuda.is_available() else "cpu"

@@ -127,7 +127,7 @@ DATASET=edaic SHARDS=8 scripts/submit_emotion_pipeline.sh
 # Smoke test first (single clip, greedy, validate the SECap API contract):
 DATASET=daic SHARDS=1 FAST=1 LIMIT=4 scripts/submit_emotion_pipeline.sh
 ```
-Key env overrides: `SECAP_ROOT` (default `/gpfs/projects/etur92/SECap`), `CKPT`,
+Key env overrides: `SECAP_ROOT` (default `/gpfs/projects/etur92/ozu647717/models/SECap`), `CKPT`,
 `TRANSLATE_MODEL`, `MANIFEST`, `OUT_ZH`, `OUT_EN`. Produces
 `outputs/emotion/<dataset>_secap_en.jsonl`.
 
@@ -168,7 +168,7 @@ python scripts/test_emotion_injection.py        # all checks pass
    to the dir containing `model2.py` (handles nested cluster layout), and the job
    `chdir`s there. Still smoke-test with `FAST=1 LIMIT=4` before the full run.
    NOTE: the first cluster attempt hit `ModuleNotFoundError: model2` because
-   `SECAP_ROOT` (`/gpfs/projects/etur92/SECap`) didn't have `model2.py` at top level
+   `SECAP_ROOT` (`/gpfs/projects/etur92/ozu647717/models/SECap`) didn't have `model2.py` at top level
    — the auto-locate fix addresses this, but verify the smoke run finds it.
 2. **Manual QC** a random sample of `emotion_en` captions (DepressInstruct did this).
    High `translation_ok=false` rate or generic/wrong captions = red flag.

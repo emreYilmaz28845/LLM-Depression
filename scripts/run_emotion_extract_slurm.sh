@@ -46,7 +46,7 @@ fi
 
 DATASET="${DATASET:-daic}"
 MANIFEST="${MANIFEST:-$PROJECT_ROOT/outputs/manifests/${DATASET}_manifest.jsonl}"
-SECAP_ROOT="${SECAP_ROOT:-/gpfs/projects/etur92/SECap}"
+SECAP_ROOT="${SECAP_ROOT:-/gpfs/projects/etur92/ozu647717/models/SECap}"
 CKPT="${CKPT:-$SECAP_ROOT/model.ckpt}"
 OUT_ZH="${OUT_ZH:-$PROJECT_ROOT/outputs/emotion/${DATASET}_secap_zh.jsonl}"
 SHARDS="${SHARDS:-1}"

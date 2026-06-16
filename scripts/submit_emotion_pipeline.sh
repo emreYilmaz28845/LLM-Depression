@@ -10,7 +10,7 @@
 # Each stage waits for the previous via --dependency=afterok. Override anything
 # via environment variables, e.g.:
 #
-#   DATASET=edaic SHARDS=8 SECAP_ROOT=/gpfs/projects/etur92/SECap \
+#   DATASET=edaic SHARDS=8 SECAP_ROOT=/gpfs/projects/etur92/ozu647717/models/SECap \
 #     scripts/submit_emotion_pipeline.sh
 #
 # Smoke test on a few clips:  DATASET=daic SHARDS=1 FAST=1 LIMIT=4 scripts/submit_emotion_pipeline.sh
@@ -22,7 +22,7 @@ DATASET="${DATASET:-daic}"
 SHARDS="${SHARDS:-8}"
 
 MANIFEST="${MANIFEST:-$PROJECT_ROOT/outputs/manifests/${DATASET}_manifest.jsonl}"
-SECAP_ROOT="${SECAP_ROOT:-/gpfs/projects/etur92/SECap}"
+SECAP_ROOT="${SECAP_ROOT:-/gpfs/projects/etur92/ozu647717/models/SECap}"
 CKPT="${CKPT:-$SECAP_ROOT/model.ckpt}"
 OUT_ZH="${OUT_ZH:-$PROJECT_ROOT/outputs/emotion/${DATASET}_secap_zh.jsonl}"
 OUT_EN="${OUT_EN:-$PROJECT_ROOT/outputs/emotion/${DATASET}_secap_en.jsonl}"
