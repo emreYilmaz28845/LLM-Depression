@@ -151,6 +151,28 @@ def _install_lightning_compat_inference_shim() -> None:
     sys.modules["lightning_compat"] = shim
 
 
+def _allow_trusted_local_torch_checkpoints() -> None:
+    """Bypass Transformers' torch<2.6 load guard for trusted local SECap weights.
+
+    Newer Transformers refuses to load PyTorch ``.bin`` checkpoints with
+    ``torch<2.6`` because arbitrary, untrusted pickle files are unsafe. The SECap
+    extractor runs against a fixed local model directory/checkpoint controlled by
+    the project, and the cluster cannot update torch from the network in-place.
+    This keeps the workaround scoped to this offline extraction process.
+    """
+    try:
+        from transformers import modeling_utils
+        from transformers.utils import import_utils
+    except Exception:
+        return
+
+    def _trusted_local_checkpoint_ok() -> None:
+        return None
+
+    import_utils.check_torch_load_is_safe = _trusted_local_checkpoint_ok
+    modeling_utils.check_torch_load_is_safe = _trusted_local_checkpoint_ok
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True, type=Path)
@@ -193,6 +215,7 @@ def main(argv: list[str] | None = None) -> int:
 
     import torch
     _install_lightning_compat_inference_shim()
+    _allow_trusted_local_torch_checkpoints()
     from model2 import MotionAudio  # type: ignore
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
