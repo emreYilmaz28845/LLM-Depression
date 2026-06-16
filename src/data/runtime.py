@@ -504,7 +504,10 @@ def build_examples(
         cache_path = config["data"].get("emotion_cache_path")
         if not cache_path:
             raise ValueError("data.use_emotion=true requires data.emotion_cache_path.")
-        emotion_cache = load_emotion_cache(cache_path)
+        emotion_cache = load_emotion_cache(
+            cache_path,
+            caption_field=str(config["data"].get("emotion_caption_field", "emotion_en")),
+        )
         emotion_policy = resolve_missing_policy(config)
         report_cache_coverage(
             emotion_cache, [str(row["sample_id"]) for row in manifest_rows]

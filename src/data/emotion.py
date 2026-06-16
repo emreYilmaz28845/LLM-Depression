@@ -1,10 +1,10 @@
 """Emotion-augmented prompting support (training/eval side).
 
-This module consumes a *frozen* offline emotion cache (SECap captions translated
-zh->en) and injects natural-language emotional descriptions into the depression
-classification prompt. It NEVER imports SECap or any model: it only reads a text
-cache keyed by ``sample_id``. See ``secap_implementation.md`` and the offline
-extraction drivers under ``src/emotion/`` for how the cache is produced.
+This module consumes a *frozen* offline emotion cache and injects natural-language
+emotional descriptions into the depression classification prompt. It NEVER
+imports SECap or any model: it only reads a text cache keyed by ``sample_id``.
+See ``secap_implementation.md`` and the offline extraction drivers under
+``src/emotion/`` for how the cache is produced.
 
 Two prompt mechanics are supported (see the plan, §3):
 
@@ -26,7 +26,7 @@ from src.utils import get_logger, read_jsonl
 
 LOGGER = get_logger(__name__)
 
-# Fixed neutral sentence injected when a chunk has no reliable English caption.
+# Fixed neutral sentence injected when a chunk has no reliable caption.
 # Kept content-free so the model can learn to ignore it rather than crash.
 NEUTRAL_FALLBACK_CAPTION = "No reliable emotional description is available for this segment."
 
@@ -67,13 +67,16 @@ def resolve_missing_policy(config: dict[str, Any]) -> str:
     return policy
 
 
-def load_emotion_cache(path: str | Path) -> dict[str, str | None]:
-    """Load the frozen emotion cache as ``{sample_id -> emotion_en}``.
+def load_emotion_cache(path: str | Path, caption_field: str = "emotion_en") -> dict[str, str | None]:
+    """Load the frozen emotion cache as ``{sample_id -> caption_field}``.
 
-    ``emotion_en`` may be ``None`` (translation failed); callers apply the
-    configured missing-caption policy. Rows lacking an English caption key map to
-    ``None`` so they are treated as missing rather than crashing.
+    The caption field may be ``None`` (for example, translation failed); callers
+    apply the configured missing-caption policy. Rows lacking the requested key
+    map to ``None`` so they are treated as missing rather than crashing.
     """
+    caption_field = str(caption_field or "emotion_en").strip()
+    if not caption_field:
+        raise ValueError("Emotion caption field must be non-empty.")
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(
@@ -85,13 +88,13 @@ def load_emotion_cache(path: str | Path) -> dict[str, str | None]:
         sample_id = row.get("sample_id")
         if not sample_id:
             continue
-        caption = row.get("emotion_en")
+        caption = row.get(caption_field)
         if isinstance(caption, str):
             caption = caption.strip() or None
         else:
             caption = None
         mapping[str(sample_id)] = caption
-    LOGGER.info("Loaded emotion cache %s (%d rows).", path, len(mapping))
+    LOGGER.info("Loaded emotion cache %s field=%s (%d rows).", path, caption_field, len(mapping))
     return mapping
 
 
@@ -128,7 +131,7 @@ def resolve_caption(
     sample_id: str,
     policy: str,
 ) -> str | None:
-    """Resolve the English caption for ``sample_id`` honoring the missing policy.
+    """Resolve the caption for ``sample_id`` honoring the missing policy.
 
     Returns the caption string, or the neutral fallback, or ``None`` (meaning the
     description line should be dropped entirely). ``error`` policy raises.
