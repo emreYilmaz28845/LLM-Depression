@@ -5,12 +5,18 @@ Chinese caption via SECap, writing a resumable JSONL cache. Translation is a
 SEPARATE pass (``translate.py``) so a translation failure never forces re-running
 the expensive SECap stage.
 
-SECap I/O contract (from ``SECap/model2.py``, see ``secap_implementation.md`` §1.3):
-- ``model = MotionAudio()``; ``model.inference([wav])`` with ``wav`` a float32
-  numpy waveform @ 16 kHz returns ``(candidates, prompt)`` where ``candidates`` is
-  a list of Chinese sentences (``post_processing`` keeps 5) and ``prompt`` is the
-  fixed Chinese instruction. ``inference`` runs 8 stochastic generations -> NON
-  deterministic, hence the offline freeze.
+SECap I/O contract (verified against ``SECap/model2.py`` + ``scripts/inference.py``):
+- ``model = MotionAudio()`` (no ckpt arg; sub-model weights load relative to
+  ``model2.py``). Checkpoint loads externally:
+  ``model.load_state_dict(torch.load(ckpt, map_location='cpu'))`` then
+  ``model = model.to('cuda')``.
+- ``model.inference([wav])`` takes ONLY a list of float32 numpy waveforms @ 16 kHz
+  and returns ``(candidates, prompt)``: ``candidates`` is a list of Chinese
+  sentences (``inference`` runs 8 stochastic generations, ``post_processing``
+  drops the 3 least-similar and keeps 5), ``prompt`` is the fixed Chinese
+  instruction. Generation is hardcoded ``do_sample=True`` -> NON deterministic,
+  hence the offline freeze. (``--fast`` cannot reduce generations without editing
+  model2; it only pairs with ``--limit`` for small smoke runs.)
 
 Example (cluster):
     python -m src.emotion.extract_secap \
@@ -94,31 +100,23 @@ def _load_wav(path: str) -> np.ndarray:
     return np.asarray(audio, dtype=np.float32)
 
 
-def _select_medoid(model, candidates: list[str]) -> str:
-    """Pick the candidate most central to the set (medoid) via SECap's SimiCal.
+def _locate_secap_dir(secap_root: Path) -> Path:
+    """Return the directory that actually contains ``model2.py``.
 
-    Falls back to the first candidate if similarity scoring is unavailable.
+    The cluster checkout may nest the SECap source under ``secap_root`` (e.g.
+    ``secap_root/SECap/model2.py``), so we search a couple of levels deep instead
+    of assuming ``model2.py`` sits at the top.
     """
-    if not candidates:
-        return ""
-    if len(candidates) == 1:
-        return candidates[0]
-    try:
-        from model2 import SimiCal  # type: ignore
-
-        scorer = SimiCal()
-        best_idx, best_score = 0, -1.0
-        for i, cand_i in enumerate(candidates):
-            total = 0.0
-            for j, cand_j in enumerate(candidates):
-                if i == j:
-                    continue
-                total += float(scorer(cand_i, cand_j))
-            if total > best_score:
-                best_idx, best_score = i, total
-        return candidates[best_idx]
-    except Exception:  # noqa: BLE001 - any failure -> deterministic first candidate
-        return candidates[0]
+    direct = secap_root / "model2.py"
+    if direct.exists():
+        return secap_root
+    matches = sorted(secap_root.glob("*/model2.py")) + sorted(secap_root.glob("*/*/model2.py"))
+    if matches:
+        return matches[0].parent
+    raise FileNotFoundError(
+        f"Could not find model2.py under {secap_root}. Point --secap-root at the "
+        f"SECap source dir (the one containing model2.py)."
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -133,14 +131,23 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     shard_index, shard_total = _parse_shard(args.shard)
-    sys.path.insert(0, str(args.secap_root))
-
-    rows = _unique_chunks(_read_manifest(args.manifest))
-    rows = [row for i, row in enumerate(rows) if i % shard_total == shard_index]
-    out_path = args.out
+    # Resolve all I/O paths to absolute BEFORE chdir into the SECap dir.
+    manifest_path = args.manifest.resolve()
+    ckpt_path = args.ckpt.resolve()
+    out_path = args.out.resolve()
     if shard_total > 1:
         out_path = out_path.with_name(f"{out_path.stem}.shard{shard_index}of{shard_total}{out_path.suffix}")
     out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    secap_dir = _locate_secap_dir(args.secap_root)
+    sys.path.insert(0, str(secap_dir))
+    # model2/SimiCal resolve some resources relative to cwd; run from the SECap dir.
+    import os
+    os.chdir(secap_dir)
+    print(f"[extract_secap] SECap source dir: {secap_dir}", flush=True)
+
+    rows = _unique_chunks(_read_manifest(manifest_path))
+    rows = [row for i, row in enumerate(rows) if i % shard_total == shard_index]
 
     done = _already_done(out_path)
     pending = [row for row in rows if str(row["sample_id"]) not in done]
@@ -152,29 +159,31 @@ def main(argv: list[str] | None = None) -> int:
     if not pending:
         return 0
 
+    import torch
     from model2 import MotionAudio  # type: ignore
 
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     model = MotionAudio()
-    if hasattr(model, "load_ckpt"):
-        model.load_ckpt(str(args.ckpt))
+    state_dict = torch.load(str(ckpt_path), map_location="cpu")
+    model.load_state_dict(state_dict)
+    model = model.to(torch.device(device))
+    model.eval()
 
-    ckpt_version = f"model.ckpt@{args.ckpt.stat().st_size}" if args.ckpt.exists() else "model.ckpt"
+    ckpt_version = f"model.ckpt@{ckpt_path.stat().st_size}" if ckpt_path.exists() else "model.ckpt"
 
     with out_path.open("a", encoding="utf-8") as handle:
         for n, row in enumerate(pending, start=1):
             sample_id = str(row["sample_id"])
             wav = _load_wav(row["audio_path"])
-            try:
-                if args.fast and hasattr(model, "inference"):
-                    candidates, prompt = model.inference([wav], do_sample=False, num_beams=1)
-                else:
-                    candidates, prompt = model.inference([wav])
-            except TypeError:
-                candidates, prompt = model.inference([wav])
+            # inference() takes only the audio list; it always runs 8 sampled
+            # generations and returns the 5 post-processed candidates + the prompt.
+            candidates, prompt = model.inference([wav])
             if isinstance(candidates, str):
                 candidates = [candidates]
             candidates = [str(c).strip() for c in candidates if str(c).strip()]
-            canonical = _select_medoid(model, candidates)
+            # SECap already keeps the 5 most mutually-similar of 8 samples; take the
+            # first as the deterministic canonical caption, store all for audit/QC.
+            canonical = candidates[0] if candidates else ""
             record = {
                 "dataset": row.get("dataset"),
                 "subject_id": row.get("subject_id"),
