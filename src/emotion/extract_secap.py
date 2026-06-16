@@ -173,6 +173,35 @@ def _allow_trusted_local_torch_checkpoints() -> None:
     modeling_utils.check_torch_load_is_safe = _trusted_local_checkpoint_ok
 
 
+def _load_secap_checkpoint(model, ckpt_path: Path) -> None:
+    """Load SECap weights while tolerating version-only buffer drift."""
+    import torch
+
+    state_dict = torch.load(str(ckpt_path), map_location="cpu")
+    incompatible = model.load_state_dict(state_dict, strict=False)
+    missing = list(getattr(incompatible, "missing_keys", []))
+    unexpected = list(getattr(incompatible, "unexpected_keys", []))
+    allowed_unexpected = {
+        key for key in unexpected if key.endswith(".embeddings.position_ids")
+    }
+    disallowed_unexpected = sorted(set(unexpected) - allowed_unexpected)
+    if missing or disallowed_unexpected:
+        details = []
+        if missing:
+            details.append(f"missing={missing}")
+        if disallowed_unexpected:
+            details.append(f"unexpected={disallowed_unexpected}")
+        raise RuntimeError(
+            f"SECap checkpoint is incompatible with MotionAudio: {'; '.join(details)}"
+        )
+    if allowed_unexpected:
+        print(
+            "[extract_secap] ignored checkpoint buffer key(s): "
+            + ", ".join(sorted(allowed_unexpected)),
+            flush=True,
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True, type=Path)
@@ -220,8 +249,7 @@ def main(argv: list[str] | None = None) -> int:
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = MotionAudio()
-    state_dict = torch.load(str(ckpt_path), map_location="cpu")
-    model.load_state_dict(state_dict)
+    _load_secap_checkpoint(model, ckpt_path)
     model = model.to(torch.device(device))
     model.eval()
 
