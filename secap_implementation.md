@@ -290,12 +290,22 @@ translated. The repo's prompts are English. → a zh→en stage is required.
 | **facebook/nllb-200-distilled-600M** | 600 M | higher fluency, robust on idioms | yes | good (GPU preferred) | heavier but still small; explicit src/tgt lang codes |
 | Qwen2.5-Instruct as translator | 7B+ | highest, controllable | yes | reuses existing infra | overkill; heavy; non-deterministic unless greedy |
 
-### 5.3 Recommendation
-- **Primary: `Helsinki-NLP/opus-mt-zh-en`** — lightweight, offline, deterministic (greedy),
-  trivially batched; ~5 k short sentences in well under a minute. Negligible vs SECap cost.
-- **Fallback for fluency: `facebook/nllb-200-distilled-600M`** (`zho_Hans`→`eng_Latn`).
-  Worth using if QC shows opus-mt produces stilted English on emotional idioms.
-- Reuse `Qwen2.5` only if you want one model to *both* clean and translate; not needed initially.
+### 5.3 Recommendation — UPDATED after smoke test (see §9, results below)
+A local CPU smoke test on 4 real SECap-style captions **reversed the original ranking**:
+- `opus-mt-zh-en` **degenerates** on short emotive input: "心情快乐舒畅" → *"Happy, happy,
+  happy, …"* (repetition collapse), and drops affect ("无奈"/helpless → *"in the mood"*). Too
+  fragile to be the default.
+- `nllb-200-distilled-600M` is **more stable** (no collapse; "无能为力" → *"powerless"*), though
+  it still makes idiom errors ("浮躁"/restless → *"flirtatious"*).
+
+- **Primary (revised): `facebook/nllb-200-distilled-600M`** (`zho_Hans`→`eng_Latn`, greedy/beam).
+  Still small (600 M), offline, batch-friendly; ~5 k short sentences in a couple of minutes.
+- **Consider a small instruction LLM** (e.g. Qwen2.5) with a *"render as a third-person
+  emotional description, preserve the affect"* prompt if QC shows NLLB's idiom errors hurt —
+  it also fixes the first-person artifact ("I'm sad") that both MT models produce.
+- `opus-mt-zh-en` demoted to a lightweight fallback only; **do not** ship it without a
+  repetition/empty-output guard.
+- **Manual QC remains mandatory** regardless of model (matches DepressInstruct).
 
 ### 5.4 Operational answers to the prompt's questions
 - **Run translation immediately after SECap?** Run it as a **separate pass over the cached
@@ -458,6 +468,34 @@ emotion if it helps without inflating the train/val gap (overfit guard).
 6. **System prompt wording** for the emotion mode (proposed in §2.4 / §3).
 
 ---
+
+## Smoke-test results (local, executed)
+
+A `--fast` single-clip end-to-end check was run locally. **The full chain works.**
+
+- **Local CUDA is dead** (`Error 804: forward compatibility ... non supported HW`) — confirms
+  the brief. SECap ran **CPU/fp32**.
+- **SECap imports + runs.** On real DAIC clip `300_random_segment_1.wav` (English, 30 s):
+  - audio encoded → `(1, 32, 4096)`; single **greedy** generation (`do_sample=False, num_beams=1`).
+  - **caption (zh):** `语调平缓，说话的流利气劲舒爽。`
+  - timing: ~928 s total, but ~881 s was fp32 checkpoint load; generation itself ~43 s. On a
+    working **GPU** (the cluster target) this is far faster, and load is amortized across the batch.
+- **Translation works on CPU** (downloads + inference), with a clear quality gap (§5.3):
+  | caption (zh) | opus-mt-zh-en | nllb-200-distilled-600M |
+  |---|---|---|
+  | 心情快乐舒畅 | *"Happy, happy, happy…"* (collapse) | "I'm happy and relieved." |
+  | 伤心难过，又无能为力 | "I'm sad, I can't help it." | "It's sad, sad, and powerless." |
+  | 语速较慢…情绪中带着无奈 | "It's slow, it's flat, it's in the mood." | "…the emotions are overwhelming." |
+  | **语调平缓，说话的流利气劲舒爽。** (the real SECap output above) | — | **"The tone of voice is calm and the flow of speech is relaxed."** |
+- **Observations that feed the plan:**
+  - Cross-lingual transfer *runs* and yields a coherent prosodic caption on English audio, but
+    it is **generic** ("calm tone, relaxed flow") — reinforces the §8.1 QC/ablation requirement.
+  - `opus-mt` repetition-collapses on short captions → **NLLB promoted to primary** (§5.3).
+  - **Env gotcha (applies to the cluster job too):** `transformers==4.29.0` + `huggingface_hub==1.8.0`
+    raise `hf_hub_download() got an unexpected keyword argument 'use_auth_token'` on any download.
+    Worked around with a shim stripping `use_auth_token`/`resume_download`; pin compatible versions
+    (or pre-download translator weights) in the extraction job.
+  - `sacremoses` recommended for Marian; `sentencepiece` needed for NLLB tokenizer.
 
 ## Appendix — measured facts
 
