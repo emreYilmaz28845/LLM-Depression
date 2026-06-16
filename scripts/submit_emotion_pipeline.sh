@@ -34,7 +34,7 @@ STRICT="${STRICT:-0}"
 RUN_VALIDATE="${RUN_VALIDATE:-1}"
 
 # SECap env selection (passed through to every job).
-SECAP_ENV_ACTIVATE="${SECAP_ENV_ACTIVATE:-}"
+SECAP_ENV_ACTIVATE="${SECAP_ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/secap_rebuilt/bin/activate}"
 SECAP_CONDA_ENV="${SECAP_CONDA_ENV:-secap}"
 
 EXTRACT_SCRIPT="${EXTRACT_SCRIPT:-$PROJECT_ROOT/scripts/run_emotion_extract_slurm.sh}"

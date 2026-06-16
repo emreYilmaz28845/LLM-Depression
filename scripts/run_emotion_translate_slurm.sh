@@ -25,7 +25,7 @@ PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depre
 export PROJECT_ROOT
 cd "$PROJECT_ROOT"
 
-SECAP_ENV_ACTIVATE="${SECAP_ENV_ACTIVATE:-}"
+SECAP_ENV_ACTIVATE="${SECAP_ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/secap_rebuilt/bin/activate}"
 SECAP_CONDA_ENV="${SECAP_CONDA_ENV:-secap}"
 if [ -n "$SECAP_ENV_ACTIVATE" ] && [ -f "$SECAP_ENV_ACTIVATE" ]; then
     # shellcheck disable=SC1090
