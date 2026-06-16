@@ -11,6 +11,15 @@ import torch
 from torch.utils.data import Dataset
 
 from src.data.eatd import CANONICAL_RESPONSES
+from src.data.emotion import (
+    interleaved_audio_emotion_block,
+    load_emotion_cache,
+    report_cache_coverage,
+    resolve_caption,
+    resolve_missing_policy,
+    single_chunk_emotion_block,
+    use_emotion,
+)
 from src.utils import (
     get_logger,
     INPUT_MODALITY_AUDIO_ONLY,
@@ -103,6 +112,7 @@ def render_user_prompt_text(
     *,
     is_subject_bundle: bool = False,
     audio_context_override: str | None = None,
+    emotion_block: str = "",
 ) -> str:
     input_modality = resolve_input_modality(config)
     use_audio, use_text = _modality_flags(input_modality)
@@ -119,6 +129,7 @@ def render_user_prompt_text(
         "decision_basis": _decision_basis(input_modality),
         "label_descriptor": prompt_label_descriptor(config),
         "label_instruction": prompt_label_instruction(config),
+        "emotion_block": emotion_block,
     }
     try:
         return template.format_map(placeholder_values).strip()
@@ -135,9 +146,20 @@ def build_prompt_text(
     user_text: str,
     num_audios: int,
     use_audio: bool,
+    emotion_captions: list[str | None] | None = None,
 ) -> str:
     if use_audio and num_audios:
-        user_text = _audio_prompt_block(num_audios) + "\n" + user_text
+        if emotion_captions is not None:
+            # Interleave Audio i: with Emotional description i: (subject mode).
+            if len(emotion_captions) != num_audios:
+                raise ValueError(
+                    f"emotion_captions length ({len(emotion_captions)}) must match "
+                    f"num_audios ({num_audios})."
+                )
+            audio_block = interleaved_audio_emotion_block(emotion_captions)
+        else:
+            audio_block = _audio_prompt_block(num_audios)
+        user_text = audio_block + "\n" + user_text
     return (
         f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
         f"<|im_start|>user\n{user_text}<|im_end|>\n"
@@ -184,12 +206,20 @@ def _base_example_from_row(
     row: dict[str, Any],
     config: dict[str, Any],
     transcript_max_chars: int,
+    emotion_cache: dict[str, str | None] | None = None,
+    emotion_policy: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     input_modality = resolve_input_modality(config)
     use_audio, use_text = _modality_flags(input_modality)
     transcript = row["transcript"] if use_text else ""
     transcript, transcript_log = _truncate_text(transcript, transcript_max_chars)
-    user_text = render_user_prompt_text(config, transcript, is_subject_bundle=False)
+    emotion_block = ""
+    if emotion_cache is not None and use_audio:
+        caption = resolve_caption(emotion_cache, str(row["sample_id"]), emotion_policy)
+        emotion_block = single_chunk_emotion_block(caption)
+    user_text = render_user_prompt_text(
+        config, transcript, is_subject_bundle=False, emotion_block=emotion_block
+    )
     example_internal_label = row.get("internal_label_text") or internal_label_text_from_int(config, int(row["label"]))
     prompt_text = build_prompt_text(
         system_prompt=config["prompt"]["system"],
@@ -321,6 +351,8 @@ def _build_subject_level_audio_examples(
     partition_name: str,
     transcript_max_chars: int,
     truncation_log_path: str | Path | None = None,
+    emotion_cache: dict[str, str | None] | None = None,
+    emotion_policy: str | None = None,
 ) -> list[dict[str, Any]]:
     """One example per subject with a FIXED number of audio chunks (K).
 
@@ -361,6 +393,13 @@ def _build_subject_level_audio_examples(
             )
         canonical_row = rows[0]
         chunk_paths = [row["audio_path"] for row in rows]
+        emotion_on = emotion_cache is not None
+        chunk_caption_by_path: dict[str, str | None] = {}
+        if emotion_on:
+            for row in rows:
+                chunk_caption_by_path[row["audio_path"]] = resolve_caption(
+                    emotion_cache, str(row["sample_id"]), emotion_policy
+                )
 
         transcript = ""
         transcript_log: dict[str, Any] | None = None
@@ -392,31 +431,42 @@ def _build_subject_level_audio_examples(
             config,
             int(canonical_row["label"]),
         )
+        deterministic_captions = (
+            [chunk_caption_by_path[path] for path in deterministic_paths] if emotion_on else None
+        )
         prompt_text = build_prompt_text(
             system_prompt=config["prompt"]["system"],
             user_text=user_text,
             num_audios=effective_k,
             use_audio=True,
+            emotion_captions=deterministic_captions,
         )
-        examples.append(
-            {
-                "dataset": canonical_row["dataset"],
-                "subject_id": subject_id,
-                "sample_id": subject_id,
-                "label": int(canonical_row["label"]),
-                "label_text": canonical_row["label_text"],
-                "internal_label_text": internal_label_text,
-                "transcript": transcript,
-                "audio_paths": deterministic_paths,
-                "audio_clip_seconds": clip_seconds,
-                "subject_chunk_paths": chunk_paths,
-                "chunks_per_subject": effective_k,
-                "input_modality": input_modality,
-                "prompt_text": prompt_text,
-                "training_text": build_training_text(prompt_text, internal_label_text),
-                "question_id": "subject_audio_bundle",
-            }
-        )
+        example = {
+            "dataset": canonical_row["dataset"],
+            "subject_id": subject_id,
+            "sample_id": subject_id,
+            "label": int(canonical_row["label"]),
+            "label_text": canonical_row["label_text"],
+            "internal_label_text": internal_label_text,
+            "transcript": transcript,
+            "audio_paths": deterministic_paths,
+            "audio_clip_seconds": clip_seconds,
+            "subject_chunk_paths": chunk_paths,
+            "chunks_per_subject": effective_k,
+            "input_modality": input_modality,
+            "prompt_text": prompt_text,
+            "training_text": build_training_text(prompt_text, internal_label_text),
+            "question_id": "subject_audio_bundle",
+        }
+        if emotion_on:
+            # Carry everything the training dataset needs to re-render the
+            # interleaved prompt after it randomly re-samples K chunks per epoch,
+            # so each Emotional description i tracks the audio actually fed (§4.3).
+            example["chunk_caption_by_path"] = chunk_caption_by_path
+            example["emotion_user_text"] = user_text
+            example["emotion_system_prompt"] = config["prompt"]["system"]
+            example["emotion_internal_label_text"] = internal_label_text
+        examples.append(example)
         log_row = {
             "partition": partition_name,
             "subject_id": subject_id,
@@ -448,6 +498,18 @@ def build_examples(
     truncation_logs: list[dict[str, Any]] = []
     examples: list[dict[str, Any]] = []
 
+    emotion_cache: dict[str, str | None] | None = None
+    emotion_policy: str | None = None
+    if use_emotion(config):
+        cache_path = config["data"].get("emotion_cache_path")
+        if not cache_path:
+            raise ValueError("data.use_emotion=true requires data.emotion_cache_path.")
+        emotion_cache = load_emotion_cache(cache_path)
+        emotion_policy = resolve_missing_policy(config)
+        report_cache_coverage(
+            emotion_cache, [str(row["sample_id"]) for row in manifest_rows]
+        )
+
     if input_modality == INPUT_MODALITY_TEXT_ONLY and dataset_name in {"daic", "edaic"}:
         return _build_subject_level_text_only_examples(
             manifest_rows,
@@ -464,11 +526,15 @@ def build_examples(
             partition_name,
             transcript_max_chars,
             truncation_log_path=truncation_log_path,
+            emotion_cache=emotion_cache,
+            emotion_policy=emotion_policy,
         )
 
     if dataset_name != "eatd" or sample_mode == "response":
         for row in sorted(manifest_rows, key=lambda item: item["sample_id"]):
-            example, transcript_log = _base_example_from_row(row, config, transcript_max_chars)
+            example, transcript_log = _base_example_from_row(
+                row, config, transcript_max_chars, emotion_cache, emotion_policy
+            )
             if transcript_log:
                 truncation_logs.append(
                     {
@@ -719,9 +785,39 @@ class AudioTextDataset(Dataset):
             clip_seconds = [cap] * len(audio_paths)
         return audio_paths, clip_seconds
 
+    def _rerender_emotion_prompt(
+        self, example: dict[str, Any], audio_paths: list[str]
+    ) -> dict[str, Any]:
+        """Re-render the interleaved emotion prompt to match the sampled chunks.
+
+        Under ``chunk_sampling="random"`` the audio order differs from the baked
+        deterministic view, so the per-chunk ``Emotional description i`` lines must
+        be rebuilt from the captions of the chunks actually sampled (§4.3). Eval is
+        deterministic and keeps the baked text. Cheap string formatting; the
+        collator reads ``prompt_text``/``training_text`` fresh each call.
+        """
+        caption_map = example["chunk_caption_by_path"]
+        captions = [caption_map.get(path) for path in audio_paths]
+        prompt_text = build_prompt_text(
+            system_prompt=example["emotion_system_prompt"],
+            user_text=example["emotion_user_text"],
+            num_audios=len(audio_paths),
+            use_audio=True,
+            emotion_captions=captions,
+        )
+        return {
+            "prompt_text": prompt_text,
+            "training_text": build_training_text(
+                prompt_text, example["emotion_internal_label_text"]
+            ),
+        }
+
     def __getitem__(self, index: int) -> dict[str, Any]:
         example = self.examples[index]
         audio_paths, clip_seconds = self._resolve_audio_plan(example)
+        rerendered: dict[str, Any] = {}
+        if self.chunk_sampling == "random" and example.get("chunk_caption_by_path"):
+            rerendered = self._rerender_emotion_prompt(example, audio_paths)
         if audio_paths:
             if self.processor_sampling_rate is None:
                 raise ValueError("Audio examples require a processor sampling rate.")
@@ -740,6 +836,7 @@ class AudioTextDataset(Dataset):
             audio_arrays = []
         return {
             **example,
+            **rerendered,
             "audio_arrays": audio_arrays,
         }
 

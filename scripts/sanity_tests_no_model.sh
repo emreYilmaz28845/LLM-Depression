@@ -892,6 +892,9 @@ with tempfile.TemporaryDirectory() as tmpdir:
 print("DepAdapter helper round-trip passed.")
 PY
 
+echo "[emotion] Verifying emotion-augmented prompt injection + K-chunk alignment"
+run_python "$PROJECT_ROOT/scripts/test_emotion_injection.py"
+
 echo "[5/5] Printing split source summary"
 run_python - <<'PY'
 import json
