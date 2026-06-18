@@ -37,8 +37,9 @@ import soundfile as sf
 
 EMOTION_PROMPT = (
     "Describe the speaker's emotional state from the speech audio in one short "
-    "sentence. Focus on tone, energy, pace, and affect. Do not infer depression "
-    "or diagnosis."
+    "sentence. Base this only on vocal qualities: pitch, loudness, speed, rhythm, "
+    "and tone of voice. Do not reference, quote, or infer what the speaker said, "
+    "and do not infer depression or diagnosis."
 )
 EMOTION_SOURCE = "qwen2audio"
 DEFAULT_MAX_NEW_TOKENS = 48

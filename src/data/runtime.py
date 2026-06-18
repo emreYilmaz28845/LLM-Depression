@@ -573,6 +573,12 @@ def build_examples(
                 "audio_total_kept_seconds": 0.0,
                 "audio_truncated": False,
             }
+            emotion_captions = None
+            if emotion_cache is not None and use_audio:
+                emotion_captions = [
+                    resolve_caption(emotion_cache, str(row["sample_id"]), emotion_policy)
+                    for row in ordered_rows
+                ]
             user_text = render_user_prompt_text(config, combined_transcript, is_subject_bundle=True)
             internal_label_text = internal_label_text_from_int(config, int(ordered_rows[0]["label"]))
             prompt_text = build_prompt_text(
@@ -580,6 +586,7 @@ def build_examples(
                 user_text=user_text,
                 num_audios=len(audio_paths),
                 use_audio=use_audio,
+                emotion_captions=emotion_captions,
             )
             example = {
                 "dataset": "eatd",
