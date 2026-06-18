@@ -1,0 +1,87 @@
+dataset: edaic
+seed: 1337
+dataset_root: ${EDAIC_DATASET_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/EDAIC-WOZ/preprocessed}
+quarantine_path: ${PROJECT_ROOT}/configs/quarantines.yaml
+model_name_or_path: /gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instruct
+output_dirs:
+  manifest_dir: ${PROJECT_ROOT}/outputs/manifests
+  split_dir: ${PROJECT_ROOT}/outputs/splits
+  run_root: ${PROJECT_ROOT}/output_model/audio_text_emotion_qwen/edaic
+prompt:
+  system: You are a clinical expert in depression assessment from speech, transcript, and emotional cues.
+  user_template: |-
+    {audio_context_block}
+    {transcript_block}Based on the speech audio segments, transcript, and emotional descriptions, determine whether the subject is {label_descriptor}.
+    {label_instruction}
+  prompt_language: english
+labels:
+  label_vocab_version: legacy_english_labels
+data:
+  use_audio: true
+  use_text: true
+  use_emotion: true
+  # Emotion captions produced offline by base Qwen2-Audio-7B-Instruct (audio-only,
+  # deterministic decode, English emotion_en directly; no translation). Drop-in
+  # replacement for the SECap cache; same injection path. See src/emotion/extract_qwen2audio.py.
+  emotion_cache_path: ${PROJECT_ROOT}/outputs/emotion/edaic_qwen2audio_en.jsonl
+  emotion_on_missing: neutral_fallback
+  silence_audio: false
+  # Subject-level audio with per-chunk emotion descriptions (re-rendered to track
+  # the chunks sampled per epoch in training; baked to the deterministic view in
+  # eval). EDAIC tuned reg2 recipe + decided default (frozen encoder + macro-F1
+  # selection + TF eval). K=4 to match the EDAIC K-ablation baseline.
+  sample_mode: subject_audio
+  chunks_per_subject: 4
+  max_audio_seconds_per_chunk: 30.0
+  transcript_max_chars: 4000
+  allow_empty_transcript: false
+split:
+  train_partitions:
+    - train
+    - val
+  final_eval_partition: test
+  inner_val_ratio: 0.2
+  seed: 1337
+lora:
+  rank: 16
+  alpha: 32
+  dropout: 0.10
+  bias: none
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+training:
+  num_train_epochs: 20
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 8
+  logging_steps: 5
+  bf16: true
+  gradient_checkpointing: true
+  run_final_eval_in_train: false
+  dataloader_num_workers: 0
+  audio_budget_audit: true
+  max_grad_norm: 0.8
+  selection_metric: inner_val_macro_f1
+  selection_metric_mode: auto
+  early_stopping:
+    enabled: true
+    metric: inner_val_macro_f1
+    mode: max
+    patience: 3
+    min_delta: 0.0
+evaluation:
+  sample_prediction_mode: original_teacher_forced
+  aggregation_level: subject
+  generation_max_new_tokens: 8
+  num_beams: 1
+  do_sample: false
+  headline_mode: original_teacher_forced

@@ -895,6 +895,9 @@ PY
 echo "[emotion] Verifying emotion-augmented prompt injection + K-chunk alignment"
 run_python "$PROJECT_ROOT/scripts/test_emotion_injection.py"
 
+echo "[emotion] Verifying Qwen2-Audio emotion cache (emotion_en, no emotion_zh) is a drop-in"
+run_python "$PROJECT_ROOT/scripts/test_emotion_qwen2audio_cache.py"
+
 echo "[5/5] Printing split source summary"
 run_python - <<'PY'
 import json
