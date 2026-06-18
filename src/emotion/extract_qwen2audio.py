@@ -175,9 +175,13 @@ def main(argv: list[str] | None = None) -> int:
             caption_ok = False
             try:
                 wav = _load_wav(row["audio_path"], target_sr)
+                # transformers==4.55.0's Qwen2AudioProcessor.__call__ takes the
+                # audio kwarg as `audio` (singular); `audios` is silently dropped
+                # (logged as an invalid kwarg), which fed captions with NO audio
+                # conditioning at all.
                 inputs = processor(
                     text=chat_text,
-                    audios=[wav],
+                    audio=[wav],
                     sampling_rate=target_sr,
                     return_tensors="pt",
                     padding=True,
