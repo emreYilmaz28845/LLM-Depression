@@ -152,6 +152,7 @@ if [ "$CV_SEQUENTIAL" = "1" ]; then
         echo "Wrote CV summary to:"
         echo "  $CV_RUN_ROOT/final_summary.json"
         echo "  $CV_RUN_ROOT/final_summary.csv"
+        echo "  $CV_RUN_ROOT/final_summary_active.csv"
         exit 0
     fi
 
