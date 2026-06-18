@@ -6,8 +6,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH -o /dev/null
-#SBATCH -e /dev/null
+#SBATCH -o /gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/logs/slurm_cv_chain-%j.out
+#SBATCH -e /gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/logs/slurm_cv_chain-%j.err
 #SBATCH --chdir=/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression
 
 set -euo pipefail

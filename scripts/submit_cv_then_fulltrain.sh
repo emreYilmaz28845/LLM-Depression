@@ -146,13 +146,24 @@ if [ "$CV_SEQUENTIAL" = "1" ]; then
     fi
 
     if [ "$CURRENT_STAGE_INDEX" -eq "$FOLD_COUNT" ]; then
-        echo "Summarizing CV results"
-        echo "  run_root: $CV_RUN_ROOT"
-        python "$SUMMARIZE_SCRIPT" --run_root "$CV_RUN_ROOT"
-        echo "Wrote CV summary to:"
-        echo "  $CV_RUN_ROOT/final_summary.json"
-        echo "  $CV_RUN_ROOT/final_summary.csv"
-        echo "  $CV_RUN_ROOT/final_summary_active.csv"
+        SUMMARY_LOG="$CV_RUN_ROOT/cv_summary-$(date +%Y-%m-%d_%H:%M:%S).log"
+        mkdir -p "$CV_RUN_ROOT"
+        {
+            echo "Summarizing CV results"
+            echo "  run_root: $CV_RUN_ROOT"
+            python "$SUMMARIZE_SCRIPT" --run_root "$CV_RUN_ROOT"
+            echo "Wrote CV summary to:"
+            echo "  $CV_RUN_ROOT/final_summary.json"
+            echo "  $CV_RUN_ROOT/final_summary.csv"
+            echo "  $CV_RUN_ROOT/final_summary_active.csv"
+            if [ -f "$CV_RUN_ROOT/final_summary_active.csv" ]; then
+                echo
+                echo "Active-backend CV summary:"
+                cat "$CV_RUN_ROOT/final_summary_active.csv"
+            fi
+            echo
+            echo "Summary log: $SUMMARY_LOG"
+        } 2>&1 | tee "$SUMMARY_LOG"
         exit 0
     fi
 
