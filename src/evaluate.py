@@ -16,7 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 import torch
 
 from src.aggregate import aggregate_predictions
-from src.data.build_manifest import build_for_config
+from src.data.build_manifest import build_for_config, manifest_build_signature
 from src.data.runtime import (
     build_examples,
     filter_rows_by_subjects,
@@ -594,6 +594,9 @@ def _load_metadata_or_build(config_path: str | Path, config: dict[str, Any], con
         if usable and missing_split_keys:
             usable = False
             reason = f"split_metadata_missing:{','.join(missing_split_keys)}"
+        if usable and metadata.get("build_signature") != manifest_build_signature(config):
+            usable = False
+            reason = "build_signature_mismatch"
         if usable:
             return metadata
         LOGGER.warning("Refreshing stale metadata for %s: %s", config["dataset"], reason)

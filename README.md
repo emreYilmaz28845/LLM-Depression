@@ -10,6 +10,7 @@ Leakage-safe depression-classification pipeline for binary depression detection 
 - No SECap
 - Subject-level leakage-safe splits with configurable subject/segment evaluation reporting
 - Likelihood is the headline evaluation; generation is secondary
+- Likelihood evaluation reports AUROC from the continuous depressed-minus-non-depressed score
 
 ## Environment
 
@@ -247,6 +248,66 @@ Subject-mode length controls are in `configs/eatd_audio_text.yaml`:
 - `max_audio_seconds_per_response`
 - `max_total_audio_seconds`
 - `transcript_max_chars`
+
+## Turkish Training / Eval
+
+The Turkish pipeline uses `patient_id` as the leakage unit, 5-fold stratified
+subject CV, a 20% inner validation split, and seeds `1337`, `7`, and `2024`.
+Audio files are already at most 20 seconds, so they are not re-chunked.
+
+Inspect and build:
+
+```bash
+export TURKISH_DATASET_ROOT=/media/emre/Backup/AudioLLM/Datasets/Turkish
+python scripts/inspect_turkish.py --root "$TURKISH_DATASET_ROOT"
+python src/data/build_manifest.py --config configs/turkish_audio_text.yaml
+```
+
+Available presets:
+
+- `configs/turkish_text_only.yaml`
+- `configs/turkish_audio_only.yaml`
+- `configs/turkish_audio_text.yaml` — one example per existing audio/transcript segment
+- `configs/turkish_subject_audio_text.yaml` — one example per subject with `K=4` audio segments and concatenated per-segment transcripts
+
+Run all 5 folds for all three seeds:
+
+```bash
+RUN_NAME=turkish_audio_text \
+CONFIG=$PWD/configs/turkish_audio_text.yaml \
+./scripts/run_turkish_5fold.sh
+```
+
+For the subject-level K-chunk headline run:
+
+```bash
+RUN_NAME=turkish_subject_k4 \
+CONFIG=$PWD/configs/turkish_subject_audio_text.yaml \
+./scripts/run_turkish_5fold.sh
+```
+
+The runner writes one summary per seed and a combined 15-run
+`*_seed_sweep_summary.json`. To run a single smoke fold:
+
+```bash
+torchrun --nproc_per_node=1 src/train.py \
+  --config configs/turkish_audio_text.yaml \
+  --fold 0 \
+  --run_name turkish_smoke \
+  --set training.num_train_epochs=1 \
+  --set split.smoke_subject_limit=6
+```
+
+Cheap subject-grouped acoustic-feature baseline:
+
+```bash
+python baselines/turkish_features_clf.py \
+  --root "$TURKISH_DATASET_ROOT" \
+  --output outputs/turkish_features_baseline.json
+```
+
+The baseline audits and strips the numeric duplicate suffixes present in the
+CSV's inline feature strings; these features are never copied into the LLM manifest.
 
 ## With-Model Smoke Test
 

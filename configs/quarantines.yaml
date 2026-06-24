@@ -9,3 +9,5 @@ datasets:
         reason: "Official corpus directory contains Q9.txt but no Q9.wav."
   eatd:
     missing_samples: []
+  turkish:
+    missing_samples: []

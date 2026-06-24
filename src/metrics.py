@@ -23,6 +23,42 @@ def _binary_confusion(y_true: list[int], y_pred: list[int]) -> list[list[int]]:
     return [[tn, fp], [fn, tp]]
 
 
+def binary_auroc(y_true: list[int], scores: list[float]) -> float:
+    if len(y_true) != len(scores):
+        raise ValueError("AUROC targets and scores must have the same length.")
+    positives = sum(int(label) == 1 for label in y_true)
+    negatives = sum(int(label) == 0 for label in y_true)
+    if positives == 0 or negatives == 0:
+        return 0.0
+
+    ordered_indices = sorted(range(len(scores)), key=lambda index: float(scores[index]))
+    ranks = [0.0] * len(scores)
+    index = 0
+    while index < len(ordered_indices):
+        tie_end = index
+        score = float(scores[ordered_indices[index]])
+        while (
+            tie_end + 1 < len(ordered_indices)
+            and float(scores[ordered_indices[tie_end + 1]]) == score
+        ):
+            tie_end += 1
+        average_rank = (index + tie_end) / 2.0 + 1.0
+        for rank_index in range(index, tie_end + 1):
+            ranks[ordered_indices[rank_index]] = average_rank
+        index = tie_end + 1
+
+    positive_rank_sum = sum(
+        ranks[index] for index, label in enumerate(y_true) if int(label) == 1
+    )
+    return float(
+        (
+            positive_rank_sum
+            - positives * (positives + 1) / 2.0
+        )
+        / (positives * negatives)
+    )
+
+
 def classification_metrics(y_true: list[int], y_pred: list[int]) -> dict[str, Any]:
     if not y_true:
         raise ValueError("Cannot compute metrics on an empty target list.")

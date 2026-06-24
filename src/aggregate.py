@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from typing import Any
 
-from src.metrics import classification_metrics, multiclass_macro_f1
+from src.metrics import binary_auroc, classification_metrics, multiclass_macro_f1
 from src.utils import (
     AGGREGATION_LEVEL_SEGMENT,
     AGGREGATION_LEVEL_SUBJECT,
@@ -157,6 +157,7 @@ def aggregate_likelihood_predictions(sample_rows: list[dict[str, Any]]) -> tuple
     subject_rows: list[dict[str, Any]] = []
     y_true: list[int] = []
     y_pred: list[int] = []
+    score_margins: list[float] = []
     for subject_id, rows in sorted(grouped.items()):
         dep_scores = [float(row["dep_score"]) for row in rows]
         non_scores = [float(row["non_score"]) for row in rows]
@@ -180,10 +181,12 @@ def aggregate_likelihood_predictions(sample_rows: list[dict[str, Any]]) -> tuple
         )
         y_true.append(gold)
         y_pred.append(pred)
+        score_margins.append(mean_dep - mean_non)
 
     binary_metrics = classification_metrics(y_true, y_pred)
     metrics = {
         **binary_metrics,
+        "auroc": binary_auroc(y_true, score_margins),
         "binary_strict_accuracy": binary_metrics["accuracy"],
         "binary_strict_precision": binary_metrics["precision"],
         "binary_strict_recall": binary_metrics["recall"],
@@ -330,6 +333,10 @@ def aggregate_likelihood_predictions_segment_level(sample_rows: list[dict[str, A
         segment_rows,
         backend_name=PREDICTION_MODE_LIKELIHOOD,
         aggregation_level=AGGREGATION_LEVEL_SEGMENT,
+    )
+    metrics["auroc"] = binary_auroc(
+        [int(row["label"]) for row in segment_rows],
+        [float(row["dep_score"]) - float(row["non_score"]) for row in segment_rows],
     )
     return segment_rows, metrics
 

@@ -5,6 +5,7 @@ import gc
 import json
 import math
 import os
+import random
 import shutil
 import sys
 import time
@@ -19,10 +20,10 @@ if str(PROJECT_ROOT) not in sys.path:
 import torch
 from accelerate import Accelerator, DistributedDataParallelKwargs
 from torch.optim import AdamW
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from transformers import get_linear_schedule_with_warmup
 
-from src.data.build_manifest import build_for_config
+from src.data.build_manifest import build_for_config, manifest_build_signature
 from src.data.runtime import (
     AudioTextDataset,
     build_examples,
@@ -147,6 +148,9 @@ def _load_metadata_or_build(config_path: str | Path, config: dict[str, Any], con
         if usable and missing_split_keys:
             usable = False
             reason = f"split_metadata_missing:{','.join(missing_split_keys)}"
+        if usable and metadata.get("build_signature") != manifest_build_signature(config):
+            usable = False
+            reason = "build_signature_mismatch"
         if usable:
             return metadata
         LOGGER.warning("Refreshing stale metadata for %s: %s", config["dataset"], reason)
@@ -314,6 +318,84 @@ def _sample_partition_counts(examples: list[dict[str, Any]]) -> dict[str, int]:
         "non_depressed_samples": int(counter[0]),
         "total_samples": len(examples),
     }
+
+
+def _limit_subject_ids_for_smoke(
+    subject_ids: list[str],
+    subject_labels: dict[str, int],
+    *,
+    limit: int,
+    seed: int,
+) -> list[str]:
+    if limit <= 0 or len(subject_ids) <= limit:
+        return sorted(subject_ids)
+    rng = random.Random(seed)
+    by_label = {
+        label: [subject_id for subject_id in sorted(subject_ids) if int(subject_labels[subject_id]) == label]
+        for label in (0, 1)
+    }
+    for values in by_label.values():
+        rng.shuffle(values)
+    selected: list[str] = []
+    while len(selected) < limit and any(by_label.values()):
+        for label in (1, 0):
+            if by_label[label] and len(selected) < limit:
+                selected.append(by_label[label].pop())
+    return sorted(selected)
+
+
+def _apply_smoke_subject_limit(
+    partition_plan: dict[str, Any],
+    subject_labels: dict[str, int],
+    config: dict[str, Any],
+    fold: int,
+) -> None:
+    limit = int(config.get("split", {}).get("smoke_subject_limit", 0) or 0)
+    if limit <= 0:
+        return
+    for offset, key in enumerate(
+        ("train_subject_ids", "selection_subject_ids", "final_eval_subject_ids")
+    ):
+        partition_plan[key] = _limit_subject_ids_for_smoke(
+            partition_plan[key],
+            subject_labels,
+            limit=limit,
+            seed=int(config["seed"]) + int(fold) * 10 + offset,
+        )
+    LOGGER.warning(
+        "Smoke subject cap enabled: at most %s subjects per train/selection/final-eval partition.",
+        limit,
+    )
+
+
+def _build_weighted_train_sampler(
+    examples: list[dict[str, Any]],
+    config: dict[str, Any],
+) -> WeightedRandomSampler | None:
+    mode = str(config.get("training", {}).get("class_balance", "none")).strip().lower()
+    if mode in {"", "none", "off", "false"}:
+        return None
+    if mode != "weighted_sampler":
+        raise ValueError(
+            f"Unsupported training.class_balance={mode!r}. Expected 'none' or 'weighted_sampler'."
+        )
+    class_counts = Counter(int(example["label"]) for example in examples)
+    if set(class_counts) != {0, 1}:
+        raise ValueError("Weighted training sampler requires both classes.")
+    weights = [1.0 / class_counts[int(example["label"])] for example in examples]
+    generator = torch.Generator()
+    generator.manual_seed(int(config["seed"]))
+    LOGGER.info(
+        "Train-only weighted sampler enabled | depressed_samples=%s non_depressed_samples=%s",
+        class_counts[1],
+        class_counts[0],
+    )
+    return WeightedRandomSampler(
+        weights=weights,
+        num_samples=len(weights),
+        replacement=True,
+        generator=generator,
+    )
 
 
 def _move_batch_to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
@@ -637,6 +719,7 @@ def main() -> None:
     manifest_rows = load_manifest_rows(metadata["manifest_path"])
     subject_labels = build_subject_label_map(manifest_rows)
     partition_plan = _resolve_training_subject_splits(config, metadata, subject_labels, args.fold)
+    _apply_smoke_subject_limit(partition_plan, subject_labels, config, args.fold)
     split_mode = str(partition_plan["split_mode"])
     selection_enabled = bool(partition_plan["selection_enabled"])
     active_split_metadata_path = (
@@ -733,10 +816,12 @@ def main() -> None:
     if args.label_mask_debug:
         _emit_label_mask_debug(train_dataset, collator, processor, logs_dir)
 
+    train_sampler = _build_weighted_train_sampler(train_examples, config)
     train_loader = DataLoader(
         train_dataset,
         batch_size=int(config["training"]["per_device_train_batch_size"]),
-        shuffle=True,
+        shuffle=train_sampler is None,
+        sampler=train_sampler,
         num_workers=int(config["training"]["dataloader_num_workers"]),
         collate_fn=collator,
     )

@@ -181,6 +181,41 @@ def _truncate_text(text: str, max_chars: int) -> tuple[str, dict[str, Any] | Non
     }
 
 
+def _resolve_subject_transcript(
+    rows: list[dict[str, Any]],
+    config: dict[str, Any],
+    *,
+    mode_name: str,
+) -> str:
+    transcript_values = [str(row["transcript"]).strip() for row in rows]
+    multi_transcript = str(config.get("data", {}).get("multi_transcript", "strict")).strip().lower()
+    if multi_transcript == "concat":
+        separator = str(config.get("data", {}).get("multi_transcript_separator", "\n"))
+        return separator.join(value for value in transcript_values if value)
+    if multi_transcript != "strict":
+        raise ValueError(
+            f"Unsupported data.multi_transcript={multi_transcript!r}. Expected 'strict' or 'concat'."
+        )
+    unique_values = set(transcript_values)
+    if len(unique_values) != 1:
+        raise ValueError(
+            f"{mode_name} expects exactly one transcript per subject unless "
+            f"data.multi_transcript=concat. Found {len(unique_values)} transcripts "
+            f"for subject_id={rows[0]['subject_id']}."
+        )
+    return transcript_values[0]
+
+
+def _ordered_subject_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if rows and str(rows[0].get("dataset", "")).lower() == "turkish":
+        def turkish_key(row: dict[str, Any]) -> tuple[int, str]:
+            chunk_id = str(row.get("chunk_id", "")).strip()
+            return (int(chunk_id) if chunk_id.isdigit() else 10**9, str(row["sample_id"]))
+
+        return sorted(rows, key=turkish_key)
+    return sorted(rows, key=lambda item: item["sample_id"])
+
+
 def _subject_mode_audio_plan(audio_paths: list[str], max_per_response: float, max_total: float) -> dict[str, Any]:
     durations = []
     for audio_path in audio_paths:
@@ -259,13 +294,7 @@ def _build_subject_level_text_only_examples(
     examples: list[dict[str, Any]] = []
     truncation_logs: list[dict[str, Any]] = []
     for subject_id in sorted(grouped):
-        rows = sorted(grouped[subject_id], key=lambda item: item["sample_id"])
-        transcript_values = {str(row["transcript"]).strip() for row in rows}
-        if len(transcript_values) != 1:
-            raise ValueError(
-                f"Text-only subject mode expects exactly one transcript per subject. "
-                f"Found {len(transcript_values)} transcripts for subject_id={subject_id}."
-            )
+        rows = _ordered_subject_rows(grouped[subject_id])
         label_values = {int(row["label"]) for row in rows}
         if len(label_values) != 1:
             raise ValueError(
@@ -274,7 +303,12 @@ def _build_subject_level_text_only_examples(
             )
 
         canonical_row = rows[0]
-        transcript, transcript_log = _truncate_text(canonical_row["transcript"], transcript_max_chars)
+        subject_transcript = _resolve_subject_transcript(
+            rows,
+            config,
+            mode_name="Text-only subject mode",
+        )
+        transcript, transcript_log = _truncate_text(subject_transcript, transcript_max_chars)
         user_text = render_user_prompt_text(config, transcript, is_subject_bundle=False)
         internal_label_text = canonical_row.get("internal_label_text") or internal_label_text_from_int(
             config,
@@ -384,7 +418,7 @@ def _build_subject_level_audio_examples(
     examples: list[dict[str, Any]] = []
     truncation_logs: list[dict[str, Any]] = []
     for subject_id in sorted(grouped):
-        rows = sorted(grouped[subject_id], key=lambda item: item["sample_id"])
+        rows = _ordered_subject_rows(grouped[subject_id])
         label_values = {int(row["label"]) for row in rows}
         if len(label_values) != 1:
             raise ValueError(
@@ -404,13 +438,12 @@ def _build_subject_level_audio_examples(
         transcript = ""
         transcript_log: dict[str, Any] | None = None
         if use_text:
-            transcript_values = {str(row["transcript"]).strip() for row in rows}
-            if len(transcript_values) != 1:
-                raise ValueError(
-                    f"subject_audio mode with use_text expects exactly one transcript per subject. "
-                    f"Found {len(transcript_values)} transcripts for subject_id={subject_id}."
-                )
-            transcript, transcript_log = _truncate_text(canonical_row["transcript"], transcript_max_chars)
+            subject_transcript = _resolve_subject_transcript(
+                rows,
+                config,
+                mode_name="subject_audio mode with use_text",
+            )
+            transcript, transcript_log = _truncate_text(subject_transcript, transcript_max_chars)
 
         effective_k = min(chunks_per_subject, len(chunk_paths))
         deterministic_indices = _evenly_spaced_indices(len(chunk_paths), effective_k)
@@ -513,7 +546,7 @@ def build_examples(
             emotion_cache, [str(row["sample_id"]) for row in manifest_rows]
         )
 
-    if input_modality == INPUT_MODALITY_TEXT_ONLY and dataset_name in {"daic", "edaic"}:
+    if input_modality == INPUT_MODALITY_TEXT_ONLY and dataset_name in {"daic", "edaic", "turkish"}:
         return _build_subject_level_text_only_examples(
             manifest_rows,
             config,
@@ -522,7 +555,7 @@ def build_examples(
             truncation_log_path=truncation_log_path,
         )
 
-    if sample_mode == "subject_audio" and dataset_name in {"daic", "edaic"}:
+    if sample_mode == "subject_audio" and dataset_name in {"daic", "edaic", "turkish"}:
         return _build_subject_level_audio_examples(
             manifest_rows,
             config,

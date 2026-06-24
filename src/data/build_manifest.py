@@ -14,6 +14,7 @@ from src.data.cmdc import build_cmdc_manifest
 from src.data.daic import build_daic_manifest
 from src.data.edaic import build_edaic_manifest
 from src.data.eatd import build_eatd_manifest
+from src.data.turkish import build_turkish_manifest
 from src.data.validation import (
     assert_audio_exists,
     assert_clean_labels,
@@ -36,6 +37,35 @@ from src.utils import serialize_project_path
 
 
 LOGGER = get_logger(__name__)
+
+
+def manifest_build_signature(config: dict[str, Any]) -> dict[str, Any]:
+    excluded_top_level = {
+        "audio_adapter",
+        "data",
+        "evaluation",
+        "labels",
+        "lora",
+        "model_name_or_path",
+        "output_dirs",
+        "prompt",
+        "quarantine_path",
+        "training",
+    }
+    builder_options = {
+        key: value
+        for key, value in config.items()
+        if key not in excluded_top_level and key != "split"
+    }
+    split_options = {
+        key: value
+        for key, value in (config.get("split") or {}).items()
+        if key != "smoke_subject_limit"
+    }
+    return {
+        "builder_options": builder_options,
+        "split_options": split_options,
+    }
 
 
 def _write_csv(rows: list[dict[str, Any]], path: Path) -> None:
@@ -81,6 +111,8 @@ def build_for_config(config_path: str | Path, config_overrides: list[str] | None
         result = build_cmdc_manifest(config, quarantine)
     elif dataset_name == "eatd":
         result = build_eatd_manifest(config, quarantine)
+    elif dataset_name == "turkish":
+        result = build_turkish_manifest(config, quarantine)
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
 
@@ -98,6 +130,7 @@ def build_for_config(config_path: str | Path, config_overrides: list[str] | None
         "dataset": dataset_name,
         "manifest_path": serialize_project_path(output_paths["manifest_jsonl"]),
         "manifest_hash": manifest_hash,
+        "build_signature": manifest_build_signature(config),
     }
     if "subject_partition_rows" in result:
         partition_path = split_dir / f"{dataset_name}_subject_partitions.json"

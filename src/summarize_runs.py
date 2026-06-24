@@ -14,7 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.utils import configure_logging, read_json, save_json
 
 
-METRIC_KEYS = ["accuracy", "precision", "recall", "positive_f1", "macro_f1", "weighted_f1"]
+METRIC_KEYS = ["accuracy", "precision", "recall", "positive_f1", "macro_f1", "weighted_f1", "auroc"]
 BACKEND_METRIC_FILES = {
     "likelihood": "metrics_likelihood.json",
     "generation": "metrics_generation.json",
@@ -120,6 +120,8 @@ def summarize_run(run_root: Path) -> None:
             row[f"{backend_name}_evaluation_protocol_name"] = backend_metrics.get("evaluation_protocol_name", "")
             row[f"{backend_name}_metrics_path"] = str(metrics_path)
             for key in METRIC_KEYS:
+                if key not in backend_metrics:
+                    continue
                 row[f"{backend_name}_{key}"] = backend_metrics[key]
                 metrics_by_backend[backend_name][key].append(float(backend_metrics[key]))
             if backend_name == active_backend:
@@ -128,6 +130,8 @@ def summarize_run(run_root: Path) -> None:
         if active_metrics is not None:
             row["active_metrics_path"] = row.get(f"{active_backend}_metrics_path", "")
             for key in METRIC_KEYS:
+                if key not in active_metrics:
+                    continue
                 row[f"active_{key}"] = active_metrics[key]
                 active_metrics_by_key[key].append(float(active_metrics[key]))
             confusion_matrix = active_metrics.get("confusion_matrix") or active_metrics.get("binary_strict_confusion_matrix")
@@ -156,6 +160,8 @@ def summarize_run(run_root: Path) -> None:
         "macro_f1_std": active_metric_summary.get("macro_f1", {}).get("std", 0.0),
         "weighted_f1_mean": active_metric_summary.get("weighted_f1", {}).get("mean", 0.0),
         "weighted_f1_std": active_metric_summary.get("weighted_f1", {}).get("std", 0.0),
+        "auroc_mean": active_metric_summary.get("auroc", {}).get("mean", 0.0),
+        "auroc_std": active_metric_summary.get("auroc", {}).get("std", 0.0),
         "pooled_accuracy": active_pooled_metrics.get("accuracy", 0.0),
         "pooled_positive_f1": active_pooled_metrics.get("positive_f1", 0.0),
         "pooled_precision": active_pooled_metrics.get("precision", 0.0),

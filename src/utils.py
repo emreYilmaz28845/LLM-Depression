@@ -49,6 +49,7 @@ OPTIONAL_OVERRIDE_PATHS = {
     ("split", "mode"),
     ("split", "dev_pool_partitions"),
     ("split", "outer_folds"),
+    ("split", "smoke_subject_limit"),
 }
 GENERATION_PARSE_PREFIXES = (
     "answer:",
