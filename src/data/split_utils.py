@@ -19,6 +19,12 @@ XML_NS = {
 SPLIT_MODE_FIXED = "fixed"
 SPLIT_MODE_CV = "cv"
 SPLIT_MODE_FULL_TRAIN = "full_train"
+CV_PROTOCOL_TRAIN_VAL = "train_val"
+CV_PROTOCOL_TRAIN_VAL_TEST = "train_val_test"
+SUPPORTED_CV_PROTOCOLS = (
+    CV_PROTOCOL_TRAIN_VAL,
+    CV_PROTOCOL_TRAIN_VAL_TEST,
+)
 SUPPORTED_SPLIT_MODES = (
     SPLIT_MODE_FIXED,
     SPLIT_MODE_CV,
@@ -199,6 +205,18 @@ def resolve_split_mode(config: dict[str, Any], metadata: dict[str, Any] | None =
     if "outer_folds" in split_cfg:
         return SPLIT_MODE_CV
     return SPLIT_MODE_FIXED
+
+
+def resolve_cv_protocol(config: dict[str, Any]) -> str:
+    raw_protocol = str(config.get("split", {}).get("cv_protocol", "")).strip().lower()
+    if not raw_protocol:
+        return CV_PROTOCOL_TRAIN_VAL if str(config.get("dataset", "")).lower() == "turkish" else CV_PROTOCOL_TRAIN_VAL_TEST
+    if raw_protocol not in SUPPORTED_CV_PROTOCOLS:
+        raise ValueError(
+            f"Unsupported split.cv_protocol={raw_protocol!r}. "
+            f"Expected one of {', '.join(SUPPORTED_CV_PROTOCOLS)}."
+        )
+    return raw_protocol
 
 
 def resolve_dev_pool_partitions(config: dict[str, Any]) -> list[str]:

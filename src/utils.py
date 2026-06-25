@@ -46,6 +46,7 @@ SUPPORTED_AGGREGATION_LEVELS = (
 ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}")
 PROJECT_PATH_ANCHORS = ("outputs", "output_model", "configs", "scripts", "src")
 OPTIONAL_OVERRIDE_PATHS = {
+    ("split", "cv_protocol"),
     ("split", "mode"),
     ("split", "dev_pool_partitions"),
     ("split", "outer_folds"),

@@ -60,7 +60,7 @@ def manifest_build_signature(config: dict[str, Any]) -> dict[str, Any]:
     split_options = {
         key: value
         for key, value in (config.get("split") or {}).items()
-        if key != "smoke_subject_limit"
+        if key not in {"cv_protocol", "smoke_subject_limit"}
     }
     return {
         "builder_options": builder_options,

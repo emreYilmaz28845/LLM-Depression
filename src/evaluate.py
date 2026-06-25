@@ -24,10 +24,12 @@ from src.data.runtime import (
     load_manifest_rows,
 )
 from src.data.split_utils import (
+    CV_PROTOCOL_TRAIN_VAL,
     SPLIT_MODE_CV,
     SPLIT_MODE_FIXED,
     SPLIT_MODE_FULL_TRAIN,
     read_fold_payload,
+    resolve_cv_protocol,
     resolve_requested_split_mode,
     resolve_split_mode,
     subject_ids_for_partitions,
@@ -656,9 +658,12 @@ def main() -> None:
     )
     metadata = _load_metadata_or_build(args.config, config, args.config_overrides)
     manifest_rows = load_manifest_rows(metadata["manifest_path"])
+    split_mode = resolve_split_mode(config, metadata)
+    cv_protocol = resolve_cv_protocol(config) if split_mode == SPLIT_MODE_CV else None
     final_eval_subject_ids = _resolve_final_eval_subject_ids(config, metadata, args.fold)
     final_eval_rows = filter_rows_by_subjects(manifest_rows, final_eval_subject_ids)
-    examples = build_examples(final_eval_rows, config, partition_name="final_eval", truncation_log_path=None)
+    evaluation_role = "fold_validation" if cv_protocol == CV_PROTOCOL_TRAIN_VAL else "final_eval"
+    examples = build_examples(final_eval_rows, config, partition_name=evaluation_role, truncation_log_path=None)
 
     model_name_or_path = resolve_model_name_or_path(args.model_name_or_path, config)
     processor = load_processor(args.checkpoint_dir, config)
@@ -671,7 +676,9 @@ def main() -> None:
         {
             "base_config_path": str(Path(args.config)),
             "config_overrides": list(args.config_overrides),
-            "split_mode": resolve_split_mode(config, metadata),
+            "split_mode": split_mode,
+            "cv_protocol": cv_protocol,
+            "evaluation_role": evaluation_role,
             "sample_prediction_mode": sample_prediction_mode,
             "aggregation_level": aggregation_level,
             "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),

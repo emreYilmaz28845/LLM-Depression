@@ -29,6 +29,7 @@ data:
   allow_empty_transcript: false
 split:
   mode: cv
+  cv_protocol: train_val
   outer_folds: 5
   inner_val_ratio: 0.2
   seed: 1337

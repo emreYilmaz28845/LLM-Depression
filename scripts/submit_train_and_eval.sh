@@ -94,6 +94,15 @@ CONFIG_SPLIT_MODE="$(awk '
     exit
   }
 ' "$CONFIG" | tr -d '"' | tr -d "'")"
+CONFIG_CV_PROTOCOL="$(awk '
+  /^split:/ {in_block=1; next}
+  in_block && /^[^[:space:]]/ {in_block=0}
+  in_block && /^[[:space:]]+cv_protocol:/ {
+    sub(/^[[:space:]]+cv_protocol:[[:space:]]*/, "", $0)
+    print $0
+    exit
+  }
+' "$CONFIG" | tr -d '"' | tr -d "'")"
 
 if [ -z "$DATASET_NAME" ]; then
     echo "Could not parse dataset from config: $CONFIG"
@@ -114,8 +123,17 @@ TRAIN_SAMPLE_PREDICTION_MODE="$(extract_set_override "$EXTRA_TRAIN_ARGS" "evalua
 EVAL_SAMPLE_PREDICTION_MODE="$(extract_set_override "$EXTRA_EVAL_ARGS" "evaluation.sample_prediction_mode" || true)"
 TRAIN_SPLIT_MODE="$(extract_set_override "$EXTRA_TRAIN_ARGS" "split.mode" || true)"
 TRAIN_SPLIT_MODE="${TRAIN_SPLIT_MODE:-$CONFIG_SPLIT_MODE}"
+TRAIN_CV_PROTOCOL="$(extract_set_override "$EXTRA_TRAIN_ARGS" "split.cv_protocol" || true)"
+TRAIN_CV_PROTOCOL="${TRAIN_CV_PROTOCOL:-$CONFIG_CV_PROTOCOL}"
 if [ -z "$TRAIN_SPLIT_MODE" ]; then
     TRAIN_SPLIT_MODE="fixed"
+fi
+if [ -z "$TRAIN_CV_PROTOCOL" ]; then
+    if [ "$DATASET_NAME" = "turkish" ]; then
+        TRAIN_CV_PROTOCOL="train_val"
+    else
+        TRAIN_CV_PROTOCOL="train_val_test"
+    fi
 fi
 
 if [ -n "$TRAIN_SAMPLE_PREDICTION_MODE" ] && [ -z "$EVAL_SAMPLE_PREDICTION_MODE" ]; then
@@ -123,7 +141,15 @@ if [ -n "$TRAIN_SAMPLE_PREDICTION_MODE" ] && [ -z "$EVAL_SAMPLE_PREDICTION_MODE"
     EVAL_SAMPLE_PREDICTION_MODE="$TRAIN_SAMPLE_PREDICTION_MODE"
 fi
 
+EVAL_CV_PROTOCOL="$(extract_set_override "$EXTRA_EVAL_ARGS" "split.cv_protocol" || true)"
+if [ -n "$TRAIN_CV_PROTOCOL" ] && [ -z "$EVAL_CV_PROTOCOL" ]; then
+    EXTRA_EVAL_ARGS="${EXTRA_EVAL_ARGS:+$EXTRA_EVAL_ARGS }--set split.cv_protocol=$TRAIN_CV_PROTOCOL"
+fi
+
 if [ "$TRAIN_SPLIT_MODE" = "full_train" ] && [ "$SUBMIT_BEST_EVAL_SPECIFIED" = "0" ]; then
+    SUBMIT_BEST_EVAL=0
+fi
+if [ "$TRAIN_SPLIT_MODE" = "cv" ] && [ "$TRAIN_CV_PROTOCOL" = "train_val" ] && [ "$SUBMIT_BEST_EVAL_SPECIFIED" = "0" ]; then
     SUBMIT_BEST_EVAL=0
 fi
 
@@ -143,6 +169,7 @@ echo "  fold: $FOLD"
 echo "  run_name: $RUN_NAME"
 echo "  fold_dir: $FOLD_DIR"
 echo "  train_split_mode: $TRAIN_SPLIT_MODE"
+echo "  train_cv_protocol: $TRAIN_CV_PROTOCOL"
 echo "  best_checkpoint_dir: $BEST_CHECKPOINT_DIR"
 echo "  last_checkpoint_dir: $LAST_CHECKPOINT_DIR"
 echo "  train_sample_prediction_mode: ${TRAIN_SAMPLE_PREDICTION_MODE:-<from config>}"

@@ -34,11 +34,13 @@ from src.data.runtime import (
     save_partition_subjects,
 )
 from src.data.split_utils import (
+    CV_PROTOCOL_TRAIN_VAL,
     SPLIT_MODE_CV,
     SPLIT_MODE_FIXED,
     SPLIT_MODE_FULL_TRAIN,
     deterministic_inner_split,
     read_fold_payload,
+    resolve_cv_protocol,
     resolve_dev_pool_partitions,
     resolve_requested_split_mode,
     resolve_split_mode,
@@ -227,9 +229,11 @@ def _resolve_training_subject_splits(
 ) -> dict[str, Any]:
     split_mode = resolve_split_mode(config, metadata)
     outer_partitions = _resolve_outer_partitions(config, metadata, fold)
+    cv_protocol = resolve_cv_protocol(config) if split_mode == SPLIT_MODE_CV else None
     if split_mode == SPLIT_MODE_FULL_TRAIN:
         return {
             "split_mode": split_mode,
+            "cv_protocol": None,
             "selection_mode": "none",
             "selection_enabled": False,
             "uses_inner_split": False,
@@ -243,6 +247,23 @@ def _resolve_training_subject_splits(
             "selection_log_dir_name": "selection_disabled",
         }
 
+    if split_mode == SPLIT_MODE_CV and cv_protocol == CV_PROTOCOL_TRAIN_VAL:
+        return {
+            "split_mode": split_mode,
+            "cv_protocol": cv_protocol,
+            "selection_mode": "outer_fold_validation",
+            "selection_enabled": True,
+            "uses_inner_split": False,
+            "outer_partitions": outer_partitions,
+            "train_subject_ids": outer_partitions["outer_train_subject_ids"],
+            "selection_subject_ids": outer_partitions["final_eval_subject_ids"],
+            "final_eval_subject_ids": [],
+            "train_split_name": "train_outer",
+            "selection_split_name": "fold_validation",
+            "final_eval_split_name": "none",
+            "selection_log_dir_name": "fold_validation",
+        }
+
     selection_partition = str(config["split"].get("selection_partition", "")).strip()
     if split_mode == SPLIT_MODE_FIXED and selection_partition:
         selection_subject_ids = outer_partitions.get("selection_subject_ids") or []
@@ -252,6 +273,7 @@ def _resolve_training_subject_splits(
             )
         return {
             "split_mode": split_mode,
+            "cv_protocol": None,
             "selection_mode": "fixed_partition",
             "selection_enabled": True,
             "uses_inner_split": False,
@@ -273,6 +295,7 @@ def _resolve_training_subject_splits(
     )
     return {
         "split_mode": split_mode,
+        "cv_protocol": cv_protocol if split_mode == SPLIT_MODE_CV else None,
         "selection_mode": "inner_split",
         "selection_enabled": True,
         "uses_inner_split": True,
@@ -763,12 +786,14 @@ def main() -> None:
             partition_name=partition_plan["selection_split_name"],
             truncation_log_path=logs_dir / "val_truncation.jsonl",
         )
-    final_eval_examples = build_examples(
-        filter_rows_by_subjects(manifest_rows, partition_plan["final_eval_subject_ids"]),
-        config,
-        partition_name=partition_plan["final_eval_split_name"],
-        truncation_log_path=logs_dir / "final_eval_truncation.jsonl",
-    )
+    final_eval_examples: list[dict[str, Any]] = []
+    if partition_plan["final_eval_subject_ids"]:
+        final_eval_examples = build_examples(
+            filter_rows_by_subjects(manifest_rows, partition_plan["final_eval_subject_ids"]),
+            config,
+            partition_name=partition_plan["final_eval_split_name"],
+            truncation_log_path=logs_dir / "final_eval_truncation.jsonl",
+        )
     sample_count_payload = {
         partition_plan["train_split_name"]: _sample_partition_counts(train_examples),
         partition_plan["final_eval_split_name"]: _sample_partition_counts(final_eval_examples),
@@ -874,11 +899,12 @@ def main() -> None:
         "split_metadata_path": active_split_metadata_path,
         "split_metadata_hash": sha256_file(active_split_metadata_path),
         "split_mode": split_mode,
+        "cv_protocol": partition_plan["cv_protocol"],
         "fold": int(args.fold),
         "save_strategy": args.save_strategy,
         "selection_protocol": {
             "mode": partition_plan["selection_mode"],
-            "metric_name": "selection_positive_f1" if selection_enabled else None,
+            "metric_name": None,
             "selection_split_name": partition_plan["selection_split_name"],
             "selection_subject_count": len(partition_plan["selection_subject_ids"]),
             "selection_sample_count": len(selection_examples),
@@ -892,13 +918,18 @@ def main() -> None:
             "final_eval_subject_count": len(partition_plan["final_eval_subject_ids"]),
             "final_eval_sample_count": len(final_eval_examples),
             "final_eval_aggregation_level": aggregation_level,
-            "run_final_eval_in_train": bool(config["training"].get("run_final_eval_in_train", False)),
+            "run_final_eval_in_train": (
+                bool(config["training"].get("run_final_eval_in_train", False))
+                and partition_plan["cv_protocol"] != CV_PROTOCOL_TRAIN_VAL
+            ),
         },
     }
-    if accelerator.is_main_process:
-        save_yaml(run_config, run_root / "run_config.yaml")
 
     selection_metric_cfg = _resolve_selection_metric(config)
+    run_config["selection_protocol"]["metric_name"] = selection_metric_cfg["metric"] if selection_enabled else None
+    run_config["selection_protocol"]["metric_mode"] = selection_metric_cfg["mode"] if selection_enabled else None
+    if accelerator.is_main_process:
+        save_yaml(run_config, run_root / "run_config.yaml")
     best_metric: float | None = (
         None
         if not selection_enabled
@@ -1035,6 +1066,33 @@ def main() -> None:
                         if best_dir.exists():
                             shutil.rmtree(best_dir)
                         save_adapter_and_processor(unwrapped, processor, best_dir, config=config)
+                    if partition_plan["cv_protocol"] == CV_PROTOCOL_TRAIN_VAL:
+                        best_validation_dir = eval_dir / "best_validation"
+                        if best_validation_dir.exists():
+                            shutil.rmtree(best_validation_dir)
+                        ensure_dir(eval_dir)
+                        shutil.copytree(selection_eval_dir, best_validation_dir)
+                        save_json(
+                            {
+                                "cv_protocol": CV_PROTOCOL_TRAIN_VAL,
+                                "score_source": "best_outer_fold_validation",
+                                "fold": int(args.fold),
+                                "epoch": int(epoch),
+                                "selection_metric": selection_metric_name,
+                                "selection_metric_mode": selection_metric_cfg["mode"],
+                                "selection_metric_value": selection_value,
+                                "prediction_backend": sample_prediction_mode,
+                                "aggregation_level": aggregation_level,
+                                "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
+                                "metrics_path": str(best_validation_dir / {
+                                    "likelihood": "metrics_likelihood.json",
+                                    "generation": "metrics_generation.json",
+                                    "original_teacher_forced": "metrics_original_teacher_forced.json",
+                                }[sample_prediction_mode]),
+                                "active_backend_metrics": headline_metrics,
+                            },
+                            best_validation_dir / "selection.json",
+                        )
                 _write_trial_progress(
                     args.trial_progress_file,
                     epoch=epoch,
@@ -1124,6 +1182,14 @@ def main() -> None:
             shutil.copytree(last_dir, best_dir)
             best_epoch = completed_epochs
         run_final_eval_in_train = bool(config["training"].get("run_final_eval_in_train", False))
+        if partition_plan["cv_protocol"] == CV_PROTOCOL_TRAIN_VAL:
+            if run_final_eval_in_train:
+                LOGGER.info(
+                    "Skipping final held-out test evaluation because split.cv_protocol=%s "
+                    "uses the outer fold as validation.",
+                    CV_PROTOCOL_TRAIN_VAL,
+                )
+            run_final_eval_in_train = False
         if selection_enabled and run_final_eval_in_train and not _save_best_checkpoint(args.save_strategy):
             LOGGER.info(
                 "Skipping final held-out evaluation inside training because save_strategy=%s does not keep best checkpoints.",
@@ -1199,11 +1265,12 @@ def main() -> None:
             {
                 "status": "completed",
                 "split_mode": split_mode,
+                "cv_protocol": partition_plan["cv_protocol"],
                 "fold": int(args.fold),
                 "run_name": args.run_name,
                 "run_root": str(run_root),
                 "save_strategy": args.save_strategy,
-                "metric_name": "selection_positive_f1" if selection_enabled else None,
+                "metric_name": selection_metric_cfg["metric"] if selection_enabled else None,
                 "best_metric": None if best_metric is None else float(best_metric),
                 "best_epoch": int(best_epoch),
                 "completed_epochs": int(completed_epochs),

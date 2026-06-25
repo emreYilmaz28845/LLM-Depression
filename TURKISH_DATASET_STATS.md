@@ -9,9 +9,13 @@ Pure-numpy stats (no scipy): Mann–Whitney via tie-corrected normal approximati
 ## 0. Headline takeaways
 
 1. **Do not tune the label threshold to maximize model F1** — that is circular (redefining
-   the ground truth to flatter the classifier). Keep the clinical cutoff (25); report
-   threshold *sensitivity* only. The model's *decision* threshold may be tuned (Youden-J /
-   max-F1) but **on inner-val only**, never on the test holdout.
+   the ground truth to flatter the classifier). The label threshold was instead set on
+   **psychometric grounds** (see §2a): `depresyon_skoru` is BDI, and BDI has published severity
+   bands (1–10 normal, 11–16 mild, 17–20 borderline clinical, 21–30 moderate, 31–40 severe,
+   >40 extreme). **Primary cut = 21 (depressed iff score ≥ 21, i.e. moderate-or-worse)** —
+   this is the original clinical cutoff (25) revised once the scale was identified as BDI,
+   not re-tuned to any model's F1. The model's *decision* threshold may still be tuned
+   (Youden-J / max-F1) but **on inner-val only**, never on the test holdout.
 2. The label is defined by a cut (25) that sits **past the mode** of a near-normal score
    distribution (62nd percentile). A ±3 shift of the cut flips **25% of the cohort's labels** —
    the binary task is intrinsically unstable.
@@ -47,18 +51,43 @@ The cut bisects the densest region → maximal label ambiguity.
 
 | threshold | depressed N | depressed % | non-dep N | label flips vs t=25 |
 |---|---|---|---|---|
+| 17 | 83 | 69.2% | 37 | 37 |
 | 18 | 77 | 64.2% | 43 | 31 |
 | 20 | 69 | 57.5% | 51 | 23 |
+| **21** | **62** | **51.7%** | **58** | **16** |
 | 22 | 57 | 47.5% | 63 | 11 |
 | 24 | 47 | 39.2% | 73 | 1 |
-| **25** | **46** | **38.3%** | **74** | **0 (reference)** |
+| 25 (orig.) | 46 | 38.3% | 74 | 0 (reference) |
 | 26 | 41 | 34.2% | 79 | 5 |
 | 28 | 27 | 22.5% | 93 | 19 |
 | 30 | 19 | 15.8% | 101 | 27 |
 | 32 | 14 | 11.7% | 106 | 32 |
 
-- ±3 around the cut (22 ↔ 28) flips **30 subjects = 25% of the cohort**.
-- Any single-threshold F1 is fragile; report F1 at {22, 25, 28} as a robustness band.
+- ±3 around the original cut (22 ↔ 28) flips **30 subjects = 25% of the cohort** — the task is
+  inherently threshold-sensitive regardless of which cut is used.
+- 21 is the best-balanced cut available (51.7% positive) and the only one that aligns with a
+  BDI band edge (borderline|moderate) rather than bisecting a band. 17 (69.2% positive, thin
+  minority) is kept as a sensitivity/robustness point, not a primary candidate.
+- Report F1 at {17, 21, 25} as a robustness band when comparing across thresholds.
+
+### 2a. Why 21, not 25 or 17
+
+`depresyon_skoru` is the **Beck Depression Inventory (BDI)** total score. Its published severity
+bands are: 1–10 normal, 11–16 mild, 17–20 borderline clinical, 21–30 moderate, 31–40 severe,
+>40 extreme.
+
+- **t=25** (original) sits inside the "moderate" band and, per §1, cuts through the score
+  distribution's mode — worst case for label stability.
+- **t=17** sits at the "mild → borderline" edge; pulls in the borderline band (ambiguous by
+  definition) as positive → thinnest, least defensible minority class (37 subjects).
+- **t=21** sits exactly at the "borderline → moderate" edge: borderline-clinical subjects
+  (17–20, n=21) are excluded from "depressed", moderate-or-worse are included. This is the
+  most clinically legible cut and happens to also be the best-balanced (62/58).
+
+Threshold configs coexist with zero code conflicts via isolated `output_dirs` per threshold
+(`outputs/manifests[_t17|_t21]`, matching `splits_*`, `run_root` suffixed `_t17`/`_t21`); default
+configs (no suffix) now use t=20 as an interim value, t=21 configs (`*_t21.yaml`) are the
+intended primary going forward.
 
 ## 3. Group differences — depressed vs non-depressed (subject level)
 
@@ -106,8 +135,10 @@ ceiling.)
 
 ## 7. Recommendations
 
-1. **Keep the label threshold at the clinical value (25).** Do not select it on model F1.
-   Add a sensitivity row (F1 at 22 / 25 / 28) — `threshold` is already a config knob.
+1. **Use the BDI-band-aligned label threshold (21 = moderate-or-worse).** Chosen on
+   psychometric grounds (§2a), not selected to maximize model F1. Report F1 at {17, 21, 25}
+   as a robustness band — all three threshold configs already exist (`*_t21.yaml`,
+   default = t20, `*_t17.yaml`).
 2. **Tune only the model's decision threshold**, on inner-val, via Youden-J or max-F1, and
    freeze it before scoring the test holdout (respects the eval-determinism rule).
 3. **Report AUROC + macro-F1 as the headline**, not positive-F1 alone — positive-F1 is the
@@ -117,3 +148,6 @@ ceiling.)
 5. Consider whether the *clinically meaningful* task is depression-vs-not at all, given the
    anxiety entanglement (d = 1.22) — a depression-vs-anxiety or severity-regression framing may
    be better supported by the signal that actually exists in the data.
+6. **All results reported in `depression_results_table*.csv` to date were trained under the
+   original t=25 cutoff and are stale** relative to this threshold decision — re-run the 5-fold
+   sweep against `*_t21.yaml` configs before treating any Turkish row as current.

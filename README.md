@@ -251,9 +251,27 @@ Subject-mode length controls are in `configs/eatd_audio_text.yaml`:
 
 ## Turkish Training / Eval
 
-The Turkish pipeline uses `patient_id` as the leakage unit, 5-fold stratified
-subject CV, a 20% inner validation split, and the seed defined in each config.
-Audio files are already at most 20 seconds, so they are not re-chunked.
+The Turkish pipeline uses `patient_id` as the leakage unit and 5-fold stratified
+subject CV. Its default `split.cv_protocol: train_val` trains on four folds,
+validates on the held-out fold after every epoch, keeps that fold's best
+validation snapshot, and averages the five selected snapshots. Audio files are
+already at most 20 seconds, so they are not re-chunked.
+
+To use the previous train/inner-validation/test protocol instead, set:
+
+```yaml
+split:
+  mode: cv
+  cv_protocol: train_val_test
+  inner_val_ratio: 0.2
+```
+
+In `train_val_test`, the inner validation split selects the checkpoint and the
+outer held-out fold supplies the reported test score. In `train_val`, the outer
+fold is both the checkpoint-selection validation set and the reported fold
+score, so it should not be described as a held-out test result.
+`training.run_final_eval_in_train` is ignored in `train_val`; it remains enabled
+in the presets so switching only `cv_protocol` restores the previous test run.
 
 Inspect and build:
 
@@ -417,6 +435,7 @@ output_model/audio_text/{dataset}/{run_name}/fold_{k}/
 Important artifacts:
 - `best_model/`
 - `last_model/`
+- `eval/best_validation/` — selected fold-validation metrics when `split.cv_protocol=train_val`
 - `logs/split_used.json`
 - `logs/sample_partition_counts.json`
 - `logs/train_truncation.jsonl`
