@@ -7,3 +7,6 @@ CMDC,Audio + Text (paper),0.989,0.982,1.0,0.967
 ,Audio + Text (our),0.923,0.893,0.833,0.962
 ,Audio only (our),0.923,0.88,0.917,0.846
 ,Text only (our),0.974,0.96,1.0,0.923
+Turkish,Audio + Text (our),0.684,0.387,0.387,0.422
+,Audio only (our),0.633,0.240,0.290,0.222
+,Text only (our),0.609,0.442,0.517,0.418
