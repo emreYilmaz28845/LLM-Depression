@@ -252,7 +252,7 @@ Subject-mode length controls are in `configs/eatd_audio_text.yaml`:
 ## Turkish Training / Eval
 
 The Turkish pipeline uses `patient_id` as the leakage unit, 5-fold stratified
-subject CV, a 20% inner validation split, and seeds `1337`, `7`, and `2024`.
+subject CV, a 20% inner validation split, and the seed defined in each config.
 Audio files are already at most 20 seconds, so they are not re-chunked.
 
 Inspect and build:
@@ -270,24 +270,22 @@ Available presets:
 - `configs/turkish_audio_text.yaml` — one example per existing audio/transcript segment
 - `configs/turkish_subject_audio_text.yaml` — one example per subject with `K=4` audio segments and concatenated per-segment transcripts
 
-Run all 5 folds for all three seeds:
+Run audio-only, text-only, and audio+text together:
 
 ```bash
-RUN_NAME=turkish_audio_text \
-CONFIG=$PWD/configs/turkish_audio_text.yaml \
-./scripts/run_turkish_5fold.sh
+sbatch scripts/run_turkish_5fold.sh
 ```
 
-For the subject-level K-chunk headline run:
+This submits three independent chains in parallel:
 
-```bash
-RUN_NAME=turkish_subject_k4 \
-CONFIG=$PWD/configs/turkish_subject_audio_text.yaml \
-./scripts/run_turkish_5fold.sh
-```
+- audio-only: folds `0 → 1 → 2 → 3 → 4`
+- text-only: folds `0 → 1 → 2 → 3 → 4`
+- audio+text: folds `0 → 1 → 2 → 3 → 4`
 
-The runner writes one summary per seed and a combined 15-run
-`*_seed_sweep_summary.json`. To run a single smoke fold:
+Thus there are 15 GPU jobs total, but up to three jobs can run simultaneously:
+one active fold from each modality. Each chain gets its own dependent summary job.
+
+To run a single smoke fold:
 
 ```bash
 torchrun --nproc_per_node=1 src/train.py \

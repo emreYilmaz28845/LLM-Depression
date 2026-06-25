@@ -36,6 +36,7 @@ DATASET_BASE_ROOT="${DATASET_BASE_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM
 export DAIC_DATASET_ROOT="${DAIC_DATASET_ROOT:-$DATASET_BASE_ROOT/DAIC-WOZ/preprocessed}"
 export CMDC_DATASET_ROOT="${CMDC_DATASET_ROOT:-$DATASET_BASE_ROOT/CMDC}"
 export EATD_DATASET_ROOT="${EATD_DATASET_ROOT:-$DATASET_BASE_ROOT/EATD-Corpus}"
+export TURKISH_DATASET_ROOT="${TURKISH_DATASET_ROOT:-$DATASET_BASE_ROOT/Turkish}"
 
 CONFIG="${CONFIG:-$PROJECT_ROOT/configs/daic_audio_text.yaml}"
 FOLD="${FOLD:-0}"
@@ -43,6 +44,7 @@ RUN_NAME="${RUN_NAME:-mn5_reproduction}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
 MODEL_PATH="${MODEL_PATH:-}"
 EXTRA_TRAIN_ARGS="${EXTRA_TRAIN_ARGS:-}"
+SKIP_MANIFEST_BUILD="${SKIP_MANIFEST_BUILD:-0}"
 ENABLE_LABEL_MASK_DEBUG="${ENABLE_LABEL_MASK_DEBUG:-0}"
 DATASET_NAME="$(python - <<PY
 import sys
@@ -77,10 +79,12 @@ echo "Run Name: $RUN_NAME" | tee -a "$RUN_LOG_FILE"
 echo "NPROC_PER_NODE: $NPROC_PER_NODE" | tee -a "$RUN_LOG_FILE"
 echo "MODEL_PATH: ${MODEL_PATH:-<from YAML>}" | tee -a "$RUN_LOG_FILE"
 echo "EXTRA_TRAIN_ARGS: ${EXTRA_TRAIN_ARGS:-<none>}" | tee -a "$RUN_LOG_FILE"
+echo "SKIP_MANIFEST_BUILD: $SKIP_MANIFEST_BUILD" | tee -a "$RUN_LOG_FILE"
 echo "DATASET_BASE_ROOT: $DATASET_BASE_ROOT" | tee -a "$RUN_LOG_FILE"
 echo "DAIC_DATASET_ROOT: $DAIC_DATASET_ROOT" | tee -a "$RUN_LOG_FILE"
 echo "CMDC_DATASET_ROOT: $CMDC_DATASET_ROOT" | tee -a "$RUN_LOG_FILE"
 echo "EATD_DATASET_ROOT: $EATD_DATASET_ROOT" | tee -a "$RUN_LOG_FILE"
+echo "TURKISH_DATASET_ROOT: $TURKISH_DATASET_ROOT" | tee -a "$RUN_LOG_FILE"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-}" | tee -a "$RUN_LOG_FILE"
 echo "Hostname: $(hostname)" | tee -a "$RUN_LOG_FILE"
 echo "Working Directory: $(pwd)" | tee -a "$RUN_LOG_FILE"
@@ -138,11 +142,15 @@ if [ -n "$EXTRA_TRAIN_ARGS" ]; then
     done
 fi
 
-echo "Building or refreshing manifests before torchrun" | tee -a "$RUN_LOG_FILE"
-printf 'Manifest command: ' | tee -a "$RUN_LOG_FILE"
-printf '%q ' "${MANIFEST_CMD[@]}" | tee -a "$RUN_LOG_FILE"
-printf '\n' | tee -a "$RUN_LOG_FILE"
-"${MANIFEST_CMD[@]}" 2>&1 | tee -a "$RUN_LOG_FILE"
+if [ "$SKIP_MANIFEST_BUILD" = "1" ]; then
+    echo "Skipping manifest rebuild; using the manifest prepared by the orchestration job." | tee -a "$RUN_LOG_FILE"
+else
+    echo "Building or refreshing manifests before torchrun" | tee -a "$RUN_LOG_FILE"
+    printf 'Manifest command: ' | tee -a "$RUN_LOG_FILE"
+    printf '%q ' "${MANIFEST_CMD[@]}" | tee -a "$RUN_LOG_FILE"
+    printf '\n' | tee -a "$RUN_LOG_FILE"
+    "${MANIFEST_CMD[@]}" 2>&1 | tee -a "$RUN_LOG_FILE"
+fi
 
 LABEL_MASK_FLAG=""
 if [ "$ENABLE_LABEL_MASK_DEBUG" = "1" ]; then

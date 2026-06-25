@@ -7,9 +7,9 @@ DAIC,Audio + Text (paper),0.857,0.762,0.889,0.667
 ,"Audio + Text + Emo (our, ZH SECap – self-extracted)",0.809,0.571,0.857,0.429
 ,"Audio + Text + Emo (our, EN SECap – self-extracted)",0.766,0.703,0.565,0.929
 CMDC,Audio + Text (paper),0.989,0.982,1.0,0.967
-,Audio + Text (our),PENDING (re-running 5-fold CV),,,
-,Audio only (our),PENDING (re-running 5-fold CV),,,
-,Text only (our),PENDING (re-running 5-fold CV),,,
+,Audio + Text (our),0.923,0.893,0.833,0.962
+,Audio only (our),0.923,0.88,0.917,0.846
+,Text only (our),0.974,0.96,1.0,0.923
 ,Audio + Text + Emo (paper),0.989,0.982,1.0,0.967
 ,"Audio + Text + Emo (our, ZH SECap – self-extracted)",0.937,0.887,1.0,0.807
 ,"Audio + Text + Emo (our, ZH SECap – paper repo)",0.948,0.919,0.967,0.887
