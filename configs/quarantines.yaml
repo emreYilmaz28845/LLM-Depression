@@ -10,4 +10,10 @@ datasets:
   eatd:
     missing_samples: []
   turkish:
-    missing_samples: []
+    missing_samples:
+      - sample_id: cy2-1-9-ank+depr
+        reason: "Repaired transcript was marked FAIL (Portuguese non-Turkish fragment)."
+      - sample_id: ak3-1-11-ank
+        reason: "Repaired transcript was marked FAIL (English fragment)."
+      - sample_id: sb2-1-9-ank+depr
+        reason: "Repaired transcript was marked FAIL (unrelated Korean news fragment)."

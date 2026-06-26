@@ -28,8 +28,8 @@ def _optional_float(value: Any) -> float | None:
     return float(text) if text else None
 
 
-def _load_whisper_transcripts(path: Path) -> dict[str, dict[str, str]]:
-    transcripts: dict[str, dict[str, str]] = {}
+def _load_whisper_transcripts(path: Path) -> dict[str, dict[str, Any]]:
+    transcripts: dict[str, dict[str, Any]] = {}
     with path.open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
             line = line.strip()
@@ -44,6 +44,7 @@ def _load_whisper_transcripts(path: Path) -> dict[str, dict[str, str]]:
             transcripts[basename] = {
                 "transcript": str(payload.get("transcript", "")).strip(),
                 "language": str(payload.get("language", "")).strip(),
+                "repair_status": str(payload.get("repair_status", "")).strip(),
             }
     return transcripts
 
@@ -181,6 +182,7 @@ def build_turkish_manifest(
             transcript_payload = transcripts.get(basename)
             transcript = str((transcript_payload or {}).get("transcript", "")).strip()
             language = str((transcript_payload or {}).get("language", "")).strip()
+            repair_status = str((transcript_payload or {}).get("repair_status", "")).strip().upper()
             audio_found = audio_path.is_file()
             transcript_found = transcript_payload is not None
             transcript_nonempty = bool(transcript)
@@ -208,9 +210,25 @@ def build_turkish_manifest(
                     "transcript_found": transcript_found,
                     "transcript_nonempty": transcript_nonempty,
                     "transcript_language": language,
+                    "transcript_repair_status": repair_status,
                     "label": label,
                 }
             )
+
+            if repair_status == "FAIL":
+                extra_file_audit.append(
+                    {
+                        "file": basename,
+                        "sample_id": sample_id,
+                        "reason": "transcript_marked_fail",
+                        "audio_found": audio_found,
+                        "transcript_found": transcript_found,
+                        "transcript_nonempty": transcript_nonempty,
+                        "language": language,
+                        "repair_status": repair_status,
+                    }
+                )
+                continue
 
             if not audio_found or not transcript_found or not transcript_nonempty:
                 if is_quarantined_missing(quarantine, "turkish", sample_id):

@@ -104,6 +104,7 @@ dataset = config["dataset"]
 
 print("dataset", dataset)
 print("dataset_root", config["dataset_root"])
+print("transcript_file", config.get("transcript_file", "<default>"))
 print("audio_adapter", json.dumps(config.get("audio_adapter", {}), sort_keys=True))
 
 split_dir = resolve_project_path(config["output_dirs"]["split_dir"])
