@@ -1,15 +1,14 @@
-dataset: turkish
+dataset: edaic
 seed: 1337
-dataset_root: ${TURKISH_DATASET_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/Turkish}
-metadata_csv: metadata_turkish_t25_binary_merged.csv
-transcript_file: whisper_transcripts_repaired.jsonl
-threshold: 20
+dataset_root: ${EDAIC_DATASET_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/EDAIC-WOZ/preprocessed}
 quarantine_path: ${PROJECT_ROOT}/configs/quarantines.yaml
-model_name_or_path: /gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instruct
+model_name_or_path: ${QWEN3_OMNI_MODEL_PATH:-Qwen/Qwen3-Omni-30B-A3B-Instruct}
+model_backend: qwen3omni
+model_attn_implementation: flash_attention_2
 output_dirs:
   manifest_dir: ${PROJECT_ROOT}/outputs/manifests
   split_dir: ${PROJECT_ROOT}/outputs/splits
-  run_root: ${PROJECT_ROOT}/output_model/audio_only/turkish
+  run_root: ${PROJECT_ROOT}/output_model/qwen3omni/audio_only/edaic
 prompt:
   system: You are a psychologist analyzing speech audio for depression screening.
   user_template: |-
@@ -23,14 +22,19 @@ data:
   use_audio: true
   use_text: false
   silence_audio: false
-  sample_mode: response
-  max_audio_seconds_per_chunk: 20.0
-  transcript_max_chars: 0
+  sample_mode: chunk
+  transcript_max_chars: 4000
   allow_empty_transcript: false
 split:
-  mode: cv
-  cv_protocol: train_val
+  mode: fixed
+  train_partitions:
+    - train
+    - val
+  dev_pool_partitions:
+    - train
+    - val
   outer_folds: 5
+  final_eval_partition: test
   inner_val_ratio: 0.2
   seed: 1337
 lora:
@@ -43,11 +47,13 @@ lora:
     - k_proj
     - v_proj
     - o_proj
-    - gate_proj
-    - up_proj
-    - down_proj
+audio_adapter:
+  enabled: false
+  adapter_dim: 512
+  dropout: 0.1
+  train_projector: false
 training:
-  num_train_epochs: 8
+  num_train_epochs: 20
   learning_rate: 2.0e-4
   weight_decay: 0.0
   warmup_ratio: 0.03
@@ -57,22 +63,19 @@ training:
   logging_steps: 5
   bf16: true
   gradient_checkpointing: true
-  run_final_eval_in_train: true
+  run_final_eval_in_train: false
   dataloader_num_workers: 0
   max_grad_norm: 1.0
-  class_balance: weighted_sampler
-  selection_metric: inner_val_macro_f1
-  selection_metric_mode: max
   early_stopping:
     enabled: true
-    metric: inner_val_macro_f1
+    metric: inner_val_positive_f1
     mode: max
     patience: 3
     min_delta: 0.0
 evaluation:
-  sample_prediction_mode: likelihood
+  sample_prediction_mode: original_teacher_forced
   aggregation_level: subject
   generation_max_new_tokens: 8
   num_beams: 1
   do_sample: false
-  headline_mode: likelihood
+  headline_mode: original_teacher_forced

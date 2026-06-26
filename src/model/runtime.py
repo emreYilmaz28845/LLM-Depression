@@ -5,12 +5,30 @@ from typing import Any
 
 from transformers import GenerationConfig
 
-from src.model import qwen2audio_lora, text_lora
+from src.model import qwen2audio_lora, qwen3omni_lora, text_lora
 from src.model.lora_common import resolve_lora_layer_selection, resolved_lora_layer_selection
-from src.utils import INPUT_MODALITY_TEXT_ONLY, resolve_input_modality
+from src.utils import (
+    INPUT_MODALITY_TEXT_ONLY,
+    MODEL_BACKEND_QWEN2AUDIO,
+    MODEL_BACKEND_QWEN3OMNI,
+    MODEL_BACKEND_TEXT,
+    resolve_input_modality,
+    resolve_model_backend,
+)
 
 
 def _backend(config: dict[str, Any]):
+    # An explicit model_backend wins over the modality default. This is what lets
+    # the same-backbone text-only control (data.use_audio=false) route through the
+    # omni Thinker instead of the dense text model (QWEN3_OMNI_IMPLEMENTATION.md §4.2).
+    backend = resolve_model_backend(config)
+    if backend == MODEL_BACKEND_QWEN3OMNI:
+        return qwen3omni_lora
+    if backend == MODEL_BACKEND_QWEN2AUDIO:
+        return qwen2audio_lora
+    if backend == MODEL_BACKEND_TEXT:
+        return text_lora
+    # No explicit backend -> today's behavior: modality picks the backend.
     if resolve_input_modality(config) == INPUT_MODALITY_TEXT_ONLY:
         return text_lora
     return qwen2audio_lora

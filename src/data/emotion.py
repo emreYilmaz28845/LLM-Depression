@@ -156,17 +156,21 @@ def single_chunk_emotion_block(caption: str | None) -> str:
     return f"Emotional description: {caption}\n"
 
 
-def interleaved_audio_emotion_block(captions: list[str | None]) -> str:
+def interleaved_audio_emotion_block(
+    captions: list[str | None], audio_placeholder: str = AUDIO_PLACEHOLDER
+) -> str:
     """Interleave ``Audio i:`` placeholders with ``Emotional description i:`` lines.
 
     ``captions[i]`` aligns with audio ``i+1`` (the i-th sampled/baked chunk). A
     ``None`` caption drops only that chunk's description line (drop policy),
-    keeping the audio placeholder so the ``<|AUDIO|>`` count still matches the
-    number of audio arrays.
+    keeping the audio placeholder so the audio-token count still matches the
+    number of audio arrays. ``audio_placeholder`` defaults to the Qwen2-Audio
+    string; the Qwen3-Omni backend passes its native placeholder so the per-chunk
+    blocks tokenize as real special tokens rather than literal text.
     """
     lines: list[str] = []
     for index, caption in enumerate(captions, start=1):
-        lines.append(f"Audio {index}: {AUDIO_PLACEHOLDER}")
+        lines.append(f"Audio {index}: {audio_placeholder}")
         if caption:
             lines.append(f"Emotional description {index}: {caption}")
     return "\n".join(lines)

@@ -19,7 +19,7 @@ from src.utils import get_logger, label_text_from_int
 
 LOGGER = get_logger(__name__)
 DEFAULT_METADATA_CSV = "metadata_turkish_t25_binary_merged.csv"
-DEFAULT_TRANSCRIPT_FILE = "whisper_transcripts.jsonl"
+DEFAULT_TRANSCRIPT_FILE = "whisper_transcripts_repaired.jsonl"
 SOURCE_THRESHOLD = 25.0
 
 

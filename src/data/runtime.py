@@ -25,18 +25,34 @@ from src.utils import (
     INPUT_MODALITY_AUDIO_ONLY,
     INPUT_MODALITY_AUDIO_TEXT,
     INPUT_MODALITY_TEXT_ONLY,
+    MODEL_BACKEND_QWEN3OMNI,
     internal_label_text_from_int,
     prompt_label_descriptor,
     prompt_label_instruction,
     read_jsonl,
     resolve_input_modality,
+    resolve_model_backend,
     save_json,
     write_jsonl,
 )
 
 
 LOGGER = get_logger(__name__)
-AUDIO_PLACEHOLDER = "<|audio_bos|><|AUDIO|><|audio_eos|>"
+# Qwen2-Audio uses <|audio_bos|><|AUDIO|><|audio_eos|>; Qwen3-Omni uses distinct
+# single special tokens <|audio_start|><|audio_pad|><|audio_end|> (verified via the
+# smoke gate, QWEN3_OMNI_IMPLEMENTATION.md §5.1). Reusing the wrong string tokenizes
+# as literal text and silently misaligns audio features, so the placeholder must
+# follow the resolved model_backend. AUDIO_PLACEHOLDER stays the Qwen2-Audio default
+# for backward compatibility; resolve_audio_placeholder() picks per backend.
+QWEN2AUDIO_AUDIO_PLACEHOLDER = "<|audio_bos|><|AUDIO|><|audio_eos|>"
+QWEN3OMNI_AUDIO_PLACEHOLDER = "<|audio_start|><|audio_pad|><|audio_end|>"
+AUDIO_PLACEHOLDER = QWEN2AUDIO_AUDIO_PLACEHOLDER
+
+
+def resolve_audio_placeholder(config: dict[str, Any]) -> str:
+    if resolve_model_backend(config) == MODEL_BACKEND_QWEN3OMNI:
+        return QWEN3OMNI_AUDIO_PLACEHOLDER
+    return AUDIO_PLACEHOLDER
 DEFAULT_SINGLE_AUDIO_CONTEXT = "The subject's speech audio is provided."
 DEFAULT_SUBJECT_AUDIO_CONTEXT = "The subject's speech audio is provided in three responses: negative, neutral, and positive."
 
@@ -57,8 +73,8 @@ def filter_rows_by_subjects(rows: list[dict[str, Any]], subject_ids: list[str]) 
     return [row for row in rows if row["subject_id"] in subject_set]
 
 
-def _audio_prompt_block(num_audios: int) -> str:
-    return "\n".join(f"Audio {index}: {AUDIO_PLACEHOLDER}" for index in range(1, num_audios + 1))
+def _audio_prompt_block(num_audios: int, audio_placeholder: str = AUDIO_PLACEHOLDER) -> str:
+    return "\n".join(f"Audio {index}: {audio_placeholder}" for index in range(1, num_audios + 1))
 
 
 def _modality_flags(input_modality: str) -> tuple[bool, bool]:
@@ -147,6 +163,7 @@ def build_prompt_text(
     num_audios: int,
     use_audio: bool,
     emotion_captions: list[str | None] | None = None,
+    audio_placeholder: str = AUDIO_PLACEHOLDER,
 ) -> str:
     if use_audio and num_audios:
         if emotion_captions is not None:
@@ -156,9 +173,11 @@ def build_prompt_text(
                     f"emotion_captions length ({len(emotion_captions)}) must match "
                     f"num_audios ({num_audios})."
                 )
-            audio_block = interleaved_audio_emotion_block(emotion_captions)
+            audio_block = interleaved_audio_emotion_block(
+                emotion_captions, audio_placeholder=audio_placeholder
+            )
         else:
-            audio_block = _audio_prompt_block(num_audios)
+            audio_block = _audio_prompt_block(num_audios, audio_placeholder=audio_placeholder)
         user_text = audio_block + "\n" + user_text
     return (
         f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
@@ -261,6 +280,7 @@ def _base_example_from_row(
         user_text=user_text,
         num_audios=1 if use_audio else 0,
         use_audio=use_audio,
+        audio_placeholder=resolve_audio_placeholder(config),
     )
     example = {
         "dataset": row["dataset"],
@@ -467,12 +487,14 @@ def _build_subject_level_audio_examples(
         deterministic_captions = (
             [chunk_caption_by_path[path] for path in deterministic_paths] if emotion_on else None
         )
+        audio_placeholder = resolve_audio_placeholder(config)
         prompt_text = build_prompt_text(
             system_prompt=config["prompt"]["system"],
             user_text=user_text,
             num_audios=effective_k,
             use_audio=True,
             emotion_captions=deterministic_captions,
+            audio_placeholder=audio_placeholder,
         )
         example = {
             "dataset": canonical_row["dataset"],
@@ -499,6 +521,7 @@ def _build_subject_level_audio_examples(
             example["emotion_user_text"] = user_text
             example["emotion_system_prompt"] = config["prompt"]["system"]
             example["emotion_internal_label_text"] = internal_label_text
+            example["emotion_audio_placeholder"] = audio_placeholder
         examples.append(example)
         log_row = {
             "partition": partition_name,
@@ -620,6 +643,7 @@ def build_examples(
                 num_audios=len(audio_paths),
                 use_audio=use_audio,
                 emotion_captions=emotion_captions,
+                audio_placeholder=resolve_audio_placeholder(config),
             )
             example = {
                 "dataset": "eatd",
@@ -847,6 +871,7 @@ class AudioTextDataset(Dataset):
             num_audios=len(audio_paths),
             use_audio=True,
             emotion_captions=captions,
+            audio_placeholder=example.get("emotion_audio_placeholder", AUDIO_PLACEHOLDER),
         )
         return {
             "prompt_text": prompt_text,

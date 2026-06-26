@@ -7,6 +7,9 @@ CMDC,Audio + Text (paper),0.989,0.982,1.0,0.967
 ,Audio + Text (our),0.923,0.893,0.833,0.962
 ,Audio only (our),0.923,0.88,0.917,0.846
 ,Text only (our),0.974,0.96,1.0,0.923
-Turkish (BDI≥25, stale — pending BDI≥21 re-run),Audio + Text (our),0.684,0.387,0.387,0.422
-,Audio only (our),0.633,0.240,0.290,0.222
-,Text only (our),0.609,0.442,0.517,0.418
+Turkish (BDI≥17),Audio + Text (our),0.710,0.799,0.751,0.871
+,Audio only (our),0.717,0.814,0.744,0.913
+,Text only (our),0.711,0.772,0.802,0.788
+Turkish (BDI≥21),Audio + Text (our),0.700,0.710,0.704,0.741
+,Audio only (our),0.642,0.688,0.625,0.778
+,Text only (our),0.707,0.694,0.749,0.694

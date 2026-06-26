@@ -4,13 +4,21 @@ from typing import Any
 
 from peft import LoraConfig
 
+from src.utils import MODEL_BACKEND_QWEN3OMNI, resolve_model_backend
+
 
 def _resolve_decoder_hidden_layer_count(model_or_config) -> int:
     model_config = getattr(model_or_config, "config", model_or_config)
+    thinker_config = getattr(model_config, "thinker_config", None)
     candidate_values = [
         getattr(getattr(model_config, "text_config", None), "num_hidden_layers", None),
         getattr(model_config, "num_hidden_layers", None),
         getattr(getattr(model_config, "language_model", None), "num_hidden_layers", None),
+        # Qwen3-Omni: the trainable Thinker's decoder count lives under
+        # thinker_config.text_config (QWEN3_OMNI_IMPLEMENTATION.md §5.5). The
+        # standalone Thinker exposes it via text_config directly (first candidate);
+        # this also resolves it when handed the full omni config.
+        getattr(getattr(thinker_config, "text_config", None), "num_hidden_layers", None),
     ]
     for value in candidate_values:
         if value is None:
@@ -23,6 +31,21 @@ def _resolve_decoder_hidden_layer_count(model_or_config) -> int:
         "Could not resolve decoder hidden-layer count from model config. "
         "Expected config.text_config.num_hidden_layers or config.num_hidden_layers."
     )
+
+
+def _default_exclude_modules(config: dict[str, Any]) -> str:
+    """Default LoRA ``exclude_modules`` regex for the resolved backend.
+
+    Keeps LoRA out of the audio front-end so it cannot leak into the encoder and
+    overfit speaker/channel shortcuts on tiny corpora (the documented audio-overfit
+    trap). For Qwen3-Omni the audio projector lives *inside* ``audio_tower``
+    (``proj1``/``proj2``/``conv_out``), so excluding ``audio_tower`` already covers
+    it; there is no separate ``multi_modal_projector``. ``visual`` is excluded too
+    so attention LoRA never lands in the (unused) vision encoder.
+    """
+    if resolve_model_backend(config) == MODEL_BACKEND_QWEN3OMNI:
+        return r".*audio_tower.*|.*visual.*"
+    return r".*audio_tower.*|.*multi_modal_projector.*"
 
 
 def resolve_lora_layer_selection(config: dict[str, Any], model_or_config) -> dict[str, Any]:
@@ -86,7 +109,7 @@ def build_lora_config(config: dict[str, Any], model_or_config) -> tuple[LoraConf
     if explicit_exclude:
         lora_kwargs["exclude_modules"] = explicit_exclude
     elif not tune_audio_encoder:
-        lora_kwargs["exclude_modules"] = r".*audio_tower.*|.*multi_modal_projector.*"
+        lora_kwargs["exclude_modules"] = _default_exclude_modules(config)
     return LoraConfig(**lora_kwargs), layer_selection
 
 

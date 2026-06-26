@@ -2,6 +2,7 @@ dataset: turkish
 seed: 1337
 dataset_root: ${TURKISH_DATASET_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/Turkish}
 metadata_csv: metadata_turkish_t25_binary_merged.csv
+transcript_file: whisper_transcripts_repaired.jsonl
 threshold: 20
 quarantine_path: ${PROJECT_ROOT}/configs/quarantines.yaml
 model_name_or_path: /gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instruct

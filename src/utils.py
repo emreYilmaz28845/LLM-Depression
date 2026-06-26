@@ -28,6 +28,14 @@ SUPPORTED_INPUT_MODALITIES = (
     INPUT_MODALITY_AUDIO_ONLY,
     INPUT_MODALITY_TEXT_ONLY,
 )
+MODEL_BACKEND_QWEN2AUDIO = "qwen2audio"
+MODEL_BACKEND_QWEN3OMNI = "qwen3omni"
+MODEL_BACKEND_TEXT = "text"
+SUPPORTED_MODEL_BACKENDS = (
+    MODEL_BACKEND_QWEN2AUDIO,
+    MODEL_BACKEND_QWEN3OMNI,
+    MODEL_BACKEND_TEXT,
+)
 PREDICTION_MODE_LIKELIHOOD = "likelihood"
 PREDICTION_MODE_GENERATION = "generation"
 PREDICTION_MODE_ORIGINAL_TEACHER_FORCED = "original_teacher_forced"
@@ -196,6 +204,28 @@ def resolve_input_modality(config: dict[str, Any]) -> str:
         "Invalid data.use_audio/data.use_text configuration. "
         "At least one modality must be enabled."
     )
+
+
+def resolve_model_backend(config: dict[str, Any]) -> str | None:
+    """Explicit ``model_backend`` switch (``qwen2audio`` | ``qwen3omni`` | ``text``).
+
+    Returns ``None`` when unset so callers fall back to today's modality-based
+    default (text-only -> ``text``; otherwise the audio backend). When set, the
+    explicit switch wins over the modality default: this is what lets the
+    same-backbone text-only control route through the omni Thinker
+    (``model_backend: qwen3omni`` with ``data.use_audio=false``) instead of the
+    dense text model. See QWEN3_OMNI_IMPLEMENTATION.md §4.2.
+    """
+    raw_value = (config or {}).get("model_backend")
+    if raw_value in (None, ""):
+        return None
+    normalized = str(raw_value).strip().lower()
+    if normalized not in SUPPORTED_MODEL_BACKENDS:
+        raise ValueError(
+            f"Unsupported model_backend={raw_value!r}. "
+            f"Expected one of {', '.join(SUPPORTED_MODEL_BACKENDS)} (or unset)."
+        )
+    return normalized
 
 
 def _parse_override_value(raw_value: str) -> Any:

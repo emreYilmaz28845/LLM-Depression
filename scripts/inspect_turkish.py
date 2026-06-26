@@ -52,7 +52,7 @@ def _load_transcripts(path: Path) -> dict[str, dict[str, str]]:
 
 def inspect_dataset(root: Path, metadata_csv: str) -> dict[str, Any]:
     metadata_path = root / metadata_csv
-    transcript_path = root / "whisper_transcripts.jsonl"
+    transcript_path = root / "whisper_transcripts_repaired.jsonl"
     audio_dir = root / "all-files"
     transcripts = _load_transcripts(transcript_path)
     disk_audio = {path.name for path in audio_dir.glob("*.wav")}

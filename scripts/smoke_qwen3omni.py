@@ -43,6 +43,7 @@ from src.data.runtime import (
     build_prompt_text,
     build_training_text,
     render_user_prompt_text,
+    resolve_audio_placeholder,
 )
 from src.model.collator import Qwen2AudioSFTCollator
 from src.utils import internal_label_text_from_int, resolve_input_modality
@@ -135,11 +136,17 @@ def tier_a(model_id: str) -> None:
             "Processor/tokenizer mismatch."
         )
     native_placeholder = "".join(native_tokens)
-    if AUDIO_PLACEHOLDER != native_placeholder:
-        print(
-            f"[Tier A] NOTE: repo AUDIO_PLACEHOLDER={AUDIO_PLACEHOLDER!r} != Qwen3-Omni "
-            f"native={native_placeholder!r}. The qwen3omni backend must emit the native one."
-        )
+    # The qwen3omni backend must emit this native placeholder (NOT the Qwen2-Audio default
+    # that AUDIO_PLACEHOLDER still holds for backward compatibility). Assert our resolver
+    # returns exactly what the real processor expects, so a regression fails loudly here.
+    resolved = resolve_audio_placeholder({"model_backend": "qwen3omni"})
+    assert resolved == native_placeholder, (
+        f"[Tier A] resolve_audio_placeholder(qwen3omni)={resolved!r} != processor "
+        f"native={native_placeholder!r}; audio features would misalign."
+    )
+    assert resolve_audio_placeholder({}) == AUDIO_PLACEHOLDER, (
+        "[Tier A] default backend must keep the Qwen2-Audio placeholder unchanged."
+    )
     # The single audio_token must expand to multiple frame positions once audio is attached.
     pad_id = tok(processor.audio_token, add_special_tokens=False)["input_ids"][0]
     probe = processor(
@@ -218,9 +225,33 @@ def _shrink_thinker_config(model_id: str):
     return thinker
 
 
+def _tier_b_config() -> dict:
+    """Config slice the real backend paths read: model_backend (picks the Qwen3-Omni
+    exclude regex) + attention-only LoRA (MoE expert FFNs excluded; see plan §3)."""
+    return {
+        "model_backend": "qwen3omni",
+        "lora": {
+            "rank": 8,
+            "alpha": 16,
+            "dropout": 0.0,
+            "bias": "none",
+            "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+        },
+    }
+
+
 def tier_b(model_id: str, device: str) -> None:
     import torch
-    from peft import LoraConfig, get_peft_model
+    from peft import PeftModel, get_peft_model
+
+    # Exercise the REAL backend code paths (not a hand-built LoRA): the layer-count
+    # resolver, the backend-aware exclude regex, and the encoder freeze guard.
+    from src.model.lora_common import build_lora_config
+    from src.model.qwen3omni_lora import (
+        _unwrap_base_model,
+        enforce_audio_encoder_freeze,
+        summarize_trainable_parameter_groups,
+    )
 
     print(f"[Tier B] loading config.json only from {model_id} (no weights) and shrinking ...")
     try:
@@ -235,17 +266,37 @@ def tier_b(model_id: str, device: str) -> None:
     print("[Tier B] instantiating RANDOM tiny THINKER from shrunk config (no checkpoint) ...")
     model = Qwen3OmniMoeThinkerForConditionalGeneration(thinker_cfg).to(device)
 
-    # Attention-only LoRA (MoE expert FFNs deliberately excluded; see plan §3 caveat).
-    lora = LoraConfig(
-        r=8,
-        lora_alpha=16,
-        lora_dropout=0.0,
-        bias="none",
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
-        task_type="CAUSAL_LM",
+    config = _tier_b_config()
+    # build_lora_config resolves the decoder layer count from thinker_config.text_config
+    # and applies the Qwen3-Omni exclude regex (.*audio_tower.*|.*visual.*).
+    lora_config, layer_selection = build_lora_config(config, model)
+    assert int(layer_selection["decoder_hidden_layer_count"]) == int(
+        thinker_cfg.text_config.num_hidden_layers
+    ), "[Tier B] layer resolver did not read thinker_config.text_config.num_hidden_layers"
+    model = get_peft_model(model, lora_config)
+
+    # Freeze guard + leak check: LoRA must land on the text decoder, never the audio
+    # encoder or vision encoder. The tiny Thinker DOES build audio_tower/visual with
+    # q/k/v_proj, so this is a real test of the exclude regex, not a vacuous one.
+    freeze_summary = enforce_audio_encoder_freeze(model, config)
+    assert freeze_summary["leaked_lora_params"] == 0, (
+        f"[Tier B] LoRA leaked into audio_tower: {freeze_summary['leaked_examples']}"
     )
-    model = get_peft_model(model, lora)
+    leaked_modules = [
+        name
+        for name, _ in model.named_parameters()
+        if "lora_" in name and ("audio_tower" in name or "visual" in name)
+    ]
+    assert not leaked_modules, f"[Tier B] LoRA on excluded encoders: {leaked_modules[:5]}"
+    trainable = summarize_trainable_parameter_groups(model)
+    assert trainable["lora_trainable_params"] > 0, "[Tier B] no trainable LoRA on the text decoder"
+    # Sanity: unwrap returns the Thinker (has audio_tower) so the audio-module helpers resolve.
+    assert hasattr(_unwrap_base_model(model), "audio_tower"), "[Tier B] _unwrap_base_model lost the Thinker"
     model.print_trainable_parameters()
+    print(
+        f"[Tier B] exclude-regex/freeze-guard OK | lora_params={trainable['lora_trainable_params']} "
+        f"leaked_under_audio_tower={freeze_summary['leaked_lora_params']}"
+    )
 
     # One forward/backward on a trivially small text batch (text-only keeps Tier B audio-agnostic;
     # audio feature wiring is covered by Tier A with the real processor).
@@ -267,9 +318,6 @@ def tier_b(model_id: str, device: str) -> None:
     # Save adapter -> reload -> one likelihood score (the headline eval path, in miniature).
     with tempfile.TemporaryDirectory() as tmp:
         model.save_pretrained(tmp)
-        from peft import PeftModel
-        from transformers import Qwen3OmniMoeThinkerForConditionalGeneration
-
         reload_base = Qwen3OmniMoeThinkerForConditionalGeneration(thinker_cfg).to(device)
         reloaded = PeftModel.from_pretrained(reload_base, tmp).eval()
         with torch.no_grad():

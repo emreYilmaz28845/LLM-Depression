@@ -1,0 +1,497 @@
+# Turkish Transcript Repair Report
+
+Date: 2026-06-26
+
+## Outputs
+
+- Repaired JSONL: `/home/emre/Projects/AudioLLM/LLM-Depression/outputs/reviews/turkish_transcripts/whisper_transcripts_repaired.jsonl`
+- Audit CSV: `/home/emre/Projects/AudioLLM/LLM-Depression/outputs/reviews/turkish_transcripts/turkish_transcript_repair_audit.csv`
+- Summary JSON: `/home/emre/Projects/AudioLLM/LLM-Depression/outputs/reviews/turkish_transcripts/turkish_transcript_repair_summary.json`
+
+## Summary
+
+- Total transcripts processed: 1186
+- `REPAIRED`: 254
+- `UNCHANGED`: 929
+- `FAIL`: 3
+- Manual review recommended: 66
+
+## Action Counts
+
+- `trim_incomplete_ellipsis_tail`: 230
+- `remove_efendim`: 5
+- `hard_fail_non_turkish_or_wrong_context`: 3
+- `mutluluyorum`: 2
+- `yazaltiyor`: 2
+- `ahraba`: 1
+- `arara`: 1
+- `cagiriyorlar_isaret`: 1
+- `dorunlarim`: 1
+- `duyuklarla`: 1
+- `esim_gelmisti`: 1
+- `farkisehirlerden`: 1
+- `firmizlemeyi`: 1
+- `gaydir`: 1
+- `greeting_ck1`: 1
+- `greeting_ey1`: 1
+- `greeting_hu1`: 1
+- `greeting_sm1`: 1
+- `hersi_gun`: 1
+- `kavallimizi`: 1
+- `kavaltimizi`: 1
+- `kiskardeslerimle_u`: 1
+- `kucukdum`: 1
+- `nelaclarini`: 1
+- `oygudan`: 1
+- `ozgunum`: 1
+- `pek_firsat`: 1
+- `randova`: 1
+- `remove_baska_neler`: 1
+- `remove_bir_olay_yasadin`: 1
+- `remove_bugun_ne_yaptiniz`: 1
+- `remove_evde_cocuklarla_prompt`: 1
+- `remove_gunluk_hayat_prompt`: 1
+- `remove_iyi_geliyor_musunuz`: 1
+- `remove_mutlu_derken`: 1
+- `remove_mutlu_eden_bir_olay`: 1
+- `remove_p1y_mutlu_olay`: 1
+- `remove_son_zamanlarda_mutlu_olay`: 1
+- `remove_standalone_peki_ee`: 1
+- `sigara_istim`: 1
+- `tahli_sonuclarim`: 1
+- `talleri`: 1
+- `tapama_taktiysam`: 1
+- `tiz_izliyorum`: 1
+
+## FAIL Cases
+
+- `ak3-1-11-ank.wav`
+  - original: `The`
+- `cy2-1-9-ank+depr.wav`
+  - original: `mas sim, já.`
+- `sb2-1-9-ank+depr.wav`
+  - original: `MBC 뉴스 김성현입니다.`
+
+## Lexical And Prompt Repairs
+
+- `aa1-1-10-ank.wav` | `yazaltiyor`
+  - before: `bu şekilde geçer genelde yeni bir toplum içerisinde oluruz yani. Evet, yani çıktıkça çünkü bir ortam oluşuyor, bir muhabbet oluşuyor. Onun dışında işte birileriyle görüşmek şeyi azaltıyor böyle, kötü düşünce yazaltıyor.`
+  - after: `bu şekilde geçer genelde yeni bir toplum içerisinde oluruz yani. Evet, yani çıktıkça çünkü bir ortam oluşuyor, bir muhabbet oluşuyor. Onun dışında işte birileriyle görüşmek şeyi azaltıyor böyle, kötü düşünce azaltıyor.`
+- `aa1-1-11-ank.wav` | `yazaltiyor`
+  - before: `Kaygı yazaltıyor, mutlu olabiliyorsun. Ondan sonra yeni yeni bilgiler öğreniyorsun. Kendime kalmıyorum, en azından yoruluyorum ve yorgun bir şekilde yatağa yattım. Hani şöyleydi, böyleydi, şu korkuydu, bu korkuydu, aman ne olacaktı? İşte acaba yaşamaya der mi diye bir...`
+  - after: `Kaygı azaltıyor, mutlu olabiliyorsun. Ondan sonra yeni yeni bilgiler öğreniyorsun. Kendime kalmıyorum, en azından yoruluyorum ve yorgun bir şekilde yatağa yattım. Hani şöyleydi, böyleydi, şu korkuydu, bu korkuydu, aman ne olacaktı?`
+- `aç1-1-6-depr+ank.wav` | `cagiriyorlar_isaret`
+  - before: `Arkadaşlarımdan hiçbir sorunum yok. Güzel anlaşıyoruz. Bazen güzel anlaşıp çağırıyorlar işaret. Çocukluk dönemimde gezemedim ben öyle çok evde yaşadık biz. Yok nereye oynayacaksın? Çok benim teyzem yengemdi. Amcam hem eniştem iki kardeş, iki kardeşi almışlardı.`
+  - after: `Arkadaşlarımdan hiçbir sorunum yok. Güzel anlaşıyoruz. Bazen güzel anlaşıp çağırıyorlar işte. Çocukluk dönemimde gezemedim ben öyle çok evde yaşadık biz. Yok nereye oynayacaksın? Çok benim teyzem yengemdi. Amcam hem eniştem iki kardeş, iki kardeşi almışlardı.`
+- `ak2-1-1-depr.wav` | `ozgunum`
+  - before: `Merhaba. Teşekkür ederim, yorgunum. Bugün müsaade edin mi? Bugün, sabah kalktım, kahvaltı yaptım. Sonra evi toparladım ve oturdu. Başka sonra buraya geldim. Anlayamadım. Çok özgünüm. Son zamanlarda beni mutlu edin.`
+  - after: `Merhaba. Teşekkür ederim, yorgunum. Bugün müsaade edin mi? Bugün, sabah kalktım, kahvaltı yaptım. Sonra evi toparladım ve oturdu. Başka sonra buraya geldim. Anlayamadım. Çok üzgünüm. Son zamanlarda beni mutlu edin.`
+- `ak2-1-2-depr.wav` | `tahli_sonuclarim, remove_bir_olay_yasadin`
+  - before: `Bir olay yaşadın mı? Evet yaşadım, oğlum iş yerinde yükseldi. Başka annem yürüyemiyordu, yürümeye başladı, ona çok sevindik. Başka hatırlayamıyorum, tahli sonuçlarım temiz çıktı onlar, kanser, rahim ağzı kanser, risk gibi.`
+  - after: `Evet yaşadım, oğlum iş yerinde yükseldi. Başka annem yürüyemiyordu, yürümeye başladı, ona çok sevindik. Başka hatırlayamıyorum, tahlil sonuçlarım temiz çıktı onlar, kanser, rahim ağzı kanser, risk gibi.`
+- `ak2-1-4-depr.wav` | `arara`
+  - before: `Sürekli evdeyim, günlük işlerim bile yapmak istemiyorum açıkçası. Dedim ya yemek yapmakta bile zorlanıyorum. Yani bu hastane sürecinden sonra başladı öncesinde bu kadar değil de arara dönem dönem oluyordu ama arara geçeceğine inanıyorum inşallah. Bu bunun bir süreci...`
+  - after: `Sürekli evdeyim, günlük işlerim bile yapmak istemiyorum açıkçası. Dedim ya yemek yapmakta bile zorlanıyorum. Yani bu hastane sürecinden sonra başladı öncesinde bu kadar değil de ara ara dönem dönem oluyordu ama ara ara geçeceğine inanıyorum inşallah.`
+- `ak3-1-10-ank.wav` | `firmizlemeyi`
+  - before: `Oğlum da bizim o hâllerimizi görüyor. Edine bileyim birlikte oturuyor, firmizlemeyi çok seviyoruz üçümüz. Evet onun dışında... Oğlumla oyun oynamayı çok seviyorum. Birlikte akıl oyunları çok fazla oynuyoruz. Beni yenemediğinde çok kıymık oluyor. Çok hoşuma gidiyor. Bu şekilde.`
+  - after: `Oğlum da bizim o hâllerimizi görüyor. Edine bileyim birlikte oturuyor, film izlemeyi çok seviyoruz üçümüz. Evet onun dışında... Oğlumla oyun oynamayı çok seviyorum. Birlikte akıl oyunları çok fazla oynuyoruz. Beni yenemediğinde çok kıymık oluyor. Çok hoşuma gidiyor. Bu şekilde.`
+- `ak3-1-3-ank.wav` | `esim_gelmisti, remove_efendim, remove_baska_neler`
+  - before: `bir gelişmesi beni mutlu etmiştir. Ya da ne bileyim oğlumun okuma sürecinde şu an 1. sınıfa gidiyor. Harfleri daha iyi okuyabiliyordur bundan mutlu olurum. Bu şekilde. Efendim? Başka neler? Ne bileyim esim gelmişti işte. Saçlarını çok güzel olmuş bugün demiştir. Ya da ne bileyim yapar mıydı?`
+  - after: `bir gelişmesi beni mutlu etmiştir. Ya da ne bileyim oğlumun okuma sürecinde şu an 1. sınıfa gidiyor. Harfleri daha iyi okuyabiliyordur bundan mutlu olurum. Bu şekilde. Ne bileyim eşim gelmişti işte. Saçlarını çok güzel olmuş bugün demiştir. Ya da ne bileyim yapar mıydı?`
+- `am1-1-2-depr+ank.wav` | `remove_mutlu_derken`
+  - before: `yani. Yok. Yok. Aynı rutun devam et. Yani bir şey hatırlamıyorum. Bir şey hatırlamıyorum. Mutlu derken çok fazla mutlu olmak mı? Mutlu oldum. Mutlu oldum. Yani yok desene kızar mısınız bilmiyorum. Çok olmadı yani öyle. O zaman tarihi yerleri gezmeye çok seviyorum.`
+  - after: `yani. Yok. Yok. Aynı rutun devam et. Yani bir şey hatırlamıyorum. Bir şey hatırlamıyorum. Mutlu oldum. Mutlu oldum. Yani yok desene kızar mısınız bilmiyorum. Çok olmadı yani öyle. O zaman tarihi yerleri gezmeye çok seviyorum.`
+- `ap1-1-5-depr.wav` | `farkisehirlerden`
+  - before: `Onların çoğu işte Farkışehirlerden olduğu için döndüler. Liseden gelen birkaç arkadaşım vardı. Onlar Dine İstanbul'a giren ama onların çoğu da Bursa'da yaşadığı için, Bursa'da lisede okumuştum. Onların çoğu da döndü. Şu an İstanbul'da çok yakın oldum, yok. Aile olarak da...`
+  - after: `Onların çoğu işte farklı şehirlerden olduğu için döndüler. Liseden gelen birkaç arkadaşım vardı. Onlar Dine İstanbul'a giren ama onların çoğu da Bursa'da yaşadığı için, Bursa'da lisede okumuştum. Onların çoğu da döndü. Şu an İstanbul'da çok yakın oldum, yok.`
+- `az1-1-4-depr+ank.wav` | `kiskardeslerimle_u`
+  - before: `Kıskardeşlerimle buluşuyoruz, babamlara gidiyorum yani vakit geçiriyorum. Hani güzel, mutluyum yani ailem. Efendim çalışıyor, yok çalışmıyor, yok. Evde mutfağa çok seviyorum, yemek yapmayı çok seviyorum. Elimin de lezzetli olduğunu söylüyorlar. Arkadaşlarım...`
+  - after: `Kız kardeşlerimle buluşuyoruz, babamlara gidiyorum yani vakit geçiriyorum. Hani güzel, mutluyum yani ailem. Efendim çalışıyor, yok çalışmıyor, yok. Evde mutfağa çok seviyorum, yemek yapmayı çok seviyorum. Elimin de lezzetli olduğunu söylüyorlar.`
+- `bb1-1-1-depr.wav` | `talleri`
+  - before: `Teşekkür eder. Vallahi uyku... Ya etti, kızım hastaydı, talleri temiz geldi. Onunla mutlu oldum. 17 yaşında kızım da okula gitmiyordu. O da okula gitti. Onunla da mutlu oldum yani. Bir tane torunum oldu, o beni mutlu etti. Başka hiçbir şey etmedi.`
+  - after: `Teşekkür eder. Vallahi uyku... Ya etti, kızım hastaydı, tahlilleri temiz geldi. Onunla mutlu oldum. 17 yaşında kızım da okula gitmiyordu. O da okula gitti. Onunla da mutlu oldum yani. Bir tane torunum oldu, o beni mutlu etti. Başka hiçbir şey etmedi.`
+- `bb1-1-6-depr.wav` | `ahraba`
+  - before: `Çocuklar da bu sefer diyor, bizi niye bekledin? Babamı seviyordun, onu bekledin. Değişik olaylar yani. Nasıl? Ya eski ki gibi yok. Eskide gelişkiliş vardı komşuya, ahraba. Şimdi yok. Şimdi merhaba, merhaba asansörden iner görürsün. Öyle oturma falan yok. Ne bileyim yani biz eskide güne gir...`
+  - after: `Çocuklar da bu sefer diyor, bizi niye bekledin? Babamı seviyordun, onu bekledin. Değişik olaylar yani. Nasıl? Ya eski ki gibi yok. Eskide gelişkiliş vardı komşuya, akraba. Şimdi yok. Şimdi merhaba, merhaba asansörden iner görürsün. Öyle oturma falan yok.`
+- `bk1-1-2-depr+ank.wav` | `duyuklarla`
+  - before: `...durup eşyalarımı bakıyorum falan. Onun dışında yok sanırım. Kedim var yani, kedim mutlu ediyor beni. Hiçbir şey yapmasa bile mutlu ediyor beni. Yatıyor mesela, ben ona bakıyorum. Onu izlediğimde pozitif duyuklarla doluyorum. Yemek yemek çok mutlu ediyor beni. Mesela dün 4-5 öğün yemek yedin. İnanılmaz mutlu oluyorum.`
+  - after: `...durup eşyalarımı bakıyorum falan. Onun dışında yok sanırım. Kedim var yani, kedim mutlu ediyor beni. Hiçbir şey yapmasa bile mutlu ediyor beni. Yatıyor mesela, ben ona bakıyorum. Onu izlediğimde pozitif duygularla doluyorum. Yemek yemek çok mutlu ediyor beni. Mesela dün 4-5 öğün yemek yedin. İnanılmaz mutlu oluyorum.`
+- `bk1-1-5-depr+ank.wav` | `kucukdum`
+  - before: `ama biz onlarla beraber büyüdüğümüz için Öz ağabeyim gibiler. Araba kiralamıştı, daha 18 yaşına yeni girmişti. Ben de çok küçükdum daha, 11 yaşında falandım. Düğün sonrası, Üsta Çikarabay'la Özgürce gezmiştik. O Özgürlük hissi beni çok mutlu etmişti ve hani şuramdan atamadığım bir mutluluk. Onun dışında kaybettiği...`
+  - after: `ama biz onlarla beraber büyüdüğümüz için Öz ağabeyim gibiler. Araba kiralamıştı, daha 18 yaşına yeni girmişti. Ben de çok küçüktüm daha, 11 yaşında falandım. Düğün sonrası, Üsta Çikarabay'la Özgürce gezmiştik. O Özgürlük hissi beni çok mutlu etmişti ve hani şuramdan atamadığım bir mutluluk.`
+- `bk1-1-6-depr+ank.wav` | `remove_standalone_peki_ee`
+  - before: `Benim babanlığımı sarıldığım bu düşünceler beni mutlu ediyor. Öyle. Çok pardon. Peki, ee... Yalnızken işte değilsem genelde yemek yaparım kendime yemek yerim. Son bir sene içerisinde bu şekilde. Ya da telefonda oyun oynarım. Çok fazla oyun...`
+  - after: `Benim babanlığımı sarıldığım bu düşünceler beni mutlu ediyor. Öyle. Çok pardon. Yalnızken işte değilsem genelde yemek yaparım kendime yemek yerim. Son bir sene içerisinde bu şekilde. Ya da telefonda oyun oynarım.`
+- `ca1-1-3-ank+depr.wav` | `gaydir`
+  - before: `Orada ölenlere sürekli ağladığım çok oldu. Dizi izlerken bile çok duygusalım. Normalde de midem işte, midemle ben 2-3 gaydır midemle uğraşıyorum. En son işte buraya yönlendirdiler. Genelde aslında evliliğim de mutluyum yani öyle...`
+  - after: `Orada ölenlere sürekli ağladığım çok oldu. Dizi izlerken bile çok duygusalım. Normalde de midem işte, midemle ben 2-3 aydır midemle uğraşıyorum. En son işte buraya yönlendirdiler.`
+- `cd1-1-4-ank+depr.wav` | `tiz_izliyorum, hersi_gun`
+  - before: `Bilgisayarın başında film izliyorum, tiz izliyorum, zaman geçiyor, sonra hersi gün oluyo işe gidiyorum, sonra kalkıyorum yine aynı gün, yine aynı şeyler. Yani eskisi gibi olsaydı daha iyi olurdu, şu an hissettiğim gibi kaygılı olmasaydım. Yani isimlendiremiyorum ama bu en son şeyden...`
+  - after: `Bilgisayarın başında film izliyorum, dizi izliyorum, zaman geçiyor, sonra her gün oluyo işe gidiyorum, sonra kalkıyorum yine aynı gün, yine aynı şeyler. Yani eskisi gibi olsaydı daha iyi olurdu, şu an hissettiğim gibi kaygılı olmasaydım.`
+- `ck1-1-1-depr.wav` | `greeting_ck1`
+  - before: `Elhamdülillah yiyeyim, buraya gelinceye kadar yataktan kalktım, yola düştüm, geldim. Oğlumun biraz iyi görmek bana mutlu etti. Baya bir sıkıntı yaşadı, son zamanlarda bir kaza geçirdi, kolu falan kırıldı. Yani baya bir şeyliği vardı ama son zamanlarda düzenince beni mutlu...`
+  - after: `Elhamdülillah, iyiyim. Buraya gelinceye kadar yataktan kalktım, yola düştüm, geldim. Oğlumun biraz iyi görmek bana mutlu etti. Baya bir sıkıntı yaşadı, son zamanlarda bir kaza geçirdi, kolu falan kırıldı.`
+- `cy1-1-8-depr+ank.wav` | `mutluluyorum`
+  - before: `ve yapar, otururuz, konuşuruz, sohbet ederiz. Yani mutluluyorum onlardan. Sosyal yaşantım dışarıda şöyle, pek fazla sosyal yaşantım yok. Zaman ayıramıyorum çünkü öyle şeylere. Yani keşke zamanım olsa da böyle gezmeyi severim. Sevdiğim insanlarla dışarı çıkmayı bundan...`
+  - after: `ve yapar, otururuz, konuşuruz, sohbet ederiz. Yani mutlu oluyorum onlardan. Sosyal yaşantım dışarıda şöyle, pek fazla sosyal yaşantım yok. Zaman ayıramıyorum çünkü öyle şeylere. Yani keşke zamanım olsa da böyle gezmeyi severim.`
+- `ey1-1-1-depr.wav` | `greeting_ey1, kavallimizi, dorunlarim`
+  - before: `yiyeyim. Sabahleyin kalktık, evi topladık. Kavallımızı yaptık, geldik. Evde bir kız cihazım var. Evlenmek istemiyordu. Şimdi evlendiriyorum onu. Onu da biraz mutluyum yani. Evet. Dorunlarım var. Bu olandan üç tane torunum var. Onları çok seviyorum. Onlarla çok mutluyum. Yani yavrum ben şimdi hep kendimi tişara atmak istiyorum.`
+  - after: `İyiyim. Sabahleyin kalktık, evi topladık. Kahvaltımızı yaptık, geldik. Evde bir kız cihazım var. Evlenmek istemiyordu. Şimdi evlendiriyorum onu. Onu da biraz mutluyum yani. Evet. Torunlarım var. Bu olandan üç tane torunum var. Onları çok seviyorum. Onlarla çok mutluyum. Yani yavrum ben şimdi hep kendimi tişara atmak istiyorum.`
+- `fa2-1-8-depr.wav` | `pek_firsat`
+  - before: `Aslında yok, yapmak istiyorum ama yapmaya çalıştığım şeyler erkek arkadaşım uyumuyor. Ona uyumadığı için anneme de uyumuyor. Peki fırsat verilmiyor galiba.`
+  - after: `Aslında yok, yapmak istiyorum ama yapmaya çalıştığım şeyler erkek arkadaşım uyumuyor. Ona uyumadığı için anneme de uyumuyor. Pek fırsat verilmiyor galiba.`
+- `fg1-1-2-depr+ank.wav` | `remove_efendim`
+  - before: `Muztuğuz diyoruz, mağazalara bakıyoruz, hep tüslümsü yemek yiyoruz. Ne bileyim o işte bir değişiklik oluyor, bir kafamı dağıtıyor benim öyle. Efendim? Başka mutlu eden şeyler. Başka mutlu eden şeyler. Şu anda yok. Yani mutlu eden şeylere kardeşime gittik, orada çok güzel eğlendik, o çok mutlu.`
+  - after: `Muztuğuz diyoruz, mağazalara bakıyoruz, hep tüslümsü yemek yiyoruz. Ne bileyim o işte bir değişiklik oluyor, bir kafamı dağıtıyor benim öyle. Başka mutlu eden şeyler. Başka mutlu eden şeyler. Şu anda yok. Yani mutlu eden şeylere kardeşime gittik, orada çok güzel eğlendik, o çok mutlu.`
+- `gk1-1-11-depr.wav` | `remove_efendim`
+  - before: `Deniz kanalında oturuyoruz. İşte bazı yerler var. Askeri yerler gibi. Onlara askeri tesisler. Orada birlikte vakit geçiriyoruz. Veya işte öğretmenler gününde filan gelmeye çalışıyoruz. Efendim? Bu tarz hattı vetteler mutlu ediyor beni tabii ki.`
+  - after: `Deniz kanalında oturuyoruz. İşte bazı yerler var. Askeri yerler gibi. Onlara askeri tesisler. Orada birlikte vakit geçiriyoruz. Veya işte öğretmenler gününde filan gelmeye çalışıyoruz. Bu tarz hattı vetteler mutlu ediyor beni tabii ki.`
+- `hg2-1-2-depr+ank.wav` | `remove_p1y_mutlu_olay`
+  - before: `Peki son bir yıllık ya da altı ay içerisinde sizi mutlu eden başka bir olay yaşadınız mı? Yok, yok yani. Çocukluğum da çok iyi geçmedi. Yani böyle sizi sevindiren bir anınızı satranız var mı? Hı, hiç hatırlayamıyorum. Evde neden yapmaktan hoşlanırsınız, neler mutlu edersiniz? Evde neden yapmak, temiz...`
+  - after: `Yok, yok yani. Çocukluğum da çok iyi geçmedi. Yani böyle sizi sevindiren bir anınızı satranız var mı? Hı, hiç hatırlayamıyorum. Evde neden yapmaktan hoşlanırsınız, neler mutlu edersiniz?`
+- `hu1-1-1-depr.wav` | `greeting_hu1, oygudan`
+  - before: `Teşekkür ederim hocam, iyi yiyeyim. Oygudan kalktım, biraz kahvaltı yaptım. İlaçlarımı kullandım. Kalktım buraya doktoruma geldim. Kızımın sözü oldu. Güzel şeyler. Söz yaptık. Güzel eğlenceli. Allah'ın sorunu devamını iyi getirsin diyelim. Güzel şeyler başka bir şey yok.`
+  - after: `Teşekkür ederim hocam, iyiyim. Uykudan kalktım, biraz kahvaltı yaptım. İlaçlarımı kullandım. Kalktım buraya doktoruma geldim. Kızımın sözü oldu. Güzel şeyler. Söz yaptık. Güzel eğlenceli. Allah'ın sorunu devamını iyi getirsin diyelim. Güzel şeyler başka bir şey yok.`
+- `hy1-1-1-depr.wav` | `sigara_istim, remove_bugun_ne_yaptiniz`
+  - before: `İyiyim teşekkür ederim. Peki bugün ne yaptınız buraya gelinceye kadar? Evet, sabah kalktım. Kötü işte direkt kalktım. Bir şey yapmadım, işte direkt kalktım. Yani kalktığımda annemi dışarı çıkacaktı, onu bekledim. Daha sonra sigara istim ve hazırlandım. Buraya geldim. Evet, yani...`
+  - after: `İyiyim teşekkür ederim. Evet, sabah kalktım. Kötü işte direkt kalktım. Bir şey yapmadım, işte direkt kalktım. Yani kalktığımda annemi dışarı çıkacaktı, onu bekledim. Daha sonra sigara içtim ve hazırlandım. Buraya geldim.`
+- `id1-1-8-depr.wav` | `nelaclarini`
+  - before: `Eşim nelaçlarını gidiyorum, alıyorum, hastane yoğunu götürüyorum. İşte onunla ilgili yani inanır mısınız doktorun hastanelerden beri gelemiyoruz. Artık bu beni evde kalmak istiyorum. Ben ev anamaydım. Eşim iyiyken hiçbir şey bana bırakmıyordu. Şimdi ben böyle bu telefonun işlerinden peki anlamlıyorum.`
+  - after: `Eşim ilaçlarını gidiyorum, alıyorum, hastane yoğunu götürüyorum. İşte onunla ilgili yani inanır mısınız doktorun hastanelerden beri gelemiyoruz. Artık bu beni evde kalmak istiyorum. Ben ev anamaydım. Eşim iyiyken hiçbir şey bana bırakmıyordu. Şimdi ben böyle bu telefonun işlerinden peki anlamlıyorum.`
+- `mb3-1-3-depr.wav` | `mutluluyorum`
+  - before: `Ne var diye düşündüm. Çocuklarımla evde vakit geçirmeyi mutluluyorum çocuklarımla. Evden çok mutfak. Çocuklarıma yemek yapayım, güzel şeyleri yapayım, onlara mutlu oluyorum. Onlara çok mutlu oluyorum. Yemekler yapayım, yediğim, içiriğim, toplayım, öyle. Onlara mutluluyor, onlara. Çocuklarımı hizmet etmeyi seviyorum yani. Öyle başka ne var diye düşünüyorum. Benim için hiçbir şey yapmıyorum.`
+  - after: `Ne var diye düşündüm. Çocuklarımla evde vakit geçirmeyi mutlu oluyorum çocuklarımla. Evden çok mutfak. Çocuklarıma yemek yapayım, güzel şeyleri yapayım, onlara mutlu oluyorum. Onlara çok mutlu oluyorum. Yemekler yapayım, yediğim, içiriğim, toplayım, öyle. Onlara mutluluyor, onlara. Çocuklarımı hizmet etmeyi seviyorum yani. Öyle başka ne var diye düşünüyorum. Benim için hiçbir şey yapmıyorum.`
+- `nç2-1-1-ank.wav` | `remove_efendim`
+  - before: `İyiyim Allah'a şükür. Buraya kahvaltı yaptık. Eşim aşağıda belinden neydi onun ismi? Ozon olacak. Oraya geldik. Yok öyle bir mutlu olacak bir olay yaşamadım. Yani... Efendim? Mutlu?`
+  - after: `İyiyim Allah'a şükür. Buraya kahvaltı yaptık. Eşim aşağıda belinden neydi onun ismi? Ozon olacak. Oraya geldik. Yok öyle bir mutlu olacak bir olay yaşamadım. Yani... Mutlu?`
+- `ng1-1-8-depr.wav` | `tapama_taktiysam`
+  - before: `Akşamları da zaten bazen bir şey tapama taktıysam eğer uyku ilacı alıyorum ama yine de uyuyamıyorum, üçe dörde kadar oturabiliyorum yani hocam. İlacı aldığım halde. Yani dengesiz bir vücutum var hocam, anlatamıyorum ben bunu da. Yemek yaparken işte mutlu oluyorum. Başka da yok hocam.`
+  - after: `Akşamları da zaten bazen bir şey kafama taktıysam eğer uyku ilacı alıyorum ama yine de uyuyamıyorum, üçe dörde kadar oturabiliyorum yani hocam. İlacı aldığım halde. Yani dengesiz bir vücutum var hocam, anlatamıyorum ben bunu da. Yemek yaparken işte mutlu oluyorum. Başka da yok hocam.`
+- `ny5-1-3-depr.wav` | `remove_efendim, remove_iyi_geliyor_musunuz`
+  - before: `Yok, ben kendim için pek bir şey yapmıyorum. Çocuklarımı düşünüyorum. Çocuklarım için, eşim için. Yani öyle çok kendim için bir şey yapmıyorum yani. Evet. Efendim? İyi geliyor musunuz? Evet. İyi geliyor. Üçüncü torunu. İyi geliyor musunuz? Aşka. Aşka. Allah'ım ben öyle işte gündem.`
+  - after: `Yok, ben kendim için pek bir şey yapmıyorum. Çocuklarımı düşünüyorum. Çocuklarım için, eşim için. Yani öyle çok kendim için bir şey yapmıyorum yani. Evet. Evet. İyi geliyor. Üçüncü torunu. Aşka. Aşka. Allah'ım ben öyle işte gündem.`
+- `ry1-1-1-depr+ank.wav` | `remove_son_zamanlarda_mutlu_olay, remove_mutlu_eden_bir_olay`
+  - before: `İyiyim. Gelinceye kadar kahvaltı hazırladım. Çocukları gönderdim, hazırlandım. Çıktım. Son zamanlarda siz mutlu eden bir olay yaşadınız mı? Yaşamadım. Üzüntü yaşadım. Babam vefat etti. Mutlu eden bir olay yaşadınız mı? Yani çocuklarımı sağlı diyelim. Onların başarısı ekstra bir mutluluk olmadığını. Peki böyle geçmişim.`
+  - after: `İyiyim. Gelinceye kadar kahvaltı hazırladım. Çocukları gönderdim, hazırlandım. Çıktım. Yaşamadım. Üzüntü yaşadım. Babam vefat etti. Yani çocuklarımı sağlı diyelim. Onların başarısı ekstra bir mutluluk olmadığını. Peki böyle geçmişim.`
+- `ry1-1-3-depr+ank.wav` | `remove_gunluk_hayat_prompt`
+  - before: `yapmıştım, resmi mi asmıştı, o beni çok mutlu etmişti. Aklıma gelen şu anda başka bir şey yok. Peki, günlük hayatınızda evde meselesi mi? Hobilerim var benim. Değişik sanat, yani böyle el nakışları bir ara resim gibi bir şeyler çalıştım. Yani genelde...`
+  - after: `yapmıştım, resmi mi asmıştı, o beni çok mutlu etmişti. Aklıma gelen şu anda başka bir şey yok. Hobilerim var benim. Değişik sanat, yani böyle el nakışları bir ara resim gibi bir şeyler çalıştım.`
+- `ry1-1-8-depr+ank.wav` | `remove_evde_cocuklarla_prompt`
+  - before: `Peki evde çocuklarla ailenizle birlikte neler yapmak hoşunuza girer, meraklı edersiniz? Yani aslında sorun hep burada. Çocuklar şimdi yeninesi çok kullanmayı seviyor anneyi. Yani anne evde tamamen hizmetçi. Beraber neler yaparız? Filmi izleriz bazen, özel şeylerden. Oynamayı severiz.`
+  - after: `Yani aslında sorun hep burada. Çocuklar şimdi yeninesi çok kullanmayı seviyor anneyi. Yani anne evde tamamen hizmetçi. Beraber neler yaparız? Filmi izleriz bazen, özel şeylerden. Oynamayı severiz.`
+- `şm1-1-1-depr.wav` | `greeting_sm1, randova, kavaltimizi`
+  - before: `Teşekkür ederim, iyi yiyeyim. Siz nasılsınız? Buraya gelince kadar uyu sabahtan. Uyandım. Kavaltımızı az yaptık. Kızım buraya alerjit testi için getirdim. Gün içinde sizden randova aldım. Geldim. Bir iki arkadaşla burada sosyal bir konuşmamız oldu. Hastalılarla alakalı. Normalde sosyal bir insanım. O şekilde. Mutlu.`
+  - after: `Teşekkür ederim, iyiyim. Siz nasılsınız? Buraya gelince kadar uyu sabahtan. Uyandım. Kahvaltımızı az yaptık. Kızım buraya alerjit testi için getirdim. Gün içinde sizden randevu aldım. Geldim. Bir iki arkadaşla burada sosyal bir konuşmamız oldu. Hastalılarla alakalı. Normalde sosyal bir insanım. O şekilde. Mutlu.`
+
+## Ellipsis Tail Trims
+
+- Count: 230
+- Files:
+  - `aa1-1-1-ank.wav`
+  - `aa1-1-11-ank.wav`
+  - `aa1-1-3-ank.wav`
+  - `aa1-1-4-ank.wav`
+  - `aç1-1-2-depr+ank.wav`
+  - `ag1-1-2-depr+ank.wav`
+  - `ag1-1-5-depr+ank.wav`
+  - `ak2-1-4-depr.wav`
+  - `ak3-1-5-ank.wav`
+  - `ap1-1-5-depr.wav`
+  - `aş1-1-5-ank+depr.wav`
+  - `aş2-1-1-depr.wav`
+  - `aş2-1-4-depr.wav`
+  - `az1-1-2-depr+ank.wav`
+  - `az1-1-3-depr+ank.wav`
+  - `az1-1-4-depr+ank.wav`
+  - `ba1-1-2-depr.wav`
+  - `ba1-1-4-depr.wav`
+  - `ba1-1-5-depr.wav`
+  - `bb1-1-4-depr.wav`
+  - `bb1-1-6-depr.wav`
+  - `bk1-1-4-depr+ank.wav`
+  - `bk1-1-5-depr+ank.wav`
+  - `bk1-1-6-depr+ank.wav`
+  - `bk1-1-8-depr+ank.wav`
+  - `ca1-1-3-ank+depr.wav`
+  - `ca1-1-4-ank+depr.wav`
+  - `cd1-1-4-ank+depr.wav`
+  - `ck1-1-1-depr.wav`
+  - `ck1-1-4-depr.wav`
+  - `cy1-1-8-depr+ank.wav`
+  - `cy2-1-2-ank+depr.wav`
+  - `cy2-1-4-ank+depr.wav`
+  - `cy2-1-6-ank+depr.wav`
+  - `cy2-1-7-ank+depr.wav`
+  - `dg1-1-1-depr+ank.wav`
+  - `dg1-1-10-depr+ank.wav`
+  - `dg1-1-2-depr+ank.wav`
+  - `dg1-1-6-depr+ank.wav`
+  - `dg1-1-7-depr+ank.wav`
+  - `dk1-1-7-ank.wav`
+  - `dy1-1-7-depr+ank.wav`
+  - `ea1-1-1-depr+ank.wav`
+  - `ea1-1-2-depr+ank.wav`
+  - `ed1-1-1-ank+depr.wav`
+  - `ed1-1-10-ank+depr.wav`
+  - `ed1-1-11-ank+depr.wav`
+  - `ed1-1-7-ank+depr.wav`
+  - `ed1-1-8-ank+depr.wav`
+  - `ee1-1-4-depr.wav`
+  - `ee1-1-6-depr.wav`
+  - `ee1-1-7-depr.wav`
+  - `ek1-1-10-depr+ank.wav`
+  - `ek1-1-5-depr+ank.wav`
+  - `ey1-1-2-depr.wav`
+  - `ey2-1-5-depr.wav`
+  - `fa1-1-5-depr.wav`
+  - `fa1-1-6-depr.wav`
+  - `fa1-1-7-depr.wav`
+  - `fa2-1-2-depr.wav`
+  - `fa2-1-3-depr.wav`
+  - `fc1-1-3-depr.wav`
+  - `fc1-1-6-depr.wav`
+  - `fc1-1-7-depr.wav`
+  - `fc2-1-1-depr.wav`
+  - `fc2-1-5-depr.wav`
+  - `fc2-1-6-depr.wav`
+  - `fc2-1-7-depr.wav`
+  - `fd1-1-5-depr+ank.wav`
+  - `fd1-1-6-depr+ank.wav`
+  - `fg1-1-5-depr+ank.wav`
+  - `fg1-1-7-depr+ank.wav`
+  - `fg1-1-8-depr+ank.wav`
+  - `fo1-1-1-depr.wav`
+  - `fo1-1-2-depr.wav`
+  - `fo1-1-3-depr.wav`
+  - `fy1-1-4-depr.wav`
+  - `fy1-1-6-depr.wav`
+  - `gç1-1-11-depr+ank.wav`
+  - `gk1-1-2-depr.wav`
+  - `gk1-1-5-depr.wav`
+  - `gk1-1-6-depr.wav`
+  - `go1-1-1-depr.wav`
+  - `go1-1-4-depr.wav`
+  - `gs1-1-2-depr.wav`
+  - `ha1-1-6-depr.wav`
+  - `hb1-1-7-depr.wav`
+  - `hd1-1-5-depr+ank.wav`
+  - `hd2-1-1-depr+ank.wav`
+  - `hd2-1-11-depr+ank.wav`
+  - `hg2-1-2-depr+ank.wav`
+  - `hg2-1-3-depr+ank.wav`
+  - `hk1-1-1-ank.wav`
+  - `hk1-1-8-ank.wav`
+  - `hs1-1-2-depr.wav`
+  - `hs2-1-6-depr.wav`
+  - `hs2-1-7-depr.wav`
+  - `ht1-1-1-depr+ank.wav`
+  - `ht1-1-3-depr+ank.wav`
+  - `ht1-1-8-depr+ank.wav`
+  - `hu1-1-2-depr.wav`
+  - `hu1-1-4-depr.wav`
+  - `hy1-1-1-depr.wav`
+  - `hy1-1-2-depr.wav`
+  - `hy1-1-3-depr.wav`
+  - `hy1-1-8-depr.wav`
+  - `id1-1-4-depr.wav`
+  - `id1-1-9-depr.wav`
+  - `ig1-1-3-depr.wav`
+  - `ig1-1-7-depr.wav`
+  - `it1-1-2-depr+ank.wav`
+  - `ka1-1-7-depr.wav`
+  - `kc1-1-1-depr.wav`
+  - `kc1-1-7-depr.wav`
+  - `kc1-1-8-depr.wav`
+  - `kd1-1-7-depr.wav`
+  - `ke1-1-5-ank+depr.wav`
+  - `ke1-1-6-ank+depr.wav`
+  - `ma1-1-1-ank+depr.wav`
+  - `ma1-1-6-ank+depr.wav`
+  - `mb1-1-5-depr.wav`
+  - `mb1-1-6-depr.wav`
+  - `mb1-1-7-depr.wav`
+  - `mc1-1-1-depr.wav`
+  - `mf1-1-2-depr.wav`
+  - `mf1-1-9-depr.wav`
+  - `ms1-1-1-depr.wav`
+  - `ms1-1-3-depr.wav`
+  - `ms2-1-10-dep+ank.wav`
+  - `ms2-1-4-dep+ank.wav`
+  - `ms2-1-5-dep+ank.wav`
+  - `ms2-1-8-dep+ank.wav`
+  - `na1-1-10-depr.wav`
+  - `na1-1-3-depr.wav`
+  - `na2-1-5-depr.wav`
+  - `nç1-1-13-depr.wav`
+  - `ng2-1-12-depr.wav`
+  - `ng2-1-14-depr.wav`
+  - `ng2-1-3-depr.wav`
+  - `ng2-1-6-depr.wav`
+  - `ng2-1-7-depr.wav`
+  - `nh1-1-1-depr+ank.wav`
+  - `nh1-1-2-depr+ank.wav`
+  - `nh1-1-4-depr+ank.wav`
+  - `nh1-1-7-depr+ank.wav`
+  - `no1-1-6-ank.wav`
+  - `no1-1-8-ank.wav`
+  - `nt1-1-2-depr.wav`
+  - `nt1-1-7-depr.wav`
+  - `ny1-1-4-depr.wav`
+  - `ny1-1-6-depr.wav`
+  - `ny1-1-8-depr.wav`
+  - `ny2-1-6-depr.wav`
+  - `ny2-1-8-depr.wav`
+  - `ny5-1-4-depr.wav`
+  - `ny5-1-5-depr.wav`
+  - `ög1-1-2-ank+depr.wav`
+  - `ög1-1-4-ank+depr.wav`
+  - `pa1-1-1-depr.wav`
+  - `pa1-1-10-depr.wav`
+  - `pa1-1-6-depr.wav`
+  - `pb1-1-1-depr.wav`
+  - `pb1-1-3-depr.wav`
+  - `pb1-1-4-depr.wav`
+  - `pö1-1-11-ank.wav`
+  - `pö1-1-2-ank.wav`
+  - `pö1-1-5-ank.wav`
+  - `pö1-1-7-ank.wav`
+  - `re1-1-5-depr.wav`
+  - `rk1-1-1-depr.wav`
+  - `rk1-1-2-depr.wav`
+  - `ry1-1-3-depr+ank.wav`
+  - `ry1-1-6-depr+ank.wav`
+  - `sa1-1-1-depr+ank.wav`
+  - `sa2-1-9-depr+ank.wav`
+  - `sb2-1-7-ank+depr.wav`
+  - `sd1-1-1-depr.wav`
+  - `sd1-1-10-depr.wav`
+  - `sd2-1-6-depr.wav`
+  - `sd2-1-9-depr.wav`
+  - `sk1-1-6-depr.wav`
+  - `sk2-1-4-ank.wav`
+  - `sp1-1-7-depr.wav`
+  - `ss1-1-4-depr.wav`
+  - `ss2-1-2-depr.wav`
+  - `ss3-1-10-depr+ank.wav`
+  - `ss3-1-8-depr+ank.wav`
+  - `ss4-1-2-ank+depr.wav`
+  - `ss4-1-6-ank+depr.wav`
+  - `ss4-1-7-ank+depr.wav`
+  - `su1-1-1-depr.wav`
+  - `su1-1-2-depr.wav`
+  - `sü1-1-5-depr.wav`
+  - `sy1-1-5-depr.wav`
+  - `şa1-1-9-depr.wav`
+  - `şç1-1-11-depr.wav`
+  - `şç1-1-6-depr.wav`
+  - `şç1-1-9-depr.wav`
+  - `şk1-1-4-depr.wav`
+  - `tö1-1-1-depr.wav`
+  - `tö1-1-10-depr.wav`
+  - `tö1-1-11-depr.wav`
+  - `tö1-1-6-depr.wav`
+  - `tö1-1-7-depr.wav`
+  - `tp1-1-10-depr.wav`
+  - `tp1-1-4-depr.wav`
+  - `tt1-1-2-depr+ank.wav`
+  - `tt1-1-4-depr+ank.wav`
+  - `tt1-1-5-depr+ank.wav`
+  - `tt1-1-8-depr+ank.wav`
+  - `yd1-1-1-depr.wav`
+  - `yd1-1-4-depr.wav`
+  - `yd1-1-6-depr.wav`
+  - `yö1-1-5-depr.wav`
+  - `ze1-1-1-ank+depr.wav`
+  - `ze1-1-11-ank+depr.wav`
+  - `ze1-1-12-ank+depr.wav`
+  - `ze1-1-4-ank+depr.wav`
+  - `ze1-1-7-ank+depr.wav`
+  - `ze1-1-9-ank+depr.wav`
+  - `zg1-1-2-depr+ank.wav`
+  - `zg1-1-3-depr+ank.wav`
+  - `zg1-1-6-depr+ank.wav`
+  - `zo1-1-10-depr.wav`
+  - `zo1-1-4-depr.wav`
+  - `zo1-1-9-depr.wav`
+  - `zt1-1-3-depr.wav`
+  - `zt1-1-4-depr.wav`
+  - `zy1-1-3-depr.wav`
+  - `zy1-1-6-depr.wav`
+
+## Manual Review Queue
+
+Files still carrying unresolved ambiguity after the conservative pass:
+- `aa1-1-12-ank.wav` | `likely_continuation_fragment, short_low_information_clip`
+- `aa1-1-9-ank.wav` | `ends_with_ellipsis`
+- `ag1-1-2-depr+ank.wav` | `repetition_flagged_in_review`
+- `ag1-1-7-depr+ank.wav` | `remaining_efendim`
+- `am1-1-5-depr+ank.wav` | `repetition_flagged_in_review`
+- `ap1-1-1-depr.wav` | `ends_with_ellipsis`
+- `at1-1-10-depr.wav` | `short_low_information_clip`
+- `az1-1-4-depr+ank.wav` | `remaining_efendim`
+- `az1-1-5-depr+ank.wav` | `repetition_flagged_in_review`
+- `bk1-1-8-depr+ank.wav` | `remaining_prompt_peki`
+- `çi1-1-4-ank.wav` | `remaining_efendim`
+- `çi1-1-9-ank.wav` | `short_low_information_clip`
+- `dc1-1-6-ank.wav` | `remaining_efendim`
+- `dg1-1-4-depr+ank.wav` | `remaining_prompt_peki`
+- `dg1-1-6-depr+ank.wav` | `remaining_prompt_peki`
+- `ee1-1-2-depr.wav` | `remaining_efendim`
+- `ee1-1-8-depr.wav` | `remaining_efendim`
+- `fa1-1-9-depr.wav` | `likely_continuation_fragment, short_low_information_clip`
+- `fc1-1-3-depr.wav` | `ends_with_ellipsis`
+- `fd1-1-4-depr+ank.wav` | `repetition_flagged_in_review`
+- `fg1-1-2-depr+ank.wav` | `repetition_flagged_in_review`
+- `fm1-1-9-depr.wav` | `repetition_flagged_in_review`
+- `fo1-1-1-depr.wav` | `repetition_flagged_in_review`
+- `gç1-1-4-depr+ank.wav` | `remaining_efendim`
+- `go2-1-3-depr.wav` | `remaining_efendim`
+- `go2-1-5-depr.wav` | `remaining_efendim`
+- `ha1-1-7-depr.wav` | `likely_continuation_fragment, short_low_information_clip`
+- `hb1-1-10-depr.wav` | `likely_continuation_fragment, short_low_information_clip`
+- `hd2-1-14-depr+ank.wav` | `likely_continuation_fragment, short_low_information_clip`
+- `hg2-1-12-depr+ank.wav` | `likely_continuation_fragment, short_low_information_clip`
+- `hg2-1-2-depr+ank.wav` | `remaining_sevindiren_aniniz, remaining_evde_neden`
+- `ht1-1-11-depr+ank.wav` | `short_low_information_clip`
+- `ht1-1-8-depr+ank.wav` | `repetition_flagged_in_review`
+- `id1-1-19-depr.wav` | `likely_continuation_fragment, short_low_information_clip`
+- `it1-1-2-depr+ank.wav` | `remaining_efendim`
+- `ka1-1-4-depr.wav` | `remaining_efendim`
+- `ka1-1-8-depr.wav` | `likely_continuation_fragment, short_low_information_clip`
+- `kc1-1-9-depr.wav` | `likely_continuation_fragment, short_low_information_clip`
+- `ma1-1-5-ank+depr.wav` | `remaining_efendim`
+- `na1-1-10-depr.wav` | `repetition_flagged_in_review`
+- `na1-1-3-depr.wav` | `repetition_flagged_in_review`
+- `nç2-1-3-ank.wav` | `remaining_efendim`
+- `ng1-1-9-depr.wav` | `short_low_information_clip`
+- `nh1-1-1-depr+ank.wav` | `ends_with_ellipsis`
+- `ny3-1-7-depr.wav` | `repetition_flagged_in_review`
+- `ny4-1-1-depr+ank.wav` | `repetition_flagged_in_review`
+- `ny5-1-3-depr.wav` | `repetition_flagged_in_review`
+- `ny5-1-7-depr.wav` | `short_low_information_clip`
+- `ög1-1-2-ank+depr.wav` | `repetition_flagged_in_review`
+- `pa1-1-15-depr.wav` | `short_low_information_clip`
+- `pb1-1-1-depr.wav` | `repetition_flagged_in_review`
+- `pö1-1-12-ank.wav` | `likely_continuation_fragment, short_low_information_clip`
+- `re1-1-7-depr.wav` | `remaining_efendim`
+- `rk1-1-6-depr.wav` | `remaining_efendim`
+- `ry1-1-4-depr+ank.wav` | `repetition_flagged_in_review`
+- `sa1-1-10-depr+ank.wav` | `likely_continuation_fragment, short_low_information_clip`
+- `sb2-1-8-ank+depr.wav` | `repetition_flagged_in_review`
+- `ss2-1-5-depr.wav` | `short_low_information_clip`
+- `ss3-1-14-depr+ank.wav` | `likely_continuation_fragment, short_low_information_clip`
+- `ss4-1-9-ank+depr.wav` | `likely_continuation_fragment, short_low_information_clip`
+- `sy1-1-1-depr.wav` | `repetition_flagged_in_review`
+- `tt1-1-1-depr+ank.wav` | `repetition_flagged_in_review`
+- `ze1-1-1-ank+depr.wav` | `ends_with_ellipsis, remaining_prompt_peki`
+- `ze1-1-2-ank+depr.wav` | `repetition_flagged_in_review`
+- `zm1-1-5-depr+ank.wav` | `remaining_prompt_peki`
+- `zo1-1-11-depr.wav` | `likely_continuation_fragment, short_low_information_clip`
+
+## Notes
+
+- Only exact or near-exact mechanical fixes were applied.
+- No semantic rewrites were attempted.
+- Hard failures were blanked in the repaired JSONL so downstream loaders can skip them.
+- Full row-level before/after detail is preserved in the audit CSV.
+
