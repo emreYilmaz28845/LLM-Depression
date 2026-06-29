@@ -88,7 +88,7 @@ PYTHONHASHSEED=0` + the expected one harmless Flash-Attention `warn_only` warnin
 
 ```bash
 # Run 1 — canonical
-CONFIGS=".../turkish_audio_only_t21.yaml .../turkish_text_only_t21.yaml .../turkish_audio_text_t21.yaml" \
+CONFIGS=".../configs/main/turkish_t21_audio_only_selmacrof1_tf.yaml .../configs/main/turkish_t21_text_only_selmacrof1_tf.yaml .../configs/main/turkish_t21_audio_text_selmacrof1_tf.yaml" \
   RUN_NAME_PREFIX=train_val_t21_rep_transcript sbatch --export=ALL scripts/run_turkish_5fold.sh
 # Run 2 — replica (same command, different prefix)
   RUN_NAME_PREFIX=train_val_t21_rep_transcript_rep2 sbatch --export=ALL scripts/run_turkish_5fold.sh

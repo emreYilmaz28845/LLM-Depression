@@ -17,7 +17,7 @@ module load bsc/1.0
 module load miniforge/24.3.0-0
 
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
-CONFIG="${CONFIG:-$PROJECT_ROOT/configs/turkish_audio_text.yaml}"
+CONFIG="${CONFIG:-$PROJECT_ROOT/configs/main/turkish_t21_audio_text_selmacrof1_tf.yaml}"
 RUN_NAME="${RUN_NAME:-turkish_audio_text}"
 ENV_ACTIVATE="${ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate}"
 DATASET_BASE_ROOT="${DATASET_BASE_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets}"

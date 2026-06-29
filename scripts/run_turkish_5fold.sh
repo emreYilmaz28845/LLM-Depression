@@ -26,7 +26,7 @@ module load bsc/1.0
 module load miniforge/24.3.0-0
 
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
-CONFIGS="${CONFIGS:-$PROJECT_ROOT/configs/turkish_audio_only.yaml $PROJECT_ROOT/configs/turkish_text_only.yaml $PROJECT_ROOT/configs/turkish_audio_text.yaml}"
+CONFIGS="${CONFIGS:-$PROJECT_ROOT/configs/main/turkish_t21_audio_only_selmacrof1_tf.yaml $PROJECT_ROOT/configs/main/turkish_t21_text_only_selmacrof1_tf.yaml $PROJECT_ROOT/configs/main/turkish_t21_audio_text_selmacrof1_tf.yaml}"
 FOLDS="${FOLDS:-0 1 2 3 4}"
 RUN_NAME_PREFIX="${RUN_NAME_PREFIX:-}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-4}"

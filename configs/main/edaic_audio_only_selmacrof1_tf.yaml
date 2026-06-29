@@ -1,12 +1,12 @@
-dataset: cmdc
+dataset: edaic
 seed: 1337
-dataset_root: ${CMDC_DATASET_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/CMDC}
+dataset_root: ${EDAIC_DATASET_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/EDAIC-WOZ/preprocessed}
 quarantine_path: ${PROJECT_ROOT}/configs/quarantines.yaml
 model_name_or_path: /gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instruct
 output_dirs:
   manifest_dir: ${PROJECT_ROOT}/outputs/manifests
   split_dir: ${PROJECT_ROOT}/outputs/splits
-  run_root: ${PROJECT_ROOT}/output_model/audio_only/cmdc
+  run_root: ${PROJECT_ROOT}/output_model/subject_audio/edaic
 prompt:
   system: You are a psychologist analyzing speech audio for depression screening.
   user_template: |-
@@ -20,17 +20,25 @@ data:
   use_audio: true
   use_text: false
   silence_audio: false
-  sample_mode: response
+  # Subject-level audio: one example per subject built from K chunks.
+  # Training samples K chunks stochastically per epoch; validation/test use a
+  # deterministic evenly-spaced K-chunk view (no randomness in reported metrics).
+  sample_mode: subject_audio
+  chunks_per_subject: 4
+  max_audio_seconds_per_chunk: 30.0
   transcript_max_chars: 4000
   allow_empty_transcript: false
 split:
-  outer_folds: 5
+  train_partitions:
+    - train
+    - val
+  final_eval_partition: test
   inner_val_ratio: 0.2
   seed: 1337
 lora:
   rank: 16
   alpha: 32
-  dropout: 0.05
+  dropout: 0.10
   bias: none
   target_modules:
     - q_proj
@@ -41,10 +49,10 @@ lora:
     - up_proj
     - down_proj
 training:
-  num_train_epochs: 3
-  learning_rate: 2.0e-4
-  weight_decay: 0.0
-  warmup_ratio: 0.03
+  num_train_epochs: 20
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.05
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 1
   gradient_accumulation_steps: 8
@@ -53,11 +61,20 @@ training:
   gradient_checkpointing: true
   run_final_eval_in_train: false
   dataloader_num_workers: 0
-  max_grad_norm: 1.0
+  audio_budget_audit: true   # one-time per-example audio seconds/tokens trace for VRAM planning
+  max_grad_norm: 0.8
+  selection_metric: inner_val_macro_f1
+  selection_metric_mode: auto
+  early_stopping:
+    enabled: true
+    metric: inner_val_macro_f1
+    mode: max
+    patience: 3
+    min_delta: 0.0
 evaluation:
-  sample_prediction_mode: likelihood
+  sample_prediction_mode: original_teacher_forced
   aggregation_level: subject
   generation_max_new_tokens: 8
   num_beams: 1
   do_sample: false
-  headline_mode: likelihood
+  headline_mode: original_teacher_forced

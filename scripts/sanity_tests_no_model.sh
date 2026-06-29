@@ -70,7 +70,7 @@ def assert_fold_coverage(label, folds, expected_subject_ids, forbidden_subject_i
     if heldout_coverage != expected_subject_set:
         raise SystemExit(f"{label} held-out fold coverage mismatch.")
 
-daic_config_path = root / "configs/daic_audio_text.yaml"
+daic_config_path = root / "configs/archive/daic/daic_audio_text.yaml"
 daic_config = load_yaml_with_overrides(daic_config_path, [])
 daic_base = Path(str(daic_config["dataset_root"]))
 daic_summary_specs = [
@@ -303,7 +303,7 @@ bad_transcript_subjects = [
 if bad_transcript_subjects:
     raise SystemExit(f"EDAIC subjects have inconsistent repeated full transcripts: {bad_transcript_subjects[:10]}")
 
-edaic_config_path = root / "configs/edaic_audio_text.yaml"
+edaic_config_path = root / "configs/archive/edaic/edaic_audio_text.yaml"
 edaic_config = load_yaml_with_overrides(edaic_config_path, [])
 edaic_metadata = resolve_metadata_paths(
     json.loads((root / "outputs/splits/edaic_manifest_metadata.json").read_text(encoding="utf-8"))
@@ -414,10 +414,10 @@ for path in config_paths:
 if missing_key:
     raise SystemExit(f"Configs missing evaluation.aggregation_level: {missing_key}")
 
-segment_config = load_yaml_with_overrides(root / "configs/edaic_audio_text.yaml", ["evaluation.aggregation_level=segment"])
+segment_config = load_yaml_with_overrides(root / "configs/archive/edaic/edaic_audio_text.yaml", ["evaluation.aggregation_level=segment"])
 if resolve_aggregation_level(segment_config) != "segment":
     raise SystemExit("Config override for evaluation.aggregation_level=segment did not resolve correctly.")
-invalid_config = load_yaml_with_overrides(root / "configs/edaic_audio_text.yaml", ["evaluation.aggregation_level=bad_level"])
+invalid_config = load_yaml_with_overrides(root / "configs/archive/edaic/edaic_audio_text.yaml", ["evaluation.aggregation_level=bad_level"])
 try:
     resolve_aggregation_level(invalid_config)
 except ValueError:
@@ -425,9 +425,9 @@ except ValueError:
 else:
     raise SystemExit("Invalid evaluation.aggregation_level value did not raise ValueError.")
 
-audio_only_config = load_yaml_with_overrides(root / "configs/daic_audio_only.yaml", [])
+audio_only_config = load_yaml_with_overrides(root / "configs/archive/daic/daic_audio_only.yaml", [])
 if resolve_input_modality(audio_only_config) != "audio_only":
-    raise SystemExit("configs/daic_audio_only.yaml did not resolve to audio_only modality.")
+    raise SystemExit("configs/archive/daic/daic_audio_only.yaml did not resolve to audio_only modality.")
 single_row = {
     "dataset": "daic",
     "subject_id": "smoke_subject",
@@ -447,9 +447,9 @@ assert audio_only_example["training_text"] == (
     f"{audio_only_example['prompt_text']}{audio_only_example['internal_label_text']}<|im_end|>\n"
 )
 
-text_only_config = load_yaml_with_overrides(root / "configs/daic_text_only.yaml", [])
+text_only_config = load_yaml_with_overrides(root / "configs/archive/daic/daic_text_only.yaml", [])
 if resolve_input_modality(text_only_config) != "text_only":
-    raise SystemExit("configs/daic_text_only.yaml did not resolve to text_only modality.")
+    raise SystemExit("configs/archive/daic/daic_text_only.yaml did not resolve to text_only modality.")
 text_only_example = build_examples([single_row], text_only_config, partition_name="smoke")[0]
 assert text_only_example["input_modality"] == "text_only"
 assert text_only_example["transcript"] == single_row["transcript"]
@@ -473,16 +473,16 @@ assert len(daic_text_only_examples) == daic_train_subject_count
 assert all(example["sample_id"] == example["subject_id"] for example in daic_text_only_examples)
 assert all(example["audio_paths"] == [] for example in daic_text_only_examples)
 
-ab_config = load_yaml_with_overrides(root / "configs/daic_audio_text_hybrid_ab.yaml", [])
+ab_config = load_yaml_with_overrides(root / "configs/archive/daic/daic_audio_text_hybrid_ab.yaml", [])
 ab_example = build_examples([single_row], ab_config, partition_name="smoke")[0]
 assert "Use this label legend:" in ab_example["prompt_text"]
 assert "A = Depressed" in ab_example["prompt_text"]
 assert "B = Non-depressed" in ab_example["prompt_text"]
 assert "Answer with exactly one label: A or B." in ab_example["prompt_text"]
 
-eatd_audio_only_config = load_yaml_with_overrides(root / "configs/eatd_audio_only.yaml", [])
+eatd_audio_only_config = load_yaml_with_overrides(root / "configs/archive/eatd/eatd_audio_only.yaml", [])
 if resolve_input_modality(eatd_audio_only_config) != "audio_only":
-    raise SystemExit("configs/eatd_audio_only.yaml did not resolve to audio_only modality.")
+    raise SystemExit("configs/archive/eatd/eatd_audio_only.yaml did not resolve to audio_only modality.")
 eatd_manifest_rows = [
     json.loads(line)
     for line in (root / "outputs/manifests/eatd_manifest.jsonl").read_text(encoding="utf-8").splitlines()
@@ -507,9 +507,9 @@ assert eatd_audio_only_example["training_text"] == (
     f"{eatd_audio_only_example['prompt_text']}{eatd_audio_only_example['internal_label_text']}<|im_end|>\n"
 )
 
-edaic_text_only_config = load_yaml_with_overrides(root / "configs/edaic_text_only.yaml", [])
+edaic_text_only_config = load_yaml_with_overrides(root / "configs/archive/edaic/edaic_text_only.yaml", [])
 if resolve_input_modality(edaic_text_only_config) != "text_only":
-    raise SystemExit("configs/edaic_text_only.yaml did not resolve to text_only modality.")
+    raise SystemExit("configs/archive/edaic/edaic_text_only.yaml did not resolve to text_only modality.")
 edaic_manifest_rows = [
     json.loads(line)
     for line in (root / "outputs/manifests/edaic_manifest.jsonl").read_text(encoding="utf-8").splitlines()
@@ -548,7 +548,7 @@ assert len(build_examples(edaic_final_eval_rows, edaic_text_only_config, partiti
 )
 
 invalid_modality_config = load_yaml_with_overrides(
-    root / "configs/daic_audio_text.yaml",
+    root / "configs/archive/daic/daic_audio_text.yaml",
     ["data.use_audio=false", "data.use_text=false"],
 )
 try:
@@ -558,19 +558,19 @@ except ValueError:
 else:
     raise SystemExit("Invalid data.use_audio/data.use_text combination did not raise ValueError.")
 
-last2_config = load_yaml_with_overrides(root / "configs/edaic_audio_text_reg3.yaml", [])
+last2_config = load_yaml_with_overrides(root / "configs/archive/edaic/edaic_audio_text_reg3.yaml", [])
 if int(last2_config["lora"]["last_n_layers"]) != 2:
-    raise SystemExit("Expected configs/edaic_audio_text_reg3.yaml to set lora.last_n_layers=2.")
+    raise SystemExit("Expected configs/archive/edaic/edaic_audio_text_reg3.yaml to set lora.last_n_layers=2.")
 
 dummy_model = SimpleNamespace(config=SimpleNamespace(text_config=SimpleNamespace(num_hidden_layers=32)))
-base_lora_config = load_yaml_with_overrides(root / "configs/edaic_audio_text.yaml", [])
+base_lora_config = load_yaml_with_overrides(root / "configs/archive/edaic/edaic_audio_text.yaml", [])
 base_peft_cfg, base_layer_selection = build_lora_config(base_lora_config, dummy_model)
 assert getattr(base_peft_cfg, "layers_to_transform", None) is None
 assert base_layer_selection["requested_last_n_layers"] is None
 assert base_layer_selection["decoder_hidden_layer_count"] == 32
 assert base_layer_selection["layers_to_transform"] is None
 
-last2_override = load_yaml_with_overrides(root / "configs/edaic_audio_text.yaml", ["lora.last_n_layers=2"])
+last2_override = load_yaml_with_overrides(root / "configs/archive/edaic/edaic_audio_text.yaml", ["lora.last_n_layers=2"])
 last2_peft_cfg, last2_layer_selection = build_lora_config(last2_override, dummy_model)
 assert last2_layer_selection["requested_last_n_layers"] == 2
 assert last2_layer_selection["decoder_hidden_layer_count"] == 32
@@ -578,7 +578,7 @@ assert last2_layer_selection["layers_to_transform"] == [30, 31]
 assert list(last2_peft_cfg.layers_to_transform) == [30, 31]
 
 for override in ["lora.last_n_layers=0", "lora.last_n_layers=-1", "lora.last_n_layers=40", "lora.last_n_layers=two"]:
-    bad_lora_cfg = load_yaml_with_overrides(root / "configs/edaic_audio_text.yaml", [override])
+    bad_lora_cfg = load_yaml_with_overrides(root / "configs/archive/edaic/edaic_audio_text.yaml", [override])
     try:
         resolve_lora_layer_selection(bad_lora_cfg, dummy_model)
     except ValueError:
@@ -770,7 +770,7 @@ examples = [
     },
 ]
 config = load_yaml_with_overrides(
-    root / "configs/edaic_audio_text.yaml",
+    root / "configs/archive/edaic/edaic_audio_text.yaml",
     [
         "evaluation.sample_prediction_mode=generation",
         "evaluation.aggregation_level=segment",

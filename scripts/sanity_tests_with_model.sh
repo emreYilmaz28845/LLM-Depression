@@ -31,13 +31,13 @@ from src.model.collator import Qwen2AudioSFTCollator
 from src.model.runtime import load_model_for_training, load_processor, resolve_processor_sampling_rate
 from src.utils import load_yaml
 
-config_path = project_root / "configs/daic_audio_text.yaml"
+config_path = project_root / "configs/archive/daic/daic_audio_text.yaml"
 config = load_yaml(config_path)
 config["model_name_or_path"] = os.environ.get("MODEL_PATH", "/home/emre/models/Qwen2-Audio-7B-Instruct")
-audio_only_config_path = project_root / "configs/daic_audio_only.yaml"
+audio_only_config_path = project_root / "configs/archive/daic/daic_audio_only.yaml"
 audio_only_config = load_yaml(audio_only_config_path)
 audio_only_config["model_name_or_path"] = config["model_name_or_path"]
-text_only_config_path = project_root / "configs/daic_text_only.yaml"
+text_only_config_path = project_root / "configs/archive/daic/daic_text_only.yaml"
 text_only_config = load_yaml(text_only_config_path)
 text_only_config["model_name_or_path"] = os.environ.get(
     "TEXT_MODEL_PATH",
