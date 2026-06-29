@@ -727,7 +727,10 @@ def main() -> None:
         config_overrides=args.config_overrides,
         resolved_config=config,
     )
-    set_seed(int(config["seed"]))
+    set_seed(
+        int(config["seed"]),
+        deterministic=bool(config.get("training", {}).get("deterministic", True)),
+    )
     input_modality = resolve_input_modality(config)
     LOGGER.info(
         "Resolved input modality=%s | use_audio=%s | use_text=%s",

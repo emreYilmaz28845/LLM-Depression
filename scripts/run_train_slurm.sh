@@ -94,6 +94,20 @@ nvidia-smi | tee -a "$RUN_LOG_FILE" || true
 python -V | tee -a "$RUN_LOG_FILE"
 python -c "import torch, transformers, accelerate, peft; print('torch', torch.__version__, 'cuda', torch.version.cuda); print('transformers', transformers.__version__); print('accelerate', accelerate.__version__); print('peft', peft.__version__)" | tee -a "$RUN_LOG_FILE"
 
+# Tier 0 provenance: stamp the shipped code snapshot (commit + uncommitted diff,
+# captured locally by scripts/capture_provenance.sh) and freeze the live env into
+# a per-job folder. All offline; no .git needed on the cluster.
+PROV_OUT="$LOG_ROOT/provenance-${SLURM_JOB_ID}"
+mkdir -p "$PROV_OUT"
+if [ -d "$PROJECT_ROOT/.provenance" ]; then
+    cp -a "$PROJECT_ROOT/.provenance/." "$PROV_OUT/" || true
+    echo "Code provenance: commit $(cat "$PROJECT_ROOT/.provenance/git_commit.txt" 2>/dev/null || echo '?')" | tee -a "$RUN_LOG_FILE"
+else
+    echo "WARNING: $PROJECT_ROOT/.provenance missing; run scripts/capture_provenance.sh before sync." | tee -a "$RUN_LOG_FILE"
+fi
+pip freeze > "$PROV_OUT/pip_freeze.txt" 2>/dev/null || true
+echo "Provenance stamped -> $PROV_OUT" | tee -a "$RUN_LOG_FILE"
+
 python - <<PY | tee -a "$RUN_LOG_FILE"
 import json
 import sys
@@ -157,6 +171,16 @@ LABEL_MASK_FLAG=""
 if [ "$ENABLE_LABEL_MASK_DEBUG" = "1" ]; then
     LABEL_MASK_FLAG="--label_mask_debug"
 fi
+
+# Tier 1 determinism: these MUST be set in the shell before the training process
+# starts. cuBLAS reads CUBLAS_WORKSPACE_CONFIG at handle creation (before our
+# Python runs), and PYTHONHASHSEED must precede interpreter start. set_seed() in
+# src/utils.py then flips the torch determinism flags. Harmless when the config
+# sets training.deterministic=false. Override CUBLAS_WORKSPACE_CONFIG/PYTHONHASHSEED
+# from the environment if you need different values.
+export CUBLAS_WORKSPACE_CONFIG="${CUBLAS_WORKSPACE_CONFIG:-:4096:8}"
+export PYTHONHASHSEED="${PYTHONHASHSEED:-0}"
+echo "Determinism env | CUBLAS_WORKSPACE_CONFIG=$CUBLAS_WORKSPACE_CONFIG PYTHONHASHSEED=$PYTHONHASHSEED" | tee -a "$RUN_LOG_FILE"
 
 CMD=(
     torchrun

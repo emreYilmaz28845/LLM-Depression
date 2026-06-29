@@ -393,7 +393,7 @@ def sha256_jsonl_rows(rows: list[dict[str, Any]]) -> str:
     return sha256_text(serialized)
 
 
-def set_seed(seed: int) -> None:
+def set_seed(seed: int, deterministic: bool = True) -> None:
     random.seed(seed)
     np.random.seed(seed)
     try:
@@ -401,6 +401,16 @@ def set_seed(seed: int) -> None:
 
         torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
+        if deterministic:
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+            # warn_only=True: Qwen2-Audio's encoder has ops with no deterministic
+            # CUDA kernel; strict mode would raise mid-run. This pins everything
+            # that *can* be pinned and leaves the rest as best-effort. Note that
+            # CUBLAS_WORKSPACE_CONFIG must be exported in the shell before launch
+            # (cuBLAS reads it at handle creation, before this code runs) — see
+            # scripts/run_train_slurm.sh.
+            torch.use_deterministic_algorithms(True, warn_only=True)
     except Exception:
         pass
 
