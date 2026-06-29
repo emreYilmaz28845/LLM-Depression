@@ -10,6 +10,18 @@ CMDC,Audio + Text (paper),0.989,0.982,1.0,0.967
 Turkish (BDI≥17),Audio + Text (our),0.710,0.799,0.751,0.871
 ,Audio only (our),0.717,0.814,0.744,0.913
 ,Text only (our),0.711,0.772,0.802,0.788
+,Audio + Text (our, transcript_repaired),0.632,0.712,0.771,0.707
+,Audio only (our, transcript_repaired),0.727,0.813,0.765,0.894
+,Text only (our, transcript_repaired),0.717,0.791,0.797,0.795
+,Audio + Text (our, transcript_repaired_cy219fixed),0.659,0.765,0.744,0.807
+,Audio only (our, transcript_repaired_cy219fixed),0.716,0.806,0.764,0.867
+,Text only (our, transcript_repaired_cy219fixed),0.716,0.788,0.812,0.771
 Turkish (BDI≥21),Audio + Text (our),0.700,0.710,0.704,0.741
 ,Audio only (our),0.642,0.688,0.625,0.778
 ,Text only (our),0.707,0.694,0.749,0.694
+,Audio + Text (our, transcript_repaired),0.657,0.664,0.664,0.677
+,Audio only (our, transcript_repaired),0.599,0.601,0.627,0.631
+,Text only (our, transcript_repaired),0.648,0.671,0.675,0.697
+,Audio + Text (our, transcript_repaired_cy219fixed),0.666,0.628,0.760,0.591
+,Audio only (our, transcript_repaired_cy219fixed),0.582,0.557,0.582,0.594
+,Text only (our, transcript_repaired_cy219fixed),0.674,0.695,0.689,0.729

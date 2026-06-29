@@ -143,8 +143,27 @@ job_tag_for_config() {
     esac
 }
 
+MANIFEST_CMD=(
+    python
+    "$PROJECT_ROOT/src/data/build_manifest.py"
+    --config "${CONFIG_VALUES[0]}"
+)
+if [ -n "$EXTRA_TRAIN_ARGS" ]; then
+    # shellcheck disable=SC2206
+    EXTRA_ARGS_ARRAY=($EXTRA_TRAIN_ARGS)
+    for ((i=0; i<${#EXTRA_ARGS_ARRAY[@]}; i++)); do
+        if [ "${EXTRA_ARGS_ARRAY[$i]}" = "--set" ] && [ $((i + 1)) -lt ${#EXTRA_ARGS_ARRAY[@]} ]; then
+            MANIFEST_CMD+=("${EXTRA_ARGS_ARRAY[$i]}" "${EXTRA_ARGS_ARRAY[$((i + 1))]}")
+            i=$((i + 1))
+        fi
+    done
+fi
+
 echo "Building the shared Turkish manifest once before parallel submission."
-python "$PROJECT_ROOT/src/data/build_manifest.py" --config "${CONFIG_VALUES[0]}"
+printf 'Manifest command: '
+printf '%q ' "${MANIFEST_CMD[@]}"
+printf '\n'
+"${MANIFEST_CMD[@]}"
 
 echo "========================================"
 echo "Turkish three-modality CV submission"
