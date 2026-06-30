@@ -16,10 +16,9 @@ Every config in `main/` uses the same standardized recipe:
 
 - **teacher-forced eval** — `evaluation.sample_prediction_mode: original_teacher_forced`
   and `headline_mode: original_teacher_forced`.
-- **macro-F1 selection** — `training.selection_metric: inner_val_macro_f1` and
-  `early_stopping.metric: inner_val_macro_f1` (base-rate robust: penalizes
-  majority-class collapse in either direction, so the *same* criterion works for
-  minority-positive datasets like DAIC and majority-positive ones like Turkish T17).
+- **positive-F1 selection** — `training.selection_metric: inner_val_positive_f1`
+  and `early_stopping.metric: inner_val_positive_f1`, with
+  `selection_metric_mode: max`.
 - **frozen audio encoder** — the default (`audio_adapter.enabled` and
   `train_projector` both default to `false` in `src/model/qwen2audio_lora.py`, and
   `enforce_audio_encoder_freeze` guards it). No config needs an explicit freeze block;
@@ -34,4 +33,4 @@ label, not a continuous score, so there is no ranking to compute AUROC over.
 BDI≥21 (×3 modalities each). EATD and Turkish BDI≥25 are not in scope (archived /
 not created).
 
-Naming: `<dataset>[_t<threshold>]_<modality>_selmacrof1_tf.yaml`.
+Naming: `<dataset>[_t<threshold>]_<modality>_selposf1_tf.yaml`.

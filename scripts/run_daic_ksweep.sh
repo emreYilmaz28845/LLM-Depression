@@ -24,7 +24,7 @@
 #   bash scripts/run_daic_ksweep.sh            # chained (default)
 #   bash scripts/run_daic_ksweep.sh --no-chain # parallel
 #
-# NOTE: daic_subject_audio_text_reg1_selmacrof1_tf (K=4, seed 1337) already has a
+# NOTE: daic_subject_audio_text_reg1_selposf1_tf (K=4, seed 1337) already has a
 # result (handoff §8, F1 0.737). It is included for a complete, uniformly-named
 # sweep; re-running reproduces it. Set RUN_SUFFIX to avoid clobbering prior runs.
 
@@ -42,18 +42,18 @@ fi
 
 # audio+text K-sweep (3 K x 3 seeds) then the text_only reference (3 seeds).
 CONFIGS=(
-    daic_subject_audio_text_reg1_selmacrof1_tf
-    daic_subject_audio_text_reg1_selmacrof1_tf_s2024
-    daic_subject_audio_text_reg1_selmacrof1_tf_s7
-    daic_subject_audio_text_reg1_selmacrof1_tf_k3
-    daic_subject_audio_text_reg1_selmacrof1_tf_k3_s2024
-    daic_subject_audio_text_reg1_selmacrof1_tf_k3_s7
-    daic_subject_audio_text_reg1_selmacrof1_tf_k2
-    daic_subject_audio_text_reg1_selmacrof1_tf_k2_s2024
-    daic_subject_audio_text_reg1_selmacrof1_tf_k2_s7
-    daic_text_only_reg1_selmacrof1_tf
-    daic_text_only_reg1_selmacrof1_tf_s2024
-    daic_text_only_reg1_selmacrof1_tf_s7
+    daic_subject_audio_text_reg1_selposf1_tf
+    daic_subject_audio_text_reg1_selposf1_tf_s2024
+    daic_subject_audio_text_reg1_selposf1_tf_s7
+    daic_subject_audio_text_reg1_selposf1_tf_k3
+    daic_subject_audio_text_reg1_selposf1_tf_k3_s2024
+    daic_subject_audio_text_reg1_selposf1_tf_k3_s7
+    daic_subject_audio_text_reg1_selposf1_tf_k2
+    daic_subject_audio_text_reg1_selposf1_tf_k2_s2024
+    daic_subject_audio_text_reg1_selposf1_tf_k2_s7
+    daic_text_only_reg1_selposf1_tf
+    daic_text_only_reg1_selposf1_tf_s2024
+    daic_text_only_reg1_selposf1_tf_s7
 )
 
 if [ ! -f "$SUBMIT_SCRIPT" ]; then

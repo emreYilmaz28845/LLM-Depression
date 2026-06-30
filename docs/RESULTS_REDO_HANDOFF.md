@@ -69,17 +69,17 @@ RUN_NAME_PREFIX=cmdc_tf bash scripts/run_cmdc_cv.sh
 # all three:
 RUN_NAME_PREFIX=daic_tf bash scripts/run_daic_fixed.sh
 # or just audio-only:
-CONFIGS="$PROJECT_ROOT/configs/main/daic_audio_only_selmacrof1_tf.yaml" \
+CONFIGS="$PROJECT_ROOT/configs/main/daic_audio_only_selposf1_tf.yaml" \
   RUN_NAME_PREFIX=daic_tf bash scripts/run_daic_fixed.sh
 ```
 
 ### Turkish — 5-fold CV, 3 modalities per submission, mean over folds
 ```bash
 # BDI>=21
-CONFIGS="$PROJECT_ROOT/configs/main/turkish_t21_audio_only_selmacrof1_tf.yaml $PROJECT_ROOT/configs/main/turkish_t21_text_only_selmacrof1_tf.yaml $PROJECT_ROOT/configs/main/turkish_t21_audio_text_selmacrof1_tf.yaml" \
+CONFIGS="$PROJECT_ROOT/configs/main/turkish_t21_audio_only_selposf1_tf.yaml $PROJECT_ROOT/configs/main/turkish_t21_text_only_selposf1_tf.yaml $PROJECT_ROOT/configs/main/turkish_t21_audio_text_selposf1_tf.yaml" \
   RUN_NAME_PREFIX=t21_tf sbatch --export=ALL scripts/run_turkish_5fold.sh
 # BDI>=17
-CONFIGS="$PROJECT_ROOT/configs/main/turkish_t17_audio_only_selmacrof1_tf.yaml $PROJECT_ROOT/configs/main/turkish_t17_text_only_selmacrof1_tf.yaml $PROJECT_ROOT/configs/main/turkish_t17_audio_text_selmacrof1_tf.yaml" \
+CONFIGS="$PROJECT_ROOT/configs/main/turkish_t17_audio_only_selposf1_tf.yaml $PROJECT_ROOT/configs/main/turkish_t17_text_only_selposf1_tf.yaml $PROJECT_ROOT/configs/main/turkish_t17_audio_text_selposf1_tf.yaml" \
   RUN_NAME_PREFIX=t17_tf sbatch --export=ALL scripts/run_turkish_5fold.sh
 ```
 
@@ -106,7 +106,7 @@ rsync -avhP ozu647717@transfer1.bsc.es:/gpfs/projects/etur92/ozu647717/AudioLLM/
 
 ## 4. Where the results land & how to read them
 
-`run_name = <PREFIX>_<config_stem>`, e.g. `cmdc_tf_cmdc_audio_only_selmacrof1_tf`.
+`run_name = <PREFIX>_<config_stem>`, e.g. `cmdc_tf_cmdc_audio_only_selposf1_tf`.
 
 - **CMDC / Turkish (CV):**
   `output_model/<modality>/<dataset>/<run_name>/final_summary.json`

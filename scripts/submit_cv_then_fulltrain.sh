@@ -3,7 +3,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
-CONFIG="${CONFIG:-$PROJECT_ROOT/configs/main/edaic_audio_text_selmacrof1_tf.yaml}"
+CONFIG="${CONFIG:-$PROJECT_ROOT/configs/main/edaic_audio_text_selposf1_tf.yaml}"
 CV_RUN_NAME="${CV_RUN_NAME:-cv_reproduction}"
 FOLDS="${FOLDS:-0 1 2 3 4}"
 CURRENT_STAGE_INDEX="${CURRENT_STAGE_INDEX:-0}"
