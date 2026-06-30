@@ -74,18 +74,18 @@ training:
   dataloader_num_workers: 0
   audio_budget_audit: true
   max_grad_norm: 1.0
-  # Select best_model on macro-F1 (averages both classes → less jumpy than the
+  # Select best_model on positive-F1 (averages both classes → less jumpy than the
   # default positive-only F1 on N=35 val / 12 positives). mode auto → max.
-  selection_metric: inner_val_macro_f1
-  selection_metric_mode: auto
+  selection_metric: inner_val_positive_f1
+  selection_metric_mode: max
   early_stopping:
     enabled: true
-    metric: inner_val_macro_f1
+    metric: inner_val_positive_f1
     mode: max
     patience: 3
     min_delta: 0.0
 evaluation:
-  # Macro-F1 SELECTION (see training.selection_metric) + teacher-forced test verdict.
+  # Positive-F1 SELECTION (see training.selection_metric) + teacher-forced test verdict.
   # Read headline/binary_strict_* (INVALID counted as wrong); ignore valid_only_*.
   sample_prediction_mode: original_teacher_forced
   aggregation_level: subject

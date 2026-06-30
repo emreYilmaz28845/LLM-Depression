@@ -67,14 +67,12 @@ training:
   run_final_eval_in_train: false
   dataloader_num_workers: 0
   max_grad_norm: 1.0
-  # Decided default (text-only reference for the K-sweep): macro-F1 selection +
-  # TF eval, matching the audio+text decided recipe so the audio-vs-text McNemar
-  # comparison holds modality as the only difference. mode auto -> max.
-  selection_metric: inner_val_macro_f1
-  selection_metric_mode: auto
+  # Current default: positive-F1 selection + teacher-forced eval. mode max.
+  selection_metric: inner_val_positive_f1
+  selection_metric_mode: max
   early_stopping:
     enabled: true
-    metric: inner_val_macro_f1
+    metric: inner_val_positive_f1
     mode: max
     patience: 3
     min_delta: 0.0

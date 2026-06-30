@@ -63,11 +63,11 @@ training:
   dataloader_num_workers: 0
   audio_budget_audit: true   # one-time per-example audio seconds/tokens trace for VRAM planning
   max_grad_norm: 0.8
-  selection_metric: inner_val_macro_f1
-  selection_metric_mode: auto
+  selection_metric: inner_val_positive_f1
+  selection_metric_mode: max
   early_stopping:
     enabled: true
-    metric: inner_val_macro_f1
+    metric: inner_val_positive_f1
     mode: max
     patience: 3
     min_delta: 0.0

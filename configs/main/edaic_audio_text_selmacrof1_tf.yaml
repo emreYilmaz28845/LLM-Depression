@@ -26,7 +26,7 @@ data:
   #
   # K=4 baseline for the EDAIC K-ablation. Recipe = EDAIC's tuned reg2 (the safe
   # pick per handoff §5; reg1 light-reg risks the all-positive collapse), with the
-  # decided default applied: frozen encoder + macro-F1 selection + TF eval. The
+  # decided default applied: frozen encoder + positive-F1 selection + TF eval. The
   # _k3/_k2 siblings are identical except chunks_per_subject, so K is the only axis.
   sample_mode: subject_audio
   chunks_per_subject: 4
@@ -68,18 +68,17 @@ training:
   dataloader_num_workers: 0
   audio_budget_audit: true   # one-time per-example audio seconds/tokens trace for VRAM planning
   max_grad_norm: 0.8
-  # Decided default: select best_model on macro-F1 (less jumpy than positive-only
-  # F1 on the small noisy inner-val). mode auto -> max.
-  selection_metric: inner_val_macro_f1
-  selection_metric_mode: auto
+  # Current default: select best_model on positive-F1. mode max.
+  selection_metric: inner_val_positive_f1
+  selection_metric_mode: max
   early_stopping:
     enabled: true
-    metric: inner_val_macro_f1
+    metric: inner_val_positive_f1
     mode: max
     patience: 3
     min_delta: 0.0
 evaluation:
-  # Macro-F1 SELECTION + teacher-forced test verdict (decided default).
+  # Positive-F1 SELECTION + teacher-forced test verdict (decided default).
   # Read headline/binary_strict_* (INVALID counted as wrong); ignore valid_only_*.
   sample_prediction_mode: original_teacher_forced
   aggregation_level: subject
