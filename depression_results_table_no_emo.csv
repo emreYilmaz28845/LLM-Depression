@@ -1,15 +1,12 @@
 Dataset,Method,ACC,F1,Precision,Recall,MacroF1,AUROC,AllPosBaseF1
 DAIC,Audio + Text (paper),0.857,0.762,0.889,0.667,TODO,TODO,0.459
-,Audio + Text (our),0.787,0.737,0.583,1.0,0.779,n/a,0.459
-,Audio only (our),0.745,0.6,0.563,0.643,0.706,n/a,0.459
-,Text only (our),0.83,0.692,0.75,0.643,0.787,n/a,0.459
+,Audio + Text (our),0.809,0.667,0.692,0.643,0.766,n/a,0.459
+,Audio only (our),0.723,0.552,0.533,0.571,0.676,n/a,0.459
+,Text only (our),0.830,0.692,0.750,0.643,0.787,n/a,0.459
 CMDC,Audio + Text (paper),0.989,0.982,1.0,0.967,TODO,TODO,0.500
-,Audio + Text (our),0.923,0.893,0.833,0.962,0.916,0.993,0.500
-,Audio only (our),0.923,0.88,0.917,0.846,0.904,1.0,0.500
-,Text only (our),0.974,0.96,1.0,0.923,0.971,1.0,0.500
-Turkish (BDI≥17),Audio + Text (our),TODO,TODO,TODO,TODO,TODO,TODO,0.818
-,Audio only (our),TODO,TODO,TODO,TODO,TODO,TODO,0.818
-,Text only (our),TODO,TODO,TODO,TODO,TODO,TODO,0.818
-Turkish (BDI≥21),Audio + Text (our),0.646,0.665,0.649,0.694,0.637,0.672,0.681
-,Audio only (our),0.637,0.648,0.659,0.659,0.629,0.653,0.681
-,Text only (our),0.657,0.669,0.682,0.677,0.647,0.713,0.681
+,Audio + Text (our),0.935,0.916,0.896,0.960,0.931,n/a,0.500
+,Audio only (our),0.949,0.926,0.905,0.960,0.943,n/a,0.500
+,Text only (our),0.948,0.926,0.943,0.927,0.943,n/a,0.500
+Turkish (BDI≥17),Audio + Text (our),0.609,0.649,0.830,0.601,0.556,n/a,0.818
+,Audio only (our),0.702,0.798,0.747,0.858,0.613,n/a,0.818
+,Text only (our),0.683,0.754,0.809,0.711,0.651,n/a,0.818
