@@ -1,12 +1,12 @@
-Dataset,Method,ACC,F1,Precision,Recall,MacroF1,NegF1,AllPosBaseF1
-DAIC,Audio + Text (paper),0.857,0.762,0.889,0.667,TODO,TODO,0.459
-,Audio + Text (our),0.766,0.718,0.560,1.000,0.759,0.800,0.459
-,Audio only (our),0.681,0.595,0.478,0.786,0.666,0.737,0.459
-,Text only (our),0.830,0.692,0.750,0.643,0.787,0.882,0.459
-CMDC,Audio + Text (paper),0.989,0.982,1.0,0.967,TODO,TODO,0.500
-,Audio + Text (our),0.908,0.896,0.871,0.960,0.905,0.914,0.500
-,Audio only (our),0.949,0.918,0.971,0.880,0.940,0.962,0.500
-,Text only (our),0.936,0.904,0.943,0.887,0.927,0.950,0.500
-Turkish (BDI≥17),Audio + Text (our),0.609,0.649,0.830,0.601,0.556,0.463,0.818
-,Audio only (our),0.702,0.798,0.747,0.858,0.613,0.428,0.818
-,Text only (our),0.683,0.754,0.809,0.711,0.651,0.548,0.818
+Dataset,Method,ACC,F1,Precision,Recall,MacroF1,NegF1,AllPosBaseF1,ClassBalance (dep/non/ratio)
+DAIC,Audio + Text (paper),0.857,0.762,0.889,0.667,TODO,TODO,0.459,14 dep / 33 non / 0.298
+,Audio + Text (our),0.766,0.718,0.560,1.000,0.759,0.800,0.459,
+,Audio only (our),0.681,0.595,0.478,0.786,0.666,0.737,0.459,
+,Text only (our),0.830,0.692,0.750,0.643,0.787,0.882,0.459,
+CMDC,Audio + Text (paper),0.989,0.982,1.0,0.967,TODO,TODO,0.500,26 dep / 52 non / 0.333
+,Audio + Text (our),0.908,0.896,0.871,0.960,0.905,0.914,0.500,
+,Audio only (our),0.949,0.918,0.971,0.880,0.940,0.962,0.500,
+,Text only (our),0.936,0.904,0.943,0.887,0.927,0.950,0.500,
+Turkish (BDI≥17),Audio + Text (our),0.693,0.809,0.715,0.940,0.488,0.167,0.818,54 dep / 24 non / 0.692
+,Audio only (our),0.759,0.847,0.760,0.965,0.613,0.379,0.818,
+,Text only (our),0.709,0.821,0.716,0.964,0.512,0.203,0.818,
