@@ -25,6 +25,12 @@ SUPPORTED_CV_PROTOCOLS = (
     CV_PROTOCOL_TRAIN_VAL,
     CV_PROTOCOL_TRAIN_VAL_TEST,
 )
+FIXED_PROTOCOL_TRAIN_VAL = "train_val"
+FIXED_PROTOCOL_TRAIN_VAL_TEST = "train_val_test"
+SUPPORTED_FIXED_PROTOCOLS = (
+    FIXED_PROTOCOL_TRAIN_VAL,
+    FIXED_PROTOCOL_TRAIN_VAL_TEST,
+)
 SUPPORTED_SPLIT_MODES = (
     SPLIT_MODE_FIXED,
     SPLIT_MODE_CV,
@@ -215,6 +221,18 @@ def resolve_cv_protocol(config: dict[str, Any]) -> str:
         raise ValueError(
             f"Unsupported split.cv_protocol={raw_protocol!r}. "
             f"Expected one of {', '.join(SUPPORTED_CV_PROTOCOLS)}."
+        )
+    return raw_protocol
+
+
+def resolve_fixed_protocol(config: dict[str, Any]) -> str:
+    raw_protocol = str(config.get("split", {}).get("fixed_protocol", "")).strip().lower()
+    if not raw_protocol:
+        return FIXED_PROTOCOL_TRAIN_VAL_TEST
+    if raw_protocol not in SUPPORTED_FIXED_PROTOCOLS:
+        raise ValueError(
+            f"Unsupported split.fixed_protocol={raw_protocol!r}. "
+            f"Expected one of {', '.join(SUPPORTED_FIXED_PROTOCOLS)}."
         )
     return raw_protocol
 

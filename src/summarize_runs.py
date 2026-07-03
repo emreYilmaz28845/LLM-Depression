@@ -86,6 +86,7 @@ def _metrics_from_confusion_matrix(confusion_matrix: list[list[int]] | None) -> 
 def summarize_run(run_root: Path) -> None:
     rows = []
     cv_protocols: set[str] = set()
+    split_modes: set[str] = set()
     expected_fold_counts: set[int] = set()
     metrics_by_backend = {
         backend: defaultdict(list) for backend in BACKEND_METRIC_FILES
@@ -99,6 +100,7 @@ def summarize_run(run_root: Path) -> None:
         active_backend = "likelihood"
         active_aggregation_level = "subject"
         cv_protocol = CV_PROTOCOL_TRAIN_VAL_TEST
+        split_mode = "cv"
         selection_metadata: dict = {}
         if run_config_path.exists():
             with run_config_path.open("r", encoding="utf-8") as handle:
@@ -107,6 +109,11 @@ def summarize_run(run_root: Path) -> None:
                 run_config.get("cv_protocol")
                 or run_config.get("config", {}).get("split", {}).get("cv_protocol")
                 or CV_PROTOCOL_TRAIN_VAL_TEST
+            )
+            split_mode = (
+                run_config.get("split_mode")
+                or run_config.get("config", {}).get("split", {}).get("mode")
+                or split_mode
             )
             configured_fold_count = run_config.get("config", {}).get("split", {}).get("outer_folds")
             if configured_fold_count is not None:
@@ -128,6 +135,7 @@ def summarize_run(run_root: Path) -> None:
                 f"Unsupported split.cv_protocol={cv_protocol!r} in {run_config_path}"
             )
         cv_protocols.add(cv_protocol)
+        split_modes.add(split_mode)
         if len(cv_protocols) > 1:
             raise ValueError(
                 f"Mixed split.cv_protocol values under {run_root}: {sorted(cv_protocols)}"
@@ -215,7 +223,10 @@ def summarize_run(run_root: Path) -> None:
         raise ValueError(
             f"Mixed split.outer_folds values under {run_root}: {sorted(expected_fold_counts)}"
         )
-    if cv_protocols == {CV_PROTOCOL_TRAIN_VAL} and expected_fold_counts:
+    # Fold completeness only applies to CV runs: split.mode=fixed uses the
+    # train_val protocol with a single fold_0 while split.outer_folds still
+    # describes the manifest's bookkeeping folds.
+    if cv_protocols == {CV_PROTOCOL_TRAIN_VAL} and expected_fold_counts and split_modes == {"cv"}:
         expected_fold_count = next(iter(expected_fold_counts))
         expected_fold_names = {f"fold_{index}" for index in range(expected_fold_count)}
         actual_fold_names = {row["fold"] for row in rows}

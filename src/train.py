@@ -35,6 +35,7 @@ from src.data.runtime import (
 )
 from src.data.split_utils import (
     CV_PROTOCOL_TRAIN_VAL,
+    FIXED_PROTOCOL_TRAIN_VAL,
     SPLIT_MODE_CV,
     SPLIT_MODE_FIXED,
     SPLIT_MODE_FULL_TRAIN,
@@ -42,6 +43,7 @@ from src.data.split_utils import (
     read_fold_payload,
     resolve_cv_protocol,
     resolve_dev_pool_partitions,
+    resolve_fixed_protocol,
     resolve_requested_split_mode,
     resolve_split_mode,
     subject_ids_for_partitions,
@@ -265,6 +267,35 @@ def _resolve_training_subject_splits(
         }
 
     selection_partition = str(config["split"].get("selection_partition", "")).strip()
+    if split_mode == SPLIT_MODE_FIXED and resolve_fixed_protocol(config) == FIXED_PROTOCOL_TRAIN_VAL:
+        selection_subject_ids = outer_partitions.get("selection_subject_ids") or []
+        if not selection_subject_ids:
+            raise ValueError(
+                "split.fixed_protocol=train_val requires split.selection_partition with resolvable subject ids."
+            )
+        # Fixed-partition analogue of the CV train_val protocol: train on the train
+        # partition, select on the selection partition, and report the best
+        # selection-partition results. Setting cv_protocol=train_val on the plan
+        # reuses that protocol's reporting plumbing (best_validation copy, forced
+        # run_final_eval_in_train=False, summarize_runs score source) unchanged.
+        # split.final_eval_partition stays manifest bookkeeping and is never
+        # evaluated here.
+        return {
+            "split_mode": split_mode,
+            "cv_protocol": CV_PROTOCOL_TRAIN_VAL,
+            "selection_mode": "fixed_partition_validation",
+            "selection_enabled": True,
+            "uses_inner_split": False,
+            "outer_partitions": outer_partitions,
+            "train_subject_ids": outer_partitions["outer_train_subject_ids"],
+            "selection_subject_ids": selection_subject_ids,
+            "final_eval_subject_ids": [],
+            "train_split_name": str(config["split"].get("train_partition", "train")),
+            "selection_split_name": selection_partition,
+            "final_eval_split_name": "none",
+            "selection_log_dir_name": selection_partition,
+        }
+
     if split_mode == SPLIT_MODE_FIXED and selection_partition:
         selection_subject_ids = outer_partitions.get("selection_subject_ids") or []
         if not selection_subject_ids:
