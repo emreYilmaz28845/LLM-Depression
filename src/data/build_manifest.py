@@ -44,6 +44,7 @@ def manifest_build_signature(config: dict[str, Any]) -> dict[str, Any]:
         "audio_adapter",
         "data",
         "evaluation",
+        "joint_train",
         "labels",
         "lora",
         "model_name_or_path",

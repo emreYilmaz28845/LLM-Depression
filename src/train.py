@@ -341,6 +341,211 @@ def _resolve_training_subject_splits(
     }
 
 
+JOINT_SELECTION_PRIMARY_ONLY = "primary_only"
+JOINT_SELECTION_MEAN_POSITIVE_F1 = "mean_positive_f1"
+_SUPPORTED_JOINT_SELECTION_MODES = (JOINT_SELECTION_PRIMARY_ONLY, JOINT_SELECTION_MEAN_POSITIVE_F1)
+
+
+def _resolve_joint_selection_mode(config: dict[str, Any]) -> str:
+    raw_mode = str((config.get("joint_train") or {}).get("selection_mode", "")).strip().lower()
+    if not raw_mode:
+        return JOINT_SELECTION_PRIMARY_ONLY
+    if raw_mode not in _SUPPORTED_JOINT_SELECTION_MODES:
+        raise ValueError(
+            f"Unsupported joint_train.selection_mode={raw_mode!r}. "
+            f"Expected one of {_SUPPORTED_JOINT_SELECTION_MODES}."
+        )
+    return raw_mode
+
+
+def _subject_overlap_proof(
+    *,
+    train_subject_ids: list[str],
+    selection_subject_ids: list[str],
+    final_eval_subject_ids: list[str],
+) -> dict[str, Any]:
+    overlaps = {
+        "train_selection": sorted(set(train_subject_ids) & set(selection_subject_ids)),
+        "train_final_eval": sorted(set(train_subject_ids) & set(final_eval_subject_ids)),
+        "selection_final_eval": sorted(set(selection_subject_ids) & set(final_eval_subject_ids)),
+    }
+    return {
+        "overlap_counts": {name: len(values) for name, values in overlaps.items()},
+        "overlaps": overlaps,
+        "passed": all(not values for values in overlaps.values()),
+    }
+
+
+def _assert_no_subject_overlap(dataset_name: str, proof: dict[str, Any]) -> None:
+    if proof["passed"]:
+        return
+    non_empty = {name: values for name, values in proof["overlaps"].items() if values}
+    raise ValueError(f"{dataset_name} train/selection/final-eval subject overlap: {non_empty}")
+
+
+def _example_class_counts(examples: list[dict[str, Any]]) -> dict[str, int]:
+    labels = [int(example["label"]) for example in examples]
+    return {
+        "depressed_samples": int(sum(labels)),
+        "non_depressed_samples": int(len(labels) - sum(labels)),
+        "total_samples": len(labels),
+    }
+
+
+def _build_joint_train_examples(
+    config: dict[str, Any],
+    logs_dir: Path,
+    primary_model_name_or_path: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Auxiliary train (and optional selection) examples for opt-in joint training.
+
+    ``config.joint_train.extra_datasets`` entries each name a standalone dataset
+    config; that config's fold-``fold`` outer-train subjects are built into
+    examples WITH THAT CONFIG (its prompts, sample_mode, transcript budget) and
+    appended to the primary train set. The entry's fold holdout is never trained
+    on, so it remains clean for a standalone eval of the joint checkpoint
+    (src.evaluate --config <entry config> --checkpoint_dir <best_model> --fold k).
+
+    ``joint_train.selection_mode`` controls checkpoint selection:
+      - ``primary_only`` (default): all outer-train subjects go to training and
+        selection stays primary-only — the original joint behavior.
+      - ``mean_positive_f1``: a deterministic inner-val is carved from each
+        entry's outer-train subjects (never from the holdout); those subjects are
+        excluded from training and evaluated per epoch, and the checkpoint is
+        selected on ``joint_val_positive_f1`` = unweighted mean of the primary
+        and per-entry selection positive-F1 (see ``_joint_selection_values``).
+
+    Returns ``(extra_train_examples, selection_groups, final_eval_groups, composition)``.
+    Selection groups carry inner-val examples for per-epoch selection eval; final
+    eval groups carry the untouched fold holdout for optional best-checkpoint
+    evaluation.
+    """
+    joint_cfg = config.get("joint_train") or {}
+    entries = joint_cfg.get("extra_datasets") or []
+    selection_mode = _resolve_joint_selection_mode(config)
+    extra_examples: list[dict[str, Any]] = []
+    selection_groups: list[dict[str, Any]] = []
+    final_eval_groups: list[dict[str, Any]] = []
+    composition: list[dict[str, Any]] = []
+    for entry in entries:
+        extra_config_path = str(entry["config"])
+        extra_config = load_yaml_with_overrides(extra_config_path, [])
+        extra_model = str(resolve_model_name_or_path(None, extra_config))
+        if extra_model != str(primary_model_name_or_path):
+            raise ValueError(
+                "joint_train.extra_datasets entries must resolve to the primary model. "
+                f"Primary={primary_model_name_or_path!r} extra={extra_model!r} in {extra_config_path}"
+            )
+        extra_fold = int(entry.get("fold", 0))
+        extra_metadata = _load_metadata_or_build(extra_config_path, extra_config)
+        extra_rows = load_manifest_rows(extra_metadata["manifest_path"])
+        outer_partitions = _resolve_outer_partitions(extra_config, extra_metadata, extra_fold)
+        train_ids = list(outer_partitions["outer_train_subject_ids"])
+        heldout_ids = list(outer_partitions["final_eval_subject_ids"])
+        selection_ids: list[str] = []
+        if selection_mode == JOINT_SELECTION_MEAN_POSITIVE_F1:
+            extra_subject_labels = build_subject_label_map(extra_rows)
+            inner_split = deterministic_inner_split(
+                extra_subject_labels,
+                train_ids,
+                seed=int(extra_config["split"]["seed"]) + extra_fold,
+                val_ratio=float(entry.get("inner_val_ratio", extra_config["split"].get("inner_val_ratio", 0.2))),
+            )
+            train_ids = inner_split["train_inner_subject_ids"]
+            selection_ids = inner_split["val_inner_subject_ids"]
+        dataset_name = str(extra_config["dataset"])
+        overlap_proof = _subject_overlap_proof(
+            train_subject_ids=train_ids,
+            selection_subject_ids=selection_ids,
+            final_eval_subject_ids=heldout_ids,
+        )
+        _assert_no_subject_overlap(dataset_name, overlap_proof)
+        examples = build_examples(
+            filter_rows_by_subjects(extra_rows, train_ids),
+            extra_config,
+            partition_name=f"joint_{dataset_name}_train",
+            truncation_log_path=logs_dir / f"joint_{dataset_name}_train_truncation.jsonl",
+        )
+        selection_examples: list[dict[str, Any]] = []
+        if selection_ids:
+            selection_examples = build_examples(
+                filter_rows_by_subjects(extra_rows, selection_ids),
+                extra_config,
+                partition_name=f"joint_{dataset_name}_inner_val",
+                truncation_log_path=logs_dir / f"joint_{dataset_name}_inner_val_truncation.jsonl",
+            )
+        heldout_examples = build_examples(
+            filter_rows_by_subjects(extra_rows, heldout_ids),
+            extra_config,
+            partition_name=f"joint_{dataset_name}_fold_holdout",
+            truncation_log_path=logs_dir / f"joint_{dataset_name}_fold_holdout_truncation.jsonl",
+        )
+        extra_examples.extend(examples)
+        composition.append(
+            {
+                "dataset": dataset_name,
+                "config": extra_config_path,
+                "fold": extra_fold,
+                "selection_mode": selection_mode,
+                "train_subject_count": len(train_ids),
+                "train_sample_count": len(examples),
+                "train_class_counts": _example_class_counts(examples),
+                "selection_subject_count": len(selection_ids),
+                "selection_sample_count": len(selection_examples),
+                "selection_class_counts": _example_class_counts(selection_examples),
+                "train_subject_ids": sorted(train_ids),
+                "selection_subject_ids": sorted(selection_ids),
+                "heldout_subject_count": len(heldout_ids),
+                "heldout_sample_count": len(heldout_examples),
+                "heldout_class_counts": _example_class_counts(heldout_examples),
+                "heldout_subject_ids": sorted(heldout_ids),
+                "subject_overlap_proof": overlap_proof,
+            }
+        )
+        if selection_examples:
+            selection_groups.append(
+                {
+                    "dataset": dataset_name,
+                    "config": extra_config,
+                    "config_path": extra_config_path,
+                    "fold": extra_fold,
+                    "split_name": f"{dataset_name}_inner_val",
+                    "subject_ids": sorted(selection_ids),
+                    "examples": selection_examples,
+                }
+            )
+        final_eval_groups.append(
+            {
+                "dataset": dataset_name,
+                "config": extra_config,
+                "config_path": extra_config_path,
+                "fold": extra_fold,
+                "split_name": f"{dataset_name}_fold_holdout",
+                "subject_ids": sorted(heldout_ids),
+                "examples": heldout_examples,
+            }
+        )
+    return extra_examples, selection_groups, final_eval_groups, composition
+
+
+def _joint_selection_values(component_headlines: list[tuple[str, dict[str, Any]]]) -> dict[str, float]:
+    """Per-dataset selection diagnostics plus the combined joint metric.
+
+    ``joint_val_positive_f1`` is the UNWEIGHTED MEAN of the components'
+    positive-F1 — never a pooled F1 over concatenated predictions, because the
+    component datasets differ in sample count and class balance, and pooling
+    would let the larger one dominate checkpoint selection.
+    """
+    values: dict[str, float] = {}
+    positive_f1s: list[float] = []
+    for name, headline in component_headlines:
+        for key in ("positive_f1", "macro_f1", "accuracy", "precision", "recall"):
+            values[f"{name}_{key}"] = float(headline[key])
+        positive_f1s.append(float(headline["positive_f1"]))
+    values["joint_val_positive_f1"] = sum(positive_f1s) / max(1, len(positive_f1s))
+    return values
+
+
 def _print_partition_counts(payload: dict[str, Any]) -> None:
     for name, counts in payload["class_counts"].items():
         LOGGER.info(
@@ -843,6 +1048,67 @@ def main() -> None:
             counts["total_samples"],
         )
 
+    joint_extra_examples, joint_selection_groups, joint_final_eval_groups, joint_composition = _build_joint_train_examples(config, logs_dir, model_name_or_path)
+    primary_overlap_proof = _subject_overlap_proof(
+        train_subject_ids=partition_plan["train_subject_ids"],
+        selection_subject_ids=partition_plan["selection_subject_ids"],
+        final_eval_subject_ids=partition_plan["final_eval_subject_ids"],
+    )
+    _assert_no_subject_overlap(str(config["dataset"]), primary_overlap_proof)
+    if joint_extra_examples:
+        primary_train_sample_count = len(train_examples)
+        primary_composition = {
+            "dataset": str(config["dataset"]),
+            "config": str(Path(args.config)),
+            "fold": int(args.fold),
+            "train_split_name": partition_plan["train_split_name"],
+            "selection_split_name": partition_plan["selection_split_name"],
+            "final_eval_split_name": partition_plan["final_eval_split_name"],
+            "train_subject_count": len(partition_plan["train_subject_ids"]),
+            "selection_subject_count": len(partition_plan["selection_subject_ids"]),
+            "final_eval_subject_count": len(partition_plan["final_eval_subject_ids"]),
+            "train_sample_count": len(train_examples),
+            "selection_sample_count": len(selection_examples),
+            "final_eval_sample_count": len(final_eval_examples),
+            "train_class_counts": _example_class_counts(train_examples),
+            "selection_class_counts": _example_class_counts(selection_examples),
+            "final_eval_class_counts": _example_class_counts(final_eval_examples),
+            "train_subject_ids": sorted(partition_plan["train_subject_ids"]),
+            "selection_subject_ids": sorted(partition_plan["selection_subject_ids"]),
+            "final_eval_subject_ids": sorted(partition_plan["final_eval_subject_ids"]),
+            "subject_overlap_proof": primary_overlap_proof,
+        }
+        train_examples = train_examples + joint_extra_examples
+        save_json(
+            {
+                "primary_dataset": str(config["dataset"]),
+                "joint_selection_mode": _resolve_joint_selection_mode(config),
+                "primary_train_sample_count": primary_train_sample_count,
+                "combined_train_sample_count": len(train_examples),
+                "primary": primary_composition,
+                "extra_datasets": joint_composition,
+            },
+            logs_dir / "joint_train_composition.json",
+        )
+        for item in joint_composition:
+            train_counts = item["train_class_counts"]
+            LOGGER.info(
+                "Joint train | dataset=%s fold=%s train_subjects=%s train_samples=%s (dep=%s non=%s) heldout_subjects=%s",
+                item["dataset"],
+                item["fold"],
+                item["train_subject_count"],
+                item["train_sample_count"],
+                train_counts["depressed_samples"],
+                train_counts["non_depressed_samples"],
+                item["heldout_subject_count"],
+            )
+        LOGGER.info(
+            "Joint train combined | primary=%s primary_samples=%s combined_samples=%s",
+            config["dataset"],
+            primary_train_sample_count,
+            len(train_examples),
+        )
+
     # Training is the only place stochastic per-epoch chunk sampling is allowed.
     # Selection/eval datasets stay deterministic (baked audio_paths) so reported
     # validation/test metrics never depend on random sampling.
@@ -893,6 +1159,48 @@ def main() -> None:
             num_workers=int(config["training"]["dataloader_num_workers"]),
             collate_fn=Qwen2AudioSFTCollator(processor=processor, debug=False),
         )
+    selection_components: list[dict[str, Any]] = []
+    if selection_enabled:
+        selection_components.append(
+            {
+                "name": f"{str(config['dataset']).lower()}_val",
+                "dataset": str(config["dataset"]).lower(),
+                "split_name": partition_plan["selection_split_name"],
+                "examples": selection_examples,
+                "config": config,
+                "loss_loader": selection_loss_loader,
+                "log_dir_prefix": partition_plan["selection_log_dir_name"],
+                "subject_count": len(partition_plan["selection_subject_ids"]),
+                "sample_count": len(selection_examples),
+            }
+        )
+        for group in joint_selection_groups:
+            group_dataset = AudioTextDataset(
+                group["examples"],
+                processor_sampling_rate=processor_sampling_rate,
+                silence_audio=bool(group["config"]["data"].get("silence_audio", False)),
+                chunk_sampling="deterministic",
+            )
+            group_loader = DataLoader(
+                group_dataset,
+                batch_size=int(config["training"]["per_device_eval_batch_size"]),
+                shuffle=False,
+                num_workers=int(config["training"]["dataloader_num_workers"]),
+                collate_fn=Qwen2AudioSFTCollator(processor=processor, debug=False),
+            )
+            selection_components.append(
+                {
+                    "name": f"{str(group['dataset']).lower()}_inner_val",
+                    "dataset": str(group["dataset"]).lower(),
+                    "split_name": group["split_name"],
+                    "examples": group["examples"],
+                    "config": group["config"],
+                    "loss_loader": group_loader,
+                    "log_dir_prefix": group["split_name"],
+                    "subject_count": len(group["subject_ids"]),
+                    "sample_count": len(group["examples"]),
+                }
+            )
 
     model = load_model_for_training(model_name_or_path, config)
     lora_layer_selection = resolved_lora_layer_selection(model)
@@ -938,10 +1246,21 @@ def main() -> None:
         "save_strategy": args.save_strategy,
         "selection_protocol": {
             "mode": partition_plan["selection_mode"],
+            "joint_selection_mode": _resolve_joint_selection_mode(config),
             "metric_name": None,
             "selection_split_name": partition_plan["selection_split_name"],
             "selection_subject_count": len(partition_plan["selection_subject_ids"]),
             "selection_sample_count": len(selection_examples),
+            "selection_components": [
+                {
+                    "name": component["name"],
+                    "dataset": component["dataset"],
+                    "split_name": component["split_name"],
+                    "subject_count": component["subject_count"],
+                    "sample_count": component["sample_count"],
+                }
+                for component in selection_components
+            ],
             "selection_prediction_backend": sample_prediction_mode if selection_enabled else None,
             "selection_aggregation_level": aggregation_level if selection_enabled else None,
             "selection_evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode) if selection_enabled else None,
@@ -952,6 +1271,27 @@ def main() -> None:
             "final_eval_subject_count": len(partition_plan["final_eval_subject_ids"]),
             "final_eval_sample_count": len(final_eval_examples),
             "final_eval_aggregation_level": aggregation_level,
+            "final_eval_components": [
+                {
+                    "name": f"{str(config['dataset']).lower()}_{partition_plan['final_eval_split_name']}",
+                    "dataset": str(config["dataset"]).lower(),
+                    "split_name": partition_plan["final_eval_split_name"],
+                    "subject_count": len(partition_plan["final_eval_subject_ids"]),
+                    "sample_count": len(final_eval_examples),
+                    "aggregation_level": aggregation_level,
+                }
+            ]
+            + [
+                {
+                    "name": f"{str(group['dataset']).lower()}_fold_holdout",
+                    "dataset": str(group["dataset"]).lower(),
+                    "split_name": group["split_name"],
+                    "subject_count": len(group["subject_ids"]),
+                    "sample_count": len(group["examples"]),
+                    "aggregation_level": resolve_aggregation_level(group["config"]),
+                }
+                for group in joint_final_eval_groups
+            ],
             "run_final_eval_in_train": (
                 bool(config["training"].get("run_final_eval_in_train", False))
                 and partition_plan["cv_protocol"] != CV_PROTOCOL_TRAIN_VAL
@@ -1039,27 +1379,63 @@ def main() -> None:
         if accelerator.is_main_process:
             unwrapped = accelerator.unwrap_model(model)
             if selection_enabled:
-                selection_eval_dir = ensure_dir(logs_dir / f"{partition_plan['selection_log_dir_name']}_epoch_{epoch}")
-                selection_loss = _compute_dataset_loss(unwrapped, selection_loss_loader)
-                LOGGER.info(
-                    "Selection evaluation split=%s | backend=%s | aggregation_level=%s | protocol=%s",
-                    partition_plan["selection_split_name"],
-                    sample_prediction_mode,
-                    aggregation_level,
-                    evaluation_protocol_name(sample_prediction_mode),
-                )
-                metrics = evaluate_examples(
-                    unwrapped,
-                    processor,
-                    selection_examples,
-                    config,
-                    selection_eval_dir,
-                    checkpoint_name=f"epoch_{epoch}",
-                    sample_prediction_mode=sample_prediction_mode,
-                )
-                headline_metrics = metrics["backend_results"][sample_prediction_mode]["headline_metrics"]
-                metric_value = float(headline_metrics["positive_f1"])
-                metric_values = _selection_metric_values(metric_value, headline_metrics, selection_loss)
+                component_headlines: list[tuple[str, dict[str, Any]]] = []
+                component_losses: dict[str, float] = {}
+                component_eval_dirs: dict[str, str] = {}
+                primary_headline_metrics: dict[str, Any] | None = None
+                primary_selection_loss: float | None = None
+                primary_eval_dir: Path | None = None
+                for component in selection_components:
+                    component_eval_dir = ensure_dir(logs_dir / f"{component['log_dir_prefix']}_epoch_{epoch}")
+                    component_loss = _compute_dataset_loss(unwrapped, component["loss_loader"])
+                    LOGGER.info(
+                        "Selection evaluation dataset=%s split=%s | backend=%s | aggregation_level=%s | protocol=%s",
+                        component["dataset"],
+                        component["split_name"],
+                        sample_prediction_mode,
+                        resolve_aggregation_level(component["config"]),
+                        evaluation_protocol_name(sample_prediction_mode),
+                    )
+                    metrics = evaluate_examples(
+                        unwrapped,
+                        processor,
+                        component["examples"],
+                        component["config"],
+                        component_eval_dir,
+                        checkpoint_name=f"epoch_{epoch}",
+                        sample_prediction_mode=sample_prediction_mode,
+                    )
+                    headline_metrics = metrics["backend_results"][sample_prediction_mode]["headline_metrics"]
+                    component_headlines.append((component["name"], headline_metrics))
+                    component_losses[f"{component['name']}_loss"] = float(component_loss)
+                    component_eval_dirs[component["name"]] = str(component_eval_dir)
+                    if component is selection_components[0]:
+                        primary_headline_metrics = headline_metrics
+                        primary_selection_loss = float(component_loss)
+                        primary_eval_dir = component_eval_dir
+                    LOGGER.info(
+                        "Selection component epoch=%s | dataset=%s split=%s aggregation_level=%s | loss=%.6f "
+                        "positive_f1=%.6f macro_f1=%.6f precision=%.6f recall=%.6f",
+                        epoch,
+                        component["dataset"],
+                        component["split_name"],
+                        resolve_aggregation_level(component["config"]),
+                        component_loss,
+                        float(headline_metrics["positive_f1"]),
+                        float(headline_metrics["macro_f1"]),
+                        float(headline_metrics["precision"]),
+                        float(headline_metrics["recall"]),
+                    )
+                if primary_headline_metrics is None or primary_selection_loss is None or primary_eval_dir is None:
+                    raise RuntimeError("Selection was enabled but no selection components were evaluated.")
+                metric_value = float(primary_headline_metrics["positive_f1"])
+                metric_values = _selection_metric_values(metric_value, primary_headline_metrics, primary_selection_loss)
+                if len(component_headlines) > 1:
+                    metric_values.update(_joint_selection_values(component_headlines))
+                    metric_values.update(component_losses)
+                selection_loss = primary_selection_loss
+                selection_eval_dir = primary_eval_dir
+                headline_metrics = primary_headline_metrics
                 selection_metric_name = selection_metric_cfg["metric"]
                 if selection_metric_name not in metric_values:
                     raise ValueError(
@@ -1079,17 +1455,22 @@ def main() -> None:
                     "inner_val_prediction_backend": sample_prediction_mode,
                     "inner_val_aggregation_level": aggregation_level,
                     "inner_val_evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
+                    "selection_component_eval_dirs": component_eval_dirs,
                     **metric_values,
                 }
                 history.append(history_row)
                 LOGGER.info(
-                    "Selection epoch=%s | split=%s | aggregation_level=%s | loss=%.6f ACC=%.6f F1=%.6f Precision=%.6f Recall=%.6f",
+                    "Selection epoch=%s | selected_metric=%s value=%.6f | primary_split=%s | aggregation_level=%s | "
+                    "loss=%.6f ACC=%.6f positive_f1=%.6f macro_f1=%.6f Precision=%.6f Recall=%.6f",
                     epoch,
+                    selection_metric_name,
+                    selection_value,
                     partition_plan["selection_split_name"],
                     aggregation_level,
                     selection_loss,
                     float(headline_metrics["accuracy"]),
                     float(headline_metrics["positive_f1"]),
+                    float(headline_metrics["macro_f1"]),
                     float(headline_metrics["precision"]),
                     float(headline_metrics["recall"]),
                 )
@@ -1115,6 +1496,8 @@ def main() -> None:
                                 "selection_metric": selection_metric_name,
                                 "selection_metric_mode": selection_metric_cfg["mode"],
                                 "selection_metric_value": selection_value,
+                                "component_selection_metrics": metric_values,
+                                "component_eval_dirs": component_eval_dirs,
                                 "prediction_backend": sample_prediction_mode,
                                 "aggregation_level": aggregation_level,
                                 "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
@@ -1200,6 +1583,28 @@ def main() -> None:
         unwrapped = accelerator.unwrap_model(model)
         completed_epochs = len(history)
         save_json(history, logs_dir / "training_history.json")
+        selected_history_row = next(
+            (row for row in history if int(row.get("epoch", -1)) == int(best_epoch)),
+            None,
+        )
+        if selection_enabled:
+            save_json(
+                {
+                    "selected_epoch": int(best_epoch),
+                    "selection_metric": selection_metric_cfg["metric"],
+                    "selection_metric_mode": selection_metric_cfg["mode"],
+                    "selection_metric_value": None if best_metric is None else float(best_metric),
+                    "component_selection_metrics": selected_history_row,
+                },
+                logs_dir / "selected_checkpoint_selection_metrics.json",
+            )
+            LOGGER.info(
+                "Selected checkpoint epoch=%s metric=%s value=%.6f components=%s",
+                best_epoch,
+                selection_metric_cfg["metric"],
+                float(best_metric),
+                selected_history_row,
+            )
         peak_gpu_memory = _log_peak_gpu_memory(LOGGER, "final")
         if peak_gpu_memory is not None:
             save_json(peak_gpu_memory, logs_dir / "peak_gpu_memory.json")
@@ -1251,6 +1656,8 @@ def main() -> None:
             )
             if not selection_enabled or best_epoch == completed_epochs:
                 best_metrics = last_metrics
+                selected_best_model = unwrapped
+                selected_best_processor = processor
                 if not (eval_dir / "best_checkpoint").exists():
                     shutil.copytree(eval_dir / "last_checkpoint", eval_dir / "best_checkpoint")
             else:
@@ -1271,6 +1678,8 @@ def main() -> None:
                     checkpoint_name="best_checkpoint",
                     sample_prediction_mode=sample_prediction_mode,
                 )
+                selected_best_model = best_model
+                selected_best_processor = best_processor
 
             save_json(
                 {
@@ -1289,6 +1698,36 @@ def main() -> None:
                 },
                 eval_dir / "best_vs_last_checkpoint_metrics.json",
             )
+            joint_final_eval_payload: dict[str, Any] = {}
+            for group in joint_final_eval_groups:
+                group_eval_dir = eval_dir / "best_checkpoint" / f"{str(group['dataset']).lower()}_fold_{group['fold']}_holdout"
+                LOGGER.info(
+                    "Starting joint final held-out evaluation dataset=%s fold=%s | aggregation_level=%s | samples=%s subjects=%s",
+                    group["dataset"],
+                    group["fold"],
+                    resolve_aggregation_level(group["config"]),
+                    len(group["examples"]),
+                    len(group["subject_ids"]),
+                )
+                group_metrics = evaluate_examples(
+                    selected_best_model,
+                    selected_best_processor,
+                    group["examples"],
+                    group["config"],
+                    group_eval_dir,
+                    checkpoint_name="best_checkpoint",
+                    sample_prediction_mode=sample_prediction_mode,
+                )
+                joint_final_eval_payload[f"{str(group['dataset']).lower()}_fold_{group['fold']}_holdout"] = {
+                    "dataset": group["dataset"],
+                    "fold": int(group["fold"]),
+                    "split_name": group["split_name"],
+                    "aggregation_level": resolve_aggregation_level(group["config"]),
+                    "active_backend_metrics": group_metrics["backend_results"][sample_prediction_mode]["headline_metrics"],
+                    "eval_dir": str(group_eval_dir),
+                }
+            if joint_final_eval_payload:
+                save_json(joint_final_eval_payload, eval_dir / "joint_final_eval_metrics.json")
         else:
             LOGGER.info(
                 "Skipping final held-out evaluation inside training to avoid multi-GPU NCCL timeout. "
