@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,7 @@ from src.model.runtime import (
     load_processor,
     resolve_processor_sampling_rate,
     prepare_model_for_evaluation,
+    restore_model_for_training,
 )
 from src.model.lora_common import resolve_lora_layer_selection
 from src.utils import (
@@ -220,8 +222,8 @@ def score_candidate_label(
     full_inputs = _processor_inputs(processor, example, full_text, device, silence_audio)
     prompt_len = int(prompt_inputs["input_ids"].shape[1])
     target_ids = full_inputs["input_ids"][0, prompt_len:]
-    with torch.no_grad():
-        outputs = model(**full_inputs)
+    with torch.inference_mode():
+        outputs = model(**full_inputs, use_cache=False)
         logits = outputs.logits[0]
         selected_logits = logits[prompt_len - 1 : full_inputs["input_ids"].shape[1] - 1]
         log_probs = torch.log_softmax(selected_logits, dim=-1)
@@ -244,7 +246,7 @@ def generate_label_text(
         int(generation_config.max_new_tokens),
         _recommended_generation_max_new_tokens(processor, config),
     )
-    with torch.no_grad():
+    with torch.inference_mode():
         generated = model.generate(
             **inputs,
             generation_config=generation_config,
@@ -332,8 +334,8 @@ def _predict_sample_original_teacher_forced(
     full_inputs = _processor_inputs(processor, example, full_text, device, silence_audio)
     prompt_len = int(prompt_inputs["input_ids"].shape[1])
     target_ids = full_inputs["input_ids"][0, prompt_len:]
-    with torch.no_grad():
-        outputs = model(**full_inputs)
+    with torch.inference_mode():
+        outputs = model(**full_inputs, use_cache=False)
         logits = outputs.logits[0]
         selected_logits = logits[prompt_len - 1 : full_inputs["input_ids"].shape[1] - 1]
         predicted_token_ids = torch.argmax(selected_logits, dim=-1)
@@ -427,7 +429,23 @@ def _invalid_sample_rows(mode: str, sample_rows: list[dict[str, Any]]) -> list[d
     return []
 
 
-def evaluate_examples(
+@contextmanager
+def _deterministic_evaluation_state(model, config: dict[str, Any]):
+    """Enter eval mode and restore the caller's training state on every exit."""
+    was_training = bool(model.training)
+    try:
+        model.eval()
+        prepare_model_for_evaluation(model, config)
+        yield
+    finally:
+        try:
+            if was_training:
+                restore_model_for_training(model, config)
+        finally:
+            model.train(was_training)
+
+
+def _evaluate_examples_in_current_state(
     model,
     processor,
     examples: list[dict[str, Any]],
@@ -440,7 +458,6 @@ def evaluate_examples(
     aggregation_level = resolve_aggregation_level(config)
     protocol_name = evaluation_protocol_name(mode)
     output_dir = ensure_dir(output_dir)
-    prepare_model_for_evaluation(model, config)
     device = next(model.parameters()).device
     silence_audio = bool(config["data"].get("silence_audio", False))
     sample_rows: list[dict[str, Any]] = []
@@ -586,6 +603,64 @@ def evaluate_examples(
     }
 
 
+def evaluate_examples(
+    model,
+    processor,
+    examples: list[dict[str, Any]],
+    config: dict[str, Any],
+    output_dir: str | Path,
+    checkpoint_name: str,
+    sample_prediction_mode: str | None = None,
+) -> dict[str, Any]:
+    with _deterministic_evaluation_state(model, config):
+        return _evaluate_examples_in_current_state(
+            model=model,
+            processor=processor,
+            examples=examples,
+            config=config,
+            output_dir=output_dir,
+            checkpoint_name=checkpoint_name,
+            sample_prediction_mode=sample_prediction_mode,
+        )
+
+
+def _model_dtype_metadata(model) -> dict[str, Any]:
+    parameter_dtypes = sorted({str(parameter.dtype).removeprefix("torch.") for parameter in model.parameters()})
+    try:
+        primary_dtype = str(next(model.parameters()).dtype).removeprefix("torch.")
+    except StopIteration:
+        primary_dtype = "unknown"
+    return {
+        "model_dtype": primary_dtype,
+        "model_parameter_dtypes": parameter_dtypes,
+    }
+
+
+def _standalone_runtime_summary(model, device: torch.device) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "device": str(device),
+        **_model_dtype_metadata(model),
+        "cuda_max_memory_allocated_bytes": None,
+        "cuda_max_memory_reserved_bytes": None,
+        "cuda_memory_allocated_bytes": None,
+        "cuda_memory_reserved_bytes": None,
+        "cuda_total_memory_bytes": None,
+    }
+    if device.type == "cuda":
+        properties = torch.cuda.get_device_properties(device)
+        summary.update(
+            {
+                "cuda_device_name": properties.name,
+                "cuda_max_memory_allocated_bytes": int(torch.cuda.max_memory_allocated(device)),
+                "cuda_max_memory_reserved_bytes": int(torch.cuda.max_memory_reserved(device)),
+                "cuda_memory_allocated_bytes": int(torch.cuda.memory_allocated(device)),
+                "cuda_memory_reserved_bytes": int(torch.cuda.memory_reserved(device)),
+                "cuda_total_memory_bytes": int(properties.total_memory),
+            }
+        )
+    return summary
+
+
 def _load_metadata_or_build(config_path: str | Path, config: dict[str, Any], config_overrides: list[str] | None = None) -> dict[str, Any]:
     metadata_path = resolve_project_path(Path(config["output_dirs"]["split_dir"]) / f"{config['dataset']}_manifest_metadata.json")
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
@@ -627,6 +702,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_dir", default=None)
     parser.add_argument("--sample_prediction_mode", default=None)
     parser.add_argument(
+        "--max_eval_samples",
+        type=int,
+        default=None,
+        help=(
+            "Deterministically evaluate only the first N built examples as a bounded preflight. "
+            "Omit this option for reportable full-split metrics."
+        ),
+    )
+    parser.add_argument(
         "--set",
         dest="config_overrides",
         action="append",
@@ -664,6 +748,17 @@ def main() -> None:
     final_eval_rows = filter_rows_by_subjects(manifest_rows, final_eval_subject_ids)
     evaluation_role = "fold_validation" if cv_protocol == CV_PROTOCOL_TRAIN_VAL else "final_eval"
     examples = build_examples(final_eval_rows, config, partition_name=evaluation_role, truncation_log_path=None)
+    available_eval_samples = len(examples)
+    if args.max_eval_samples is not None:
+        if args.max_eval_samples < 1:
+            raise ValueError("--max_eval_samples must be at least 1 when provided.")
+        examples = examples[: args.max_eval_samples]
+        LOGGER.warning(
+            "Bounded standalone preflight active: evaluating first %s of %s deterministic examples; "
+            "these partial-split metrics are not reportable full-split metrics.",
+            len(examples),
+            available_eval_samples,
+        )
 
     model_name_or_path = resolve_model_name_or_path(args.model_name_or_path, config)
     processor = load_processor(args.checkpoint_dir, config)
@@ -671,6 +766,9 @@ def main() -> None:
     lora_layer_selection = resolve_lora_layer_selection(config, model)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
+    dtype_metadata = _model_dtype_metadata(model)
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
     output_dir = args.output_dir or (Path(args.checkpoint_dir) / "standalone_eval")
     save_yaml(
         {
@@ -686,19 +784,60 @@ def main() -> None:
             "lora_resolution": lora_layer_selection,
             "resolved_model_name_or_path": model_name_or_path,
             "checkpoint_dir": str(Path(args.checkpoint_dir)),
+            "max_eval_samples": args.max_eval_samples,
+            "available_eval_samples": available_eval_samples,
+            "selected_eval_samples": len(examples),
+            "bounded_preflight": args.max_eval_samples is not None,
+            **dtype_metadata,
+            "runtime_summary_path": str(Path(output_dir) / "standalone_runtime_summary.json"),
             "config": config,
         },
         Path(output_dir) / "eval_config.yaml",
     )
-    metrics = evaluate_examples(
-        model,
-        processor,
-        examples,
-        config,
-        output_dir,
-        checkpoint_name=Path(args.checkpoint_dir).name,
-        sample_prediction_mode=sample_prediction_mode,
-    )
+    evaluation_succeeded = False
+    try:
+        metrics = evaluate_examples(
+            model,
+            processor,
+            examples,
+            config,
+            output_dir,
+            checkpoint_name=Path(args.checkpoint_dir).name,
+            sample_prediction_mode=sample_prediction_mode,
+        )
+        evaluation_succeeded = True
+    finally:
+        cuda_stats_error = None
+        if device.type == "cuda":
+            try:
+                torch.cuda.synchronize(device)
+            except Exception as exc:
+                cuda_stats_error = f"{type(exc).__name__}: {exc}"
+                LOGGER.warning("CUDA synchronization failed while recording evaluation peaks: %s", cuda_stats_error)
+        try:
+            runtime_measurements = _standalone_runtime_summary(model, device)
+        except Exception as exc:
+            cuda_stats_error = cuda_stats_error or f"{type(exc).__name__}: {exc}"
+            LOGGER.warning("CUDA memory-stat collection failed: %s", cuda_stats_error)
+            runtime_measurements = {
+                "device": str(device),
+                **_model_dtype_metadata(model),
+                "cuda_max_memory_allocated_bytes": None,
+                "cuda_max_memory_reserved_bytes": None,
+                "cuda_memory_allocated_bytes": None,
+                "cuda_memory_reserved_bytes": None,
+                "cuda_total_memory_bytes": None,
+            }
+        runtime_summary = {
+            **runtime_measurements,
+            "evaluation_succeeded": evaluation_succeeded,
+            "bounded_preflight": args.max_eval_samples is not None,
+            "available_eval_samples": available_eval_samples,
+            "selected_eval_samples": len(examples),
+            "cuda_stats_error": cuda_stats_error,
+        }
+        save_json(runtime_summary, Path(output_dir) / "standalone_runtime_summary.json")
+        LOGGER.info("Standalone runtime summary: %s", runtime_summary)
     active_backend = metrics["active_backend"]
     LOGGER.info("Standalone evaluation complete: %s", metrics["backend_results"][active_backend]["headline_metrics"])
 

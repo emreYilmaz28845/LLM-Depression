@@ -105,7 +105,16 @@ def load_model_for_inference(
     adapter_path: str | Path | None = None,
     config: dict[str, Any] | None = None,
 ):
-    model = AutoModelForCausalLM.from_pretrained(model_name_or_path)
+    training_cfg = (config or {}).get("training", {})
+    torch_dtype = (
+        torch.bfloat16
+        if bool(training_cfg.get("bf16", False)) and torch.cuda.is_available()
+        else None
+    )
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name_or_path,
+        torch_dtype=torch_dtype,
+    )
     if adapter_path:
         model = PeftModel.from_pretrained(model, adapter_path)
     if hasattr(model, "gradient_checkpointing_disable"):

@@ -335,7 +335,16 @@ def load_model_for_inference(
     adapter_path: str | Path | None = None,
     config: dict[str, Any] | None = None,
 ):
-    model = Qwen2AudioForConditionalGeneration.from_pretrained(model_name_or_path)
+    training_cfg = (config or {}).get("training", {})
+    torch_dtype = (
+        torch.bfloat16
+        if bool(training_cfg.get("bf16", False)) and torch.cuda.is_available()
+        else None
+    )
+    model = Qwen2AudioForConditionalGeneration.from_pretrained(
+        model_name_or_path,
+        torch_dtype=torch_dtype,
+    )
     checkpoint_audio_cfg = None
     if adapter_path:
         checkpoint_audio_cfg = load_additional_audio_modules(model, adapter_path)
