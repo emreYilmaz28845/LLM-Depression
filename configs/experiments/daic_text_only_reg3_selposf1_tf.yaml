@@ -73,7 +73,7 @@ training:
   selection_metric: inner_val_positive_f1
   selection_metric_mode: max
   early_stopping:
-    enabled: true
+    enabled: false
     metric: inner_val_positive_f1
     mode: max
     patience: 2
