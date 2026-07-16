@@ -74,6 +74,70 @@ from src.utils import (
 LOGGER = get_logger(__name__)
 
 
+def _load_best_validation_result(checkpoint_dir: str | Path) -> dict[str, Any] | None:
+    """Load the validation metrics that selected ``checkpoint_dir``.
+
+    Training stores these metrics at the fold level rather than inside the
+    adapter directory. Evaluation must remain usable for external/legacy
+    checkpoints, so missing or incomplete selection metadata is non-fatal.
+    """
+    checkpoint_path = Path(checkpoint_dir)
+    metadata_path = checkpoint_path.parent / "logs" / "selected_checkpoint_selection_metrics.json"
+    if not metadata_path.exists():
+        LOGGER.warning(
+            "Best-validation metadata not found for checkpoint=%s (expected %s).",
+            checkpoint_path,
+            metadata_path,
+        )
+        return None
+
+    payload = read_json(metadata_path)
+    component_metrics = payload.get("component_selection_metrics") or {}
+    if not isinstance(component_metrics, dict):
+        component_metrics = {}
+
+    def metric(name: str) -> float | None:
+        value = component_metrics.get(f"inner_val_{name}")
+        if value is None:
+            value = component_metrics.get(f"selection_{name}")
+        return None if value is None else float(value)
+
+    return {
+        "source_path": str(metadata_path),
+        "selected_epoch": int(payload.get("selected_epoch", component_metrics.get("epoch", -1))),
+        "selection_split_name": component_metrics.get("selection_split_name", "validation"),
+        "selection_metric": payload.get("selection_metric"),
+        "selection_metric_mode": payload.get("selection_metric_mode"),
+        "selection_metric_value": payload.get("selection_metric_value"),
+        "prediction_backend": component_metrics.get("selection_prediction_backend"),
+        "aggregation_level": component_metrics.get("selection_aggregation_level"),
+        "loss": metric("loss"),
+        "accuracy": metric("accuracy"),
+        "positive_f1": metric("positive_f1"),
+        "macro_f1": metric("macro_f1"),
+        "precision": metric("precision"),
+        "recall": metric("recall"),
+    }
+
+
+def _log_metric_summary(label: str, summary: dict[str, Any]) -> None:
+    LOGGER.info(
+        "%s | split=%s epoch=%s backend=%s aggregation=%s | "
+        "ACC=%s positive_f1=%s macro_f1=%s Precision=%s Recall=%s loss=%s",
+        label,
+        summary.get("split_name", summary.get("selection_split_name", "unknown")),
+        summary.get("selected_epoch", "n/a"),
+        summary.get("prediction_backend", "unknown"),
+        summary.get("aggregation_level", "unknown"),
+        "n/a" if summary.get("accuracy") is None else f"{float(summary['accuracy']):.6f}",
+        "n/a" if summary.get("positive_f1") is None else f"{float(summary['positive_f1']):.6f}",
+        "n/a" if summary.get("macro_f1") is None else f"{float(summary['macro_f1']):.6f}",
+        "n/a" if summary.get("precision") is None else f"{float(summary['precision']):.6f}",
+        "n/a" if summary.get("recall") is None else f"{float(summary['recall']):.6f}",
+        "n/a" if summary.get("loss") is None else f"{float(summary['loss']):.6f}",
+    )
+
+
 def _recommended_generation_max_new_tokens(processor, config: dict[str, Any]) -> int:
     labels_cfg = resolve_label_config(config)
     label_texts = (
@@ -700,7 +764,32 @@ def main() -> None:
         sample_prediction_mode=sample_prediction_mode,
     )
     active_backend = metrics["active_backend"]
-    LOGGER.info("Standalone evaluation complete: %s", metrics["backend_results"][active_backend]["headline_metrics"])
+    headline_metrics = metrics["backend_results"][active_backend]["headline_metrics"]
+    final_result = {
+        "split_name": str(config["split"]["final_eval_partition"]),
+        "prediction_backend": active_backend,
+        "aggregation_level": aggregation_level,
+        "loss": None,
+        "accuracy": headline_metrics.get("accuracy"),
+        "positive_f1": headline_metrics.get("positive_f1"),
+        "macro_f1": headline_metrics.get("macro_f1"),
+        "precision": headline_metrics.get("precision"),
+        "recall": headline_metrics.get("recall"),
+        "headline_metrics": headline_metrics,
+    }
+    best_validation_result = _load_best_validation_result(args.checkpoint_dir)
+
+    LOGGER.info("Standalone evaluation complete: %s", headline_metrics)
+    _log_metric_summary("FINAL EVALUATION RESULT", final_result)
+    if best_validation_result is not None:
+        _log_metric_summary("BEST VALIDATION RESULT (checkpoint-selection score)", best_validation_result)
+    save_json(
+        {
+            "final_evaluation": final_result,
+            "best_validation": best_validation_result,
+        },
+        Path(output_dir) / "final_and_best_validation_metrics.json",
+    )
 
 
 if __name__ == "__main__":
