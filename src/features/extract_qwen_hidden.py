@@ -54,13 +54,17 @@ def _load_saved_run(checkpoint_dir: Path) -> tuple[dict[str, Any], dict[str, Any
 
 
 def _git_commit() -> str:
+    # Cluster copies are synchronized without .git; an old checkout may still
+    # leave a stale .git directory behind, so the captured sync provenance wins.
+    provenance = PROJECT_ROOT / ".provenance" / "git_commit.txt"
+    if provenance.exists():
+        return provenance.read_text(encoding="utf-8").strip()
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, text=True, stderr=subprocess.DEVNULL
         ).strip()
     except Exception:
-        provenance = PROJECT_ROOT / ".provenance" / "git_commit.txt"
-        return provenance.read_text(encoding="utf-8").strip() if provenance.exists() else "unknown"
+        return "unknown"
 
 
 def _package_version(name: str) -> str | None:
