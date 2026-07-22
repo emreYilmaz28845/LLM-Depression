@@ -28,6 +28,7 @@ CACHE_DIR="${CACHE_DIR:?Set CACHE_DIR}"
 CLASSIFIER_DIR="${CLASSIFIER_DIR:-${CACHE_DIR/hidden_features/hidden_classifiers}}"
 MODEL_PATH="${MODEL_PATH:-}"
 MAX_EXAMPLES="${MAX_EXAMPLES:-}"
+SKIP_CLASSIFIERS="${SKIP_CLASSIFIERS:-0}"
 QWEN_HIDDEN_DEPS="${QWEN_HIDDEN_DEPS:-$PROJECT_ROOT/.deps/qwen_hidden}"
 export PYTHONPATH="$QWEN_HIDDEN_DEPS:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
@@ -45,6 +46,10 @@ if [ -n "$MAX_EXAMPLES" ]; then CMD+=(--max-examples "$MAX_EXAMPLES"); fi
 printf 'Extraction command: '; printf '%q ' "${CMD[@]}"; printf '\n'
 "${CMD[@]}"
 
-python "$PROJECT_ROOT/baselines/qwen_hidden_classifier.py" \
-  --cache-dir "$CACHE_DIR" \
-  --output-dir "$CLASSIFIER_DIR"
+if [ "$SKIP_CLASSIFIERS" = "1" ]; then
+  echo "Skipping classifiers for extraction-only smoke test."
+else
+  python "$PROJECT_ROOT/baselines/qwen_hidden_classifier.py" \
+    --cache-dir "$CACHE_DIR" \
+    --output-dir "$CLASSIFIER_DIR"
+fi
