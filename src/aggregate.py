@@ -313,6 +313,64 @@ def aggregate_original_teacher_forced_predictions(sample_rows: list[dict[str, An
     )
 
 
+def aggregate_binary_classifier_predictions(
+    sample_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Apply the baseline majority vote and score-margin tie rule to classifiers."""
+    normalized = []
+    for row in sample_rows:
+        probability = float(row["probability"])
+        normalized.append(
+            {
+                **row,
+                "classifier_prediction": int(row["predicted_class"]),
+                "dep_score": probability,
+                "non_score": 1.0 - probability,
+            }
+        )
+    subject_rows, metrics = _aggregate_majority_vote_predictions(
+        normalized,
+        prediction_field="classifier_prediction",
+        # Reuse the teacher-forced majority-vote path because its tie rule is
+        # exactly the required summed positive-versus-negative score margin.
+        backend_name=PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
+        invalid_metric_name="invalid_classifier_predictions",
+        valid_count_field="classifier_num_valid_predictions",
+        tie_break_positive_score_field="dep_score",
+        tie_break_negative_score_field="non_score",
+    )
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in normalized:
+        grouped[str(row["subject_id"])].append(row)
+    for subject_row in subject_rows:
+        rows = grouped[str(subject_row["subject_id"])]
+        probabilities = [float(row["probability"]) for row in rows]
+        subject_row.update(
+            {
+                "prediction_backend": "qwen_hidden_classifier",
+                "evaluation_protocol_name": "qwen_hidden_majority_vote",
+                "sample_count": len(rows),
+                "sample_predictions": [int(row["predicted_class"]) for row in rows],
+                "sample_probabilities": probabilities,
+                "aggregated_prediction": int(subject_row["prediction"]),
+                "aggregation_method": "majority_vote_probability_margin_tie_break",
+                "probability": float(sum(probabilities) / len(probabilities)),
+            }
+        )
+    metrics["prediction_backend"] = "qwen_hidden_classifier"
+    metrics["evaluation_protocol_name"] = "qwen_hidden_majority_vote"
+    metrics["auroc"] = binary_auroc(
+        [int(row["label"]) for row in subject_rows],
+        [float(row["probability"]) for row in subject_rows],
+    )
+    metrics["predicted_positive_rate"] = (
+        sum(int(row["prediction"]) == 1 for row in subject_rows) / len(subject_rows)
+        if subject_rows
+        else 0.0
+    )
+    return subject_rows, metrics
+
+
 def aggregate_likelihood_predictions_segment_level(sample_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     segment_rows = [
         {

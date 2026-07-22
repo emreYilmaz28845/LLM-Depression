@@ -2,6 +2,7 @@ outputs/
 __pycache__/
 *.pyc
 .venv/
+.deps/
 .env
 logs/
 output_model

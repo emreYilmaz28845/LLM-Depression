@@ -1,0 +1,36 @@
+# Fold-specific best-model adapters selected for the predeclared hidden-state matrix.
+# Paths are relative to the project root and are resolved on the cluster after rsync.
+experiments:
+  - dataset: daic
+    modality: audio_text
+    folds: [0]
+    run_dir: output_model/audio_text/daic/daic_posf1_tf_daic_audio_text_selmacrof1_tf
+  - dataset: daic
+    modality: audio_only
+    folds: [0]
+    run_dir: output_model/subject_audio/daic/daic_posf1_tf_daic_audio_only_selmacrof1_tf
+  - dataset: daic
+    modality: text_only
+    folds: [0]
+    run_dir: output_model/text_only/daic/daic_posf1_tf_daic_text_only_selmacrof1_tf
+  - dataset: cmdc
+    modality: audio_text
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/audio_text/cmdc/cmdc_posf1_tf_cmdc_audio_text_selmacrof1_tf
+  - dataset: cmdc
+    modality: audio_only
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/audio_only/cmdc/cmdc_posf1_tf_cmdc_audio_only_selmacrof1_tf
+  - dataset: cmdc
+    modality: text_only
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/text_only/cmdc/cmdc_posf1_tf_cmdc_text_only_selmacrof1_tf
+
+variants:
+  - logreg_raw
+  - xgb_raw
+  - xgb_pca32
+  - logreg_pca32
+  - xgb_pca64
+  - majority_class
+  - xgb_raw_shuffled_labels
