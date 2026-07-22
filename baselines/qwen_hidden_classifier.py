@@ -117,6 +117,26 @@ def _metrics_with_negative_f1(metrics: dict[str, Any]) -> dict[str, Any]:
     return output
 
 
+def shuffled_subject_labels(rows: list[dict[str, Any]], seed: int) -> np.ndarray:
+    """Permute labels between subjects while preserving response groups."""
+    labels_by_subject: dict[str, int] = {}
+    for row in rows:
+        subject_id = str(row["subject_id"])
+        label = int(row["label"])
+        if subject_id in labels_by_subject and labels_by_subject[subject_id] != label:
+            raise ValueError(f"Subject {subject_id} has inconsistent training labels.")
+        labels_by_subject[subject_id] = label
+    subject_ids = sorted(labels_by_subject)
+    shuffled = np.random.default_rng(seed).permutation(
+        [labels_by_subject[subject_id] for subject_id in subject_ids]
+    )
+    shuffled_by_subject = dict(zip(subject_ids, shuffled.tolist()))
+    return np.asarray(
+        [shuffled_by_subject[str(row["subject_id"])] for row in rows],
+        dtype=np.int64,
+    )
+
+
 def run_variant(
     cache_dir: Path,
     output_root: Path,
@@ -155,7 +175,7 @@ def run_variant(
                 )
             effective_components = requested_components
         if variant == "xgb_raw_shuffled_labels":
-            fit_y = np.random.default_rng(seed).permutation(fit_y)
+            fit_y = shuffled_subject_labels(train_rows, seed)
         fitted.fit(train_x, fit_y)
         probabilities = np.asarray(fitted.predict_proba(test_x)[:, 1], dtype=np.float64)
         predictions = (probabilities >= 0.5).astype(np.int64)
@@ -204,6 +224,7 @@ def run_variant(
         "training_subject_ids": sorted(train_subjects),
         "heldout_subject_ids": sorted(test_subjects),
         "shuffled_training_labels": variant == "xgb_raw_shuffled_labels",
+        "label_shuffle_unit": "subject" if variant == "xgb_raw_shuffled_labels" else None,
         "extraction_metadata": str(cache_dir / "extraction_metadata.json"),
     }
     write_jsonl(sample_rows, variant_dir / "predictions_sample_level.jsonl")

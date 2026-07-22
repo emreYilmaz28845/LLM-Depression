@@ -101,6 +101,26 @@ class AggregationTests(unittest.TestCase):
 
 
 class ClassifierTests(unittest.TestCase):
+    def test_shuffled_labels_preserve_subject_groups(self):
+        from baselines.qwen_hidden_classifier import shuffled_subject_labels
+
+        rows = [
+            {"subject_id": "a", "label": 0},
+            {"subject_id": "a", "label": 0},
+            {"subject_id": "b", "label": 1},
+            {"subject_id": "b", "label": 1},
+            {"subject_id": "c", "label": 0},
+            {"subject_id": "c", "label": 0},
+            {"subject_id": "d", "label": 1},
+            {"subject_id": "d", "label": 1},
+        ]
+        shuffled = shuffled_subject_labels(rows, seed=1337)
+        self.assertEqual(shuffled[0], shuffled[1])
+        self.assertEqual(shuffled[2], shuffled[3])
+        self.assertEqual(shuffled[4], shuffled[5])
+        self.assertEqual(shuffled[6], shuffled[7])
+        self.assertEqual(sorted(shuffled[::2].tolist()), [0, 0, 1, 1])
+
     def test_pca_artifact_records_only_training_rows(self):
         from baselines.qwen_hidden_classifier import run_variant
         from src.utils import save_json, write_jsonl
