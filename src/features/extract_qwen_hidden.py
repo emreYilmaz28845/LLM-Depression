@@ -22,7 +22,7 @@ from src.model.runtime import load_model_for_inference, load_processor, resolve_
 from src.utils import read_json, save_json, sha256_file, sha256_jsonl_rows, sha256_text, write_jsonl
 
 
-EXPECTED_HIDDEN_SIZE = 3584
+SUPPORTED_HIDDEN_SIZES = {3584, 4096}
 POOLING_NAME = "last_valid_prompt_token"
 
 
@@ -74,6 +74,27 @@ def _package_version(name: str) -> str | None:
         return version(name)
     except Exception:
         return None
+
+
+def _decoder_hidden_size(model) -> int:
+    configs = [getattr(model, "config", None)]
+    base_model = getattr(model, "base_model", None)
+    if base_model is not None:
+        configs.append(getattr(base_model, "config", None))
+        configs.append(getattr(getattr(base_model, "model", None), "config", None))
+    for config in configs:
+        if config is None:
+            continue
+        text_config = getattr(config, "text_config", None)
+        hidden_size = getattr(text_config, "hidden_size", None) or getattr(config, "hidden_size", None)
+        if hidden_size is not None:
+            hidden_size = int(hidden_size)
+            if hidden_size not in SUPPORTED_HIDDEN_SIZES:
+                raise ValueError(
+                    f"Unexpected decoder hidden size {hidden_size}; expected one of {sorted(SUPPORTED_HIDDEN_SIZES)}."
+                )
+            return hidden_size
+    raise ValueError("Could not resolve the decoder hidden size from the loaded model configuration.")
 
 
 def _partition_examples(
@@ -149,6 +170,7 @@ def _extract_partition(
     output_dir: Path,
     partition: str,
     max_examples: int | None,
+    expected_hidden_size: int,
 ) -> dict[str, Any]:
     device = next(model.parameters()).device
     sampling_rate = resolve_processor_sampling_rate(processor)
@@ -180,8 +202,8 @@ def _extract_partition(
         output_mask = getattr(outputs, "attention_mask", None)
         mask, mask_source = aligned_attention_mask(hidden, model_inputs["attention_mask"], output_mask)
         vector = last_valid_token(hidden, mask).cpu().numpy()[0].astype(np.float32, copy=False)
-        if vector.shape != (EXPECTED_HIDDEN_SIZE,):
-            raise ValueError(f"Expected {EXPECTED_HIDDEN_SIZE} features, got {vector.shape}.")
+        if vector.shape != (expected_hidden_size,):
+            raise ValueError(f"Expected {expected_hidden_size} features, got {vector.shape}.")
         if not bool(np.isfinite(vector).all()):
             raise ValueError(f"Non-finite vector for sample {metadata['sample_id']}.")
         if index == 1:
@@ -221,7 +243,7 @@ def _extract_partition(
             "prompt_sha256": sha256_text(prompt_text),
             "hidden_layer": "final",
             "pooling": POOLING_NAME,
-            "vector_dimension": EXPECTED_HIDDEN_SIZE,
+            "vector_dimension": expected_hidden_size,
             "vector_dtype": "float32",
             "mask_source": mask_source,
             "checkpoint": str(checkpoint_dir),
@@ -231,7 +253,11 @@ def _extract_partition(
         mask_sources[mask_source] = mask_sources.get(mask_source, 0) + 1
         if index % 25 == 0 or index == len(selected):
             print(f"{partition}: extracted {index}/{len(selected)}", flush=True)
-    matrix = np.stack(vectors).astype(np.float32, copy=False) if vectors else np.empty((0, EXPECTED_HIDDEN_SIZE), np.float32)
+    matrix = (
+        np.stack(vectors).astype(np.float32, copy=False)
+        if vectors
+        else np.empty((0, expected_hidden_size), np.float32)
+    )
     np.savez_compressed(output_dir / f"{partition}.npz", vectors=matrix)
     write_jsonl(rows, output_dir / f"{partition}_rows.jsonl")
     return {
@@ -280,6 +306,7 @@ def main() -> None:
     dtype = torch.bfloat16 if device.type == "cuda" and bool(config.get("training", {}).get("bf16", False)) else None
     model.to(device=device, dtype=dtype)
     model.eval()
+    expected_hidden_size = _decoder_hidden_size(model)
     partition_summaries = {}
     for partition in ("outer_train", "final_eval"):
         partition_summaries[partition] = _extract_partition(
@@ -291,6 +318,7 @@ def main() -> None:
             output_dir=output_dir,
             partition=partition,
             max_examples=args.max_examples,
+            expected_hidden_size=expected_hidden_size,
         )
     metadata = {
         "dataset": config["dataset"],
@@ -312,7 +340,7 @@ def main() -> None:
         "manifest_file_sha256": sha256_file(manifest_path),
         "hidden_layer": "final",
         "pooling": POOLING_NAME,
-        "vector_dimension": EXPECTED_HIDDEN_SIZE,
+        "vector_dimension": expected_hidden_size,
         "vector_dtype": "float32",
         "gold_label_protection": {
             "input_field": "prompt_text",

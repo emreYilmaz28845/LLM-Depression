@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import torch
@@ -10,6 +11,7 @@ import torch
 from src.aggregate import aggregate_binary_classifier_predictions, aggregate_original_teacher_forced_predictions
 from src.features.pooling import aligned_attention_mask, last_valid_token
 from src.features.qwen_hidden_collator import PromptOnlyExtractionCollator
+from src.features.extract_qwen_hidden import _decoder_hidden_size
 
 
 class _FakeFeatureExtractor:
@@ -28,6 +30,15 @@ class _FakeProcessor:
 
 
 class PoolingTests(unittest.TestCase):
+    def test_backend_specific_decoder_dimensions(self):
+        text_model = SimpleNamespace(config=SimpleNamespace(hidden_size=3584), base_model=None)
+        audio_model = SimpleNamespace(
+            config=SimpleNamespace(text_config=SimpleNamespace(hidden_size=4096)),
+            base_model=None,
+        )
+        self.assertEqual(_decoder_hidden_size(text_model), 3584)
+        self.assertEqual(_decoder_hidden_size(audio_model), 4096)
+
     def test_last_valid_token_right_padding_and_batches(self):
         hidden = torch.arange(2 * 4 * 3).reshape(2, 4, 3).to(torch.bfloat16)
         mask = torch.tensor([[1, 1, 0, 0], [1, 1, 1, 0]])

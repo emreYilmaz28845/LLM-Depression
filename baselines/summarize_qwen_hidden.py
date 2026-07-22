@@ -51,6 +51,7 @@ def summarize(root: Path) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
     for (dataset, modality, run_name, variant), variant_dirs in sorted(groups.items()):
         fold_metrics = [read_json(path / "metrics.json") for path in sorted(variant_dirs)]
+        classifier_metadata = read_json(sorted(variant_dirs)[0] / "classifier_metadata.json")
         subject_rows = []
         for path in sorted(variant_dirs):
             subject_rows.extend(read_jsonl(path / "predictions_subject_level.jsonl"))
@@ -75,8 +76,12 @@ def summarize(root: Path) -> list[dict[str, Any]]:
             "classifier_variant": variant,
             "folds": len(fold_metrics),
             "pooled_subjects": len(subject_rows),
-            "input_dimension": 3584,
-            "post_pca_dimension": 32 if "pca32" in variant else 64 if "pca64" in variant else 3584,
+            "input_dimension": int(classifier_metadata["input_dimension"]),
+            "post_pca_dimension": (
+                int(classifier_metadata["effective_pca_components"])
+                if classifier_metadata.get("effective_pca_components") is not None
+                else int(classifier_metadata["input_dimension"])
+            ),
             "pooling": "last_valid_prompt_token",
         }
         for key in METRIC_KEYS:
