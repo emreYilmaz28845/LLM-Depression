@@ -7,9 +7,9 @@ Implementation plan: [`QWEN2_HIDDEN_XGBOOST_IMPLEMENTATION_PLAN_2026-07-22.md`](
 ## Summary
 
 The prompt-only final-hidden-state pipeline was implemented and run for the
-aligned DAIC and CMDC audio+text, audio-only, and text-only checkpoints.
-Eighteen fold/checkpoint extraction jobs and one grouped control rerun completed
-successfully on MareNostrum 5.
+aligned DAIC and CMDC audio+text, audio-only, text-only, and emotion-augmented
+checkpoints. Twenty-five fold/checkpoint extraction jobs and one grouped control
+rerun completed successfully on MareNostrum 5.
 
 The main findings are:
 
@@ -27,6 +27,14 @@ The main findings are:
 - Logistic regression was at least as competitive as XGBoost and was often
   better. The useful signal is therefore not dependent on a nonlinear tree
   head.
+- Adding emotion descriptions did not improve the strongest raw logistic
+  result. DAIC no-emotion audio+text remained best at positive F1 0.800; Chinese
+  SECap emotion was close at 0.788 and English SECap emotion fell to 0.703.
+  CMDC paper-provided Chinese emotion tied the no-emotion logistic result at
+  F1 0.980.
+- Raw XGBoost reacted differently: emotion increased DAIC F1 from 0.621 to
+  0.714 with English captions and increased CMDC F1 from 0.960 to 0.980. These
+  gains still did not beat the strongest no-emotion logistic result.
 - Majority-class and subject-shuffled-label controls failed at the 0.5 decision
   threshold, supporting that the primary results are not class-prior artifacts.
 
@@ -64,6 +72,12 @@ was introduced merely to force the audio representation to 3,584 dimensions.
 - Class threshold: fixed at 0.5.
 - Classifiers: predeclared XGBoost configuration, balanced logistic-regression
   control, majority-class control, and subject-level shuffled-label control.
+- Emotion extension: frozen cache only; no SECap model ran during extraction.
+  DAIC used local SECap English and Chinese caption conditions. CMDC used the
+  Chinese captions distributed with the DepressInstruct repository.
+- Emotion and no-emotion conditions use separately fine-tuned saved adapters,
+  so their difference reflects the complete prompt/training condition rather
+  than text injection into one identical checkpoint.
 
 The baseline deltas below use the rounded "our" Qwen results in
 `depression_results_table_no_emo.csv`; deltas are therefore approximate.
@@ -142,6 +156,71 @@ CMDC interpretation:
   size and repeated-response structure in mind. The split remains strictly
   subject-disjoint, but external validation is still necessary.
 
+## Emotion-extension results
+
+The DAIC probe still trains on all 142 development subjects and evaluates only
+the 47 official-test subjects. This extension deliberately does **not** report a
+paper-matched 107-train/35-validation result, because the available adapters
+were selected using validation performance. CMDC retains five-fold
+subject-disjoint out-of-fold evaluation.
+
+### Headline comparison
+
+The Qwen-head values are the corresponding saved verdict-head results. The
+hidden classifiers use the final prompt-position representation from that same
+condition's adapter.
+
+| Dataset | Condition | Qwen ACC | Qwen F1 | Raw logistic ACC | Raw logistic F1 | Raw XGBoost ACC | Raw XGBoost F1 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| DAIC | Audio+text, no emotion | 0.766 | 0.718 | **0.851** | **0.800** | 0.766 | 0.621 |
+| DAIC | Audio+text+SECap EN | 0.766 | 0.703 | 0.766 | 0.703 | **0.830** | **0.714** |
+| DAIC | Audio+text+SECap ZH | 0.809 | 0.571 | **0.851** | **0.788** | 0.809 | 0.640 |
+| CMDC | Audio+text, no emotion | 0.908 | 0.896 | **0.987** | **0.980** | 0.974 | 0.960 |
+| CMDC | Audio+text+paper SECap ZH | 0.949 | 0.920 | **0.987** | **0.980** | **0.987** | **0.980** |
+
+For DAIC, no-emotion raw logistic remains the strongest thresholded result. Its
+confusion matrix is `[[26, 7], [0, 14]]`, compared with
+`[[23, 10], [1, 13]]` for English emotion and `[[27, 6], [1, 13]]` for Chinese
+emotion. Chinese captions slightly improve AUROC from 0.900 to 0.911, but at the
+fixed 0.5 threshold lose one depressed subject and therefore do not improve F1.
+
+For CMDC, no-emotion and paper-emotion raw logistic have the same confusion
+matrix, `[[52, 0], [1, 25]]`. Emotion changes the representation and ranking but
+does not change the best thresholded logistic result. Raw XGBoost improves from
+two false negatives without emotion to one with emotion.
+
+### Complete primary emotion matrix
+
+| Dataset | Condition | Variant | Dim | ACC | Positive F1 | Macro F1 | AUROC |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| DAIC | SECap EN | `logreg_raw` | 4,096 | 0.766 | 0.703 | 0.755 | 0.892 |
+| DAIC | SECap EN | `logreg_pca32` | 32 | 0.723 | 0.606 | 0.696 | 0.851 |
+| DAIC | SECap EN | `xgb_raw` | 4,096 | **0.830** | **0.714** | **0.797** | 0.900 |
+| DAIC | SECap EN | `xgb_pca32` | 32 | 0.787 | 0.615 | 0.734 | **0.903** |
+| DAIC | SECap EN | `xgb_pca64` | 64 | 0.809 | 0.640 | 0.755 | 0.887 |
+| DAIC | SECap ZH | `logreg_raw` | 4,096 | **0.851** | **0.788** | **0.837** | **0.911** |
+| DAIC | SECap ZH | `logreg_pca32` | 32 | 0.745 | 0.625 | 0.716 | 0.851 |
+| DAIC | SECap ZH | `xgb_raw` | 4,096 | 0.809 | 0.640 | 0.755 | 0.877 |
+| DAIC | SECap ZH | `xgb_pca32` | 32 | 0.766 | 0.353 | 0.605 | 0.829 |
+| DAIC | SECap ZH | `xgb_pca64` | 64 | 0.723 | 0.235 | 0.533 | 0.859 |
+| CMDC | Paper SECap ZH | `logreg_raw` | 4,096 | **0.987** | **0.980** | **0.985** | 0.993 |
+| CMDC | Paper SECap ZH | `logreg_pca32` | 32 | 0.974 | 0.960 | 0.971 | **0.997** |
+| CMDC | Paper SECap ZH | `xgb_raw` | 4,096 | **0.987** | **0.980** | **0.985** | 0.993 |
+| CMDC | Paper SECap ZH | `xgb_pca32` | 32 | 0.962 | 0.939 | 0.955 | 0.993 |
+| CMDC | Paper SECap ZH | `xgb_pca64` | 64 | 0.962 | 0.939 | 0.955 | 0.995 |
+
+The full matrix reinforces the original PCA finding: reducing to 32 or 64
+components is not reliably beneficial, especially for DAIC Chinese-emotion
+XGBoost.
+
+### Emotion-cache provenance
+
+| Condition | Cache SHA-256 | Coverage | Missing behavior |
+| --- | --- | ---: | --- |
+| DAIC SECap EN | `1a2f4c3ed1a4d25f86b072e2e6d0ee376525725c1c8a5a653f35a533942a2b90` | 2,127/2,170 clips | 43 null translations use the saved neutral fallback: 35 development, 8 test |
+| DAIC SECap ZH | `42c3655245e4888ffa9c4236e9a2f66f7ec44a5dea32046b1850f633cbd4f11c` | 2,170/2,170 clips | None |
+| CMDC paper SECap ZH | `8383d12987e5376d037a7f678048153fd64ce101aaac862f5a0a3d35f9aa51f0` | 923/923 responses | None |
+
 ## Negative controls
 
 The shuffled control permutes labels between subjects and preserves all response
@@ -161,6 +240,12 @@ rows within a subject as one group.
 | CMDC | Audio-only | Subject-shuffled XGBoost | 0.667 | 0.000 | 0.557 |
 | CMDC | Text-only | Majority class | 0.667 | 0.000 | 0.485 |
 | CMDC | Text-only | Subject-shuffled XGBoost | 0.667 | 0.000 | 0.324 |
+| DAIC | Audio+text+SECap EN | Majority class | 0.702 | 0.000 | 0.500 |
+| DAIC | Audio+text+SECap EN | Subject-shuffled XGBoost | 0.702 | 0.000 | 0.519 |
+| DAIC | Audio+text+SECap ZH | Majority class | 0.702 | 0.000 | 0.500 |
+| DAIC | Audio+text+SECap ZH | Subject-shuffled XGBoost | 0.702 | 0.000 | 0.394 |
+| CMDC | Audio+text+paper SECap ZH | Majority class | 0.667 | 0.000 | 0.485 |
+| CMDC | Audio+text+paper SECap ZH | Subject-shuffled XGBoost | 0.667 | 0.000 | 0.539 |
 
 The constant-probability majority control has pooled CMDC AUROC 0.485 rather
 than exactly 0.5 because the pooled rank calculation sees tiny fold-to-fold
@@ -169,21 +254,23 @@ control result.
 
 ## Integrity and reproducibility checks
 
-- 18 extraction metadata files were produced.
-- 14,412 total feature rows were extracted across training and held-out caches.
+- 25 extraction metadata files were produced.
+- 19,405 total feature rows were extracted across training and held-out caches.
 - All repeated-vector determinism checks had maximum absolute difference 0.0.
 - All model inputs were built from `prompt_text`; no `labels` key or metadata
   key was passed to Qwen and no generation was performed.
 - Every current manifest and split hash matched the corresponding checkpoint's
   saved hash before extraction.
 - All training and held-out subject intersections were empty.
-- All 126 classifier metadata files (18 folds/checkpoints x 7 variants) passed
+- All 175 classifier metadata files (25 folds/checkpoints x 7 variants) passed
   overlap and PCA-component checks.
 - CMDC pooled held-out predictions cover 78 unique subjects exactly once for
   every variant.
 - Feature extraction records implementation commit
   `14fe9d022ec95d54866e75aa75684921e5a27659`; the grouped subject-shuffle
-  correction is commit `8f8584f4e044252ddf04b7d02a0e220a0eb709a7`.
+  correction is commit `8f8584f4e044252ddf04b7d02a0e220a0eb709a7`. Emotion extraction records
+  condition-aware implementation commit
+  `2242f1f039093d7fe890b3ea882017260e3b1f92`.
 - Runtime: Python 3.10.14, Torch 2.3.0+cu121, Transformers 4.55.0, PEFT 0.17.0,
   scikit-learn 1.7.0, and project-local `xgboost-cpu` 2.1.4.
 
@@ -195,8 +282,10 @@ control result.
 - Corrected audio smoke: `43668069` (completed, 4,096 dimensions).
 - Primary matrix: `43668129` through `43668146` (18/18 completed, exit code 0).
 - Corrected grouped control rerun: `43668444` (completed, exit code 0).
+- Emotion smoke: `43671537` (completed, exit code 0).
+- Emotion matrix: `43671578` through `43671584` (7/7 completed, exit code 0).
 
-Primary job wall times ranged from 1:28 to 4:40. No primary job log contained a
+Primary job wall times ranged from 1:28 to 4:47. No primary job log contained a
 traceback, CUDA OOM, killed-process marker, or error signature.
 
 ## Artifacts
@@ -206,12 +295,13 @@ traceback, CUDA OOM, killed-process marker, or error signature.
 - Per-fold metrics, pipelines, sample predictions, subject predictions, and
   classifier provenance: `outputs/hidden_classifiers/<dataset>/<modality>/...`.
 - Feature matrices and extraction provenance:
-  `outputs/hidden_features/<dataset>/<modality>/...`.
+  `outputs/hidden_features/<dataset>/<condition>/...`.
 - Slurm logs: `logs/slurm_qwen_hidden/`.
-- Experiment matrix: `configs/features/primary_matrix.yaml`.
+- Experiment matrices: `configs/features/primary_matrix.yaml` and
+  `configs/features/emotion_matrix.yaml`.
 
-The full 110 MB feature cache remains on GPFS and has also been synchronized
-locally. The 79 MB classifier result tree and compact extraction metadata are
+The full 149 MB feature cache remains on GPFS and has also been synchronized
+locally. The 105 MB classifier result tree and compact extraction metadata are
 available locally. No model checkpoints were copied as part of this experiment.
 
 ## Conclusion
@@ -220,6 +310,10 @@ The final prompt-position hidden state is a materially better CMDC depression
 representation than the model's current verdict-token head. On DAIC, it is also
 useful, but classifier choice matters: linear heads are more reliable than the
 predeclared conservative XGBoost configuration, and low-dimensional PCA can
-discard important signal. The most defensible next step is external or
-cross-dataset validation of the fixed raw logistic and raw XGBoost heads, not
-selection of a new variant from these official-test results.
+discard important signal. Frozen emotion descriptions do not improve the
+strongest logistic result: they are nearly neutral for DAIC Chinese captions
+and CMDC paper captions, and harmful for DAIC English captions. They can help
+the weaker raw XGBoost head, but that does not overturn logistic regression as
+the preferred probe. The most defensible next step is external or cross-dataset
+validation of the fixed raw logistic head, not selection of a new variant from
+these official-test results.
