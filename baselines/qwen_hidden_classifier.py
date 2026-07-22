@@ -183,12 +183,14 @@ def run_variant(
 
         joblib.dump(fitted, variant_dir / "pipeline.joblib")
     metadata = read_json(cache_dir / "extraction_metadata.json")
+    condition = str(metadata.get("condition") or metadata["input_modality"])
     sample_rows = []
     for row, probability, prediction in zip(test_rows, probabilities.tolist(), predictions.tolist()):
         sample_rows.append(
             {
                 "dataset": metadata["dataset"],
                 "modality": metadata["input_modality"],
+                "condition": condition,
                 "fold": int(metadata["fold"]),
                 "sample_id": str(row["sample_id"]),
                 "subject_id": str(row["subject_id"]),
@@ -205,6 +207,7 @@ def run_variant(
             {
                 "dataset": metadata["dataset"],
                 "modality": metadata["input_modality"],
+                "condition": condition,
                 "fold": int(metadata["fold"]),
                 "classifier_variant": variant,
             }
@@ -213,6 +216,7 @@ def run_variant(
     artifact_metadata = {
         "dataset": metadata["dataset"],
         "modality": metadata["input_modality"],
+        "condition": condition,
         "fold": int(metadata["fold"]),
         "classifier_variant": variant,
         "seed": seed,

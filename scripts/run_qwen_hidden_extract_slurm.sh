@@ -28,6 +28,9 @@ CACHE_DIR="${CACHE_DIR:?Set CACHE_DIR}"
 CLASSIFIER_DIR="${CLASSIFIER_DIR:-${CACHE_DIR/hidden_features/hidden_classifiers}}"
 MODEL_PATH="${MODEL_PATH:-}"
 MAX_EXAMPLES="${MAX_EXAMPLES:-}"
+CONDITION="${CONDITION:-}"
+EMOTION_SOURCE="${EMOTION_SOURCE:-}"
+EMOTION_LANGUAGE="${EMOTION_LANGUAGE:-}"
 SKIP_CLASSIFIERS="${SKIP_CLASSIFIERS:-0}"
 QWEN_HIDDEN_DEPS="${QWEN_HIDDEN_DEPS:-$PROJECT_ROOT/.deps/qwen_hidden}"
 export PYTHONPATH="$QWEN_HIDDEN_DEPS:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
@@ -43,6 +46,9 @@ nvidia-smi
 CMD=(python "$PROJECT_ROOT/src/features/extract_qwen_hidden.py" --checkpoint-dir "$CHECKPOINT_DIR" --output-dir "$CACHE_DIR")
 if [ -n "$MODEL_PATH" ]; then CMD+=(--model-name-or-path "$MODEL_PATH"); fi
 if [ -n "$MAX_EXAMPLES" ]; then CMD+=(--max-examples "$MAX_EXAMPLES"); fi
+if [ -n "$CONDITION" ]; then CMD+=(--condition "$CONDITION"); fi
+if [ -n "$EMOTION_SOURCE" ]; then CMD+=(--emotion-source "$EMOTION_SOURCE"); fi
+if [ -n "$EMOTION_LANGUAGE" ]; then CMD+=(--emotion-language "$EMOTION_LANGUAGE"); fi
 printf 'Extraction command: '; printf '%q ' "${CMD[@]}"; printf '\n'
 "${CMD[@]}"
 

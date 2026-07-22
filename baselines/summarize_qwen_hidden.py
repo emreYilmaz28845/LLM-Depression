@@ -45,19 +45,25 @@ def summarize(root: Path) -> list[dict[str, Any]]:
         variant_dir = metrics_path.parent
         fold_dir = variant_dir.parent
         run_name = fold_dir.parent.name
-        modality = fold_dir.parent.parent.name
+        condition = fold_dir.parent.parent.name
         dataset = fold_dir.parent.parent.parent.name
-        groups[(dataset, modality, run_name, variant_dir.name)].append(variant_dir)
+        groups[(dataset, condition, run_name, variant_dir.name)].append(variant_dir)
     summaries: list[dict[str, Any]] = []
-    for (dataset, modality, run_name, variant), variant_dirs in sorted(groups.items()):
+    for (dataset, condition, run_name, variant), variant_dirs in sorted(groups.items()):
         fold_metrics = [read_json(path / "metrics.json") for path in sorted(variant_dirs)]
         classifier_metadata = read_json(sorted(variant_dirs)[0] / "classifier_metadata.json")
+        modality = str(classifier_metadata.get("modality", condition))
+        metadata_condition = str(classifier_metadata.get("condition", modality))
+        if metadata_condition != condition:
+            raise ValueError(
+                f"Condition path/metadata mismatch: path={condition} metadata={metadata_condition}."
+            )
         subject_rows = []
         for path in sorted(variant_dirs):
             subject_rows.extend(read_jsonl(path / "predictions_subject_level.jsonl"))
         subject_ids = [str(row["subject_id"]) for row in subject_rows]
         if dataset == "cmdc" and len(subject_ids) != len(set(subject_ids)):
-            raise ValueError(f"CMDC pooled held-out subjects overlap for {modality}/{run_name}/{variant}.")
+            raise ValueError(f"CMDC pooled held-out subjects overlap for {condition}/{run_name}/{variant}.")
         y_true = [int(row["label"]) for row in subject_rows]
         y_pred = [
             int(row["prediction"])
@@ -72,6 +78,7 @@ def summarize(root: Path) -> list[dict[str, Any]]:
         summary: dict[str, Any] = {
             "dataset": dataset,
             "modality": modality,
+            "condition": condition,
             "run_name": run_name,
             "classifier_variant": variant,
             "folds": len(fold_metrics),

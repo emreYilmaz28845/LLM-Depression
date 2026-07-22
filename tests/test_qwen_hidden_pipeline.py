@@ -11,7 +11,7 @@ import torch
 from src.aggregate import aggregate_binary_classifier_predictions, aggregate_original_teacher_forced_predictions
 from src.features.pooling import aligned_attention_mask, last_valid_token
 from src.features.qwen_hidden_collator import PromptOnlyExtractionCollator
-from src.features.extract_qwen_hidden import _decoder_hidden_size
+from src.features.extract_qwen_hidden import _decoder_hidden_size, _emotion_provenance, resolve_condition
 
 
 class _FakeFeatureExtractor:
@@ -52,6 +52,62 @@ class PoolingTests(unittest.TestCase):
         torch.testing.assert_close(last_valid_token(hidden, torch.ones((1, 1))), hidden[:, 0])
         with self.assertRaisesRegex(ValueError, "at least one valid"):
             last_valid_token(hidden, torch.zeros((1, 1)))
+
+    def test_emotion_conditions_are_explicit_and_path_safe(self):
+        self.assertEqual(resolve_condition(None, "audio_text", False), "audio_text")
+        self.assertEqual(
+            resolve_condition("audio_text_emotion_en", "audio_text", True),
+            "audio_text_emotion_en",
+        )
+        with self.assertRaisesRegex(ValueError, "distinct"):
+            resolve_condition(None, "audio_text", True)
+        with self.assertRaisesRegex(ValueError, "Invalid"):
+            resolve_condition("../collision", "audio_text", True)
+
+    def test_emotion_provenance_records_hash_coverage_and_fallbacks(self):
+        from src.utils import write_jsonl
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache_path = Path(directory) / "emotion.jsonl"
+            write_jsonl(
+                [
+                    {"sample_id": "train-covered", "emotion_en": "calm"},
+                    {"sample_id": "test-null", "emotion_en": None},
+                ],
+                cache_path,
+            )
+            config = {
+                "data": {
+                    "use_audio": True,
+                    "use_emotion": True,
+                    "emotion_cache_path": str(cache_path),
+                    "emotion_caption_field": "emotion_en",
+                    "emotion_on_missing": "neutral_fallback",
+                }
+            }
+            rows = [
+                {"sample_id": "train-covered", "subject_id": "train"},
+                {"sample_id": "val-missing", "subject_id": "val"},
+                {"sample_id": "test-null", "subject_id": "test"},
+            ]
+            split = {
+                "train_subject_ids": ["train"],
+                "selection_subject_ids": ["val"],
+                "final_eval_subject_ids": ["test"],
+            }
+            provenance = _emotion_provenance(
+                config,
+                rows,
+                split,
+                source="secap_local",
+                language="en",
+            )
+            self.assertIsNotNone(provenance)
+            self.assertEqual(provenance["partition_coverage"]["outer_train"]["covered"], 1)
+            self.assertEqual(provenance["partition_coverage"]["outer_train"]["missing_row"], 1)
+            self.assertEqual(provenance["partition_coverage"]["final_eval"]["null_caption"], 1)
+            self.assertEqual(provenance["fallback_caption_count"], 2)
+            self.assertEqual(len(provenance["cache_sha256"]), 64)
 
     def test_audio_expansion_uses_aligned_all_valid_mask(self):
         hidden = torch.zeros((1, 5, 2))
@@ -149,6 +205,7 @@ class ClassifierTests(unittest.TestCase):
                 {
                     "dataset": "synthetic",
                     "input_modality": "text_only",
+                    "condition": "text_only_control",
                     "fold": 0,
                     "checkpoint_dir": "synthetic/best_model",
                 },
@@ -159,6 +216,7 @@ class ClassifierTests(unittest.TestCase):
                 (output / "logreg_pca32" / "classifier_metadata.json").read_text()
             )
             self.assertEqual(metadata["training_row_ids"], [f"tr{i}" for i in range(40)])
+            self.assertEqual(metadata["condition"], "text_only_control")
             self.assertTrue(set(metadata["training_subject_ids"]).isdisjoint(metadata["heldout_subject_ids"]))
             import joblib
 

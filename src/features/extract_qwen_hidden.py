@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import platform
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 import numpy as np
 import torch
 
+from src.data.emotion import load_emotion_cache, report_cache_coverage, resolve_missing_policy, use_emotion
 from src.data.runtime import build_examples, filter_rows_by_subjects, load_manifest_rows
 from src.features.pooling import aligned_attention_mask, last_valid_token
 from src.features.qwen_hidden_collator import PromptOnlyExtractionCollator, load_prompt_audio
@@ -24,6 +26,69 @@ from src.utils import read_json, save_json, sha256_file, sha256_jsonl_rows, sha2
 
 SUPPORTED_HIDDEN_SIZES = {3584, 4096}
 POOLING_NAME = "last_valid_prompt_token"
+CONDITION_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_]*$")
+
+
+def resolve_condition(value: str | None, input_modality: str | None, emotion_enabled: bool) -> str:
+    condition = str(value or input_modality or "").strip()
+    if not CONDITION_PATTERN.fullmatch(condition):
+        raise ValueError(f"Invalid experiment condition: {condition!r}.")
+    if emotion_enabled and condition == str(input_modality):
+        raise ValueError("Emotion runs require an explicit condition distinct from input_modality.")
+    return condition
+
+
+def _emotion_provenance(
+    config: dict[str, Any],
+    manifest_rows: list[dict[str, Any]],
+    split_payload: dict[str, Any],
+    *,
+    source: str | None,
+    language: str | None,
+) -> dict[str, Any] | None:
+    if not use_emotion(config):
+        if source or language:
+            raise ValueError("Emotion source/language metadata was supplied for a non-emotion run.")
+        return None
+    if not source or not language:
+        raise ValueError("Emotion runs require explicit source and language provenance.")
+    data = config["data"]
+    cache_path = _saved_path(data["emotion_cache_path"])
+    if not cache_path.exists():
+        raise FileNotFoundError(f"Saved emotion cache is unavailable: {cache_path}")
+    caption_field = str(data.get("emotion_caption_field", "emotion_en"))
+    cache = load_emotion_cache(cache_path, caption_field=caption_field)
+    train_ids = set(split_payload["train_subject_ids"]) | set(split_payload["selection_subject_ids"])
+    heldout_ids = set(split_payload["final_eval_subject_ids"])
+
+    def coverage(subject_ids: set[str]) -> dict[str, int]:
+        sample_ids = [
+            str(row["sample_id"])
+            for row in manifest_rows
+            if str(row["subject_id"]) in subject_ids
+        ]
+        return report_cache_coverage(cache, sample_ids)
+
+    policy = resolve_missing_policy(config)
+    partition_coverage = {
+        "outer_train": coverage(train_ids),
+        "final_eval": coverage(heldout_ids),
+    }
+    missing_total = sum(
+        stats["missing_row"] + stats["null_caption"] for stats in partition_coverage.values()
+    )
+    return {
+        "enabled": True,
+        "source": source,
+        "language": language,
+        "cache_path": str(cache_path),
+        "cache_sha256": sha256_file(cache_path),
+        "caption_field": caption_field,
+        "missing_policy": policy,
+        "partition_coverage": partition_coverage,
+        "fallback_caption_count": missing_total if policy == "neutral_fallback" else 0,
+        "dropped_caption_count": missing_total if policy == "drop_emotion_line" else 0,
+    }
 
 
 def _saved_path(value: str | Path) -> Path:
@@ -277,6 +342,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-name-or-path")
     parser.add_argument("--manifest-path", type=Path, help="Relocated copy of the saved manifest; hash must match.")
     parser.add_argument("--max-examples", type=int)
+    parser.add_argument("--condition", help="Unique experiment condition used in metadata and output grouping.")
+    parser.add_argument("--emotion-source", help="Predeclared source label for an emotion cache.")
+    parser.add_argument("--emotion-language", help="Predeclared language label for emotion captions.")
     return parser.parse_args()
 
 
@@ -298,6 +366,14 @@ def main() -> None:
     canonical_manifest_hash = sha256_jsonl_rows(manifest_rows)
     if saved.get("manifest_hash") and canonical_manifest_hash != saved["manifest_hash"]:
         raise ValueError("Current manifest hash does not match the checkpoint's saved manifest hash.")
+    condition = resolve_condition(args.condition, saved.get("input_modality"), use_emotion(config))
+    emotion_provenance = _emotion_provenance(
+        config,
+        manifest_rows,
+        split_payload,
+        source=args.emotion_source,
+        language=args.emotion_language,
+    )
     examples = _partition_examples(manifest_rows, config, split_payload, fold)
     model_name = args.model_name_or_path or saved.get("resolved_model_name_or_path") or config["model_name_or_path"]
     processor = load_processor(checkpoint_dir, config)
@@ -322,6 +398,7 @@ def main() -> None:
         )
     metadata = {
         "dataset": config["dataset"],
+        "condition": condition,
         "input_modality": saved.get("input_modality"),
         "fold": fold,
         "checkpoint_type": "best_model",
@@ -338,6 +415,7 @@ def main() -> None:
         "manifest": str(manifest_path),
         "manifest_sha256": canonical_manifest_hash,
         "manifest_file_sha256": sha256_file(manifest_path),
+        "emotion_provenance": emotion_provenance,
         "hidden_layer": "final",
         "pooling": POOLING_NAME,
         "vector_dimension": expected_hidden_size,

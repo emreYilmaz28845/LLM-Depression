@@ -1,0 +1,34 @@
+# Predeclared emotion extension of the final-layer, last-valid-prompt-token matrix.
+# DAIC probes train on train+validation and evaluate on the official test set.
+# CMDC retains the saved five-fold subject-disjoint evaluation protocol.
+experiments:
+  - dataset: daic
+    condition: audio_text_emotion_en
+    modality: audio_text
+    emotion_source: secap_local
+    emotion_language: en
+    folds: [0]
+    run_dir: output_model/audio_text_emotion/daic/mn5_reproduction
+  - dataset: daic
+    condition: audio_text_emotion_zh
+    modality: audio_text
+    emotion_source: secap_local
+    emotion_language: zh
+    folds: [0]
+    run_dir: output_model/audio_text_emotion_zh/daic/mn5_reproduction
+  - dataset: cmdc
+    condition: audio_text_emotion_paper_zh
+    modality: audio_text
+    emotion_source: depressinstruct_repository
+    emotion_language: zh
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/audio_text_emotion_zh/cmdc/emotion_paper_zh_cv
+
+variants:
+  - logreg_raw
+  - xgb_raw
+  - xgb_pca32
+  - logreg_pca32
+  - xgb_pca64
+  - majority_class
+  - xgb_raw_shuffled_labels
