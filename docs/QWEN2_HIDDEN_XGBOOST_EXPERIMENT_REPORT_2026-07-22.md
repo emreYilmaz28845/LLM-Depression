@@ -1,15 +1,15 @@
 # Qwen2 Final Hidden-State Classifier Experiment Report
 
-Date: 2026-07-22
+Date: 2026-07-22; Turkish extension: 2026-07-23
 
 Implementation plan: [`QWEN2_HIDDEN_XGBOOST_IMPLEMENTATION_PLAN_2026-07-22.md`](QWEN2_HIDDEN_XGBOOST_IMPLEMENTATION_PLAN_2026-07-22.md)
 
 ## Summary
 
 The prompt-only final-hidden-state pipeline was implemented and run for the
-aligned DAIC and CMDC audio+text, audio-only, text-only, and emotion-augmented
-checkpoints. Twenty-five fold/checkpoint extraction jobs and one grouped control
-rerun completed successfully on MareNostrum 5.
+aligned DAIC, CMDC, and Turkish audio+text, audio-only, text-only, and
+emotion-augmented checkpoints. Forty fold/checkpoint extraction jobs and one
+grouped control rerun completed successfully on MareNostrum 5.
 
 The main findings are:
 
@@ -35,11 +35,19 @@ The main findings are:
 - Raw XGBoost reacted differently: emotion increased DAIC F1 from 0.621 to
   0.714 with English captions and increased CMDC F1 from 0.960 to 0.980. These
   gains still did not beat the strongest no-emotion logistic result.
-- Majority-class and subject-shuffled-label controls failed at the 0.5 decision
-  threshold, supporting that the primary results are not class-prior artifacts.
+- Turkish results did not reproduce the CMDC gains. Audio+text XGBoost PCA-32
+  reached positive F1 0.814 but remained below the all-positive control's
+  0.818. Audio-only raw XGBoost reached F1 0.830, below the saved Qwen
+  baseline's 0.847. Text-only raw XGBoost had the best Turkish macro-F1, 0.623,
+  but positive F1 was only 0.774.
+- Majority-class and subject-shuffled-label controls failed on DAIC and CMDC.
+  On positive-skewed Turkish data they instead expose why positive F1 alone is
+  misleading: predicting every subject positive gives F1 0.818 but macro-F1
+  only 0.409.
 
-These are predeclared official held-out results, not a basis for selecting a
-new variant on the same test subjects.
+DAIC and CMDC are the predeclared held-out evaluations described below.
+Turkish is a table-aligned five-fold outer-validation analysis; it is not an
+unseen-test result.
 
 ## Important model-dimension correction
 
@@ -68,6 +76,9 @@ was introduced merely to force the audio representation to 3,584 dimensions.
   subjects fit the classical head and official test remains locked evaluation.
 - CMDC: one vector and prediction per response, followed by the repository's
   existing majority vote and probability-margin tie behavior.
+- Turkish: the classical head fits each saved outer-training fold and evaluates
+  the corresponding saved selection fold. Audio modalities are response-level
+  before subject aggregation; text-only has one vector per subject.
 - PCA: fit independently on each fold's training rows only.
 - Class threshold: fixed at 0.5.
 - Classifiers: predeclared XGBoost configuration, balanced logistic-regression
@@ -156,6 +167,56 @@ CMDC interpretation:
   size and repeated-response structure in mind. The split remains strictly
   subject-disjoint, but external validation is still necessary.
 
+## Turkish table-aligned five-fold results
+
+The pooled folds contain 120 unique subjects exactly once: 83 BDI-positive and
+37 BDI-negative. The old baseline CSV says `54 dep / 24 non`, which totals only
+78 and is stale or inconsistent with the saved folds. Its prevalence value,
+0.692, does match the observed 83/120 prevalence.
+
+These are not strict nested-CV estimates. The classical heads use only the
+saved outer-training subjects, but each Qwen `best_model` adapter was selected
+using the same outer validation fold evaluated here. This reproduces the
+baseline table's protocol and should be labeled **table-aligned outer
+validation**, not test evaluation.
+
+Values before parentheses are pooled metrics. Parentheses show the five-fold
+mean and sample standard deviation.
+
+| Modality | Variant | Dim | ACC | Positive F1 (mean±SD) | Macro F1 (mean±SD) | AUROC | Delta F1 vs Qwen |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Audio+text | `logreg_raw` | 4,096 | 0.600 | 0.724 (0.724±0.092) | 0.498 (0.497±0.157) | 0.480 | -0.085 |
+| Audio+text | `logreg_pca32` | 32 | 0.592 | 0.696 (0.693±0.162) | **0.538** (0.551±0.220) | 0.531 | -0.113 |
+| Audio+text | `xgb_raw` | 4,096 | 0.650 | 0.784 (0.780±0.078) | 0.435 (0.429±0.066) | **0.600** | -0.025 |
+| Audio+text | `xgb_pca32` | 32 | **0.692** | **0.814** (0.815±0.034) | 0.456 (0.452±0.114) | 0.579 | +0.005 |
+| Audio+text | `xgb_pca64` | 64 | **0.692** | **0.814** (0.815±0.034) | 0.456 (0.452±0.114) | 0.596 | +0.005 |
+| Audio-only | `logreg_raw` | 4,096 | 0.683 | 0.789 (0.787±0.091) | **0.578** (0.583±0.119) | 0.614 | -0.058 |
+| Audio-only | `logreg_pca32` | 32 | 0.658 | 0.771 (0.766±0.078) | 0.549 (0.526±0.075) | 0.645 | -0.076 |
+| Audio-only | `xgb_raw` | 4,096 | **0.717** | **0.830** (0.831±0.021) | 0.490 (0.482±0.109) | 0.642 | -0.017 |
+| Audio-only | `xgb_pca32` | 32 | 0.700 | 0.822 (0.822±0.014) | 0.437 (0.436±0.062) | 0.675 | -0.025 |
+| Audio-only | `xgb_pca64` | 64 | 0.700 | 0.822 (0.822±0.014) | 0.437 (0.436±0.062) | **0.684** | -0.025 |
+| Text-only | `logreg_raw` | 3,584 | 0.583 | 0.667 (0.665±0.094) | 0.556 (0.556±0.095) | 0.616 | -0.154 |
+| Text-only | `logreg_pca32` | 32 | 0.642 | 0.723 (0.723±0.030) | 0.608 (0.606±0.052) | 0.647 | -0.098 |
+| Text-only | `xgb_raw` | 3,584 | **0.683** | 0.774 (0.772±0.068) | **0.623** (0.621±0.093) | **0.677** | -0.047 |
+| Text-only | `xgb_pca32` | 32 | 0.658 | **0.778** (0.776±0.036) | 0.516 (0.513±0.032) | 0.610 | -0.043 |
+| Text-only | `xgb_pca64` | 64 | 0.633 | 0.761 (0.759±0.045) | 0.488 (0.481±0.064) | 0.594 | -0.060 |
+
+Turkish interpretation:
+
+- No primary hidden-state head beats the corresponding saved Qwen baseline on
+  both positive F1 and macro-F1. Audio+text PCA XGBoost improves positive F1 by
+  only 0.005 while reducing macro-F1 from 0.488 to 0.456.
+- Audio-only raw XGBoost predicts every positive subject correctly but also
+  labels 34/37 negative subjects positive (`[[3, 34], [0, 83]]`). Its F1 0.830
+  is therefore close to the all-positive control and below the Qwen F1 0.847.
+- Text-only raw XGBoost is the most balanced hidden probe:
+  `[[17, 20], [18, 65]]`, macro-F1 0.623. It improves macro-F1 by 0.111 over
+  the saved Qwen text-only baseline, but loses 0.047 positive F1 and 0.026
+  accuracy.
+- Unlike DAIC and CMDC, logistic regression is not the stronger Turkish head.
+  Its best macro-F1 is 0.608 for text-only PCA-32, while raw XGBoost reaches
+  0.623.
+
 ## Emotion-extension results
 
 The DAIC probe still trains on all 142 development subjects and evaluates only
@@ -240,6 +301,12 @@ rows within a subject as one group.
 | CMDC | Audio-only | Subject-shuffled XGBoost | 0.667 | 0.000 | 0.557 |
 | CMDC | Text-only | Majority class | 0.667 | 0.000 | 0.485 |
 | CMDC | Text-only | Subject-shuffled XGBoost | 0.667 | 0.000 | 0.324 |
+| Turkish | Audio+text | Majority class | 0.692 | 0.818 | 0.487 |
+| Turkish | Audio+text | Subject-shuffled XGBoost | 0.692 | 0.818 | 0.558 |
+| Turkish | Audio-only | Majority class | 0.692 | 0.818 | 0.487 |
+| Turkish | Audio-only | Subject-shuffled XGBoost | 0.692 | 0.818 | 0.546 |
+| Turkish | Text-only | Majority class | 0.692 | 0.818 | 0.486 |
+| Turkish | Text-only | Subject-shuffled XGBoost | 0.667 | 0.789 | 0.623 |
 | DAIC | Audio+text+SECap EN | Majority class | 0.702 | 0.000 | 0.500 |
 | DAIC | Audio+text+SECap EN | Subject-shuffled XGBoost | 0.702 | 0.000 | 0.519 |
 | DAIC | Audio+text+SECap ZH | Majority class | 0.702 | 0.000 | 0.500 |
@@ -254,23 +321,27 @@ control result.
 
 ## Integrity and reproducibility checks
 
-- 25 extraction metadata files were produced.
-- 19,405 total feature rows were extracted across training and held-out caches.
+- The Turkish extension adds 15 extraction metadata files and 11,110 feature
+  rows, for 40 extraction metadata files and 30,515 total feature rows overall.
 - All repeated-vector determinism checks had maximum absolute difference 0.0.
 - All model inputs were built from `prompt_text`; no `labels` key or metadata
   key was passed to Qwen and no generation was performed.
 - Every current manifest and split hash matched the corresponding checkpoint's
   saved hash before extraction.
 - All training and held-out subject intersections were empty.
-- All 175 classifier metadata files (25 folds/checkpoints x 7 variants) passed
+- All 280 classifier metadata files (40 folds/checkpoints x 7 variants) passed
   overlap and PCA-component checks.
 - CMDC pooled held-out predictions cover 78 unique subjects exactly once for
   every variant.
+- Turkish pooled outer-validation predictions cover 120 unique subjects exactly
+  once for every variant.
 - Feature extraction records implementation commit
   `14fe9d022ec95d54866e75aa75684921e5a27659`; the grouped subject-shuffle
   correction is commit `8f8584f4e044252ddf04b7d02a0e220a0eb709a7`. Emotion extraction records
   condition-aware implementation commit
   `2242f1f039093d7fe890b3ea882017260e3b1f92`.
+- Turkish extraction records protocol-aware implementation commit
+  `418f17bbbdc578ba44197d0f3287a5be7b936f95`.
 - Runtime: Python 3.10.14, Torch 2.3.0+cu121, Transformers 4.55.0, PEFT 0.17.0,
   scikit-learn 1.7.0, and project-local `xgboost-cpu` 2.1.4.
 
@@ -284,6 +355,8 @@ control result.
 - Corrected grouped control rerun: `43668444` (completed, exit code 0).
 - Emotion smoke: `43671537` (completed, exit code 0).
 - Emotion matrix: `43671578` through `43671584` (7/7 completed, exit code 0).
+- Turkish smoke: `43705279` (completed, exit code 0).
+- Turkish matrix: `43705723` through `43705745` (15/15 completed, exit code 0).
 
 Primary job wall times ranged from 1:28 to 4:47. No primary job log contained a
 traceback, CUDA OOM, killed-process marker, or error signature.
@@ -298,11 +371,13 @@ traceback, CUDA OOM, killed-process marker, or error signature.
   `outputs/hidden_features/<dataset>/<condition>/...`.
 - Slurm logs: `logs/slurm_qwen_hidden/`.
 - Experiment matrices: `configs/features/primary_matrix.yaml` and
-  `configs/features/emotion_matrix.yaml`.
+  `configs/features/emotion_matrix.yaml`, and
+  `configs/features/turkish_matrix.yaml`.
 
-The full 149 MB feature cache remains on GPFS and has also been synchronized
-locally. The 105 MB classifier result tree and compact extraction metadata are
-available locally. No model checkpoints were copied as part of this experiment.
+The earlier 149 MB DAIC/CMDC feature cache remains synchronized locally. The
+new Turkish feature matrices remain on GPFS; their compact extraction metadata
+and the complete 168 MB classifier result tree are available locally. No model
+checkpoints were copied as part of this experiment.
 
 ## Conclusion
 
@@ -314,6 +389,8 @@ discard important signal. Frozen emotion descriptions do not improve the
 strongest logistic result: they are nearly neutral for DAIC Chinese captions
 and CMDC paper captions, and harmful for DAIC English captions. They can help
 the weaker raw XGBoost head, but that does not overturn logistic regression as
-the preferred probe. The most defensible next step is external or cross-dataset
-validation of the fixed raw logistic head, not selection of a new variant from
-these official-test results.
+the preferred probe on DAIC/CMDC. Turkish does not show the same pattern:
+XGBoost is stronger than logistic regression there, but most of its positive-F1
+score comes from the 69% positive class prior. The most defensible next step is
+strict nested or external validation using macro-F1 as a co-primary metric, not
+selection of a new variant from these evaluation subjects.
