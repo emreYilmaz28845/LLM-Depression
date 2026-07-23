@@ -119,15 +119,11 @@ def _per_experiment_rows(root: Path) -> list[dict[str, Any]]:
 
 def summarize_stability(root: Path, gate_threshold: float = 0.03) -> dict[str, Any]:
     per_seed_rows = _per_experiment_rows(root)
-    pilot_rows = [
-        row
-        for row in per_seed_rows
-        if (row["dataset"], row["condition"]) in PILOT_CONDITIONS
-    ]
     groups: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
-    for row in pilot_rows:
+    for row in per_seed_rows:
         groups[(row["dataset"], row["condition"], row["run_name"])].append(row)
-    if set((dataset, condition) for dataset, condition, _ in groups) != PILOT_CONDITIONS:
+    available_conditions = {(dataset, condition) for dataset, condition, _ in groups}
+    if not PILOT_CONDITIONS.issubset(available_conditions):
         raise ValueError("The stability panel does not contain all three representative conditions.")
     stability_rows: list[dict[str, Any]] = []
     for (dataset, condition, run_name), rows in sorted(groups.items()):
@@ -147,10 +143,11 @@ def summarize_stability(root: Path, gate_threshold: float = 0.03) -> dict[str, A
                 "primary_min": float(np.min(values)),
                 "primary_max": float(np.max(values)),
                 "primary_range": float(np.max(values) - np.min(values)),
-                "expand_all": float(np.max(values) - np.min(values)) >= gate_threshold,
+                "pilot_condition": (dataset, condition) in PILOT_CONDITIONS,
             }
         )
-    observed_max = max(float(row["primary_range"]) for row in stability_rows)
+    pilot_stability_rows = [row for row in stability_rows if row["pilot_condition"]]
+    observed_max = max(float(row["primary_range"]) for row in pilot_stability_rows)
     return {
         "schema_version": "qwen_hidden_optuna_stability.v1",
         "source_experiment_ids": EXPERIMENT_IDS,
@@ -159,6 +156,7 @@ def summarize_stability(root: Path, gate_threshold: float = 0.03) -> dict[str, A
         "expand_all": observed_max >= gate_threshold,
         "per_seed_rows": per_seed_rows,
         "stability_rows": stability_rows,
+        "pilot_stability_rows": pilot_stability_rows,
     }
 
 

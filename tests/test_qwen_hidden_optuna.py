@@ -400,6 +400,7 @@ class OptunaConfigTests(unittest.TestCase):
         values = {
             ("daic", "text_only"): [0.70, 0.72, 0.71],
             ("cmdc", "audio_text"): [0.60, 0.64, 0.61],
+            ("cmdc", "text_only"): [0.10, 0.80, 0.20],
             ("turkish", "text_only"): [0.55, 0.56, 0.57],
         }
         ids = [followup.STAGE1_ID, followup.SEED_IDS[7], followup.SEED_IDS[2024]]
@@ -423,12 +424,17 @@ class OptunaConfigTests(unittest.TestCase):
             payload = stability.summarize_stability(Path("unused"), gate_threshold=0.03)
         self.assertTrue(payload["expand_all"])
         self.assertAlmostEqual(payload["observed_max_primary_range"], 0.04)
+        self.assertEqual(len(payload["stability_rows"]), 4)
+        self.assertEqual(len(payload["pilot_stability_rows"]), 3)
         cmdc = next(
             row
             for row in payload["stability_rows"]
             if row["dataset"] == "cmdc"
         )
         self.assertAlmostEqual(cmdc["primary_range"], 0.04)
+        with mock.patch.object(stability, "_per_experiment_rows", return_value=rows):
+            stricter = stability.summarize_stability(Path("unused"), gate_threshold=0.05)
+        self.assertFalse(stricter["expand_all"])
 
 
 @unittest.skipIf(
