@@ -1,0 +1,25 @@
+# Table-aligned five-fold Turkish BDI>=17 hidden-state probes.
+# The saved train_val checkpoints were selected on each outer validation fold;
+# these results are therefore validation estimates, not unseen-test estimates.
+experiments:
+  - dataset: turkish
+    modality: audio_text
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/audio_text/turkish_t17_qwen3asr/t17_posf1_tf_qwen3asr_turkish_t17_audio_text_selposf1_tf_qwen3asr
+  - dataset: turkish
+    modality: audio_only
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/audio_only/turkish_t17_qwen3asr/t17_posf1_tf_qwen3asr_turkish_t17_audio_only_selposf1_tf_qwen3asr
+  - dataset: turkish
+    modality: text_only
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/text_only/turkish_t17_qwen3asr/t17_posf1_tf_qwen3asr_turkish_t17_text_only_selposf1_tf_qwen3asr
+
+variants:
+  - logreg_raw
+  - xgb_raw
+  - xgb_pca32
+  - logreg_pca32
+  - xgb_pca64
+  - majority_class
+  - xgb_raw_shuffled_labels

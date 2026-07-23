@@ -41,7 +41,7 @@ def resolve_condition(value: str | None, input_modality: str | None, emotion_ena
 def _emotion_provenance(
     config: dict[str, Any],
     manifest_rows: list[dict[str, Any]],
-    split_payload: dict[str, Any],
+    partition_subject_ids: dict[str, list[str]],
     *,
     source: str | None,
     language: str | None,
@@ -58,8 +58,8 @@ def _emotion_provenance(
         raise FileNotFoundError(f"Saved emotion cache is unavailable: {cache_path}")
     caption_field = str(data.get("emotion_caption_field", "emotion_en"))
     cache = load_emotion_cache(cache_path, caption_field=caption_field)
-    train_ids = set(split_payload["train_subject_ids"]) | set(split_payload["selection_subject_ids"])
-    heldout_ids = set(split_payload["final_eval_subject_ids"])
+    train_ids = set(partition_subject_ids["outer_train"])
+    heldout_ids = set(partition_subject_ids["final_eval"])
 
     def coverage(subject_ids: set[str]) -> dict[str, int]:
         sample_ids = [
@@ -165,16 +165,12 @@ def _decoder_hidden_size(model) -> int:
 def _partition_examples(
     manifest_rows: list[dict[str, Any]],
     config: dict[str, Any],
-    split_payload: dict[str, Any],
+    partition_subject_ids: dict[str, list[str]],
     fold: int,
 ) -> dict[str, list[dict[str, Any]]]:
-    train_ids = sorted(set(split_payload["train_subject_ids"]) | set(split_payload["selection_subject_ids"]))
-    heldout_ids = sorted(set(split_payload["final_eval_subject_ids"]))
-    overlap = sorted(set(train_ids) & set(heldout_ids))
-    if overlap:
-        raise ValueError(f"Training/held-out subject overlap: {overlap[:10]}")
     result: dict[str, list[dict[str, Any]]] = {}
-    for partition, ids in (("outer_train", train_ids), ("final_eval", heldout_ids)):
+    for partition in ("outer_train", "final_eval"):
+        ids = partition_subject_ids[partition]
         rows = filter_rows_by_subjects(manifest_rows, ids)
         examples = build_examples(rows, config, partition_name=partition, truncation_log_path=None)
         for example in examples:
@@ -190,10 +186,61 @@ def _partition_examples(
     return result
 
 
-def _validate_saved_split(
+def _resolve_subject_partitions(
     saved: dict[str, Any],
     config: dict[str, Any],
     split_payload: dict[str, Any],
+) -> tuple[dict[str, list[str]], dict[str, Any]]:
+    cv_protocol = str(
+        saved.get("cv_protocol")
+        or config.get("split", {}).get("cv_protocol")
+        or ""
+    )
+    if cv_protocol == "train_val":
+        train_sources = ("train_subject_ids",)
+        heldout_source = "selection_subject_ids"
+        evaluation_protocol = "table_aligned_outer_validation"
+    else:
+        train_sources = ("train_subject_ids", "selection_subject_ids")
+        heldout_source = "final_eval_subject_ids"
+        evaluation_protocol = "saved_final_evaluation"
+
+    train_ids = sorted({
+        str(subject_id)
+        for source in train_sources
+        for subject_id in split_payload.get(source, [])
+    })
+    heldout_ids = sorted({str(subject_id) for subject_id in split_payload.get(heldout_source, [])})
+    if not train_ids:
+        raise ValueError("Resolved outer_train subject set is empty.")
+    if not heldout_ids:
+        raise ValueError(
+            f"Resolved final_eval subject set is empty (source={heldout_source}, cv_protocol={cv_protocol!r})."
+        )
+    overlap = sorted(set(train_ids) & set(heldout_ids))
+    if overlap:
+        raise ValueError(f"Training/held-out subject overlap: {overlap[:10]}")
+    partitions = {"outer_train": train_ids, "final_eval": heldout_ids}
+    provenance = {
+        "evaluation_protocol": evaluation_protocol,
+        "saved_cv_protocol": cv_protocol or None,
+        "partition_sources": {
+            "outer_train": list(train_sources),
+            "final_eval": [heldout_source],
+        },
+        "compatibility_note": (
+            "The final_eval cache contains the saved outer-fold validation subjects."
+            if cv_protocol == "train_val"
+            else None
+        ),
+    }
+    return partitions, provenance
+
+
+def _validate_saved_split(
+    saved: dict[str, Any],
+    config: dict[str, Any],
+    partition_subject_ids: dict[str, list[str]],
     fold: int,
 ) -> Path:
     split_metadata_path = _saved_path(saved["split_metadata_path"])
@@ -201,8 +248,8 @@ def _validate_saved_split(
         raise FileNotFoundError(f"Saved split metadata is unavailable: {split_metadata_path}")
     if saved.get("split_metadata_hash") and sha256_file(split_metadata_path) != saved["split_metadata_hash"]:
         raise ValueError("Current split metadata hash does not match the checkpoint's saved split hash.")
-    train_ids = set(split_payload["train_subject_ids"]) | set(split_payload["selection_subject_ids"])
-    heldout_ids = set(split_payload["final_eval_subject_ids"])
+    train_ids = set(partition_subject_ids["outer_train"])
+    heldout_ids = set(partition_subject_ids["final_eval"])
     split_metadata = read_json(split_metadata_path)
     if str(saved.get("split_mode", "")) == "cv":
         fold_payload = split_metadata[str(fold)] if str(fold) in split_metadata else split_metadata[fold]
@@ -358,7 +405,12 @@ def main() -> None:
     if checkpoint_dir.name != "best_model":
         raise ValueError("Primary experiment requires the fold-specific best_model checkpoint.")
     split_payload = read_json(split_path)
-    split_metadata_path = _validate_saved_split(saved, config, split_payload, fold)
+    partition_subject_ids, evaluation_provenance = _resolve_subject_partitions(
+        saved, config, split_payload
+    )
+    split_metadata_path = _validate_saved_split(
+        saved, config, partition_subject_ids, fold
+    )
     manifest_path = args.manifest_path.resolve() if args.manifest_path else _saved_path(saved["manifest_path"])
     if not manifest_path.exists():
         raise FileNotFoundError(f"Saved manifest is unavailable: {manifest_path}")
@@ -370,11 +422,11 @@ def main() -> None:
     emotion_provenance = _emotion_provenance(
         config,
         manifest_rows,
-        split_payload,
+        partition_subject_ids,
         source=args.emotion_source,
         language=args.emotion_language,
     )
-    examples = _partition_examples(manifest_rows, config, split_payload, fold)
+    examples = _partition_examples(manifest_rows, config, partition_subject_ids, fold)
     model_name = args.model_name_or_path or saved.get("resolved_model_name_or_path") or config["model_name_or_path"]
     processor = load_processor(checkpoint_dir, config)
     model = load_model_for_inference(str(model_name), checkpoint_dir, config)
@@ -410,6 +462,7 @@ def main() -> None:
         "saved_run_config_sha256": sha256_file(run_config_path),
         "saved_split": str(split_path),
         "saved_split_sha256": sha256_file(split_path),
+        "evaluation_provenance": evaluation_provenance,
         "split_metadata": str(split_metadata_path),
         "split_metadata_sha256": sha256_file(split_metadata_path),
         "manifest": str(manifest_path),

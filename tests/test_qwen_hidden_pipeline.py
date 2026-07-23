@@ -11,7 +11,12 @@ import torch
 from src.aggregate import aggregate_binary_classifier_predictions, aggregate_original_teacher_forced_predictions
 from src.features.pooling import aligned_attention_mask, last_valid_token
 from src.features.qwen_hidden_collator import PromptOnlyExtractionCollator
-from src.features.extract_qwen_hidden import _decoder_hidden_size, _emotion_provenance, resolve_condition
+from src.features.extract_qwen_hidden import (
+    _decoder_hidden_size,
+    _emotion_provenance,
+    _resolve_subject_partitions,
+    resolve_condition,
+)
 
 
 class _FakeFeatureExtractor:
@@ -91,9 +96,8 @@ class PoolingTests(unittest.TestCase):
                 {"sample_id": "test-null", "subject_id": "test"},
             ]
             split = {
-                "train_subject_ids": ["train"],
-                "selection_subject_ids": ["val"],
-                "final_eval_subject_ids": ["test"],
+                "outer_train": ["train", "val"],
+                "final_eval": ["test"],
             }
             provenance = _emotion_provenance(
                 config,
@@ -108,6 +112,51 @@ class PoolingTests(unittest.TestCase):
             self.assertEqual(provenance["partition_coverage"]["final_eval"]["null_caption"], 1)
             self.assertEqual(provenance["fallback_caption_count"], 2)
             self.assertEqual(len(provenance["cache_sha256"]), 64)
+
+    def test_standard_partition_resolution_preserves_train_selection_union(self):
+        split = {
+            "train_subject_ids": ["train"],
+            "selection_subject_ids": ["selection"],
+            "final_eval_subject_ids": ["test"],
+        }
+        partitions, provenance = _resolve_subject_partitions({}, {"split": {}}, split)
+        self.assertEqual(partitions["outer_train"], ["selection", "train"])
+        self.assertEqual(partitions["final_eval"], ["test"])
+        self.assertEqual(provenance["evaluation_protocol"], "saved_final_evaluation")
+
+    def test_train_val_partition_resolution_uses_selection_as_heldout(self):
+        split = {
+            "train_subject_ids": ["train"],
+            "selection_subject_ids": ["outer-validation"],
+            "final_eval_subject_ids": [],
+        }
+        partitions, provenance = _resolve_subject_partitions(
+            {"cv_protocol": "train_val"},
+            {"split": {"cv_protocol": "train_val"}},
+            split,
+        )
+        self.assertEqual(partitions["outer_train"], ["train"])
+        self.assertEqual(partitions["final_eval"], ["outer-validation"])
+        self.assertEqual(provenance["evaluation_protocol"], "table_aligned_outer_validation")
+        self.assertEqual(provenance["partition_sources"]["final_eval"], ["selection_subject_ids"])
+
+    def test_partition_resolution_rejects_empty_or_overlapping_heldout(self):
+        with self.assertRaisesRegex(ValueError, "empty"):
+            _resolve_subject_partitions(
+                {"cv_protocol": "train_val"},
+                {"split": {}},
+                {"train_subject_ids": ["a"], "selection_subject_ids": []},
+            )
+        with self.assertRaisesRegex(ValueError, "overlap"):
+            _resolve_subject_partitions(
+                {},
+                {"split": {}},
+                {
+                    "train_subject_ids": ["a"],
+                    "selection_subject_ids": [],
+                    "final_eval_subject_ids": ["a"],
+                },
+            )
 
     def test_audio_expansion_uses_aligned_all_valid_mask(self):
         hidden = torch.zeros((1, 5, 2))

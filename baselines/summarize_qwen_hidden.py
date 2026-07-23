@@ -62,8 +62,15 @@ def summarize(root: Path) -> list[dict[str, Any]]:
         for path in sorted(variant_dirs):
             subject_rows.extend(read_jsonl(path / "predictions_subject_level.jsonl"))
         subject_ids = [str(row["subject_id"]) for row in subject_rows]
-        if dataset == "cmdc" and len(subject_ids) != len(set(subject_ids)):
-            raise ValueError(f"CMDC pooled held-out subjects overlap for {condition}/{run_name}/{variant}.")
+        if len(fold_metrics) > 1 and len(subject_ids) != len(set(subject_ids)):
+            raise ValueError(
+                f"Pooled held-out subjects overlap for {dataset}/{condition}/{run_name}/{variant}."
+            )
+        if dataset == "turkish" and len(fold_metrics) == 5 and len(subject_ids) != 120:
+            raise ValueError(
+                f"Turkish five-fold evaluation must pool 120 subjects, found {len(subject_ids)} "
+                f"for {condition}/{run_name}/{variant}."
+            )
         y_true = [int(row["label"]) for row in subject_rows]
         y_pred = [
             int(row["prediction"])
