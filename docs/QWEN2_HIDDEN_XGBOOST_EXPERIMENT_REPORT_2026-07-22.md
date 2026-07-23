@@ -4,6 +4,9 @@ Date: 2026-07-22; Turkish and Optuna extensions: 2026-07-23
 
 Implementation plan: [`QWEN2_HIDDEN_XGBOOST_IMPLEMENTATION_PLAN_2026-07-22.md`](QWEN2_HIDDEN_XGBOOST_IMPLEMENTATION_PLAN_2026-07-22.md)
 
+The completed 150-trial, depth-8, and three-inner-seed follow-up is reported in
+[`QWEN2_HIDDEN_XGBOOST_OPTUNA_FOLLOWUP_REPORT_2026-07-23.md`](QWEN2_HIDDEN_XGBOOST_OPTUNA_FOLLOWUP_REPORT_2026-07-23.md).
+
 ## Summary
 
 The prompt-only final-hidden-state pipeline was implemented and run for the
