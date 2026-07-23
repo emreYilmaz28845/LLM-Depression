@@ -1,6 +1,6 @@
 # Qwen2 Final Hidden-State Classifier Experiment Report
 
-Date: 2026-07-22; Turkish extension: 2026-07-23
+Date: 2026-07-22; Turkish and Optuna extensions: 2026-07-23
 
 Implementation plan: [`QWEN2_HIDDEN_XGBOOST_IMPLEMENTATION_PLAN_2026-07-22.md`](QWEN2_HIDDEN_XGBOOST_IMPLEMENTATION_PLAN_2026-07-22.md)
 
@@ -40,6 +40,11 @@ The main findings are:
   0.818. Audio-only raw XGBoost reached F1 0.830, below the saved Qwen
   baseline's 0.847. Text-only raw XGBoost had the best Turkish macro-F1, 0.623,
   but positive F1 was only 0.774.
+- Leakage-safe Optuna tuning improved fixed raw XGBoost most clearly for CMDC
+  audio+text (positive F1 0.960 to 0.980) and DAIC text-only (0.692 to
+  0.741). It did not improve the strongest hidden-state result for any dataset:
+  fixed logistic regression still leads DAIC/CMDC, while fixed raw text-only
+  XGBoost retains the best Turkish macro-F1.
 - Majority-class and subject-shuffled-label controls failed on DAIC and CMDC.
   On positive-skewed Turkish data they instead expose why positive F1 alone is
   misleading: predicting every subject positive gives F1 0.818 but macro-F1
@@ -83,6 +88,12 @@ was introduced merely to force the audio representation to 3,584 dimensions.
 - Class threshold: fixed at 0.5.
 - Classifiers: predeclared XGBoost configuration, balanced logistic-regression
   control, majority-class control, and subject-level shuffled-label control.
+- Tuned classifier: raw XGBoost only, with 50 sequential Optuna TPE trials per
+  outer evaluation and three deterministic stratified subject folds. Each
+  trial pools one out-of-fold prediction per training subject after the same
+  response-majority/probability-margin aggregation used for final scoring.
+  DAIC/CMDC maximize positive F1; Turkish maximizes macro-F1. The final outer
+  partition is not loaded until tuning is complete.
 - Emotion extension: frozen cache only; no SECap model ran during extraction.
   DAIC used local SECap English and Chinese caption conditions. CMDC used the
   Chinese captions distributed with the DepressInstruct repository.
@@ -217,6 +228,66 @@ Turkish interpretation:
   Its best macro-F1 is 0.608 for text-only PCA-32, while raw XGBoost reaches
   0.623.
 
+## Optuna-tuned raw XGBoost extension
+
+This extension tuned only the raw XGBoost head. It reused the existing frozen
+hidden matrices and ran no Qwen extraction, Qwen training, PCA, emotion
+condition, GPU code, early stopping, or threshold selection. Each of the 33
+outer evaluations ran 50 sequential TPE trials with three subject-disjoint
+inner folds. The threshold remained 0.5. DAIC and CMDC optimized pooled
+subject-level positive F1; Turkish optimized pooled subject-level macro-F1.
+
+Values before parentheses are pooled outer metrics. Parentheses contain the
+outer-fold mean and sample standard deviation; DAIC has one fixed outer split,
+so its SD is zero.
+
+| Dataset | Modality | ACC | Positive F1 (mean±SD) | Macro F1 (mean±SD) | Neg F1 | Precision | Recall | AUROC | Confusion matrix |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| DAIC | Audio+text | 0.787 | 0.643 (0.643±0.000) | 0.746 (0.746±0.000) | 0.848 | 0.643 | 0.643 | 0.883 | `[[28, 5], [5, 9]]` |
+| DAIC | Audio-only | 0.723 | 0.581 (0.581±0.000) | 0.687 (0.687±0.000) | 0.794 | 0.529 | 0.643 | 0.786 | `[[25, 8], [5, 9]]` |
+| DAIC | Text-only | 0.851 | 0.741 (0.741±0.000) | 0.818 (0.818±0.000) | 0.896 | 0.769 | 0.714 | 0.911 | `[[30, 3], [4, 10]]` |
+| CMDC | Audio+text | 0.987 | 0.980 (0.978±0.050) | 0.985 (0.984±0.035) | 0.990 | 1.000 | 0.962 | 0.994 | `[[52, 0], [1, 25]]` |
+| CMDC | Audio-only | 0.987 | 0.980 (0.978±0.050) | 0.985 (0.984±0.035) | 0.990 | 1.000 | 0.962 | 0.987 | `[[52, 0], [1, 25]]` |
+| CMDC | Text-only | 0.974 | 0.962 (0.962±0.053) | 0.971 (0.972±0.039) | 0.981 | 0.962 | 0.962 | 0.997 | `[[51, 1], [1, 25]]` |
+| Turkish | Audio+text | 0.625 | 0.746 (0.743±0.094) | 0.516 (0.506±0.151) | 0.286 | 0.702 | 0.795 | 0.576 | `[[9, 28], [17, 66]]` |
+| Turkish | Audio-only | 0.658 | 0.771 (0.769±0.087) | 0.549 (0.549±0.109) | 0.328 | 0.719 | 0.831 | 0.623 | `[[10, 27], [14, 69]]` |
+| Turkish | Text-only | 0.642 | 0.726 (0.727±0.036) | 0.604 (0.603±0.059) | 0.482 | 0.770 | 0.687 | 0.647 | `[[20, 17], [26, 57]]` |
+
+The comparison metric is positive F1 for DAIC/CMDC and macro-F1 for Turkish.
+Qwen deltas use the rounded values in
+`depression_results_table_no_emo.csv`; the other deltas use unrounded pooled
+classifier metrics.
+
+| Dataset | Modality | Tuned metric | Δ vs fixed raw XGB | Δ vs raw LogReg | Δ vs majority | Δ vs Qwen |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| DAIC | Audio+text | 0.643 positive F1 | +0.022 | -0.157 | +0.643 | -0.075 |
+| DAIC | Audio-only | 0.581 positive F1 | -0.012 | -0.048 | +0.581 | -0.014 |
+| DAIC | Text-only | 0.741 positive F1 | +0.048 | +0.000 | +0.741 | +0.049 |
+| CMDC | Audio+text | 0.980 positive F1 | +0.020 | +0.000 | +0.980 | +0.084 |
+| CMDC | Audio-only | 0.980 positive F1 | +0.000 | +0.000 | +0.980 | +0.062 |
+| CMDC | Text-only | 0.962 positive F1 | +0.002 | -0.019 | +0.962 | +0.058 |
+| Turkish | Audio+text | 0.516 macro-F1 | +0.081 | +0.017 | +0.107 | +0.028 |
+| Turkish | Audio-only | 0.549 macro-F1 | +0.059 | -0.028 | +0.141 | -0.064 |
+| Turkish | Text-only | 0.604 macro-F1 | -0.019 | +0.048 | +0.195 | +0.092 |
+
+Interpretation:
+
+- Tuning gives a useful but limited gain for CMDC audio+text, reaching the raw
+  logistic result with one error among 78 pooled subjects. CMDC audio-only is
+  unchanged, and text-only gains only 0.002 positive F1 while introducing one
+  false positive.
+- DAIC text-only improves from 0.692 to 0.741 positive F1 and matches raw
+  logistic regression, but not the 0.759 PCA-32 logistic result. DAIC
+  audio+text improves modestly and audio-only declines.
+- Optimizing Turkish macro-F1 makes the audio+text and audio-only heads more
+  balanced than fixed raw XGBoost, but their positive F1 falls substantially.
+  Tuned text-only reaches macro-F1 0.604, below fixed raw text-only XGBoost
+  (0.623) and slightly below PCA-32 logistic regression (0.608). Tuning
+  therefore does not change the primary Turkish ranking.
+- Turkish remains table-aligned outer validation, not unseen-test evaluation,
+  because the saved Qwen adapters were selected using those outer validation
+  folds.
+
 ## Emotion-extension results
 
 The DAIC probe still trains on all 142 development subjects and evaluates only
@@ -329,12 +400,20 @@ control result.
 - Every current manifest and split hash matched the corresponding checkpoint's
   saved hash before extraction.
 - All training and held-out subject intersections were empty.
-- All 280 classifier metadata files (40 folds/checkpoints x 7 variants) passed
-  overlap and PCA-component checks.
+- All 280 fixed-classifier metadata files (40 folds/checkpoints x 7 variants)
+  passed overlap and PCA-component checks. The 33 tuned metadata files also
+  passed the complete outer/inner subject audit.
 - CMDC pooled held-out predictions cover 78 unique subjects exactly once for
   every variant.
 - Turkish pooled outer-validation predictions cover 120 unique subjects exactly
   once for every variant.
+- The tuned matrix contains 33 studies with exactly 1,650 completed trials,
+  4,950 inner fits, and 33 final fits. Every trial stays inside its declared
+  search bounds and stores pooled subject-level OOF metrics.
+- Every tuned inner split is deterministic, stratified, subject-disjoint, and
+  covers each outer-training subject exactly once. Every final outer
+  train/evaluation intersection is empty and every study/configuration SHA-256
+  matches its persisted Optuna attributes.
 - Feature extraction records implementation commit
   `14fe9d022ec95d54866e75aa75684921e5a27659`; the grouped subject-shuffle
   correction is commit `8f8584f4e044252ddf04b7d02a0e220a0eb709a7`. Emotion extraction records
@@ -342,8 +421,11 @@ control result.
   `2242f1f039093d7fe890b3ea882017260e3b1f92`.
 - Turkish extraction records protocol-aware implementation commit
   `418f17bbbdc578ba44197d0f3287a5be7b936f95`.
+- Optuna tuning uses implementation commit
+  `3d41c974b5779e261a72c39e4fa9c720a00d542d`.
 - Runtime: Python 3.10.14, Torch 2.3.0+cu121, Transformers 4.55.0, PEFT 0.17.0,
-  scikit-learn 1.7.0, and project-local `xgboost-cpu` 2.1.4.
+  scikit-learn 1.7.0, project-local Optuna 4.4.0, and project-local
+  `xgboost-cpu` 2.1.4.
 
 ## Slurm execution
 
@@ -357,9 +439,14 @@ control result.
 - Emotion matrix: `43671578` through `43671584` (7/7 completed, exit code 0).
 - Turkish smoke: `43705279` (completed, exit code 0).
 - Turkish matrix: `43705723` through `43705745` (15/15 completed, exit code 0).
+- Optuna repeated-response smoke: `43727515`; idempotent resume check:
+  `43727544` (both completed, exit code 0).
+- Optuna production matrix: `43727794` through `43727828`, with scheduler ID
+  gaps (33/33 completed, exit code 0).
 
-Primary job wall times ranged from 1:28 to 4:47. No primary job log contained a
-traceback, CUDA OOM, killed-process marker, or error signature.
+Original primary job wall times ranged from 1:28 to 4:47. Optuna production
+wall times ranged from 1:16 to 28:21. No production log contained a traceback,
+out-of-memory marker, killed-process marker, or error signature.
 
 ## Artifacts
 
@@ -370,14 +457,19 @@ traceback, CUDA OOM, killed-process marker, or error signature.
 - Feature matrices and extraction provenance:
   `outputs/hidden_features/<dataset>/<condition>/...`.
 - Slurm logs: `logs/slurm_qwen_hidden/`.
+- Optuna studies and complete per-fold tuning provenance:
+  `outputs/hidden_classifiers/<dataset>/<condition>/.../xgb_optuna_raw/`.
+- Optuna logs and acceptance audit: `logs/slurm_qwen_hidden_optuna/`.
 - Experiment matrices: `configs/features/primary_matrix.yaml` and
   `configs/features/emotion_matrix.yaml`, and
-  `configs/features/turkish_matrix.yaml`.
+  `configs/features/turkish_matrix.yaml`. The tuned matrix is
+  `configs/features/optuna_raw_matrix.yaml`.
 
 The earlier 149 MB DAIC/CMDC feature cache remains synchronized locally. The
 new Turkish feature matrices remain on GPFS; their compact extraction metadata
-and the complete 168 MB classifier result tree are available locally. No model
-checkpoints were copied as part of this experiment.
+and the classifier result tree are available locally. The tuned artifacts add
+approximately 53 MB, including all 33 SQLite studies and final fitted
+pipelines. No model checkpoints were copied as part of this experiment.
 
 ## Conclusion
 
@@ -389,8 +481,10 @@ discard important signal. Frozen emotion descriptions do not improve the
 strongest logistic result: they are nearly neutral for DAIC Chinese captions
 and CMDC paper captions, and harmful for DAIC English captions. They can help
 the weaker raw XGBoost head, but that does not overturn logistic regression as
-the preferred probe on DAIC/CMDC. Turkish does not show the same pattern:
-XGBoost is stronger than logistic regression there, but most of its positive-F1
-score comes from the 69% positive class prior. The most defensible next step is
-strict nested or external validation using macro-F1 as a co-primary metric, not
-selection of a new variant from these evaluation subjects.
+the preferred probe on DAIC/CMDC. Optuna closes some gaps but does not change
+that conclusion. Turkish does not show the same pattern: XGBoost is stronger
+than logistic regression there, but most of its positive-F1 score comes from
+the 69% positive class prior, and macro-F1 tuning does not beat fixed raw
+text-only XGBoost. The most defensible next step is strict nested or external
+validation using macro-F1 as a co-primary metric, not selection of a new
+variant from these evaluation subjects.
