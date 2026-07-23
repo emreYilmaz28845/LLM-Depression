@@ -92,7 +92,9 @@ def summarize(root: Path) -> list[dict[str, Any]]:
             "pooled_subjects": len(subject_rows),
             "input_dimension": int(classifier_metadata["input_dimension"]),
             "post_pca_dimension": (
-                int(classifier_metadata["effective_pca_components"])
+                int(classifier_metadata["post_pca_dimension"])
+                if classifier_metadata.get("post_pca_dimension") is not None
+                else int(classifier_metadata["effective_pca_components"])
                 if classifier_metadata.get("effective_pca_components") is not None
                 else int(classifier_metadata["input_dimension"])
             ),

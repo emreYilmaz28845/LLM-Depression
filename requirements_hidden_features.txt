@@ -1,3 +1,4 @@
 # Kept separate from the reconstructed MN5 freeze to avoid mutating the shared environment.
 # 2.1.4 supports Python 3.10 and is the last 2.1 patch release.
+optuna==4.4.0
 xgboost-cpu==2.1.4

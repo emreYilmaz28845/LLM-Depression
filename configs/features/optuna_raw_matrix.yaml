@@ -1,0 +1,60 @@
+# No-emotion Optuna-tuned raw XGBoost hidden-state matrix.
+# Cache paths are derived from outputs/hidden_features/<dataset>/<condition>/<basename(run_dir)>/fold_<fold>.
+experiments:
+  - dataset: daic
+    modality: audio_text
+    condition: audio_text
+    objective: positive_f1
+    folds: [0]
+    run_dir: output_model/audio_text/daic/daic_posf1_tf_daic_audio_text_selmacrof1_tf
+  - dataset: daic
+    modality: audio_only
+    condition: audio_only
+    objective: positive_f1
+    folds: [0]
+    run_dir: output_model/subject_audio/daic/daic_posf1_tf_daic_audio_only_selmacrof1_tf
+  - dataset: daic
+    modality: text_only
+    condition: text_only
+    objective: positive_f1
+    folds: [0]
+    run_dir: output_model/text_only/daic/daic_posf1_tf_daic_text_only_selmacrof1_tf
+  - dataset: cmdc
+    modality: audio_text
+    condition: audio_text
+    objective: positive_f1
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/audio_text/cmdc/cmdc_posf1_tf_cmdc_audio_text_selmacrof1_tf
+  - dataset: cmdc
+    modality: audio_only
+    condition: audio_only
+    objective: positive_f1
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/audio_only/cmdc/cmdc_posf1_tf_cmdc_audio_only_selmacrof1_tf
+  - dataset: cmdc
+    modality: text_only
+    condition: text_only
+    objective: positive_f1
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/text_only/cmdc/cmdc_posf1_tf_cmdc_text_only_selmacrof1_tf
+  - dataset: turkish
+    modality: audio_text
+    condition: audio_text
+    objective: macro_f1
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/audio_text/turkish_t17_qwen3asr/t17_posf1_tf_qwen3asr_turkish_t17_audio_text_selposf1_tf_qwen3asr
+  - dataset: turkish
+    modality: audio_only
+    condition: audio_only
+    objective: macro_f1
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/audio_only/turkish_t17_qwen3asr/t17_posf1_tf_qwen3asr_turkish_t17_audio_only_selposf1_tf_qwen3asr
+  - dataset: turkish
+    modality: text_only
+    condition: text_only
+    objective: macro_f1
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/text_only/turkish_t17_qwen3asr/t17_posf1_tf_qwen3asr_turkish_t17_text_only_selposf1_tf_qwen3asr
+
+classifier_variant: xgb_optuna_raw
+expected_jobs: 33
