@@ -4,6 +4,7 @@ import argparse
 import csv
 import hashlib
 import json
+import re
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -20,11 +21,15 @@ from src.metrics import classification_metrics
 from src.utils import read_json, read_jsonl, save_json_atomic, write_jsonl
 
 
-CLASSIFIER_VARIANT = "xgb_optuna_raw"
+CLASSIFIER_FAMILY = "xgb_optuna_raw"
+CLASSIFIER_VARIANT = CLASSIFIER_FAMILY
+DEFAULT_EXPERIMENT_ID = CLASSIFIER_FAMILY
 THRESHOLD = 0.5
-CONFIG_SCHEMA_VERSION = "qwen_hidden_xgb_optuna.v1"
+CONFIG_SCHEMA_VERSION = "qwen_hidden_xgb_optuna.v2"
 SUPPORTED_OBJECTIVES = ("positive_f1", "macro_f1")
-SEARCH_SPACE: dict[str, dict[str, Any]] = {
+SUPPORTED_SEARCH_PROFILES = ("standard_d6", "depth8")
+EXPERIMENT_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)*$")
+STANDARD_SEARCH_SPACE: dict[str, dict[str, Any]] = {
     "n_estimators": {"kind": "int", "low": 100, "high": 1000, "step": 50},
     "learning_rate": {"kind": "float", "low": 0.005, "high": 0.2, "log": True},
     "max_depth": {"kind": "int", "low": 1, "high": 6},
@@ -36,6 +41,8 @@ SEARCH_SPACE: dict[str, dict[str, Any]] = {
     "reg_lambda": {"kind": "float", "low": 1e-3, "high": 50.0, "log": True},
     "scale_pos_weight": {"kind": "float", "low": 0.25, "high": 4.0, "log": True},
 }
+# Backward-compatible public constant used by existing tests and callers.
+SEARCH_SPACE = STANDARD_SEARCH_SPACE
 FINAL_ARTIFACT_NAMES = (
     "pipeline.joblib",
     "predictions_sample_level.jsonl",
@@ -199,9 +206,21 @@ def build_inner_subject_assignments(
     }
 
 
-def _suggest_params(trial: Any) -> dict[str, Any]:
+def resolved_search_space(search_profile: str) -> dict[str, dict[str, Any]]:
+    if search_profile not in SUPPORTED_SEARCH_PROFILES:
+        raise ValueError(
+            f"Unsupported search profile {search_profile!r}; expected one of "
+            f"{SUPPORTED_SEARCH_PROFILES}."
+        )
+    search_space = {name: dict(spec) for name, spec in STANDARD_SEARCH_SPACE.items()}
+    if search_profile == "depth8":
+        search_space["max_depth"]["high"] = 8
+    return search_space
+
+
+def _suggest_params(trial: Any, search_space: dict[str, dict[str, Any]]) -> dict[str, Any]:
     params: dict[str, Any] = {}
-    for name, spec in SEARCH_SPACE.items():
+    for name, spec in search_space.items():
         if spec["kind"] == "int":
             params[name] = trial.suggest_int(name, spec["low"], spec["high"], step=spec.get("step", 1))
         elif spec["kind"] == "float":
@@ -234,6 +253,7 @@ def _sample_rows_for_predictions(
     probabilities: np.ndarray,
     predictions: np.ndarray,
     metadata: dict[str, Any],
+    experiment_id: str = DEFAULT_EXPERIMENT_ID,
 ) -> list[dict[str, Any]]:
     condition = str(metadata.get("condition") or metadata["input_modality"])
     return [
@@ -248,7 +268,8 @@ def _sample_rows_for_predictions(
             "probability": float(probability),
             "predicted_class": int(prediction),
             "checkpoint": metadata.get("checkpoint_dir"),
-            "classifier_variant": CLASSIFIER_VARIANT,
+            "classifier_family": CLASSIFIER_FAMILY,
+            "classifier_variant": experiment_id,
         }
         for row, probability, prediction in zip(rows, probabilities.tolist(), predictions.tolist())
     ]
@@ -262,12 +283,15 @@ def make_objective(
     assignments: dict[str, Any],
     objective_name: str,
     fixed_params: dict[str, Any],
+    search_space: dict[str, dict[str, Any]] | None = None,
+    experiment_id: str = DEFAULT_EXPERIMENT_ID,
 ) -> Callable[[Any], float]:
     train_y = np.asarray([int(row["label"]) for row in train_rows], dtype=np.int64)
     outer_subjects = {str(row["subject_id"]) for row in train_rows}
+    resolved_space = search_space or resolved_search_space("standard_d6")
 
     def objective(trial: Any) -> float:
-        params = _suggest_params(trial)
+        params = _suggest_params(trial, resolved_space)
         oof_subject_rows: list[dict[str, Any]] = []
         fold_metrics: list[dict[str, Any]] = []
         for fold in assignments["folds"]:
@@ -278,7 +302,13 @@ def make_objective(
             probabilities = np.asarray(model.predict_proba(train_x[val_idx])[:, 1], dtype=np.float64)
             predictions = (probabilities >= THRESHOLD).astype(np.int64)
             val_rows = [train_rows[index] for index in val_idx.tolist()]
-            sample_rows = _sample_rows_for_predictions(val_rows, probabilities, predictions, metadata)
+            sample_rows = _sample_rows_for_predictions(
+                val_rows,
+                probabilities,
+                predictions,
+                metadata,
+                experiment_id,
+            )
             subject_rows, metrics = aggregate_binary_classifier_predictions(sample_rows)
             fold_metrics.append({"inner_fold": int(fold["fold"]), **_metrics_with_negative_f1(metrics)})
             oof_subject_rows.extend(subject_rows)
@@ -299,16 +329,44 @@ def _canonical_json(data: dict[str, Any]) -> str:
     return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
+def validate_experiment_output(
+    output_dir: Path,
+    *,
+    metadata: dict[str, Any],
+    experiment_id: str,
+) -> str:
+    if not EXPERIMENT_ID_PATTERN.fullmatch(experiment_id):
+        raise ValueError(
+            "experiment_id must be a lowercase slug containing only letters, digits, "
+            "and single underscore separators."
+        )
+    if output_dir.name != experiment_id:
+        raise ValueError(
+            f"Output directory basename {output_dir.name!r} must equal experiment_id "
+            f"{experiment_id!r}."
+        )
+    expected_fold = f"fold_{int(metadata['fold'])}"
+    if output_dir.parent.name != expected_fold:
+        raise ValueError(
+            f"Output directory must be directly below {expected_fold}, found "
+            f"{output_dir.parent.name!r}."
+        )
+    return output_dir.parent.parent.name
+
+
 def build_study_config(
     *,
     cache_dir: Path,
-    output_dir: Path,
     metadata: dict[str, Any],
     objective_name: str,
     target_trials: int,
     inner_folds: int,
     seed: int,
+    inner_seed: int,
     xgb_threads: int,
+    experiment_id: str,
+    search_profile: str,
+    run_name: str,
 ) -> tuple[dict[str, Any], str]:
     try:
         import optuna
@@ -318,15 +376,21 @@ def build_study_config(
     import sklearn
 
     condition = str(metadata.get("condition") or metadata["input_modality"])
-    study_name = f"{metadata['dataset']}_{condition}_fold{int(metadata['fold'])}_{CLASSIFIER_VARIANT}_{objective_name}"
+    search_space = resolved_search_space(search_profile)
+    study_name = (
+        f"{metadata['dataset']}_{condition}_fold{int(metadata['fold'])}_"
+        f"{experiment_id}_{objective_name}"
+    )
     config = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "dataset": metadata["dataset"],
         "modality": metadata["input_modality"],
         "condition": condition,
         "outer_fold": int(metadata["fold"]),
-        "run_name": output_dir.parent.parent.name if output_dir.name == CLASSIFIER_VARIANT else output_dir.parent.name,
-        "classifier_variant": CLASSIFIER_VARIANT,
+        "run_name": run_name,
+        "classifier_family": CLASSIFIER_FAMILY,
+        "classifier_variant": experiment_id,
+        "experiment_id": experiment_id,
         "cache_dir": str(cache_dir),
         "cache_identity": {
             "outer_train_npz": _file_identity(cache_dir / "outer_train.npz"),
@@ -338,10 +402,14 @@ def build_study_config(
         "target_trials": target_trials,
         "inner_fold_count": inner_folds,
         "seed": seed,
+        "sampler_seed": seed,
+        "model_seed": seed,
+        "inner_seed": inner_seed,
         "aggregation_method": "aggregate_binary_classifier_predictions",
         "threshold": THRESHOLD,
         "fixed_xgb_params": fixed_xgb_params(seed, xgb_threads),
-        "search_space": SEARCH_SPACE,
+        "search_profile": search_profile,
+        "search_space": search_space,
         "study_name": study_name,
         "packages": {
             "optuna": optuna.__version__,
@@ -452,6 +520,7 @@ def _completed_final_result(
     *,
     config_hash: str,
     target_trials: int,
+    experiment_id: str,
 ) -> dict[str, Any] | None:
     metadata_path = output_dir / "classifier_metadata.json"
     if not metadata_path.exists():
@@ -461,9 +530,11 @@ def _completed_final_result(
         raise ValueError("Existing final classifier metadata has a different search config hash.")
     if int(metadata.get("completed_trials", -1)) != target_trials:
         raise ValueError("Existing final classifier metadata has a different completed-trial count.")
+    if metadata.get("experiment_id", metadata.get("classifier_variant")) != experiment_id:
+        raise ValueError("Existing final classifier metadata has a different experiment ID.")
     if not all((output_dir / name).is_file() for name in FINAL_ARTIFACT_NAMES):
         return None
-    return {"variant": CLASSIFIER_VARIANT, **read_json(output_dir / "metrics.json")}
+    return {"variant": experiment_id, **read_json(output_dir / "metrics.json")}
 
 
 def run_optuna_raw_xgb(
@@ -475,6 +546,9 @@ def run_optuna_raw_xgb(
     inner_folds: int,
     seed: int,
     xgb_threads: int,
+    experiment_id: str = DEFAULT_EXPERIMENT_ID,
+    search_profile: str = "standard_d6",
+    inner_seed: int | None = None,
 ) -> dict[str, Any]:
     if objective_name not in SUPPORTED_OBJECTIVES:
         raise ValueError(f"Unsupported objective {objective_name!r}; expected one of {SUPPORTED_OBJECTIVES}.")
@@ -484,19 +558,33 @@ def run_optuna_raw_xgb(
         raise ValueError("inner_folds must be at least 2.")
     if xgb_threads < 1:
         raise ValueError("xgb_threads must be at least 1.")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    resolved_inner_seed = seed if inner_seed is None else inner_seed
+    search_space = resolved_search_space(search_profile)
     train_x, train_rows = _load_partition(cache_dir, "outer_train")
     metadata = read_json(cache_dir / "extraction_metadata.json")
-    assignments = build_inner_subject_assignments(train_rows, inner_folds=inner_folds, seed=seed)
+    run_name = validate_experiment_output(
+        output_dir,
+        metadata=metadata,
+        experiment_id=experiment_id,
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    assignments = build_inner_subject_assignments(
+        train_rows,
+        inner_folds=inner_folds,
+        seed=resolved_inner_seed,
+    )
     config, config_hash = build_study_config(
         cache_dir=cache_dir,
-        output_dir=output_dir,
         metadata=metadata,
         objective_name=objective_name,
         target_trials=target_trials,
         inner_folds=inner_folds,
         seed=seed,
+        inner_seed=resolved_inner_seed,
         xgb_threads=xgb_threads,
+        experiment_id=experiment_id,
+        search_profile=search_profile,
+        run_name=run_name,
     )
     _write_or_validate_study_config(output_dir, config, config_hash)
     _write_or_validate_json(
@@ -518,6 +606,8 @@ def run_optuna_raw_xgb(
             assignments=assignments,
             objective_name=objective_name,
             fixed_params=fixed_params,
+            search_space=search_space,
+            experiment_id=experiment_id,
         )
         study.optimize(objective, n_trials=remaining, n_jobs=1)
     completed = len(_completed_trials(study))
@@ -535,6 +625,7 @@ def run_optuna_raw_xgb(
         output_dir,
         config_hash=config_hash,
         target_trials=target_trials,
+        experiment_id=experiment_id,
     )
     if completed_result is not None:
         return completed_result
@@ -554,7 +645,13 @@ def run_optuna_raw_xgb(
     model.fit(train_x, train_y)
     probabilities = np.asarray(model.predict_proba(final_x)[:, 1], dtype=np.float64)
     predictions = (probabilities >= THRESHOLD).astype(np.int64)
-    sample_rows = _sample_rows_for_predictions(final_rows, probabilities, predictions, metadata)
+    sample_rows = _sample_rows_for_predictions(
+        final_rows,
+        probabilities,
+        predictions,
+        metadata,
+        experiment_id,
+    )
     subject_rows, metrics = aggregate_binary_classifier_predictions(sample_rows)
     metrics = _metrics_with_negative_f1(metrics)
     condition = str(metadata.get("condition") or metadata["input_modality"])
@@ -565,7 +662,8 @@ def run_optuna_raw_xgb(
                 "modality": metadata["input_modality"],
                 "condition": condition,
                 "fold": int(metadata["fold"]),
-                "classifier_variant": CLASSIFIER_VARIANT,
+                "classifier_family": CLASSIFIER_FAMILY,
+                "classifier_variant": experiment_id,
             }
         )
     _dump_joblib_atomic(model, output_dir / "pipeline.joblib")
@@ -580,8 +678,14 @@ def run_optuna_raw_xgb(
         "condition": condition,
         "fold": int(metadata["fold"]),
         "run_name": config["run_name"],
-        "classifier_variant": CLASSIFIER_VARIANT,
+        "classifier_family": CLASSIFIER_FAMILY,
+        "classifier_variant": experiment_id,
+        "experiment_id": experiment_id,
         "seed": seed,
+        "sampler_seed": seed,
+        "model_seed": seed,
+        "inner_seed": resolved_inner_seed,
+        "search_profile": search_profile,
         "threshold": THRESHOLD,
         "inner_fold_count": inner_folds,
         "target_trials": target_trials,
@@ -615,7 +719,7 @@ def run_optuna_raw_xgb(
         ),
     }
     save_json_atomic(artifact_metadata, output_dir / "classifier_metadata.json")
-    return {"variant": CLASSIFIER_VARIANT, **metrics}
+    return {"variant": experiment_id, **metrics}
 
 
 def parse_args() -> argparse.Namespace:
@@ -626,6 +730,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-trials", type=int, default=50)
     parser.add_argument("--inner-folds", type=int, default=3)
     parser.add_argument("--seed", type=int, default=1337)
+    parser.add_argument("--inner-seed", type=int)
+    parser.add_argument("--experiment-id", default=DEFAULT_EXPERIMENT_ID)
+    parser.add_argument(
+        "--search-profile",
+        choices=SUPPORTED_SEARCH_PROFILES,
+        default="standard_d6",
+    )
     parser.add_argument("--xgb-threads", type=int, default=20)
     return parser.parse_args()
 
@@ -639,7 +750,10 @@ def main() -> None:
         target_trials=args.target_trials,
         inner_folds=args.inner_folds,
         seed=args.seed,
+        inner_seed=args.inner_seed,
         xgb_threads=args.xgb_threads,
+        experiment_id=args.experiment_id,
+        search_profile=args.search_profile,
     )
     print(json.dumps(summary, indent=2), flush=True)
 

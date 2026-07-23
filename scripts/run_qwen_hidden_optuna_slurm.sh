@@ -32,9 +32,12 @@ OBJECTIVE="${OBJECTIVE:?Set OBJECTIVE}"
 TARGET_TRIALS="${TARGET_TRIALS:-50}"
 INNER_FOLDS="${INNER_FOLDS:-3}"
 SEED="${SEED:-1337}"
+INNER_SEED="${INNER_SEED:-$SEED}"
+EXPERIMENT_ID="${EXPERIMENT_ID:-xgb_optuna_raw}"
+SEARCH_PROFILE="${SEARCH_PROFILE:-standard_d6}"
 XGB_THREADS="${XGB_THREADS:-20}"
 QWEN_HIDDEN_DEPS="${QWEN_HIDDEN_DEPS:-$PROJECT_ROOT/.deps/qwen_hidden}"
-LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/slurm_qwen_hidden_optuna}"
+LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/slurm_qwen_hidden_optuna/$EXPERIMENT_ID}"
 
 export PROJECT_ROOT
 export PYTHONPATH="$QWEN_HIDDEN_DEPS:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
@@ -55,6 +58,9 @@ CMD=(
   --target-trials "$TARGET_TRIALS"
   --inner-folds "$INNER_FOLDS"
   --seed "$SEED"
+  --inner-seed "$INNER_SEED"
+  --experiment-id "$EXPERIMENT_ID"
+  --search-profile "$SEARCH_PROFILE"
   --xgb-threads "$XGB_THREADS"
 )
 
@@ -68,6 +74,9 @@ echo "Objective: $OBJECTIVE"
 echo "Target Trials: $TARGET_TRIALS"
 echo "Inner Folds: $INNER_FOLDS"
 echo "Seed: $SEED"
+echo "Inner Seed: $INNER_SEED"
+echo "Experiment ID: $EXPERIMENT_ID"
+echo "Search Profile: $SEARCH_PROFILE"
 echo "XGB Threads: $XGB_THREADS"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-}"
 python -V
