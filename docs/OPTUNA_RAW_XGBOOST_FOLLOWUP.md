@@ -7,6 +7,11 @@ files or submitting jobs. The completed 50-trial results under
 `xgb_optuna_raw/` are immutable inputs for comparison and are never resumed by
 this experiment.
 
+For an end-to-end agent procedure covering selective rsync, the distinct
+`transfer1` and `alogin1` roles, smoke submission, Slurm monitoring, failure
+handling, artifact retrieval, local re-audit, and Git handoff, also read
+`docs/MN5_AGENT_EXECUTION_RUNBOOK.md`.
+
 ## Experiment identities
 
 | Purpose | Result directory / experiment ID |
