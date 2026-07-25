@@ -14,3 +14,6 @@ CMDC,Audio + Text (paper),0.989,0.982,1.000,0.967,n/a,n/a,0.500,26 dep / 52 non 
 Turkish (BDI≥17),Audio + Text (our),0.693,0.809,0.715,0.940,0.488,0.167,0.818,54 dep / 24 non / 0.692
 ,Audio only (our),0.759,0.847,0.760,0.965,0.613,0.379,0.818,
 ,Text only (our),0.709,0.821,0.716,0.964,0.512,0.203,0.818,
+,Audio + Text (XGB subject OS 0.75; 3-seed mean),0.656,0.783,0.694,0.900,0.473,0.162,0.818,
+,Audio only (XGB subject OS 0.75; 3-seed mean),0.697,0.811,0.713,0.940,0.524,0.238,0.818,
+,Text only (XGB subject OS 0.75; 3-seed mean),0.653,0.745,0.756,0.735,0.600,0.454,0.818,
