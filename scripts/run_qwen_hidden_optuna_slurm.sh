@@ -36,6 +36,9 @@ INNER_SEED="${INNER_SEED:-$SEED}"
 EXPERIMENT_ID="${EXPERIMENT_ID:-xgb_optuna_raw}"
 SEARCH_PROFILE="${SEARCH_PROFILE:-standard_d6}"
 XGB_THREADS="${XGB_THREADS:-20}"
+SAMPLING_MODE="${SAMPLING_MODE:--}"
+OVERSAMPLING_RATIO="${OVERSAMPLING_RATIO:--}"
+OVERSAMPLING_SEED="${OVERSAMPLING_SEED:-$SEED}"
 QWEN_HIDDEN_DEPS="${QWEN_HIDDEN_DEPS:-$PROJECT_ROOT/.deps/qwen_hidden}"
 LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/slurm_qwen_hidden_optuna/$EXPERIMENT_ID}"
 
@@ -63,6 +66,12 @@ CMD=(
   --search-profile "$SEARCH_PROFILE"
   --xgb-threads "$XGB_THREADS"
 )
+if [ "$SAMPLING_MODE" != "-" ]; then
+  CMD+=(--sampling-mode "$SAMPLING_MODE" --oversampling-seed "$OVERSAMPLING_SEED")
+fi
+if [ "$OVERSAMPLING_RATIO" != "-" ]; then
+  CMD+=(--oversampling-ratio "$OVERSAMPLING_RATIO")
+fi
 
 echo "Timestamp: $(date +%Y-%m-%d_%H:%M:%S)"
 echo "SLURM_JOB_ID: ${SLURM_JOB_ID:-}"
@@ -78,6 +87,9 @@ echo "Inner Seed: $INNER_SEED"
 echo "Experiment ID: $EXPERIMENT_ID"
 echo "Search Profile: $SEARCH_PROFILE"
 echo "XGB Threads: $XGB_THREADS"
+echo "Sampling Mode: $SAMPLING_MODE"
+echo "Oversampling Ratio: $OVERSAMPLING_RATIO"
+echo "Oversampling Seed: $OVERSAMPLING_SEED"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-}"
 python -V
 python -c "

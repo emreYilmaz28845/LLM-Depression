@@ -68,6 +68,9 @@ for item in expanded:
             str(item.get("xgb_threads", "-")),
             experiment_id,
             search_profile,
+            str(item.get("sampling_mode", "-")),
+            str(item.get("oversampling_ratio", "-")),
+            str(item.get("oversampling_seed", "-")),
         )
     )
 if len(rows) != expected:
@@ -88,7 +91,7 @@ fi
 submitted=0
 skipped=0
 for job in "${jobs[@]}"; do
-  IFS=$'\t' read -r dataset condition modality fold run_dir objective row_trials row_folds row_seed row_inner_seed row_threads row_experiment row_profile <<< "$job"
+  IFS=$'\t' read -r dataset condition modality fold run_dir objective row_trials row_folds row_seed row_inner_seed row_threads row_experiment row_profile row_sampling_mode row_oversampling_ratio row_oversampling_seed <<< "$job"
   target_trials="$row_trials"; [ "$target_trials" = "-" ] && target_trials="$TARGET_TRIALS"
   inner_folds="$row_folds"; [ "$inner_folds" = "-" ] && inner_folds="$INNER_FOLDS"
   seed="$row_seed"; [ "$seed" = "-" ] && seed="$SEED"
@@ -96,6 +99,9 @@ for job in "${jobs[@]}"; do
   xgb_threads="$row_threads"; [ "$xgb_threads" = "-" ] && xgb_threads="$XGB_THREADS"
   experiment_id="$row_experiment"; [ "$experiment_id" = "-" ] && experiment_id="$EXPERIMENT_ID"
   search_profile="$row_profile"; [ "$search_profile" = "-" ] && search_profile="$SEARCH_PROFILE"
+  sampling_mode="$row_sampling_mode"
+  oversampling_ratio="$row_oversampling_ratio"
+  oversampling_seed="$row_oversampling_seed"; [ "$oversampling_seed" = "-" ] && oversampling_seed="$seed"
   run_name="$(basename "$run_dir")"
   cache="$PROJECT_ROOT/outputs/hidden_features/$dataset/$condition/$run_name/fold_$fold"
   output="$PROJECT_ROOT/outputs/hidden_classifiers/$dataset/$condition/$run_name/fold_$fold/$experiment_id"
@@ -106,7 +112,7 @@ for job in "${jobs[@]}"; do
     fi
   done
   if [ -d "$output" ]; then
-    state="$(python - "$output" "$experiment_id" "$target_trials" "$seed" "$inner_seed" "$search_profile" "$inner_folds" "$xgb_threads" "$objective" <<'PY'
+    state="$(python - "$output" "$experiment_id" "$target_trials" "$seed" "$inner_seed" "$search_profile" "$inner_folds" "$xgb_threads" "$objective" "$sampling_mode" "$oversampling_ratio" "$oversampling_seed" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -121,6 +127,14 @@ expected = {
     "inner_fold_count": int(sys.argv[7]),
     "objective": sys.argv[9],
 }
+if sys.argv[10] != "-":
+    expected.update(
+        {
+            "sampling_mode": sys.argv[10],
+            "oversampling_ratio": None if sys.argv[11] == "-" else float(sys.argv[11]),
+            "oversampling_seed": int(sys.argv[12]),
+        }
+    )
 config_path = output / "study_config.json"
 if not config_path.is_file():
     if any(output.iterdir()):
@@ -168,7 +182,7 @@ PY
   command=(
     sbatch
     --parsable
-    --export="ALL,CACHE_DIR=$cache,OUTPUT_DIR=$output,OBJECTIVE=$objective,TARGET_TRIALS=$target_trials,INNER_FOLDS=$inner_folds,SEED=$seed,INNER_SEED=$inner_seed,XGB_THREADS=$xgb_threads,EXPERIMENT_ID=$experiment_id,SEARCH_PROFILE=$search_profile"
+    --export="ALL,CACHE_DIR=$cache,OUTPUT_DIR=$output,OBJECTIVE=$objective,TARGET_TRIALS=$target_trials,INNER_FOLDS=$inner_folds,SEED=$seed,INNER_SEED=$inner_seed,XGB_THREADS=$xgb_threads,EXPERIMENT_ID=$experiment_id,SEARCH_PROFILE=$search_profile,SAMPLING_MODE=$sampling_mode,OVERSAMPLING_RATIO=$oversampling_ratio,OVERSAMPLING_SEED=$oversampling_seed"
     "$PROJECT_ROOT/scripts/run_qwen_hidden_optuna_slurm.sh"
   )
   if [ "$DRY_RUN" = "1" ]; then

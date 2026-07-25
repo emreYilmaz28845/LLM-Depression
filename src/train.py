@@ -61,6 +61,10 @@ from src.model.runtime import (
     save_adapter_and_processor,
 )
 from src.model.lora_common import resolved_lora_layer_selection
+from src.sampling import (
+    SAMPLING_MODE_SUBJECT_OVERSAMPLE,
+    build_subject_oversampling,
+)
 from src.utils import (
     configure_logging,
     ensure_dir,
@@ -585,6 +589,7 @@ def _limit_subject_ids_for_smoke(
     *,
     limit: int,
     seed: int,
+    preserve_class_ratio: bool = False,
 ) -> list[str]:
     if limit <= 0 or len(subject_ids) <= limit:
         return sorted(subject_ids)
@@ -595,6 +600,19 @@ def _limit_subject_ids_for_smoke(
     }
     for values in by_label.values():
         rng.shuffle(values)
+    if preserve_class_ratio:
+        negative_target = max(
+            1,
+            min(
+                limit - 1,
+                round(limit * len(by_label[0]) / (len(by_label[0]) + len(by_label[1]))),
+            ),
+        )
+        positive_target = limit - negative_target
+        selected = by_label[0][:negative_target] + by_label[1][:positive_target]
+        if len(selected) != limit:
+            raise ValueError("Smoke subject cap could not retain both classes proportionally.")
+        return sorted(selected)
     selected: list[str] = []
     while len(selected) < limit and any(by_label.values()):
         for label in (1, 0):
@@ -612,6 +630,10 @@ def _apply_smoke_subject_limit(
     limit = int(config.get("split", {}).get("smoke_subject_limit", 0) or 0)
     if limit <= 0:
         return
+    preserve_class_ratio = (
+        str(config.get("training", {}).get("class_balance", "")).strip().lower()
+        == SAMPLING_MODE_SUBJECT_OVERSAMPLE
+    )
     for offset, key in enumerate(
         ("train_subject_ids", "selection_subject_ids", "final_eval_subject_ids")
     ):
@@ -620,6 +642,7 @@ def _apply_smoke_subject_limit(
             subject_labels,
             limit=limit,
             seed=int(config["seed"]) + int(fold) * 10 + offset,
+            preserve_class_ratio=preserve_class_ratio,
         )
     LOGGER.warning(
         "Smoke subject cap enabled: at most %s subjects per train/selection/final-eval partition.",
@@ -634,9 +657,13 @@ def _build_weighted_train_sampler(
     mode = str(config.get("training", {}).get("class_balance", "none")).strip().lower()
     if mode in {"", "none", "off", "false"}:
         return None
+    if mode == SAMPLING_MODE_SUBJECT_OVERSAMPLE:
+        return None
     if mode != "weighted_sampler":
         raise ValueError(
-            f"Unsupported training.class_balance={mode!r}. Expected 'none' or 'weighted_sampler'."
+            "Unsupported training.class_balance="
+            f"{mode!r}. Expected 'none', 'weighted_sampler', or "
+            f"'{SAMPLING_MODE_SUBJECT_OVERSAMPLE}'."
         )
     class_counts = Counter(int(example["label"]) for example in examples)
     if set(class_counts) != {0, 1}:
@@ -655,6 +682,69 @@ def _build_weighted_train_sampler(
         replacement=True,
         generator=generator,
     )
+
+
+def _apply_subject_oversampling(
+    train_examples: list[dict[str, Any]],
+    selection_examples: list[dict[str, Any]],
+    final_eval_examples: list[dict[str, Any]],
+    config: dict[str, Any],
+    run_root: Path,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None, torch.Generator | None]:
+    training_cfg = config.get("training", {})
+    mode = str(training_cfg.get("class_balance", "none")).strip().lower()
+    if mode != SAMPLING_MODE_SUBJECT_OVERSAMPLE:
+        return train_examples, None, None
+    if config.get("joint_train", {}).get("extra_datasets"):
+        raise ValueError("Subject oversampling is not supported for joint_train experiments.")
+
+    ratio = training_cfg.get("oversampling_ratio")
+    sampling_seed = int(training_cfg.get("oversampling_seed", config["seed"]))
+    result = build_subject_oversampling(
+        train_examples,
+        ratio=ratio,
+        seed=sampling_seed,
+        expected_minority_label=0,
+        validation_rows=selection_examples,
+        evaluation_rows=final_eval_examples,
+    )
+    identity = {
+        "schema_version": "qwen_sampling_identity.v1",
+        "strategy": result.audit["strategy"],
+        "requested_ratio": result.audit["requested_ratio"],
+        "sampling_seed": result.audit["sampling_seed"],
+        "source_row_assignments_sha256": result.audit[
+            "source_row_assignments_sha256"
+        ],
+        "source_subject_assignments_sha256": result.audit[
+            "source_subject_assignments_sha256"
+        ],
+    }
+    identity_path = run_root / "sampling_identity.json"
+    if int(os.environ.get("RANK", "0")) == 0:
+        if identity_path.exists():
+            existing = read_json(identity_path)
+            if existing != identity:
+                raise ValueError(
+                    f"Incompatible sampling configuration already exists at {identity_path}."
+                )
+        else:
+            save_json_atomic(identity, identity_path)
+        save_json_atomic(result.audit, run_root / "sampling_audit.json")
+
+    expanded_examples = [train_examples[index] for index in result.indices]
+    generator = torch.Generator()
+    generator.manual_seed(sampling_seed)
+    LOGGER.info(
+        "Train-only subject oversampling enabled | ratio=%s seed=%s "
+        "original_samples=%s expanded_samples=%s subject_occurrences=%s",
+        result.audit["requested_ratio"],
+        sampling_seed,
+        len(train_examples),
+        len(expanded_examples),
+        result.audit["final_subject_occurrence_counts_by_class"],
+    )
+    return expanded_examples, result.audit, generator
 
 
 def _move_batch_to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
@@ -1109,6 +1199,15 @@ def main() -> None:
             len(train_examples),
         )
 
+    original_train_sample_count = len(train_examples)
+    train_examples, sampling_audit, train_shuffle_generator = _apply_subject_oversampling(
+        train_examples,
+        selection_examples,
+        final_eval_examples,
+        config,
+        run_root,
+    )
+
     # Training is the only place stochastic per-epoch chunk sampling is allowed.
     # Selection/eval datasets stay deterministic (baked audio_paths) so reported
     # validation/test metrics never depend on random sampling.
@@ -1147,6 +1246,7 @@ def main() -> None:
         batch_size=int(config["training"]["per_device_train_batch_size"]),
         shuffle=train_sampler is None,
         sampler=train_sampler,
+        generator=train_shuffle_generator,
         num_workers=int(config["training"]["dataloader_num_workers"]),
         collate_fn=collator,
     )
@@ -1244,6 +1344,15 @@ def main() -> None:
         "cv_protocol": partition_plan["cv_protocol"],
         "fold": int(args.fold),
         "save_strategy": args.save_strategy,
+        "sampling": {
+            "mode": str(config.get("training", {}).get("class_balance", "none")).strip().lower(),
+            "oversampling_ratio": config.get("training", {}).get("oversampling_ratio"),
+            "oversampling_seed": config.get("training", {}).get("oversampling_seed"),
+            "original_train_sample_count": original_train_sample_count,
+            "effective_train_sample_count": len(train_examples),
+            "audit_path": str(run_root / "sampling_audit.json") if sampling_audit else None,
+            "audit": sampling_audit,
+        },
         "selection_protocol": {
             "mode": partition_plan["selection_mode"],
             "joint_selection_mode": _resolve_joint_selection_mode(config),

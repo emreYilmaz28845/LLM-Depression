@@ -14,11 +14,18 @@ if str(PROJECT_ROOT) not in sys.path:
 import numpy as np
 
 from src.aggregate import aggregate_binary_classifier_predictions
+from src.sampling import (
+    SAMPLING_MODE_NONE,
+    SAMPLING_MODE_SUBJECT_OVERSAMPLE,
+    build_no_sampling_audit,
+    build_subject_oversampling,
+)
 from src.utils import read_json, read_jsonl, save_json, write_jsonl
 
 
 PRIMARY_VARIANTS = ("logreg_raw", "xgb_raw", "xgb_pca32", "logreg_pca32", "xgb_pca64")
 CONTROL_VARIANTS = ("majority_class", "xgb_raw_shuffled_labels")
+LEGACY_SAMPLING_MODE = "legacy"
 
 
 def _load_partition(cache_dir: Path, name: str) -> tuple[np.ndarray, list[dict[str, Any]]]:
@@ -35,7 +42,7 @@ def _load_partition(cache_dir: Path, name: str) -> tuple[np.ndarray, list[dict[s
     return vectors, rows
 
 
-def _variant_pipeline(variant: str, seed: int):
+def _variant_pipeline(variant: str, seed: int, *, unweighted: bool = False):
     from sklearn.decomposition import PCA
     from sklearn.linear_model import LogisticRegression
     from sklearn.pipeline import Pipeline
@@ -58,6 +65,7 @@ def _variant_pipeline(variant: str, seed: int):
             colsample_bytree=0.25,
             reg_alpha=1.0,
             reg_lambda=10.0,
+            scale_pos_weight=1.0,
             tree_method="hist",
             random_state=seed,
             n_jobs=1,
@@ -78,7 +86,7 @@ def _variant_pipeline(variant: str, seed: int):
                     "classifier",
                     LogisticRegression(
                         C=1.0,
-                        class_weight="balanced",
+                        class_weight=None if unweighted else "balanced",
                         max_iter=5000,
                         random_state=seed,
                         solver="liblinear",
@@ -142,6 +150,9 @@ def run_variant(
     output_root: Path,
     variant: str,
     seed: int,
+    sampling_mode: str = LEGACY_SAMPLING_MODE,
+    oversampling_ratio: float | None = None,
+    oversampling_seed: int = 1337,
 ) -> dict[str, Any]:
     train_x, train_rows = _load_partition(cache_dir, "outer_train")
     test_x, test_rows = _load_partition(cache_dir, "final_eval")
@@ -159,6 +170,40 @@ def run_variant(
     requested_components = None
     effective_components = None
     fit_y = train_y.copy()
+    if sampling_mode == SAMPLING_MODE_SUBJECT_OVERSAMPLE:
+        sampling = build_subject_oversampling(
+            train_rows,
+            ratio=oversampling_ratio,
+            seed=oversampling_seed,
+            expected_minority_label=0,
+            evaluation_rows=test_rows,
+        )
+    elif sampling_mode in {SAMPLING_MODE_NONE, LEGACY_SAMPLING_MODE}:
+        sampling = build_no_sampling_audit(
+            train_rows,
+            seed=oversampling_seed,
+            evaluation_rows=test_rows,
+        )
+    else:
+        raise ValueError(f"Unsupported sampling_mode {sampling_mode!r}.")
+    fit_indices = np.asarray(sampling.indices, dtype=np.int64)
+    if sampling_mode != LEGACY_SAMPLING_MODE:
+        sampling_identity = {
+            "schema_version": "fixed_hidden_sampling_identity.v1",
+            "sampling_mode": sampling_mode,
+            "oversampling_ratio": oversampling_ratio,
+            "oversampling_seed": int(oversampling_seed),
+            "source_row_assignments_sha256": sampling.audit[
+                "source_row_assignments_sha256"
+            ],
+            "source_subject_assignments_sha256": sampling.audit[
+                "source_subject_assignments_sha256"
+            ],
+        }
+        identity_path = output_root / "sampling_config.json"
+        if identity_path.exists() and read_json(identity_path) != sampling_identity:
+            raise ValueError("Existing fixed-head sampling configuration is incompatible.")
+        save_json(sampling_identity, identity_path)
     if variant == "majority_class":
         prediction = int(np.bincount(train_y, minlength=2).argmax())
         probability = float(train_y.mean())
@@ -166,7 +211,11 @@ def run_variant(
         predictions = np.full(test_y.shape, prediction, dtype=np.int64)
     else:
         fitted_variant = "xgb_raw" if variant == "xgb_raw_shuffled_labels" else variant
-        fitted, requested_components = _variant_pipeline(fitted_variant, seed)
+        fitted, requested_components = _variant_pipeline(
+            fitted_variant,
+            seed,
+            unweighted=sampling_mode != LEGACY_SAMPLING_MODE,
+        )
         if requested_components:
             matrix_limit = min(train_x.shape)
             if requested_components > matrix_limit:
@@ -176,7 +225,7 @@ def run_variant(
             effective_components = requested_components
         if variant == "xgb_raw_shuffled_labels":
             fit_y = shuffled_subject_labels(train_rows, seed)
-        fitted.fit(train_x, fit_y)
+        fitted.fit(train_x[fit_indices], fit_y[fit_indices])
         probabilities = np.asarray(fitted.predict_proba(test_x)[:, 1], dtype=np.float64)
         predictions = (probabilities >= 0.5).astype(np.int64)
         import joblib
@@ -199,6 +248,9 @@ def run_variant(
                 "predicted_class": int(prediction),
                 "checkpoint": metadata["checkpoint_dir"],
                 "classifier_variant": variant,
+                "sampling_mode": sampling_mode,
+                "oversampling_ratio": oversampling_ratio,
+                "oversampling_seed": int(oversampling_seed),
             }
         )
     subject_rows, metrics = aggregate_binary_classifier_predictions(sample_rows)
@@ -210,6 +262,9 @@ def run_variant(
                 "condition": condition,
                 "fold": int(metadata["fold"]),
                 "classifier_variant": variant,
+                "sampling_mode": sampling_mode,
+                "oversampling_ratio": oversampling_ratio,
+                "oversampling_seed": int(oversampling_seed),
             }
         )
     metrics = _metrics_with_negative_f1(metrics)
@@ -220,6 +275,10 @@ def run_variant(
         "fold": int(metadata["fold"]),
         "classifier_variant": variant,
         "seed": seed,
+        "sampling_mode": sampling_mode,
+        "oversampling_ratio": oversampling_ratio,
+        "oversampling_seed": int(oversampling_seed),
+        "sampling_audit": sampling.audit,
         "threshold": 0.5,
         "input_dimension": int(train_x.shape[1]),
         "requested_pca_components": requested_components,
@@ -237,6 +296,7 @@ def run_variant(
     _write_csv(subject_rows, variant_dir / "predictions_subject_level.csv")
     save_json(metrics, variant_dir / "metrics.json")
     save_json(artifact_metadata, variant_dir / "classifier_metadata.json")
+    save_json(sampling.audit, variant_dir / "sampling_audit.json")
     return {"variant": variant, **metrics}
 
 
@@ -246,13 +306,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--variants", nargs="+", default=list(PRIMARY_VARIANTS + CONTROL_VARIANTS))
     parser.add_argument("--seed", type=int, default=1337)
+    parser.add_argument(
+        "--sampling-mode",
+        choices=(SAMPLING_MODE_NONE, SAMPLING_MODE_SUBJECT_OVERSAMPLE),
+        default=LEGACY_SAMPLING_MODE,
+    )
+    parser.add_argument("--oversampling-ratio", type=float)
+    parser.add_argument("--oversampling-seed", type=int, default=1337)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    summaries = [run_variant(args.cache_dir, args.output_dir, variant, args.seed) for variant in args.variants]
+    summaries = [
+        run_variant(
+            args.cache_dir,
+            args.output_dir,
+            variant,
+            args.seed,
+            sampling_mode=args.sampling_mode,
+            oversampling_ratio=args.oversampling_ratio,
+            oversampling_seed=args.oversampling_seed,
+        )
+        for variant in args.variants
+    ]
     save_json(summaries, args.output_dir / "variant_summary.json")
     _write_csv(summaries, args.output_dir / "variant_summary.csv")
     print(json.dumps(summaries, indent=2), flush=True)

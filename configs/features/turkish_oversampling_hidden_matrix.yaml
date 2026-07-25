@@ -1,0 +1,19 @@
+schema_version: turkish_oversampling_hidden_matrix.v1
+expected_jobs: 15
+experiment_id: hidden_os_screen
+experiments:
+  - dataset: turkish
+    modality: audio_text
+    condition: audio_text
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/audio_text/turkish_t17_qwen3asr/t17_posf1_tf_qwen3asr_turkish_t17_audio_text_selposf1_tf_qwen3asr
+  - dataset: turkish
+    modality: audio_only
+    condition: audio_only
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/audio_only/turkish_t17_qwen3asr/t17_posf1_tf_qwen3asr_turkish_t17_audio_only_selposf1_tf_qwen3asr
+  - dataset: turkish
+    modality: text_only
+    condition: text_only
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/text_only/turkish_t17_qwen3asr/t17_posf1_tf_qwen3asr_turkish_t17_text_only_selposf1_tf_qwen3asr

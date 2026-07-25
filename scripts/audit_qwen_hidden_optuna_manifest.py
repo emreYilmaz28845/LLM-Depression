@@ -65,6 +65,14 @@ def audit_manifest(matrix: Path, results_root: Path) -> dict[str, Any]:
             "search_profile": str(job["search_profile"]),
             "objective": str(job["objective"]),
         }
+        if "sampling_mode" in job:
+            expected.update(
+                {
+                    "sampling_mode": str(job["sampling_mode"]),
+                    "oversampling_ratio": job.get("oversampling_ratio"),
+                    "oversampling_seed": int(job["oversampling_seed"]),
+                }
+            )
         mismatches = {
             key: (config.get(key), value)
             for key, value in expected.items()
@@ -85,6 +93,33 @@ def audit_manifest(matrix: Path, results_root: Path) -> dict[str, Any]:
         if int(metadata.get("outer_subject_overlap_count", -1)) != 0:
             failures.append(f"{result_dir}: outer subject overlap is nonzero")
             continue
+        if "sampling_mode" in job:
+            sampling_artifacts = (
+                "inner_sampling_audits.json",
+                "final_fit_sampling_audit.json",
+            )
+            missing_sampling = [
+                name for name in sampling_artifacts if not (result_dir / name).is_file()
+            ]
+            if missing_sampling:
+                failures.append(f"{result_dir}: missing sampling audits {missing_sampling}")
+                continue
+            inner_audits = json.loads(
+                (result_dir / "inner_sampling_audits.json").read_text(encoding="utf-8")
+            )
+            final_audit = json.loads(
+                (result_dir / "final_fit_sampling_audit.json").read_text(encoding="utf-8")
+            )
+            if len(inner_audits) != expected["inner_fold_count"]:
+                failures.append(f"{result_dir}: wrong inner sampling audit count")
+                continue
+            if not all(
+                audit.get("validation_indices_untouched")
+                and audit.get("evaluation_indices_untouched")
+                for audit in [*inner_audits, final_audit]
+            ):
+                failures.append(f"{result_dir}: sampling audit reports modified evaluation indices")
+                continue
         coverage = metadata.get("inner_subject_coverage", {})
         if not bool(coverage.get("validation_covers_each_subject_once")):
             failures.append(f"{result_dir}: incomplete inner validation coverage")

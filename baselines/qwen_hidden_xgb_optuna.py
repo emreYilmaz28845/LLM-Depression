@@ -18,6 +18,12 @@ import numpy as np
 
 from src.aggregate import aggregate_binary_classifier_predictions
 from src.metrics import classification_metrics
+from src.sampling import (
+    SAMPLING_MODE_NONE,
+    SAMPLING_MODE_SUBJECT_OVERSAMPLE,
+    build_no_sampling_audit,
+    build_subject_oversampling,
+)
 from src.utils import read_json, read_jsonl, save_json_atomic, write_jsonl
 
 
@@ -28,6 +34,8 @@ THRESHOLD = 0.5
 CONFIG_SCHEMA_VERSION = "qwen_hidden_xgb_optuna.v2"
 SUPPORTED_OBJECTIVES = ("positive_f1", "macro_f1")
 SUPPORTED_SEARCH_PROFILES = ("standard_d6", "depth8")
+LEGACY_SAMPLING_MODE = "legacy"
+SUPPORTED_SAMPLING_MODES = (SAMPLING_MODE_NONE, SAMPLING_MODE_SUBJECT_OVERSAMPLE)
 EXPERIMENT_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)*$")
 STANDARD_SEARCH_SPACE: dict[str, dict[str, Any]] = {
     "n_estimators": {"kind": "int", "low": 100, "high": 1000, "step": 50},
@@ -218,6 +226,16 @@ def resolved_search_space(search_profile: str) -> dict[str, dict[str, Any]]:
     return search_space
 
 
+def resolved_oversampling_search_space(
+    search_profile: str,
+    sampling_mode: str,
+) -> dict[str, dict[str, Any]]:
+    search_space = resolved_search_space(search_profile)
+    if sampling_mode in SUPPORTED_SAMPLING_MODES:
+        search_space.pop("scale_pos_weight", None)
+    return search_space
+
+
 def _suggest_params(trial: Any, search_space: dict[str, dict[str, Any]]) -> dict[str, Any]:
     params: dict[str, Any] = {}
     for name, spec in search_space.items():
@@ -230,14 +248,56 @@ def _suggest_params(trial: Any, search_space: dict[str, dict[str, Any]]) -> dict
     return params
 
 
-def fixed_xgb_params(seed: int, xgb_threads: int) -> dict[str, Any]:
-    return {
+def fixed_xgb_params(
+    seed: int,
+    xgb_threads: int,
+    *,
+    sampling_mode: str = LEGACY_SAMPLING_MODE,
+) -> dict[str, Any]:
+    params = {
         "objective": "binary:logistic",
         "tree_method": "hist",
         "eval_metric": "logloss",
         "random_state": seed,
         "n_jobs": xgb_threads,
     }
+    if sampling_mode in SUPPORTED_SAMPLING_MODES:
+        params["scale_pos_weight"] = 1.0
+    return params
+
+
+def _fit_indices_and_audit(
+    rows: list[dict[str, Any]],
+    source_indices: list[int],
+    validation_indices: list[int],
+    *,
+    sampling_mode: str,
+    oversampling_ratio: float | None,
+    oversampling_seed: int,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    source_rows = [rows[index] for index in source_indices]
+    validation_rows = [rows[index] for index in validation_indices]
+    if sampling_mode == SAMPLING_MODE_SUBJECT_OVERSAMPLE:
+        result = build_subject_oversampling(
+            source_rows,
+            ratio=oversampling_ratio,
+            seed=oversampling_seed,
+            expected_minority_label=0,
+            validation_rows=validation_rows,
+        )
+    elif sampling_mode in {SAMPLING_MODE_NONE, LEGACY_SAMPLING_MODE}:
+        result = build_no_sampling_audit(
+            source_rows,
+            seed=oversampling_seed,
+            validation_rows=validation_rows,
+        )
+    else:
+        raise ValueError(f"Unsupported sampling_mode {sampling_mode!r}.")
+    fit_indices = np.asarray(
+        [source_indices[index] for index in result.indices],
+        dtype=np.int64,
+    )
+    return fit_indices, result.audit
 
 
 def _classifier(params: dict[str, Any], fixed_params: dict[str, Any]):
@@ -254,6 +314,9 @@ def _sample_rows_for_predictions(
     predictions: np.ndarray,
     metadata: dict[str, Any],
     experiment_id: str = DEFAULT_EXPERIMENT_ID,
+    sampling_mode: str = LEGACY_SAMPLING_MODE,
+    oversampling_ratio: float | None = None,
+    oversampling_seed: int = 1337,
 ) -> list[dict[str, Any]]:
     condition = str(metadata.get("condition") or metadata["input_modality"])
     return [
@@ -270,6 +333,9 @@ def _sample_rows_for_predictions(
             "checkpoint": metadata.get("checkpoint_dir"),
             "classifier_family": CLASSIFIER_FAMILY,
             "classifier_variant": experiment_id,
+            "sampling_mode": sampling_mode,
+            "oversampling_ratio": oversampling_ratio,
+            "oversampling_seed": int(oversampling_seed),
         }
         for row, probability, prediction in zip(rows, probabilities.tolist(), predictions.tolist())
     ]
@@ -285,17 +351,32 @@ def make_objective(
     fixed_params: dict[str, Any],
     search_space: dict[str, dict[str, Any]] | None = None,
     experiment_id: str = DEFAULT_EXPERIMENT_ID,
+    sampling_mode: str = LEGACY_SAMPLING_MODE,
+    oversampling_ratio: float | None = None,
+    oversampling_seed: int = 1337,
 ) -> Callable[[Any], float]:
     train_y = np.asarray([int(row["label"]) for row in train_rows], dtype=np.int64)
     outer_subjects = {str(row["subject_id"]) for row in train_rows}
-    resolved_space = search_space or resolved_search_space("standard_d6")
+    resolved_space = search_space or resolved_oversampling_search_space(
+        "standard_d6", sampling_mode
+    )
 
     def objective(trial: Any) -> float:
         params = _suggest_params(trial, resolved_space)
         oof_subject_rows: list[dict[str, Any]] = []
         fold_metrics: list[dict[str, Any]] = []
         for fold in assignments["folds"]:
-            train_idx = np.asarray(fold["train_row_indices"], dtype=np.int64)
+            if sampling_mode == LEGACY_SAMPLING_MODE:
+                train_idx = np.asarray(fold["train_row_indices"], dtype=np.int64)
+            else:
+                train_idx, _ = _fit_indices_and_audit(
+                    train_rows,
+                    list(fold["train_row_indices"]),
+                    list(fold["validation_row_indices"]),
+                    sampling_mode=sampling_mode,
+                    oversampling_ratio=oversampling_ratio,
+                    oversampling_seed=oversampling_seed,
+                )
             val_idx = np.asarray(fold["validation_row_indices"], dtype=np.int64)
             model = _classifier(params, fixed_params)
             model.fit(train_x[train_idx], train_y[train_idx])
@@ -308,6 +389,9 @@ def make_objective(
                 predictions,
                 metadata,
                 experiment_id,
+                sampling_mode,
+                oversampling_ratio,
+                oversampling_seed,
             )
             subject_rows, metrics = aggregate_binary_classifier_predictions(sample_rows)
             fold_metrics.append({"inner_fold": int(fold["fold"]), **_metrics_with_negative_f1(metrics)})
@@ -367,6 +451,9 @@ def build_study_config(
     experiment_id: str,
     search_profile: str,
     run_name: str,
+    sampling_mode: str = LEGACY_SAMPLING_MODE,
+    oversampling_ratio: float | None = None,
+    oversampling_seed: int = 1337,
 ) -> tuple[dict[str, Any], str]:
     try:
         import optuna
@@ -376,11 +463,22 @@ def build_study_config(
     import sklearn
 
     condition = str(metadata.get("condition") or metadata["input_modality"])
-    search_space = resolved_search_space(search_profile)
-    study_name = (
-        f"{metadata['dataset']}_{condition}_fold{int(metadata['fold'])}_"
-        f"{experiment_id}_{objective_name}"
-    )
+    search_space = resolved_oversampling_search_space(search_profile, sampling_mode)
+    if sampling_mode == LEGACY_SAMPLING_MODE:
+        study_name = (
+            f"{metadata['dataset']}_{condition}_fold{int(metadata['fold'])}_"
+            f"{experiment_id}_{objective_name}"
+        )
+    else:
+        ratio_token = (
+            "na"
+            if oversampling_ratio is None
+            else f"{int(round(float(oversampling_ratio) * 100)):03d}"
+        )
+        study_name = (
+            f"{metadata['dataset']}_{condition}_fold{int(metadata['fold'])}_"
+            f"{experiment_id}_{objective_name}_{sampling_mode}_r{ratio_token}_os{oversampling_seed}"
+        )
     config = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "dataset": metadata["dataset"],
@@ -407,7 +505,9 @@ def build_study_config(
         "inner_seed": inner_seed,
         "aggregation_method": "aggregate_binary_classifier_predictions",
         "threshold": THRESHOLD,
-        "fixed_xgb_params": fixed_xgb_params(seed, xgb_threads),
+        "fixed_xgb_params": fixed_xgb_params(
+            seed, xgb_threads, sampling_mode=sampling_mode
+        ),
         "search_profile": search_profile,
         "search_space": search_space,
         "study_name": study_name,
@@ -418,6 +518,14 @@ def build_study_config(
             "numpy": np.__version__,
         },
     }
+    if sampling_mode != LEGACY_SAMPLING_MODE:
+        config.update(
+            {
+                "sampling_mode": sampling_mode,
+                "oversampling_ratio": oversampling_ratio,
+                "oversampling_seed": int(oversampling_seed),
+            }
+        )
     config_hash = hashlib.sha256(_canonical_json(config).encode("utf-8")).hexdigest()
     return config, config_hash
 
@@ -549,6 +657,9 @@ def run_optuna_raw_xgb(
     experiment_id: str = DEFAULT_EXPERIMENT_ID,
     search_profile: str = "standard_d6",
     inner_seed: int | None = None,
+    sampling_mode: str = LEGACY_SAMPLING_MODE,
+    oversampling_ratio: float | None = None,
+    oversampling_seed: int = 1337,
 ) -> dict[str, Any]:
     if objective_name not in SUPPORTED_OBJECTIVES:
         raise ValueError(f"Unsupported objective {objective_name!r}; expected one of {SUPPORTED_OBJECTIVES}.")
@@ -558,8 +669,14 @@ def run_optuna_raw_xgb(
         raise ValueError("inner_folds must be at least 2.")
     if xgb_threads < 1:
         raise ValueError("xgb_threads must be at least 1.")
+    if sampling_mode not in (LEGACY_SAMPLING_MODE, *SUPPORTED_SAMPLING_MODES):
+        raise ValueError(f"Unsupported sampling_mode {sampling_mode!r}.")
+    if sampling_mode != SAMPLING_MODE_SUBJECT_OVERSAMPLE and oversampling_ratio is not None:
+        raise ValueError("oversampling_ratio is only valid for minority_subject_oversample.")
+    if sampling_mode == SAMPLING_MODE_SUBJECT_OVERSAMPLE and oversampling_ratio is None:
+        raise ValueError("oversampling_ratio is required for minority_subject_oversample.")
     resolved_inner_seed = seed if inner_seed is None else inner_seed
-    search_space = resolved_search_space(search_profile)
+    search_space = resolved_oversampling_search_space(search_profile, sampling_mode)
     train_x, train_rows = _load_partition(cache_dir, "outer_train")
     metadata = read_json(cache_dir / "extraction_metadata.json")
     run_name = validate_experiment_output(
@@ -585,6 +702,9 @@ def run_optuna_raw_xgb(
         experiment_id=experiment_id,
         search_profile=search_profile,
         run_name=run_name,
+        sampling_mode=sampling_mode,
+        oversampling_ratio=oversampling_ratio,
+        oversampling_seed=oversampling_seed,
     )
     _write_or_validate_study_config(output_dir, config, config_hash)
     _write_or_validate_json(
@@ -592,7 +712,32 @@ def run_optuna_raw_xgb(
         output_dir / "inner_subject_assignments.json",
         "inner_subject_assignments.json",
     )
-    fixed_params = fixed_xgb_params(seed, xgb_threads)
+    inner_sampling_audits = []
+    for fold in assignments["folds"]:
+        _, audit = _fit_indices_and_audit(
+            train_rows,
+            list(fold["train_row_indices"]),
+            list(fold["validation_row_indices"]),
+            sampling_mode=sampling_mode,
+            oversampling_ratio=oversampling_ratio,
+            oversampling_seed=oversampling_seed,
+        )
+        inner_sampling_audits.append(
+            {
+                **audit,
+                "inner_fold": int(fold["fold"]),
+                "applies_to_all_trials": True,
+                "target_trial_count": int(target_trials),
+            }
+        )
+    _write_or_validate_json(
+        inner_sampling_audits,
+        output_dir / "inner_sampling_audits.json",
+        "inner_sampling_audits.json",
+    )
+    fixed_params = fixed_xgb_params(
+        seed, xgb_threads, sampling_mode=sampling_mode
+    )
     study = _study(output_dir, config["study_name"], config, config_hash)
     completed = len(_completed_trials(study))
     if target_trials < completed:
@@ -608,6 +753,9 @@ def run_optuna_raw_xgb(
             fixed_params=fixed_params,
             search_space=search_space,
             experiment_id=experiment_id,
+            sampling_mode=sampling_mode,
+            oversampling_ratio=oversampling_ratio,
+            oversampling_seed=oversampling_seed,
         )
         study.optimize(objective, n_trials=remaining, n_jobs=1)
     completed = len(_completed_trials(study))
@@ -640,9 +788,20 @@ def run_optuna_raw_xgb(
     overlap = sorted(train_subjects & final_subjects)
     if overlap:
         raise ValueError(f"Training/held-out subject leakage: {overlap[:10]}")
+    full_train_indices, final_fit_sampling_audit = _fit_indices_and_audit(
+        train_rows,
+        list(range(len(train_rows))),
+        [],
+        sampling_mode=sampling_mode,
+        oversampling_ratio=oversampling_ratio,
+        oversampling_seed=oversampling_seed,
+    )
+    final_fit_sampling_audit["validation_indices_untouched"] = True
+    final_fit_sampling_audit["evaluation_indices_untouched"] = True
+    save_json_atomic(final_fit_sampling_audit, output_dir / "final_fit_sampling_audit.json")
     train_y = np.asarray([int(row["label"]) for row in train_rows], dtype=np.int64)
     model = _classifier(dict(best_trial.params), fixed_params)
-    model.fit(train_x, train_y)
+    model.fit(train_x[full_train_indices], train_y[full_train_indices])
     probabilities = np.asarray(model.predict_proba(final_x)[:, 1], dtype=np.float64)
     predictions = (probabilities >= THRESHOLD).astype(np.int64)
     sample_rows = _sample_rows_for_predictions(
@@ -651,6 +810,9 @@ def run_optuna_raw_xgb(
         predictions,
         metadata,
         experiment_id,
+        sampling_mode,
+        oversampling_ratio,
+        oversampling_seed,
     )
     subject_rows, metrics = aggregate_binary_classifier_predictions(sample_rows)
     metrics = _metrics_with_negative_f1(metrics)
@@ -685,6 +847,9 @@ def run_optuna_raw_xgb(
         "sampler_seed": seed,
         "model_seed": seed,
         "inner_seed": resolved_inner_seed,
+        "sampling_mode": sampling_mode,
+        "oversampling_ratio": oversampling_ratio,
+        "oversampling_seed": int(oversampling_seed),
         "search_profile": search_profile,
         "threshold": THRESHOLD,
         "inner_fold_count": inner_folds,
@@ -707,6 +872,8 @@ def run_optuna_raw_xgb(
         "outer_subject_overlap_count": len(overlap),
         "inner_subject_coverage": _inner_coverage(assignments),
         "inner_subject_assignments": assignments,
+        "inner_sampling_audits": inner_sampling_audits,
+        "final_fit_sampling_audit": final_fit_sampling_audit,
         "cache_dir": str(cache_dir),
         "extraction_metadata": str(cache_dir / "extraction_metadata.json"),
         "original_extraction_metadata": metadata,
@@ -731,6 +898,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--inner-folds", type=int, default=3)
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--inner-seed", type=int)
+    parser.add_argument(
+        "--sampling-mode",
+        choices=SUPPORTED_SAMPLING_MODES,
+        default=LEGACY_SAMPLING_MODE,
+    )
+    parser.add_argument("--oversampling-ratio", type=float)
+    parser.add_argument("--oversampling-seed", type=int, default=1337)
     parser.add_argument("--experiment-id", default=DEFAULT_EXPERIMENT_ID)
     parser.add_argument(
         "--search-profile",
@@ -754,6 +928,9 @@ def main() -> None:
         xgb_threads=args.xgb_threads,
         experiment_id=args.experiment_id,
         search_profile=args.search_profile,
+        sampling_mode=args.sampling_mode,
+        oversampling_ratio=args.oversampling_ratio,
+        oversampling_seed=args.oversampling_seed,
     )
     print(json.dumps(summary, indent=2), flush=True)
 
