@@ -13,6 +13,7 @@ from baselines import qwen_hidden_oversampling_screen as screen
 from baselines import qwen_hidden_xgb_optuna as optuna_xgb
 from scripts import build_turkish_oversampling_optuna_matrix as optuna_matrix
 from scripts import build_turkish_oversampling_qwen_matrix as qwen_matrix
+from scripts.summarize_turkish_oversampling_qwen_pilot import _metrics
 from src.sampling import build_subject_oversampling, validate_oversampling_ratio
 
 
@@ -34,6 +35,17 @@ def _rows(negative_subjects: int = 4, positive_subjects: int = 8):
 
 
 class SubjectOversamplingTests(unittest.TestCase):
+    def test_pilot_metrics_are_json_serializable(self):
+        metrics = _metrics(
+            [
+                {"label": 0, "prediction": 0},
+                {"label": 1, "prediction": 1},
+            ]
+        )
+
+        json.dumps(metrics)
+        self.assertTrue(all(type(value) is float for value in metrics.values()))
+
     def test_exact_ratio_retains_all_subjects_and_duplicates_only_minority_groups(self):
         rows = _rows()
         result = build_subject_oversampling(rows, ratio=0.75, seed=1337)

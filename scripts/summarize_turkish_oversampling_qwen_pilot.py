@@ -30,9 +30,11 @@ def _metrics(rows: list[dict[str, Any]]) -> dict[str, float]:
     p = [row["prediction"] for row in rows]
     tn, fp, fn, tp = confusion_matrix(y, p, labels=[0, 1]).ravel()
     return {
-        "macro_f1": f1_score(y, p, average="macro", zero_division=0),
-        "negative_recall": tn / (tn + fp) if tn + fp else 0.0,
-        "positive_recall": recall_score(y, p, pos_label=1, zero_division=0),
+        "macro_f1": float(f1_score(y, p, average="macro", zero_division=0)),
+        "negative_recall": float(tn / (tn + fp)) if tn + fp else 0.0,
+        "positive_recall": float(
+            recall_score(y, p, pos_label=1, zero_division=0)
+        ),
     }
 
 
@@ -78,8 +80,10 @@ def main() -> None:
         "minimum_fold_selected_validation_macro_f1_gain": min(fold_gains),
         "pooled_control": control,
         "pooled_oversampled": sampled,
-        "pooled_macro_f1_not_below_control": sampled["macro_f1"] >= control["macro_f1"],
-        "pooled_negative_recall_not_below_control": (
+        "pooled_macro_f1_not_below_control": bool(
+            sampled["macro_f1"] >= control["macro_f1"]
+        ),
+        "pooled_negative_recall_not_below_control": bool(
             sampled["negative_recall"] >= control["negative_recall"]
         ),
     }
