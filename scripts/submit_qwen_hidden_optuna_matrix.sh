@@ -69,8 +69,8 @@ for item in expanded:
             experiment_id,
             search_profile,
             str(item.get("sampling_mode", "-")),
-            str(item.get("oversampling_ratio", "-")),
-            str(item.get("oversampling_seed", "-")),
+            "-" if item.get("oversampling_ratio") is None else str(item["oversampling_ratio"]),
+            "-" if item.get("oversampling_seed") is None else str(item["oversampling_seed"]),
         )
     )
 if len(rows) != expected:
