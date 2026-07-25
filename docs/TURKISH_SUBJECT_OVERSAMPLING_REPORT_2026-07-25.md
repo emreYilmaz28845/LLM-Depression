@@ -235,7 +235,8 @@ intentionally excluded. No transfer used `--delete`.
   labeled OS seed-mean rows.
 - `depression_results_combined_with_posf1_graphs.xlsx` retains its charts,
   adds the OS mean to the Macro-F1 Summary, and includes a dedicated
-  `Turkish Oversampling` evidence sheet.
+  `Turkish Oversampling` evidence sheet plus a presentation-focused
+  `Turkish OS Comparison` page with baseline/oversampling charts.
 - This report records the full execution and negative Stage-5 decision.
 
 ## Conclusion

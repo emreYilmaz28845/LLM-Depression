@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 from openpyxl import load_workbook
-from openpyxl.chart import Reference
+from openpyxl.chart import BarChart, Reference
 from openpyxl.styles import Alignment, Font, PatternFill
 
 
@@ -97,6 +97,181 @@ def _style_sheet(sheet) -> None:
         for cell in row:
             if isinstance(cell.value, float):
                 cell.number_format = "0.000000"
+
+
+def _add_comparison_sheet(workbook, stage3: dict, stage4: dict) -> None:
+    title = "Turkish OS Comparison"
+    if title in workbook.sheetnames:
+        del workbook[title]
+    sheet = workbook.create_sheet(title, 5)
+    dark = PatternFill("solid", fgColor="1F4E78")
+    blue = PatternFill("solid", fgColor="D9EAF7")
+    green = PatternFill("solid", fgColor="E2F0D9")
+    white_bold = Font(color="FFFFFF", bold=True)
+
+    sheet.merge_cells("A1:G1")
+    sheet["A1"] = "Turkish BDI>=17: Baseline vs Subject Oversampling"
+    sheet["A1"].fill = dark
+    sheet["A1"].font = Font(size=16, bold=True, color="FFFFFF")
+    sheet["A1"].alignment = Alignment(horizontal="center")
+    sheet.merge_cells("A2:G2")
+    sheet["A2"] = (
+        "Hidden-state values are five-fold pooled results; oversampling is the "
+        "mean of seeds 1337, 2024, and 7. Qwen values are the folds 0-1 pilot."
+    )
+    sheet["A2"].alignment = Alignment(wrap_text=True)
+
+    sheet.merge_cells("A4:G4")
+    sheet["A4"] = "Hidden-state XGBoost comparison"
+    sheet["A4"].fill = blue
+    sheet["A4"].font = Font(bold=True)
+    headers = (
+        "Modality",
+        "Baseline Macro F1",
+        "OS mean Macro F1",
+        "Macro F1 delta",
+        "Baseline negative recall",
+        "OS mean negative recall",
+        "Negative-recall delta",
+    )
+    for column, value in enumerate(headers, 1):
+        cell = sheet.cell(row=6, column=column, value=value)
+        cell.fill = dark
+        cell.font = white_bold
+        cell.alignment = Alignment(horizontal="center", wrap_text=True)
+
+    results_by_modality = {}
+    for result in stage3["results"]:
+        results_by_modality.setdefault(result["condition"], []).append(result)
+    for row, modality in enumerate(("audio_text", "audio_only", "text_only"), 7):
+        results = results_by_modality[modality]
+        control = next(item for item in results if item["sampling_mode"] == "none")
+        sampled = [item for item in results if item["sampling_mode"] != "none"]
+        mean_macro = sum(item["macro_f1"] for item in sampled) / len(sampled)
+        mean_negative_recall = sum(
+            item["negative_recall"] for item in sampled
+        ) / len(sampled)
+        values = (
+            MODALITY_LABELS[modality],
+            control["macro_f1"],
+            mean_macro,
+            mean_macro - control["macro_f1"],
+            control["negative_recall"],
+            mean_negative_recall,
+            mean_negative_recall - control["negative_recall"],
+        )
+        for column, value in enumerate(values, 1):
+            cell = sheet.cell(row=row, column=column, value=value)
+            if column in (3, 4, 6, 7):
+                cell.fill = green
+
+    sheet.merge_cells("A12:E12")
+    sheet["A12"] = "Matched Qwen audio-only pilot"
+    sheet["A12"].fill = blue
+    sheet["A12"].font = Font(bold=True)
+    qwen_headers = ("Metric", "Baseline", "Oversampling", "Delta", "Gate result")
+    for column, value in enumerate(qwen_headers, 1):
+        cell = sheet.cell(row=14, column=column, value=value)
+        cell.fill = dark
+        cell.font = white_bold
+        cell.alignment = Alignment(horizontal="center")
+    control = stage4["pooled_control"]
+    sampled = stage4["pooled_oversampled"]
+    qwen_rows = (
+        (
+            "Pooled Macro F1",
+            control["macro_f1"],
+            sampled["macro_f1"],
+            sampled["macro_f1"] - control["macro_f1"],
+            "PASS",
+        ),
+        (
+            "Pooled negative recall",
+            control["negative_recall"],
+            sampled["negative_recall"],
+            sampled["negative_recall"] - control["negative_recall"],
+            "PASS",
+        ),
+        (
+            "Pooled positive recall",
+            control["positive_recall"],
+            sampled["positive_recall"],
+            sampled["positive_recall"] - control["positive_recall"],
+            "Diagnostic",
+        ),
+        (
+            "Mean selected-fold Macro F1 gain",
+            None,
+            None,
+            stage4["mean_selected_validation_macro_f1_gain"],
+            "FAIL (<0.015)",
+        ),
+        (
+            "Minimum selected-fold Macro F1 gain",
+            None,
+            None,
+            stage4["minimum_fold_selected_validation_macro_f1_gain"],
+            "FAIL (<-0.03)",
+        ),
+    )
+    for row, values in enumerate(qwen_rows, 15):
+        for column, value in enumerate(values, 1):
+            sheet.cell(row=row, column=column, value=value)
+    sheet["A21"] = "Decision"
+    sheet["B21"] = (
+        "Oversampling improved pooled Qwen Macro F1, but Stage 5 was not run "
+        "because both selected-fold gate criteria failed."
+    )
+    sheet.merge_cells("B21:G21")
+    sheet["B21"].alignment = Alignment(wrap_text=True)
+
+    macro_chart = BarChart()
+    macro_chart.type = "col"
+    macro_chart.style = 10
+    macro_chart.title = "Hidden-state Macro-F1"
+    macro_chart.y_axis.title = "Macro-F1"
+    macro_chart.height = 7
+    macro_chart.width = 12
+    macro_chart.add_data(
+        Reference(sheet, min_col=2, max_col=3, min_row=6, max_row=9),
+        titles_from_data=True,
+    )
+    macro_chart.set_categories(Reference(sheet, min_col=1, min_row=7, max_row=9))
+    sheet.add_chart(macro_chart, "I4")
+
+    recall_chart = BarChart()
+    recall_chart.type = "col"
+    recall_chart.style = 11
+    recall_chart.title = "Hidden-state Negative Recall"
+    recall_chart.y_axis.title = "Negative recall"
+    recall_chart.height = 7
+    recall_chart.width = 12
+    recall_chart.add_data(
+        Reference(sheet, min_col=5, max_col=6, min_row=6, max_row=9),
+        titles_from_data=True,
+    )
+    recall_chart.set_categories(Reference(sheet, min_col=1, min_row=7, max_row=9))
+    sheet.add_chart(recall_chart, "I19")
+
+    for column, width in {
+        "A": 34,
+        "B": 20,
+        "C": 20,
+        "D": 18,
+        "E": 24,
+        "F": 24,
+        "G": 23,
+    }.items():
+        sheet.column_dimensions[column].width = width
+    for row in sheet.iter_rows(min_row=7, max_row=19, min_col=2, max_col=7):
+        for cell in row:
+            if isinstance(cell.value, float):
+                cell.number_format = "0.000000"
+    sheet.freeze_panes = "A6"
+    sheet.sheet_properties.pageSetUpPr.fitToPage = True
+    sheet.page_setup.orientation = "landscape"
+    sheet.page_setup.fitToWidth = 1
+    sheet.page_setup.fitToHeight = 1
 
 
 def update_workbook(
@@ -292,11 +467,14 @@ def update_workbook(
     sheet["B38"].alignment = Alignment(wrap_text=True)
     sheet["B39"].alignment = Alignment(wrap_text=True)
     _style_sheet(sheet)
+    _add_comparison_sheet(workbook, stage3, stage4)
 
     workbook.save(workbook_path)
     verified = load_workbook(workbook_path, read_only=False)
     if "Turkish Oversampling" not in verified.sheetnames:
         raise RuntimeError("Turkish Oversampling sheet was not saved")
+    if "Turkish OS Comparison" not in verified.sheetnames:
+        raise RuntimeError("Turkish OS Comparison sheet was not saved")
     if len(verified["Summary"]._charts) != 1:
         raise RuntimeError("Macro-F1 Summary chart was not preserved")
 
