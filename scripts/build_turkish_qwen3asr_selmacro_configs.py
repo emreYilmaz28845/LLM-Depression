@@ -31,6 +31,8 @@ def main() -> None:
         config["training"]["selection_metric"] = "inner_val_macro_f1"
         config["training"]["selection_metric_mode"] = "max"
         config["training"]["early_stopping"]["metric"] = "inner_val_macro_f1"
+        config["training"]["oversampling_ratio"] = None
+        config["training"]["oversampling_seed"] = 1337
         target = output_dir / f"turkish_t17_{modality}_selmacro_tf_qwen3asr.yaml"
         header = (
             "# Generated from the reported Qwen3ASR T17 configuration. "

@@ -75,6 +75,8 @@ training:
     mode: max
     patience: 3
     min_delta: 0.0
+  oversampling_ratio: null
+  oversampling_seed: 1337
 evaluation:
   sample_prediction_mode: original_teacher_forced
   aggregation_level: subject
