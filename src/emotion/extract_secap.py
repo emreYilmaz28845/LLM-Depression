@@ -90,8 +90,11 @@ def _already_done(out_path: Path) -> set[str]:
     return done
 
 
-def _load_wav(path: str) -> np.ndarray:
-    audio, sr = sf.read(path, dtype="float32", always_2d=False)
+def _load_wav(path: str, start_time: float | None = None, end_time: float | None = None) -> np.ndarray:
+    info = sf.info(path)
+    start = max(0, int(round(float(start_time or 0.0) * info.samplerate)))
+    stop = info.frames if end_time is None else min(info.frames, int(round(float(end_time) * info.samplerate)))
+    audio, sr = sf.read(path, start=start, stop=stop, dtype="float32", always_2d=False)
     if audio.ndim > 1:
         audio = audio.mean(axis=1)
     if int(sr) != TARGET_SR:
@@ -349,7 +352,7 @@ def main(argv: list[str] | None = None) -> int:
     with out_path.open("a", encoding="utf-8") as handle:
         for n, row in enumerate(pending, start=1):
             sample_id = str(row["sample_id"])
-            wav = _load_wav(row["audio_path"])
+            wav = _load_wav(row["audio_path"], row.get("start_time"), row.get("end_time"))
             # inference() takes only the audio list; it always runs 8 sampled
             # generations and returns the 5 post-processed candidates + the prompt.
             candidates, prompt = model.inference([wav])

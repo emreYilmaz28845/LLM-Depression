@@ -92,15 +92,15 @@ def _already_done(out_path: Path) -> set[str]:
     return done
 
 
-def _load_wav(path: str, target_sr: int) -> np.ndarray:
-    audio, sr = sf.read(path, dtype="float32", always_2d=False)
-    if audio.ndim > 1:
-        audio = audio.mean(axis=1)
-    if int(sr) != int(target_sr):
-        import librosa
+def _load_wav(
+    path: str,
+    target_sr: int,
+    start_time: float | None = None,
+    end_time: float | None = None,
+) -> np.ndarray:
+    from src.data.runtime import load_audio_array
 
-        audio = librosa.resample(audio, orig_sr=sr, target_sr=target_sr)
-    return np.asarray(audio, dtype=np.float32)
+    return load_audio_array(path, target_sr, None, False, start_time, end_time)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -175,7 +175,12 @@ def main(argv: list[str] | None = None) -> int:
             caption = ""
             caption_ok = False
             try:
-                wav = _load_wav(row["audio_path"], target_sr)
+                wav = _load_wav(
+                    row["audio_path"],
+                    target_sr,
+                    row.get("start_time"),
+                    row.get("end_time"),
+                )
                 # transformers==4.55.0's Qwen2AudioProcessor.__call__ takes the
                 # audio kwarg as `audio` (singular); `audios` is silently dropped
                 # (logged as an invalid kwarg), which fed captions with NO audio

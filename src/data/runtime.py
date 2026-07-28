@@ -226,6 +226,14 @@ def _resolve_subject_transcript(
 
 
 def _ordered_subject_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if rows and str(rows[0].get("dataset", "")).lower() == "d3tec":
+        return sorted(
+            rows,
+            key=lambda row: (
+                int(row.get("prompt_id", 0)),
+                int(row.get("segment_index", 0)),
+            ),
+        )
     if rows and str(rows[0].get("dataset", "")).lower() == "turkish":
         def turkish_key(row: dict[str, Any]) -> tuple[int, str]:
             chunk_id = str(row.get("chunk_id", "")).strip()
@@ -292,10 +300,23 @@ def _base_example_from_row(
         "transcript": transcript,
         "audio_paths": [row["audio_path"]] if use_audio else [],
         "audio_clip_seconds": [None] if use_audio else [],
+        "audio_start_times": [float(row.get("start_time", 0.0) or 0.0)] if use_audio else [],
+        "audio_end_times": (
+            [float(row["end_time"]) if row.get("end_time") not in (None, "") else None]
+            if use_audio
+            else []
+        ),
         "input_modality": input_modality,
         "prompt_text": prompt_text,
         "training_text": build_training_text(prompt_text, example_internal_label),
         "question_id": row.get("question_id", ""),
+        "response_id": row.get("response_id", ""),
+        "prompt_id": row.get("prompt_id", row.get("question_id", "")),
+        "segment_index": row.get("segment_index", 0),
+        "num_segments": row.get("num_segments", 1),
+        "start_time": row.get("start_time", ""),
+        "end_time": row.get("end_time", ""),
+        "segment_duration": row.get("segment_duration", ""),
     }
     return example, transcript_log
 
@@ -323,11 +344,31 @@ def _build_subject_level_text_only_examples(
             )
 
         canonical_row = rows[0]
-        subject_transcript = _resolve_subject_transcript(
-            rows,
-            config,
-            mode_name="Text-only subject mode",
-        )
+        if str(canonical_row.get("dataset", "")).lower() == "d3tec":
+            response_rows: dict[int, dict[str, Any]] = {}
+            for row in rows:
+                prompt_id = int(row["prompt_id"])
+                prior = response_rows.setdefault(prompt_id, row)
+                if str(prior["full_response_transcript"]).strip() != str(row["full_response_transcript"]).strip():
+                    raise ValueError(
+                        f"Inconsistent D3TEC full transcript within response_id={row['response_id']}."
+                    )
+            expected_prompts = set(range(27))
+            if set(response_rows) != expected_prompts:
+                raise ValueError(
+                    f"D3TEC text-only mode requires prompts 0-26 for {subject_id}; "
+                    f"found={sorted(response_rows)}"
+                )
+            subject_transcript = "\n\n".join(
+                f"[Response {prompt_id}]\n{str(response_rows[prompt_id]['full_response_transcript']).strip()}"
+                for prompt_id in range(27)
+            )
+        else:
+            subject_transcript = _resolve_subject_transcript(
+                rows,
+                config,
+                mode_name="Text-only subject mode",
+            )
         transcript, transcript_log = _truncate_text(subject_transcript, transcript_max_chars)
         user_text = render_user_prompt_text(config, transcript, is_subject_bundle=False)
         internal_label_text = canonical_row.get("internal_label_text") or internal_label_text_from_int(
@@ -351,6 +392,8 @@ def _build_subject_level_text_only_examples(
                 "transcript": transcript,
                 "audio_paths": [],
                 "audio_clip_seconds": [],
+                "audio_start_times": [],
+                "audio_end_times": [],
                 "input_modality": INPUT_MODALITY_TEXT_ONLY,
                 "prompt_text": prompt_text,
                 "training_text": build_training_text(prompt_text, internal_label_text),
@@ -569,7 +612,7 @@ def build_examples(
             emotion_cache, [str(row["sample_id"]) for row in manifest_rows]
         )
 
-    if input_modality == INPUT_MODALITY_TEXT_ONLY and dataset_name in {"daic", "edaic", "turkish"}:
+    if input_modality == INPUT_MODALITY_TEXT_ONLY and dataset_name in {"daic", "d3tec", "edaic", "turkish"}:
         return _build_subject_level_text_only_examples(
             manifest_rows,
             config,
@@ -690,18 +733,39 @@ def qwen2audio_audio_token_length(mel_frames: int) -> int:
     return max(0, int(output_lengths))
 
 
-def load_audio_array(audio_path: str, target_sr: int, max_seconds: float | None, silence_audio: bool) -> np.ndarray:
+def load_audio_array(
+    audio_path: str,
+    target_sr: int,
+    max_seconds: float | None,
+    silence_audio: bool,
+    start_time: float | None = None,
+    end_time: float | None = None,
+) -> np.ndarray:
     info = sf.info(audio_path)
-    keep_seconds = min(max_seconds, float(info.frames / info.samplerate)) if max_seconds else float(info.frames / info.samplerate)
-    keep_frames = max(1, int(round(keep_seconds * info.samplerate)))
+    duration = float(info.frames / info.samplerate)
+    start_seconds = max(0.0, float(start_time or 0.0))
+    end_seconds = duration if end_time is None else min(duration, float(end_time))
+    if end_seconds <= start_seconds:
+        raise ValueError(
+            f"Invalid audio interval for {audio_path}: start_time={start_seconds} end_time={end_seconds}"
+        )
+    interval_seconds = end_seconds - start_seconds
+    keep_seconds = min(float(max_seconds), interval_seconds) if max_seconds else interval_seconds
+    start_frame = min(info.frames - 1, max(0, int(round(start_seconds * info.samplerate))))
+    keep_frames = max(1, min(info.frames - start_frame, int(round(keep_seconds * info.samplerate))))
     if silence_audio:
         audio = np.zeros(keep_frames, dtype=np.float32)
         source_sr = info.samplerate
     else:
-        audio, source_sr = sf.read(audio_path, dtype="float32", always_2d=False)
+        audio, source_sr = sf.read(
+            audio_path,
+            start=start_frame,
+            frames=keep_frames,
+            dtype="float32",
+            always_2d=False,
+        )
         if audio.ndim > 1:
             audio = audio.mean(axis=1)
-        audio = audio[:keep_frames]
     if int(source_sr) != int(target_sr):
         import librosa
 
@@ -889,9 +953,20 @@ class AudioTextDataset(Dataset):
         if audio_paths:
             if self.processor_sampling_rate is None:
                 raise ValueError("Audio examples require a processor sampling rate.")
+            start_times = list(example.get("audio_start_times") or [None] * len(audio_paths))
+            end_times = list(example.get("audio_end_times") or [None] * len(audio_paths))
             audio_arrays = [
-                load_audio_array(audio_path, self.processor_sampling_rate, max_seconds, self.silence_audio)
-                for audio_path, max_seconds in zip(audio_paths, clip_seconds)
+                load_audio_array(
+                    audio_path,
+                    self.processor_sampling_rate,
+                    max_seconds,
+                    self.silence_audio,
+                    start_time,
+                    end_time,
+                )
+                for audio_path, max_seconds, start_time, end_time in zip(
+                    audio_paths, clip_seconds, start_times, end_times
+                )
             ]
             if self.audio_augment and not self.silence_audio:
                 audio_arrays = [

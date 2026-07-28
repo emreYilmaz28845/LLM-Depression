@@ -62,9 +62,13 @@ def load_prompt_audio(example: dict[str, Any], sampling_rate: int | None, silenc
     if paths:
         if sampling_rate is None:
             raise ValueError("Audio examples require a processor sampling rate.")
+        start_times = list(output.get("audio_start_times") or [None] * len(paths))
+        end_times = list(output.get("audio_end_times") or [None] * len(paths))
         output["audio_arrays"] = [
-            load_audio_array(path, sampling_rate, max_seconds, silence_audio)
-            for path, max_seconds in zip(paths, output["audio_clip_seconds"])
+            load_audio_array(path, sampling_rate, max_seconds, silence_audio, start_time, end_time)
+            for path, max_seconds, start_time, end_time in zip(
+                paths, output["audio_clip_seconds"], start_times, end_times
+            )
         ]
     else:
         output["audio_arrays"] = []

@@ -15,7 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import torch
 
-from src.aggregate import aggregate_predictions
+from src.aggregate import aggregate_predictions, aggregate_response_subject_predictions
 from src.data.build_manifest import build_for_config, manifest_build_signature
 from src.data.runtime import (
     build_examples,
@@ -44,6 +44,7 @@ from src.model.runtime import (
 from src.model.lora_common import resolve_lora_layer_selection
 from src.utils import (
     AGGREGATION_LEVEL_SUBJECT,
+    AGGREGATION_LEVEL_RESPONSE_SUBJECT,
     PREDICTION_MODE_GENERATION,
     PREDICTION_MODE_LIKELIHOOD,
     PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
@@ -232,9 +233,13 @@ def _write_csv(rows: list[dict[str, Any]], path: str | Path) -> None:
 
 
 def _load_example_audio(example: dict[str, Any], sampling_rate: int, silence_audio: bool) -> list:
+    start_times = list(example.get("audio_start_times") or [None] * len(example["audio_paths"]))
+    end_times = list(example.get("audio_end_times") or [None] * len(example["audio_paths"]))
     return [
-        load_audio_array(audio_path, sampling_rate, max_seconds, silence_audio)
-        for audio_path, max_seconds in zip(example["audio_paths"], example["audio_clip_seconds"])
+        load_audio_array(audio_path, sampling_rate, max_seconds, silence_audio, start_time, end_time)
+        for audio_path, max_seconds, start_time, end_time in zip(
+            example["audio_paths"], example["audio_clip_seconds"], start_times, end_times
+        )
     ]
 
 
@@ -268,6 +273,13 @@ def _base_sample_row(example: dict[str, Any], checkpoint_name: str, backend_name
         "label": int(example["label"]),
         "label_text": example["label_text"],
         "internal_label_text": example["internal_label_text"],
+        "response_id": example.get("response_id", ""),
+        "prompt_id": example.get("prompt_id", example.get("question_id", "")),
+        "segment_index": example.get("segment_index", 0),
+        "num_segments": example.get("num_segments", 1),
+        "start_time": example.get("start_time", ""),
+        "end_time": example.get("end_time", ""),
+        "segment_duration": example.get("segment_duration", ""),
     }
 
 
@@ -539,11 +551,29 @@ def evaluate_examples(
                 total_examples,
             )
 
-    headline_rows, headline_metrics, subject_rows, subject_metrics = aggregate_predictions(
-        sample_rows,
-        mode=mode,
-        aggregation_level=aggregation_level,
-    )
+    response_rows: list[dict[str, Any]] = []
+    response_metrics: dict[str, Any] | None = None
+    if aggregation_level == AGGREGATION_LEVEL_RESPONSE_SUBJECT:
+        prediction_field = {
+            PREDICTION_MODE_LIKELIHOOD: "likelihood_prediction",
+            PREDICTION_MODE_GENERATION: "parsed_prediction",
+            PREDICTION_MODE_ORIGINAL_TEACHER_FORCED: "teacher_forced_prediction",
+        }[mode]
+        response_rows, response_metrics, subject_rows, subject_metrics = (
+            aggregate_response_subject_predictions(
+                sample_rows,
+                prediction_field=prediction_field,
+                backend_name=mode,
+                invalid_as_wrong=mode == PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
+            )
+        )
+        headline_rows, headline_metrics = subject_rows, subject_metrics
+    else:
+        headline_rows, headline_metrics, subject_rows, subject_metrics = aggregate_predictions(
+            sample_rows,
+            mode=mode,
+            aggregation_level=aggregation_level,
+        )
     headline_metrics_payload = dict(headline_metrics)
     headline_metrics_payload["checkpoint_name"] = checkpoint_name
     subject_metrics_payload = dict(subject_metrics)
@@ -552,15 +582,22 @@ def evaluate_examples(
     sample_csv_path = output_dir / "predictions_sample_level.csv"
     headline_csv_path = output_dir / "predictions_headline_level.csv"
     subject_csv_path = output_dir / "predictions_subject_level.csv"
+    response_csv_path = output_dir / "predictions_response_level.csv"
     sample_jsonl_path = output_dir / "predictions_sample_level.jsonl"
     invalid_jsonl_path = output_dir / "predictions_invalid_sample_level.jsonl"
     _write_csv(sample_rows, sample_csv_path)
     _write_csv(headline_rows, headline_csv_path)
     _write_csv(subject_rows, subject_csv_path)
+    if response_rows:
+        _write_csv(response_rows, response_csv_path)
     write_jsonl(sample_rows, sample_jsonl_path)
+    if response_rows:
+        write_jsonl(response_rows, output_dir / "predictions_response_level.jsonl")
     invalid_rows = _invalid_sample_rows(mode, sample_rows)
     write_jsonl(invalid_rows, invalid_jsonl_path)
     save_json(headline_metrics_payload, output_dir / _metrics_filename_for_mode(mode))
+    if response_metrics is not None:
+        save_json(response_metrics, output_dir / f"metrics_response_level_{mode}.json")
     if aggregation_level != AGGREGATION_LEVEL_SUBJECT:
         save_json(subject_metrics_payload, output_dir / _subject_metrics_filename_for_mode(mode))
     save_json(
@@ -585,7 +622,11 @@ def evaluate_examples(
         float(headline_metrics_payload["precision"]),
         float(headline_metrics_payload["recall"]),
     )
-    unit_suffix = "subjects" if aggregation_level == AGGREGATION_LEVEL_SUBJECT else "segments"
+    unit_suffix = (
+        "subjects"
+        if aggregation_level in {AGGREGATION_LEVEL_SUBJECT, AGGREGATION_LEVEL_RESPONSE_SUBJECT}
+        else "segments"
+    )
     LOGGER.info(
         "Validation predicted counts checkpoint=%s | backend=%s | aggregation_level=%s | predicted_depressed=%s predicted_non_depressed=%s predicted_invalid=%s",
         checkpoint_name,
@@ -639,6 +680,8 @@ def evaluate_examples(
         "headline_metrics": headline_metrics_payload,
         "subject_rows": subject_rows,
         "subject_metrics": subject_metrics_payload,
+        "response_rows": response_rows,
+        "response_metrics": response_metrics,
         "backend_results": {
             mode: {
                 "headline_rows": headline_rows,

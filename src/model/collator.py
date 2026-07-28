@@ -86,6 +86,11 @@ class Qwen2AudioSFTCollator:
             "attention_mask": torch.tensor(np.stack(batch_attention_mask), dtype=torch.long),
             "labels": torch.tensor(np.stack(batch_labels), dtype=torch.long),
         }
+        if any("loss_weight" in example for example in batch):
+            batch_dict["loss_weight"] = torch.tensor(
+                [float(example.get("loss_weight", 1.0)) for example in batch],
+                dtype=torch.float32,
+            )
 
         if "input_features" in processed_items[0]:
             all_features = np.concatenate([item["input_features"] for item in processed_items], axis=0)

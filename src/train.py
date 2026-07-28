@@ -24,6 +24,7 @@ from torch.utils.data import DataLoader, WeightedRandomSampler
 from transformers import get_linear_schedule_with_warmup
 
 from src.data.build_manifest import build_for_config, manifest_build_signature
+from src.data.d3tec import build_d3tec_training_schedule
 from src.data.runtime import (
     AudioTextDataset,
     build_examples,
@@ -964,6 +965,7 @@ def _selection_metric_values(metric_value: float, headline_metrics: dict[str, An
         "selection_precision": float(headline_metrics["precision"]),
         "selection_recall": float(headline_metrics["recall"]),
         "selection_loss": selection_loss,
+        "selection_auroc": float(headline_metrics.get("auroc", 0.0)),
     }
     values.update(
         {
@@ -973,6 +975,7 @@ def _selection_metric_values(metric_value: float, headline_metrics: dict[str, An
             "inner_val_precision": values["selection_precision"],
             "inner_val_recall": values["selection_recall"],
             "inner_val_loss": values["selection_loss"],
+            "inner_val_auroc": values["selection_auroc"],
         }
     )
     return values
@@ -1207,6 +1210,39 @@ def main() -> None:
         config,
         run_root,
     )
+    d3tec_epoch_schedule: list[list[dict[str, Any]]] | None = None
+    d3tec_schedule_audit: dict[str, Any] | None = None
+    if str(config["dataset"]).lower() == "d3tec" and input_modality != "text_only":
+        if int(config["training"]["per_device_train_batch_size"]) != 1:
+            raise ValueError("D3TEC audio policies require per_device_train_batch_size=1.")
+        if int(config["training"]["dataloader_num_workers"]) != 0:
+            raise ValueError("D3TEC epoch schedules require training.dataloader_num_workers=0.")
+        virtual_epochs = int(
+            config["training"].get(
+                "reference_virtual_epochs",
+                config["training"]["num_train_epochs"],
+            )
+        )
+        if int(config["training"]["num_train_epochs"]) != virtual_epochs:
+            raise ValueError(
+                "D3TEC num_train_epochs must equal training.reference_virtual_epochs."
+            )
+        reference_examples = int(
+            config["training"].get("reference_examples_per_response", 1)
+        )
+        if reference_examples != 1:
+            raise ValueError(
+                "D3TEC requires training.reference_examples_per_response=1."
+            )
+        d3tec_epoch_schedule, d3tec_schedule_audit = build_d3tec_training_schedule(
+            train_examples,
+            policy=str(config["data"]["train_chunk_policy"]),
+            seed=int(config["seed"]),
+            virtual_epochs=virtual_epochs,
+            responses_per_subject=27,
+        )
+        train_examples = d3tec_epoch_schedule[0]
+        save_json(d3tec_schedule_audit, logs_dir / "d3tec_training_schedule_audit.json")
 
     # Training is the only place stochastic per-epoch chunk sampling is allowed.
     # Selection/eval datasets stay deterministic (baked audio_paths) so reported
@@ -1244,7 +1280,7 @@ def main() -> None:
     train_loader = DataLoader(
         train_dataset,
         batch_size=int(config["training"]["per_device_train_batch_size"]),
-        shuffle=train_sampler is None,
+        shuffle=False if d3tec_epoch_schedule is not None else train_sampler is None,
         sampler=train_sampler,
         generator=train_shuffle_generator,
         num_workers=int(config["training"]["dataloader_num_workers"]),
@@ -1352,6 +1388,11 @@ def main() -> None:
             "effective_train_sample_count": len(train_examples),
             "audit_path": str(run_root / "sampling_audit.json") if sampling_audit else None,
             "audit": sampling_audit,
+            "d3tec_schedule_audit_path": (
+                str(logs_dir / "d3tec_training_schedule_audit.json")
+                if d3tec_schedule_audit is not None
+                else None
+            ),
         },
         "selection_protocol": {
             "mode": partition_plan["selection_mode"],
@@ -1419,6 +1460,8 @@ def main() -> None:
         else (float("inf") if selection_metric_cfg["mode"] == "min" else float("-inf"))
     )
     best_epoch = -1 if selection_enabled else 0
+    best_selection_auroc = float("-inf")
+    best_selection_loss = float("inf")
     if selection_enabled:
         LOGGER.info(
             "Checkpoint selection metric=%s mode=%s (early_stopping metric handled separately).",
@@ -1464,6 +1507,8 @@ def main() -> None:
         )
 
     for epoch in range(1, int(config["training"]["num_train_epochs"]) + 1):
+        if d3tec_epoch_schedule is not None:
+            train_dataset.examples = d3tec_epoch_schedule[epoch - 1]
         model.train()
         # The previous epoch's selection eval disables gradient checkpointing and
         # enables use_cache; restore the training-time memory config before this
@@ -1472,8 +1517,13 @@ def main() -> None:
         epoch_losses: list[float] = []
         for step, batch in enumerate(train_loader, start=1):
             with accelerator.accumulate(model):
+                loss_weights = batch.pop("loss_weight", None)
                 outputs = model(**batch)
                 loss = outputs.loss
+                if loss_weights is not None:
+                    if int(loss_weights.numel()) != 1:
+                        raise ValueError("Schedule-aware D3TEC weighting currently requires batch size 1.")
+                    loss = loss * loss_weights.reshape(-1)[0].to(loss.device)
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(model.parameters(), float(config["training"]["max_grad_norm"]))
@@ -1583,9 +1633,30 @@ def main() -> None:
                     float(headline_metrics["precision"]),
                     float(headline_metrics["recall"]),
                 )
-                if _metric_improved(selection_value, best_metric, selection_metric_cfg["mode"], 0.0):
+                selection_improved = _metric_improved(
+                    selection_value,
+                    best_metric,
+                    selection_metric_cfg["mode"],
+                    0.0,
+                )
+                if (
+                    str(config["dataset"]).lower() == "d3tec"
+                    and not selection_improved
+                    and float(selection_value) == float(best_metric)
+                ):
+                    current_auroc = float(metric_values.get("inner_val_auroc", 0.0))
+                    selection_improved = (
+                        current_auroc > best_selection_auroc
+                        or (
+                            current_auroc == best_selection_auroc
+                            and float(selection_loss) < best_selection_loss
+                        )
+                    )
+                if selection_improved:
                     best_metric = selection_value
                     best_epoch = epoch
+                    best_selection_auroc = float(metric_values.get("inner_val_auroc", 0.0))
+                    best_selection_loss = float(selection_loss)
                     if _save_best_checkpoint(args.save_strategy):
                         if best_dir.exists():
                             shutil.rmtree(best_dir)
@@ -1752,24 +1823,23 @@ def main() -> None:
                 aggregation_level,
                 evaluation_protocol_name(sample_prediction_mode),
             )
-            LOGGER.info("Starting final held-out evaluation for last_checkpoint")
-            prepare_model_for_evaluation(unwrapped, config)
-            last_metrics = evaluate_examples(
-                unwrapped,
-                processor,
-                final_eval_examples,
-                config,
-                eval_dir / "last_checkpoint",
-                checkpoint_name="last_checkpoint",
-                sample_prediction_mode=sample_prediction_mode,
+            evaluate_last_checkpoint = bool(
+                config.get("evaluation", {}).get("evaluate_last_checkpoint", True)
             )
-            if not selection_enabled or best_epoch == completed_epochs:
-                best_metrics = last_metrics
-                selected_best_model = unwrapped
-                selected_best_processor = processor
-                if not (eval_dir / "best_checkpoint").exists():
-                    shutil.copytree(eval_dir / "last_checkpoint", eval_dir / "best_checkpoint")
-            else:
+            last_metrics = None
+            if evaluate_last_checkpoint:
+                LOGGER.info("Starting final held-out evaluation for last_checkpoint")
+                prepare_model_for_evaluation(unwrapped, config)
+                last_metrics = evaluate_examples(
+                    unwrapped,
+                    processor,
+                    final_eval_examples,
+                    config,
+                    eval_dir / "last_checkpoint",
+                    checkpoint_name="last_checkpoint",
+                    sample_prediction_mode=sample_prediction_mode,
+                )
+            if selection_enabled and best_epoch != completed_epochs:
                 unwrapped.to("cpu")
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
@@ -1789,24 +1859,43 @@ def main() -> None:
                 )
                 selected_best_model = best_model
                 selected_best_processor = best_processor
+            else:
+                selected_best_model = unwrapped
+                selected_best_processor = processor
+                if evaluate_last_checkpoint and last_metrics is not None:
+                    best_metrics = last_metrics
+                    if not (eval_dir / "best_checkpoint").exists():
+                        shutil.copytree(eval_dir / "last_checkpoint", eval_dir / "best_checkpoint")
+                else:
+                    LOGGER.info("Starting the only outer-holdout evaluation for selected best_checkpoint")
+                    prepare_model_for_evaluation(unwrapped, config)
+                    best_metrics = evaluate_examples(
+                        unwrapped,
+                        processor,
+                        final_eval_examples,
+                        config,
+                        eval_dir / "best_checkpoint",
+                        checkpoint_name="best_checkpoint",
+                        sample_prediction_mode=sample_prediction_mode,
+                    )
 
-            save_json(
-                {
-                    "split_mode": split_mode,
-                    "prediction_backend": sample_prediction_mode,
-                    "aggregation_level": aggregation_level,
-                    "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
-                    "selected_best_checkpoint": {
-                        "epoch": best_epoch,
-                        "active_backend_metrics": best_metrics["backend_results"][sample_prediction_mode]["headline_metrics"],
-                    },
-                    "last_checkpoint": {
-                        "epoch": completed_epochs,
-                        "active_backend_metrics": last_metrics["backend_results"][sample_prediction_mode]["headline_metrics"],
-                    },
+            final_checkpoint_payload = {
+                "split_mode": split_mode,
+                "prediction_backend": sample_prediction_mode,
+                "aggregation_level": aggregation_level,
+                "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
+                "evaluate_last_checkpoint": evaluate_last_checkpoint,
+                "selected_best_checkpoint": {
+                    "epoch": best_epoch,
+                    "active_backend_metrics": best_metrics["backend_results"][sample_prediction_mode]["headline_metrics"],
                 },
-                eval_dir / "best_vs_last_checkpoint_metrics.json",
-            )
+            }
+            if last_metrics is not None:
+                final_checkpoint_payload["last_checkpoint"] = {
+                    "epoch": completed_epochs,
+                    "active_backend_metrics": last_metrics["backend_results"][sample_prediction_mode]["headline_metrics"],
+                }
+            save_json(final_checkpoint_payload, eval_dir / "best_vs_last_checkpoint_metrics.json")
             joint_final_eval_payload: dict[str, Any] = {}
             for group in joint_final_eval_groups:
                 group_eval_dir = eval_dir / "best_checkpoint" / f"{str(group['dataset']).lower()}_fold_{group['fold']}_holdout"

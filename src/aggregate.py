@@ -7,6 +7,7 @@ from src.metrics import binary_auroc, classification_metrics, multiclass_macro_f
 from src.utils import (
     AGGREGATION_LEVEL_SEGMENT,
     AGGREGATION_LEVEL_SUBJECT,
+    AGGREGATION_LEVEL_RESPONSE_SUBJECT,
     PREDICTION_MODE_GENERATION,
     PREDICTION_MODE_LIKELIHOOD,
     PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
@@ -37,7 +38,160 @@ def _wrong_vote_for_gold(gold: int) -> int:
 
 
 def _unit_suffix(aggregation_level: str) -> str:
-    return "subjects" if aggregation_level == AGGREGATION_LEVEL_SUBJECT else "segments"
+    if aggregation_level in {AGGREGATION_LEVEL_SUBJECT, AGGREGATION_LEVEL_RESPONSE_SUBJECT}:
+        return "subjects"
+    return "segments"
+
+
+def _majority_with_margin(
+    rows: list[dict[str, Any]],
+    *,
+    prediction_field: str,
+    gold: int,
+    invalid_as_wrong: bool,
+) -> tuple[int, int, float]:
+    valid = [int(row[prediction_field]) for row in rows if row.get(prediction_field) in (0, 1)]
+    invalid_count = len(rows) - len(valid)
+    votes = list(valid)
+    if invalid_as_wrong:
+        votes.extend([_wrong_vote_for_gold(gold)] * invalid_count)
+    margin = sum(
+        float(row.get("score_margin", row.get("dep_score", 0.0) - row.get("non_score", 0.0)))
+        for row in rows
+    )
+    if not votes:
+        return INVALID_PREDICTION, invalid_count, margin
+    counts = Counter(votes)
+    if counts[1] > counts[0]:
+        return 1, invalid_count, margin
+    if counts[0] > counts[1]:
+        return 0, invalid_count, margin
+    if margin > 0:
+        return 1, invalid_count, margin
+    if margin < 0:
+        return 0, invalid_count, margin
+    return INVALID_PREDICTION, invalid_count, margin
+
+
+def aggregate_response_subject_predictions(
+    sample_rows: list[dict[str, Any]],
+    *,
+    prediction_field: str,
+    backend_name: str,
+    invalid_as_wrong: bool = True,
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    """D3TEC's predeclared segment -> response -> subject hierarchy.
+
+    Segment counts never directly influence the subject vote: each response is
+    reduced first and each response then contributes exactly one subject vote.
+    """
+    grouped_responses: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in sample_rows:
+        rid = str(row.get("response_id", "")).strip()
+        if not rid:
+            raise ValueError("response_subject aggregation requires response_id on every sample.")
+        grouped_responses[rid].append(row)
+
+    response_rows: list[dict[str, Any]] = []
+    invalid_segments = 0
+    for rid, rows in sorted(grouped_responses.items()):
+        gold = int(rows[0]["label"])
+        pred, invalid_count, margin_sum = _majority_with_margin(
+            rows,
+            prediction_field=prediction_field,
+            gold=gold,
+            invalid_as_wrong=invalid_as_wrong,
+        )
+        invalid_segments += invalid_count
+        response_rows.append(
+            {
+                "subject_id": rows[0]["subject_id"],
+                "response_id": rid,
+                "prompt_id": rows[0].get("prompt_id", ""),
+                "label": gold,
+                "label_text": label_text_from_int(gold),
+                "prediction_backend": backend_name,
+                "evaluation_protocol_name": evaluation_protocol_name(backend_name),
+                "prediction": pred,
+                "prediction_text": label_text_from_int(pred) if pred in (0, 1) else "INVALID",
+                "num_segments": len(rows),
+                "num_valid_segments": len(rows) - invalid_count,
+                "invalid_segments": invalid_count,
+                "score_margin_sum": margin_sum,
+                "score_margin": margin_sum / len(rows),
+                "dep_score": sum(float(row.get("dep_score", 0.0)) for row in rows) / len(rows),
+                "non_score": sum(float(row.get("non_score", 0.0)) for row in rows) / len(rows),
+            }
+        )
+
+    response_metrics = _metrics_from_prediction_rows(
+        response_rows,
+        backend_name=backend_name,
+        aggregation_level=AGGREGATION_LEVEL_SEGMENT,
+        invalid_metric_name="invalid_segment_predictions",
+        invalid_prediction_count=invalid_segments,
+    )
+    response_metrics["aggregation_level"] = "response"
+    response_metrics["unit_label"] = "response"
+    response_metrics["num_responses"] = len(response_rows)
+    response_metrics["invalid_responses"] = sum(
+        int(row["prediction"]) not in (0, 1) for row in response_rows
+    )
+    response_metrics["auroc"] = binary_auroc(
+        [int(row["label"]) for row in response_rows],
+        [float(row["score_margin"]) for row in response_rows],
+    )
+
+    grouped_subjects: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in response_rows:
+        grouped_subjects[str(row["subject_id"])].append(row)
+    subject_rows: list[dict[str, Any]] = []
+    invalid_responses = 0
+    for subject_id, rows in sorted(grouped_subjects.items()):
+        gold = int(rows[0]["label"])
+        pred, invalid_count, margin_sum = _majority_with_margin(
+            rows,
+            prediction_field="prediction",
+            gold=gold,
+            invalid_as_wrong=invalid_as_wrong,
+        )
+        invalid_responses += invalid_count
+        subject_rows.append(
+            {
+                "subject_id": subject_id,
+                "label": gold,
+                "label_text": label_text_from_int(gold),
+                "prediction_backend": backend_name,
+                "evaluation_protocol_name": evaluation_protocol_name(backend_name),
+                "prediction": pred,
+                "prediction_text": label_text_from_int(pred) if pred in (0, 1) else "INVALID",
+                "num_responses": len(rows),
+                "num_valid_responses": len(rows) - invalid_count,
+                "invalid_responses": invalid_count,
+                "score_margin_sum": margin_sum,
+                "score_margin": margin_sum / len(rows),
+                "dep_score": sum(float(row["dep_score"]) for row in rows) / len(rows),
+                "non_score": sum(float(row["non_score"]) for row in rows) / len(rows),
+            }
+        )
+    subject_metrics = _metrics_from_prediction_rows(
+        subject_rows,
+        backend_name=backend_name,
+        aggregation_level=AGGREGATION_LEVEL_SUBJECT,
+        invalid_metric_name="invalid_response_predictions",
+        invalid_prediction_count=invalid_responses,
+    )
+    subject_metrics["aggregation_level"] = AGGREGATION_LEVEL_RESPONSE_SUBJECT
+    subject_metrics["num_valid_response_subject_predictions"] = subject_metrics[
+        "num_valid_subject_predictions"
+    ]
+    subject_metrics["invalid_segments"] = invalid_segments
+    subject_metrics["invalid_responses"] = invalid_responses
+    subject_metrics["auroc"] = binary_auroc(
+        [int(row["label"]) for row in subject_rows],
+        [float(row["score_margin"]) for row in subject_rows],
+    )
+    return response_rows, response_metrics, subject_rows, subject_metrics
 
 
 def _count_payload(rows: list[dict[str, Any]], aggregation_level: str) -> dict[str, int]:
@@ -265,19 +419,32 @@ def _aggregate_majority_vote_predictions(
                     pred = INVALID_PREDICTION
         if pred not in (0, 1):
             invalid_subjects += 1
-        subject_rows.append(
-            {
-                "subject_id": subject_id,
-                "label": gold,
-                "label_text": label_text_from_int(gold),
-                "prediction_backend": backend_name,
-                "evaluation_protocol_name": evaluation_protocol_name(backend_name),
-                "prediction": pred,
-                "prediction_text": label_text_from_int(pred) if pred in (0, 1) else "INVALID",
-                "num_samples": len(rows),
-                valid_count_field: len(valid_predictions),
-            }
-        )
+        subject_row = {
+            "subject_id": subject_id,
+            "label": gold,
+            "label_text": label_text_from_int(gold),
+            "prediction_backend": backend_name,
+            "evaluation_protocol_name": evaluation_protocol_name(backend_name),
+            "prediction": pred,
+            "prediction_text": label_text_from_int(pred) if pred in (0, 1) else "INVALID",
+            "num_samples": len(rows),
+            valid_count_field: len(valid_predictions),
+        }
+        if tie_break_positive_score_field and tie_break_negative_score_field:
+            mean_positive = sum(
+                float(row.get(tie_break_positive_score_field, 0.0)) for row in rows
+            ) / len(rows)
+            mean_negative = sum(
+                float(row.get(tie_break_negative_score_field, 0.0)) for row in rows
+            ) / len(rows)
+            subject_row.update(
+                {
+                    "dep_score": mean_positive,
+                    "non_score": mean_negative,
+                    "score_margin": mean_positive - mean_negative,
+                }
+            )
+        subject_rows.append(subject_row)
 
     metrics = _metrics_from_prediction_rows(
         subject_rows,
@@ -287,6 +454,11 @@ def _aggregate_majority_vote_predictions(
         invalid_prediction_count=total_invalid_predictions,
     )
     metrics["invalid_subjects"] = invalid_subjects
+    if tie_break_positive_score_field and tie_break_negative_score_field:
+        metrics["auroc"] = binary_auroc(
+            [int(row["label"]) for row in subject_rows],
+            [float(row["score_margin"]) for row in subject_rows],
+        )
     return subject_rows, metrics
 
 
@@ -475,6 +647,19 @@ def aggregate_predictions(
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
     mode = normalize_prediction_mode(mode)
     aggregation_level = normalize_aggregation_level(aggregation_level)
+    if aggregation_level == AGGREGATION_LEVEL_RESPONSE_SUBJECT:
+        prediction_field = {
+            PREDICTION_MODE_LIKELIHOOD: "likelihood_prediction",
+            PREDICTION_MODE_GENERATION: "parsed_prediction",
+            PREDICTION_MODE_ORIGINAL_TEACHER_FORCED: "teacher_forced_prediction",
+        }[mode]
+        _, _, subject_rows, subject_metrics = aggregate_response_subject_predictions(
+            sample_rows,
+            prediction_field=prediction_field,
+            backend_name=mode,
+            invalid_as_wrong=mode == PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
+        )
+        return subject_rows, subject_metrics, subject_rows, subject_metrics
 
     if mode == PREDICTION_MODE_LIKELIHOOD:
         subject_rows, subject_metrics = aggregate_likelihood_predictions(sample_rows)

@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.data.cmdc import build_cmdc_manifest
 from src.data.daic import build_daic_manifest
+from src.data.d3tec import build_d3tec_manifest
 from src.data.edaic import build_edaic_manifest
 from src.data.eatd import build_eatd_manifest
 from src.data.turkish import build_turkish_manifest
@@ -31,6 +32,8 @@ from src.utils import (
     log_resolved_config,
     save_json,
     sha256_jsonl_rows,
+    sha256_file,
+    resolve_project_path,
     write_jsonl,
 )
 from src.utils import serialize_project_path
@@ -58,6 +61,11 @@ def manifest_build_signature(config: dict[str, Any]) -> dict[str, Any]:
         for key, value in config.items()
         if key not in excluded_top_level and key != "split"
     }
+    data_options = {
+        key: value
+        for key, value in (config.get("data") or {}).items()
+        if key in {"segment_seconds", "segment_partition"}
+    }
     split_options = {
         key: value
         for key, value in (config.get("split") or {}).items()
@@ -65,6 +73,7 @@ def manifest_build_signature(config: dict[str, Any]) -> dict[str, Any]:
     }
     return {
         "builder_options": builder_options,
+        "data_options": data_options,
         "split_options": split_options,
     }
 
@@ -106,6 +115,8 @@ def build_for_config(config_path: str | Path, config_overrides: list[str] | None
 
     if dataset_name == "daic":
         result = build_daic_manifest(config, quarantine)
+    elif dataset_name == "d3tec":
+        result = build_d3tec_manifest(config, quarantine)
     elif dataset_name == "edaic":
         result = build_edaic_manifest(config, quarantine)
     elif dataset_name == "cmdc":
@@ -164,6 +175,29 @@ def build_for_config(config_path: str | Path, config_overrides: list[str] | None
         extra_path = split_dir / f"{dataset_name}_extra_file_audit.json"
         save_json(result["extra_file_audit"], extra_path)
         metadata["extra_file_audit_path"] = serialize_project_path(extra_path)
+    for result_key, filename in (
+        ("chunk_window_audit", f"{dataset_name}_chunk_window_audit.json"),
+        ("label_source_audit", f"{dataset_name}_label_source_audit.json"),
+    ):
+        if result_key in result:
+            artifact_path = split_dir / filename
+            save_json(result[result_key], artifact_path)
+            metadata[f"{result_key}_path"] = serialize_project_path(artifact_path)
+    if "fold_hash" in result:
+        metadata["fold_hash"] = result["fold_hash"]
+    if "transcript_paths" in result:
+        metadata["transcript_paths"] = result["transcript_paths"]
+    if "source_hashes" in result:
+        metadata["source_hashes"] = result["source_hashes"]
+
+    metadata["artifact_hashes"] = {
+        f"{key}_sha256": sha256_file(resolve_project_path(value))
+        for key, value in metadata.items()
+        if key.endswith("_path")
+        and isinstance(value, str)
+        and value
+        and resolve_project_path(value).is_file()
+    }
 
     metadata_path = split_dir / f"{dataset_name}_manifest_metadata.json"
     save_json(metadata, metadata_path)
