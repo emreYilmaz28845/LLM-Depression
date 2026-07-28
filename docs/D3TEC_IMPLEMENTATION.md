@@ -118,3 +118,73 @@ The final CPU audit requires exactly 62 pooled out-of-fold subjects per config,
 checks leakage and artifact coverage, requires common manifest/split hashes,
 writes the seven-config result table, and runs the predeclared 10,000-resample
 paired subject bootstraps.
+
+## Completed MN5 production run
+
+The production matrix completed on 2026-07-29:
+
+- source commit: `201ec0affb9c8ca7239a8a0c37b462538cb9091d`;
+- smoke ID: `d3tec_smoke_20260728T134717Z`;
+- production ID: `d3tec_prod_20260728T135954Z`;
+- smoke jobs: `43923944`-`43923947`;
+- production: 35 GPU folds, seven summaries, and matrix audit `43924656`;
+- Slurm result: all 43 production jobs `COMPLETED` with `ExitCode=0:0`;
+- elapsed production wall-clock window: approximately 8 hours 22 minutes;
+- audio fold runtimes: approximately 1 hour 27 minutes to 1 hour 49 minutes;
+- text-only fold runtimes: approximately 4 to 6 minutes.
+
+The pooled, strict 62-subject out-of-fold results are:
+
+| Configuration | Accuracy | Positive F1 | Macro F1 | AUROC | Invalid subjects |
+|---|---:|---:|---:|---:|---:|
+| Audio-only rotary | 0.581 | 0.435 | 0.551 | 0.536 | 0 |
+| Audio-only flat | 0.581 | 0.500 | 0.569 | 0.515 | 0 |
+| Audio-only normalized | 0.581 | 0.500 | 0.569 | 0.576 | 0 |
+| Audio+text rotary | 0.565 | 0.471 | 0.550 | 0.554 | 0 |
+| Audio+text flat | 0.548 | 0.440 | 0.531 | 0.549 | 0 |
+| Audio+text normalized | 0.613 | 0.429 | 0.568 | 0.574 | 0 |
+| Text-only | 0.516 | 0.423 | 0.503 | 0.619 | 0 |
+
+The selected epochs by fold were:
+
+- audio-only rotary: `7, 7, 5, 5, 6`;
+- audio-only flat: `1, 3, 8, 6, 2`;
+- audio-only normalized: `7, 6, 8, 6, 6`;
+- audio+text rotary: `8, 7, 7, 4, 8`;
+- audio+text flat: `3, 7, 8, 2, 7`;
+- audio+text normalized: `5, 6, 5, 5, 7`;
+- text-only: `5, 2, 8, 6, 6`.
+
+All six predeclared 10,000-resample paired policy comparisons had 95% confidence
+intervals spanning zero for macro-F1, positive-F1, and accuracy. The matrix
+therefore does not establish a statistically clear winner among chunk policies.
+Audio-only flat and normalized produced the same hard subject predictions and
+classification metrics, but their score margins differed, yielding different
+AUROC values.
+
+Strict parsing recorded many invalid segment predictions (881-943 pooled per
+audio configuration), while hierarchical response/subject aggregation produced
+zero invalid responses and zero invalid subjects. These invalid segment counts
+remain part of the reported protocol and must not be silently discarded.
+
+The synchronized local artifacts are under:
+
+```text
+outputs/d3tec_matrix/d3tec_prod_20260728T135954Z/
+outputs/d3tec_jobs/d3tec_prod_20260728T135954Z.tsv
+outputs/manifests_d3tec/
+outputs/splits_d3tec/
+logs/slurm_d3tec/
+output_model/experiments/d3tec/
+```
+
+`best_model/` and `last_model/` were deliberately not retrieved. The local
+matrix re-audit passed and reproduced the remote result CSV exactly. The audited
+manifest hash is
+`67a62eb73b4ab7e0cd810b81af5e424f6bf9deea9cfdbc322fb32057a6e6f799`;
+the split hash is
+`a672e309fb193d7fd76e7283f5f42828c33713fe770ccbbf90f1ed72bf3fc15c`.
+
+Interpret the results with the predeclared limitations: only 62 subjects,
+subject-level labels inherited by segments, unavailable prompt semantics,
+machine-generated Spanish transcripts for audio+text, and SM-27-only audio.
