@@ -24,6 +24,22 @@ def _metric(value: Any) -> str:
     return "N/A" if value is None else f"{float(value):.6f}"
 
 
+def _duration(seconds: int | float) -> str:
+    seconds = int(seconds)
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:d}h {minutes:02d}m {seconds:02d}s"
+
+
+def _bytes(value: int | float) -> str:
+    value = float(value)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if value < 1024.0 or unit == "TiB":
+            return f"{value:.2f} {unit}"
+        value /= 1024.0
+    raise AssertionError("unreachable")
+
+
 def write_report(
     audit_path: Path,
     stability_path: Path,
@@ -68,14 +84,26 @@ def write_report(
         f"- Registered jobs: {len(jobs)}",
         f"- Terminal accounting rows: {len(accounting['jobs'])}",
         f"- Retries: {len(accounting.get('retries', []))}",
+        f"- Aggregate allocated job runtime: "
+        f"{_duration(accounting.get('total_job_runtime_seconds', 0))}",
         "",
-        "| Stage | Jobs |",
-        "|---|---:|",
+        "| Stage | Jobs | Aggregate runtime |",
+        "|---|---:|---:|",
     ]
     stage_counts: dict[str, int] = {}
     for row in jobs:
         stage_counts[row["stage"]] = stage_counts.get(row["stage"], 0) + 1
-    lines.extend(f"| {stage} | {count} |" for stage, count in sorted(stage_counts.items()))
+    stage_runtime = accounting.get("stage_runtime_seconds", {})
+    lines.extend(
+        f"| {stage} | {count} | {_duration(stage_runtime.get(stage, 0))} |"
+        for stage, count in sorted(stage_counts.items())
+    )
+    if accounting.get("storage"):
+        lines.extend(["", "Remote retained artifact footprint:"])
+        lines.extend(
+            f"- `{name}`: {_bytes(value)}"
+            for name, value in sorted(accounting["storage"].items())
+        )
     lines.extend(
         [
             "",
@@ -96,6 +124,24 @@ def write_report(
             f"{_metric(metrics['macro_f1'])} | {_metric(metrics['negative_f1'])} | "
             f"{_metric(metrics['auroc'])} | `{json.dumps(metrics['confusion_matrix'])}` |"
         )
+    lines.extend(
+        [
+            "",
+            "## Headline fold metrics",
+            "",
+            "| Modality | Head | Fold | Subjects | Accuracy | PosF1 | Macro-F1 | AUROC |",
+            "|---|---|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for row in sorted(headline_rows, key=lambda item: (item["modality"], item["variant"])):
+        for fold in row["folds"]:
+            metrics = fold["metrics"]
+            lines.append(
+                f"| {row['modality']} | {HEADLINE[row['variant']]} | "
+                f"{fold['fold']} | {fold['subjects']} | {_metric(metrics['accuracy'])} | "
+                f"{_metric(metrics['positive_f1'])} | {_metric(metrics['macro_f1'])} | "
+                f"{_metric(metrics['auroc'])} |"
+            )
     lines.extend(
         [
             "",
@@ -137,6 +183,24 @@ def write_report(
             f"- `{row['modality']}` / `{row['variant']}`: Macro-F1 "
             f"{_metric(row['pooled_metrics']['macro_f1'])}."
         )
+    lines.extend(
+        [
+            "",
+            "## Gender-stratified headline errors",
+            "",
+            "| Modality | Head | Group | Subjects | Errors | Error rate |",
+            "|---|---|---|---:|---:|---:|",
+        ]
+    )
+    for row in sorted(headline_rows, key=lambda item: (item["modality"], item["variant"])):
+        analysis = row["gender_analysis"]
+        for group in sorted(analysis["subject_counts"]):
+            lines.append(
+                f"| {row['modality']} | {HEADLINE[row['variant']]} | {group} | "
+                f"{analysis['subject_counts'][group]} | "
+                f"{analysis['error_counts'][group]} | "
+                f"{_metric(analysis['error_rates'][group])} |"
+            )
     lines.extend(
         [
             "",
