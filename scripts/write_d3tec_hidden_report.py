@@ -104,6 +104,15 @@ def write_report(
             f"- `{name}`: {_bytes(value)}"
             for name, value in sorted(accounting["storage"].items())
         )
+    source_commits = sorted({row["source_commit"] for row in jobs})
+    lines.extend(
+        [
+            "",
+            "Registered source commits: "
+            + ", ".join(f"`{commit}`" for commit in source_commits)
+            + ".",
+        ]
+    )
     lines.extend(
         [
             "",
@@ -224,8 +233,19 @@ def write_report(
             "- Hidden-state heads reuse representations from supervised LoRA checkpoints; "
             "they are downstream probes, not independently trained foundation models.",
             "",
+            "## Slurm accounting appendix",
+            "",
+            "| Job ID | Stage | Modality | Fold | Experiment | State | Exit | Elapsed |",
+            "|---:|---|---|---:|---|---|---:|---:|",
         ]
     )
+    for row in accounting["jobs"]:
+        lines.append(
+            f"| {row['job_id']} | {row['stage']} | {row['modality']} | "
+            f"{row['fold']} | `{row['experiment_id']}` | {row['state']} | "
+            f"{row['exit_code']} | {row['elapsed']} |"
+        )
+    lines.append("")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines), encoding="utf-8")
 
