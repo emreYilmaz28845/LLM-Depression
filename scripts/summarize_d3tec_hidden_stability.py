@@ -25,12 +25,19 @@ from src.utils import read_json, read_jsonl, save_json
 EXPERIMENT_SEEDS = {STAGE1_ID: 1337, **{value: key for key, value in SEED_IDS.items()}}
 
 
-def summarize(matrix_path: Path, results_root: Path) -> dict[str, Any]:
+def summarize(
+    matrix_path: Path,
+    results_root: Path,
+    include_audio_only: bool = False,
+) -> dict[str, Any]:
     matrix = yaml.safe_load(matrix_path.read_text(encoding="utf-8"))
+    required_conditions = set(PILOT_CONDITIONS)
+    if include_audio_only:
+        required_conditions.add("audio_only_normalized")
     rows = []
     for item in matrix["experiments"]:
         condition = item["condition"]
-        if condition not in PILOT_CONDITIONS:
+        if condition not in required_conditions:
             continue
         run_name = Path(item["run_dir"]).name
         condition_results = []
@@ -83,9 +90,13 @@ def summarize(matrix_path: Path, results_root: Path) -> dict[str, Any]:
                 "pooled_macro_f1_range": max(values) - min(values),
             }
         )
-    if {row["condition"] for row in rows} != PILOT_CONDITIONS:
-        raise ValueError("Stability pilot does not contain both required modalities.")
-    observed = max(row["pooled_macro_f1_range"] for row in rows)
+    if {row["condition"] for row in rows} != required_conditions:
+        raise ValueError(
+            "Stability results do not contain all required conditions: "
+            f"{sorted(required_conditions)}."
+        )
+    pilot_rows = [row for row in rows if row["condition"] in PILOT_CONDITIONS]
+    observed = max(row["pooled_macro_f1_range"] for row in pilot_rows)
     return {
         "schema_version": "d3tec_hidden_stability.v1",
         "source_experiment_ids": list(EXPERIMENT_SEEDS),
@@ -95,6 +106,7 @@ def summarize(matrix_path: Path, results_root: Path) -> dict[str, Any]:
         "selection_prohibition": (
             "Inner seeds are a stability analysis only; workbook values use seed 1337."
         ),
+        "expansion_audited": include_audio_only,
         "stability_rows": sorted(rows, key=lambda row: row["condition"]),
     }
 
@@ -111,9 +123,14 @@ def main() -> None:
         type=Path,
         default=Path("outputs/hidden_classifiers"),
     )
+    parser.add_argument(
+        "--include-audio-only",
+        action="store_true",
+        help="Also require and audit all three inner seeds for audio-only.",
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    payload = summarize(args.matrix, args.results_root)
+    payload = summarize(args.matrix, args.results_root, args.include_audio_only)
     save_json(payload, args.output)
     print(f"expand_audio_only={payload['expand_audio_only']}")
 
