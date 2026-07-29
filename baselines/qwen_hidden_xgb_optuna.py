@@ -16,7 +16,16 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import numpy as np
 
-from src.aggregate import aggregate_binary_classifier_predictions
+from src.aggregate import (
+    aggregate_binary_classifier_predictions,
+    aggregate_binary_classifier_response_rows,
+)
+from src.features.hidden_classifier_policy import (
+    cache_identity,
+    canonical_sha256,
+    classifier_aggregation_policy,
+    response_normalized_sample_weights,
+)
 from src.metrics import classification_metrics
 from src.sampling import (
     SAMPLING_MODE_NONE,
@@ -327,6 +336,11 @@ def _sample_rows_for_predictions(
             "fold": int(metadata["fold"]),
             "sample_id": str(row["sample_id"]),
             "subject_id": str(row["subject_id"]),
+            **{
+                key: row[key]
+                for key in ("response_id", "prompt_id", "segment_index", "num_segments")
+                if key in row
+            },
             "label": int(row["label"]),
             "probability": float(probability),
             "predicted_class": int(prediction),
@@ -379,7 +393,16 @@ def make_objective(
                 )
             val_idx = np.asarray(fold["validation_row_indices"], dtype=np.int64)
             model = _classifier(params, fixed_params)
-            model.fit(train_x[train_idx], train_y[train_idx])
+            fit_rows = [train_rows[index] for index in train_idx.tolist()]
+            fit_weights, weight_audit = response_normalized_sample_weights(
+                fit_rows,
+                metadata,
+            )
+            model.fit(
+                train_x[train_idx],
+                train_y[train_idx],
+                sample_weight=fit_weights,
+            )
             probabilities = np.asarray(model.predict_proba(train_x[val_idx])[:, 1], dtype=np.float64)
             predictions = (probabilities >= THRESHOLD).astype(np.int64)
             val_rows = [train_rows[index] for index in val_idx.tolist()]
@@ -394,7 +417,13 @@ def make_objective(
                 oversampling_seed,
             )
             subject_rows, metrics = aggregate_binary_classifier_predictions(sample_rows)
-            fold_metrics.append({"inner_fold": int(fold["fold"]), **_metrics_with_negative_f1(metrics)})
+            fold_metrics.append(
+                {
+                    "inner_fold": int(fold["fold"]),
+                    "weight_audit": weight_audit,
+                    **_metrics_with_negative_f1(metrics),
+                }
+            )
             oof_subject_rows.extend(subject_rows)
         subject_ids = [str(row["subject_id"]) for row in oof_subject_rows]
         if Counter(subject_ids) != Counter(outer_subjects):
@@ -490,11 +519,7 @@ def build_study_config(
         "classifier_variant": experiment_id,
         "experiment_id": experiment_id,
         "cache_dir": str(cache_dir),
-        "cache_identity": {
-            "outer_train_npz": _file_identity(cache_dir / "outer_train.npz"),
-            "outer_train_rows": _file_identity(cache_dir / "outer_train_rows.jsonl"),
-            "extraction_metadata": _file_identity(cache_dir / "extraction_metadata.json"),
-        },
+        "cache_identity": cache_identity(cache_dir),
         "extraction_metadata_identity": _file_identity(cache_dir / "extraction_metadata.json"),
         "objective": objective_name,
         "target_trials": target_trials,
@@ -503,7 +528,7 @@ def build_study_config(
         "sampler_seed": seed,
         "model_seed": seed,
         "inner_seed": inner_seed,
-        "aggregation_method": "aggregate_binary_classifier_predictions",
+        "aggregation_method": classifier_aggregation_policy(metadata),
         "threshold": THRESHOLD,
         "fixed_xgb_params": fixed_xgb_params(
             seed, xgb_threads, sampling_mode=sampling_mode
@@ -629,6 +654,7 @@ def _completed_final_result(
     config_hash: str,
     target_trials: int,
     experiment_id: str,
+    metadata: dict[str, Any],
 ) -> dict[str, Any] | None:
     metadata_path = output_dir / "classifier_metadata.json"
     if not metadata_path.exists():
@@ -640,7 +666,23 @@ def _completed_final_result(
         raise ValueError("Existing final classifier metadata has a different completed-trial count.")
     if metadata.get("experiment_id", metadata.get("classifier_variant")) != experiment_id:
         raise ValueError("Existing final classifier metadata has a different experiment ID.")
-    if not all((output_dir / name).is_file() for name in FINAL_ARTIFACT_NAMES):
+    required = list(FINAL_ARTIFACT_NAMES)
+    if str(metadata.get("dataset", "")).lower() == "d3tec":
+        required.extend(
+            (
+                "inner_weight_audits.json",
+                "final_fit_weight_audit.json",
+            )
+        )
+        if metadata.get("input_modality") != "text_only":
+            required.extend(
+                (
+                    "predictions_response_level.jsonl",
+                    "predictions_response_level.csv",
+                    "metrics_response_level.json",
+                )
+            )
+    if not all((output_dir / name).is_file() for name in required):
         return None
     return {"variant": experiment_id, **read_json(output_dir / "metrics.json")}
 
@@ -713,8 +755,9 @@ def run_optuna_raw_xgb(
         "inner_subject_assignments.json",
     )
     inner_sampling_audits = []
+    inner_weight_audits = []
     for fold in assignments["folds"]:
-        _, audit = _fit_indices_and_audit(
+        fit_indices, audit = _fit_indices_and_audit(
             train_rows,
             list(fold["train_row_indices"]),
             list(fold["validation_row_indices"]),
@@ -730,10 +773,27 @@ def run_optuna_raw_xgb(
                 "target_trial_count": int(target_trials),
             }
         )
+        _, weight_audit = response_normalized_sample_weights(
+            [train_rows[index] for index in fit_indices.tolist()],
+            metadata,
+        )
+        inner_weight_audits.append(
+            {
+                **weight_audit,
+                "inner_fold": int(fold["fold"]),
+                "applies_to_all_trials": True,
+                "target_trial_count": int(target_trials),
+            }
+        )
     _write_or_validate_json(
         inner_sampling_audits,
         output_dir / "inner_sampling_audits.json",
         "inner_sampling_audits.json",
+    )
+    _write_or_validate_json(
+        inner_weight_audits,
+        output_dir / "inner_weight_audits.json",
+        "inner_weight_audits.json",
     )
     fixed_params = fixed_xgb_params(
         seed, xgb_threads, sampling_mode=sampling_mode
@@ -774,6 +834,7 @@ def run_optuna_raw_xgb(
         config_hash=config_hash,
         target_trials=target_trials,
         experiment_id=experiment_id,
+        metadata=metadata,
     )
     if completed_result is not None:
         return completed_result
@@ -801,7 +862,20 @@ def run_optuna_raw_xgb(
     save_json_atomic(final_fit_sampling_audit, output_dir / "final_fit_sampling_audit.json")
     train_y = np.asarray([int(row["label"]) for row in train_rows], dtype=np.int64)
     model = _classifier(dict(best_trial.params), fixed_params)
-    model.fit(train_x[full_train_indices], train_y[full_train_indices])
+    final_fit_rows = [train_rows[index] for index in full_train_indices.tolist()]
+    final_fit_weights, final_fit_weight_audit = response_normalized_sample_weights(
+        final_fit_rows,
+        metadata,
+    )
+    save_json_atomic(
+        final_fit_weight_audit,
+        output_dir / "final_fit_weight_audit.json",
+    )
+    model.fit(
+        train_x[full_train_indices],
+        train_y[full_train_indices],
+        sample_weight=final_fit_weights,
+    )
     probabilities = np.asarray(model.predict_proba(final_x)[:, 1], dtype=np.float64)
     predictions = (probabilities >= THRESHOLD).astype(np.int64)
     sample_rows = _sample_rows_for_predictions(
@@ -833,6 +907,26 @@ def run_optuna_raw_xgb(
     _write_jsonl_atomic(subject_rows, output_dir / "predictions_subject_level.jsonl")
     _write_csv(sample_rows, output_dir / "predictions_sample_level.csv")
     _write_csv(subject_rows, output_dir / "predictions_subject_level.csv")
+    response_rows = []
+    if str(metadata["dataset"]).lower() == "d3tec" and metadata["input_modality"] != "text_only":
+        response_rows, response_metrics = aggregate_binary_classifier_response_rows(sample_rows)
+        for row in response_rows:
+            row.update(
+                {
+                    "dataset": metadata["dataset"],
+                    "modality": metadata["input_modality"],
+                    "condition": condition,
+                    "fold": int(metadata["fold"]),
+                    "classifier_family": CLASSIFIER_FAMILY,
+                    "classifier_variant": experiment_id,
+                }
+            )
+        _write_jsonl_atomic(
+            response_rows,
+            output_dir / "predictions_response_level.jsonl",
+        )
+        _write_csv(response_rows, output_dir / "predictions_response_level.csv")
+        save_json_atomic(response_metrics, output_dir / "metrics_response_level.json")
     save_json_atomic(metrics, output_dir / "metrics.json")
     artifact_metadata = {
         "dataset": metadata["dataset"],
@@ -873,7 +967,23 @@ def run_optuna_raw_xgb(
         "inner_subject_coverage": _inner_coverage(assignments),
         "inner_subject_assignments": assignments,
         "inner_sampling_audits": inner_sampling_audits,
+        "inner_weight_audits": inner_weight_audits,
         "final_fit_sampling_audit": final_fit_sampling_audit,
+        "final_fit_weight_audit": final_fit_weight_audit,
+        "weight_policy": final_fit_weight_audit["policy"],
+        "aggregation_policy": classifier_aggregation_policy(metadata),
+        "cache_identity": config["cache_identity"],
+        "cache_identity_sha256": canonical_sha256(config["cache_identity"]),
+        "checkpoint_hashes": {
+            "adapter_config_sha256": metadata.get("adapter_config_sha256"),
+            "adapter_sha256": metadata.get("adapter_sha256"),
+        },
+        "split_hashes": {
+            "saved_split_sha256": metadata.get("saved_split_sha256"),
+            "split_metadata_sha256": metadata.get("split_metadata_sha256"),
+            "manifest_sha256": metadata.get("manifest_sha256"),
+        },
+        "response_prediction_count": len(response_rows) if response_rows else None,
         "cache_dir": str(cache_dir),
         "extraction_metadata": str(cache_dir / "extraction_metadata.json"),
         "original_extraction_metadata": metadata,

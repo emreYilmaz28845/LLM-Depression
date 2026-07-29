@@ -27,6 +27,14 @@ from src.utils import read_json, save_json, sha256_file, sha256_jsonl_rows, sha2
 SUPPORTED_HIDDEN_SIZES = {3584, 4096}
 POOLING_NAME = "last_valid_prompt_token"
 CONDITION_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_]*$")
+CACHE_SCHEMA_VERSION = "qwen_hidden_cache.v2"
+CACHE_ARTIFACT_NAMES = (
+    "outer_train.npz",
+    "outer_train_rows.jsonl",
+    "final_eval.npz",
+    "final_eval_rows.jsonl",
+    "extraction_metadata.json",
+)
 
 
 def resolve_condition(value: str | None, input_modality: str | None, emotion_enabled: bool) -> str:
@@ -399,7 +407,6 @@ def main() -> None:
     args = parse_args()
     checkpoint_dir = args.checkpoint_dir.resolve()
     output_dir = args.output_dir.resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
     saved, config, run_config_path, split_path = _load_saved_run(checkpoint_dir)
     fold = int(saved["fold"])
     if checkpoint_dir.name != "best_model":
@@ -419,6 +426,52 @@ def main() -> None:
     if saved.get("manifest_hash") and canonical_manifest_hash != saved["manifest_hash"]:
         raise ValueError("Current manifest hash does not match the checkpoint's saved manifest hash.")
     condition = resolve_condition(args.condition, saved.get("input_modality"), use_emotion(config))
+    cache_config = {
+        "schema_version": CACHE_SCHEMA_VERSION,
+        "dataset": config["dataset"],
+        "condition": condition,
+        "input_modality": saved.get("input_modality"),
+        "fold": fold,
+        "checkpoint_dir": str(checkpoint_dir),
+        "adapter_config_sha256": sha256_file(checkpoint_dir / "adapter_config.json"),
+        "adapter_sha256": sha256_file(checkpoint_dir / "adapter_model.safetensors"),
+        "saved_run_config_sha256": sha256_file(run_config_path),
+        "saved_split_sha256": sha256_file(split_path),
+        "split_metadata_sha256": sha256_file(split_metadata_path),
+        "manifest_sha256": canonical_manifest_hash,
+        "max_examples": args.max_examples,
+    }
+    cache_config_sha256 = sha256_text(
+        json.dumps(cache_config, sort_keys=True, separators=(",", ":"))
+    )
+    if output_dir.exists() and any(output_dir.iterdir()):
+        metadata_path = output_dir / "extraction_metadata.json"
+        if not metadata_path.is_file():
+            raise ValueError(
+                f"Non-empty hidden cache has no extraction_metadata.json: {output_dir}. "
+                "Refusing to overwrite a partial cache."
+            )
+        existing = read_json(metadata_path)
+        if (
+            existing.get("cache_config") != cache_config
+            or existing.get("cache_config_sha256") != cache_config_sha256
+        ):
+            raise ValueError(f"Existing hidden cache is incompatible: {output_dir}.")
+        if not all((output_dir / name).is_file() for name in CACHE_ARTIFACT_NAMES):
+            raise ValueError(f"Existing hidden cache is partial: {output_dir}.")
+        print(
+            json.dumps(
+                {
+                    "status": "skipped_compatible_complete_cache",
+                    "output_dir": str(output_dir),
+                    "cache_config_sha256": cache_config_sha256,
+                },
+                indent=2,
+            ),
+            flush=True,
+        )
+        return
+    output_dir.mkdir(parents=True, exist_ok=True)
     emotion_provenance = _emotion_provenance(
         config,
         manifest_rows,
@@ -478,6 +531,11 @@ def main() -> None:
             "generation_used": False,
             "labels_passed_to_model": False,
         },
+        "cache_config": cache_config,
+        "cache_config_sha256": cache_config_sha256,
+        "cache_collision_policy": (
+            "skip_compatible_complete_refuse_partial_or_incompatible"
+        ),
         "partitions": partition_summaries,
         "versions": {
             "python": platform.python_version(),

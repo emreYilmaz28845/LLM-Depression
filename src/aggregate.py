@@ -96,6 +96,19 @@ def aggregate_response_subject_predictions(
     invalid_segments = 0
     for rid, rows in sorted(grouped_responses.items()):
         gold = int(rows[0]["label"])
+        if len({str(row["subject_id"]) for row in rows}) != 1:
+            raise ValueError(f"Response {rid} spans multiple subjects.")
+        if len({int(row["label"]) for row in rows}) != 1:
+            raise ValueError(f"Response {rid} has inconsistent labels.")
+        declared = {
+            int(row["num_segments"])
+            for row in rows
+            if row.get("num_segments") not in (None, "")
+        }
+        if declared and (len(declared) != 1 or next(iter(declared)) != len(rows)):
+            raise ValueError(
+                f"Response {rid} segment metadata disagrees with observed rows."
+            )
         pred, invalid_count, margin_sum = _majority_with_margin(
             rows,
             prediction_field=prediction_field,
@@ -500,6 +513,52 @@ def aggregate_binary_classifier_predictions(
                 "non_score": 1.0 - probability,
             }
         )
+    if normalized and all(str(row.get("response_id", "")).strip() for row in normalized):
+        response_rows, _, subject_rows, metrics = aggregate_response_subject_predictions(
+            normalized,
+            prediction_field="classifier_prediction",
+            backend_name=PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
+            invalid_as_wrong=False,
+        )
+        responses_by_subject: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        samples_by_subject: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in response_rows:
+            responses_by_subject[str(row["subject_id"])].append(row)
+        for row in normalized:
+            samples_by_subject[str(row["subject_id"])].append(row)
+        for subject_row in subject_rows:
+            subject_id = str(subject_row["subject_id"])
+            samples = samples_by_subject[subject_id]
+            responses = responses_by_subject[subject_id]
+            subject_row.update(
+                {
+                    "prediction_backend": "qwen_hidden_classifier",
+                    "evaluation_protocol_name": "d3tec_hidden_response_subject",
+                    "sample_count": len(samples),
+                    "response_count": len(responses),
+                    "response_ids": [str(row["response_id"]) for row in responses],
+                    "response_predictions": [int(row["prediction"]) for row in responses],
+                    "response_probabilities": [float(row["dep_score"]) for row in responses],
+                    "aggregated_prediction": int(subject_row["prediction"]),
+                    "aggregation_method": (
+                        "segment_majority_probability_margin_tie_break_then_"
+                        "equal_response_majority_probability_margin_tie_break"
+                    ),
+                    "probability": float(subject_row["dep_score"]),
+                }
+            )
+        metrics["prediction_backend"] = "qwen_hidden_classifier"
+        metrics["evaluation_protocol_name"] = "d3tec_hidden_response_subject"
+        metrics["aggregation_method"] = (
+            "segment_majority_probability_margin_tie_break_then_"
+            "equal_response_majority_probability_margin_tie_break"
+        )
+        metrics["predicted_positive_rate"] = (
+            sum(int(row["prediction"]) == 1 for row in subject_rows) / len(subject_rows)
+            if subject_rows
+            else 0.0
+        )
+        return subject_rows, metrics
     subject_rows, metrics = _aggregate_majority_vote_predictions(
         normalized,
         prediction_field="classifier_prediction",
@@ -541,6 +600,35 @@ def aggregate_binary_classifier_predictions(
         else 0.0
     )
     return subject_rows, metrics
+
+
+def aggregate_binary_classifier_response_rows(
+    sample_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Return D3TEC response-level classifier predictions and metrics."""
+    normalized = []
+    for row in sample_rows:
+        probability = float(row["probability"])
+        normalized.append(
+            {
+                **row,
+                "classifier_prediction": int(row["predicted_class"]),
+                "dep_score": probability,
+                "non_score": 1.0 - probability,
+            }
+        )
+    response_rows, response_metrics, _, _ = aggregate_response_subject_predictions(
+        normalized,
+        prediction_field="classifier_prediction",
+        backend_name=PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
+        invalid_as_wrong=False,
+    )
+    for row in response_rows:
+        row["prediction_backend"] = "qwen_hidden_classifier"
+        row["evaluation_protocol_name"] = "d3tec_hidden_response"
+    response_metrics["prediction_backend"] = "qwen_hidden_classifier"
+    response_metrics["evaluation_protocol_name"] = "d3tec_hidden_response"
+    return response_rows, response_metrics
 
 
 def aggregate_likelihood_predictions_segment_level(sample_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:

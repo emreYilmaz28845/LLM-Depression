@@ -12,6 +12,7 @@ import yaml
 from baselines import qwen_hidden_xgb_optuna as optuna_xgb
 from baselines import summarize_qwen_hidden_optuna_stability as stability
 from scripts import build_qwen_hidden_optuna_followup_matrix as followup
+from scripts import build_d3tec_hidden_optuna_matrix as d3tec_followup
 from src.metrics import classification_metrics
 from src.utils import read_json, save_json, write_jsonl
 
@@ -32,9 +33,11 @@ class _FakeTrial:
 
 class _FakeClassifier:
     fit_calls = 0
+    fit_sample_weights = []
 
-    def fit(self, x, y):
+    def fit(self, x, y, sample_weight=None):
         _FakeClassifier.fit_calls += 1
+        _FakeClassifier.fit_sample_weights.append(sample_weight)
         return self
 
     def predict_proba(self, x):
@@ -43,6 +46,73 @@ class _FakeClassifier:
 
 
 class OptunaObjectiveTests(unittest.TestCase):
+    def test_d3tec_objective_uses_hierarchical_macro_f1_and_response_weights(self):
+        rows = []
+        vectors = []
+        indices_by_subject = {}
+        for subject_index in range(4):
+            subject_id = f"p{subject_index}"
+            label = subject_index % 2
+            indices_by_subject[subject_id] = []
+            for prompt_id in range(27):
+                count = 1 + (prompt_id % 2)
+                for segment_index in range(count):
+                    indices_by_subject[subject_id].append(len(rows))
+                    rows.append(
+                        {
+                            "sample_id": f"{subject_id}-{prompt_id}-{segment_index}",
+                            "subject_id": subject_id,
+                            "response_id": f"{subject_id}_p{prompt_id}",
+                            "prompt_id": prompt_id,
+                            "segment_index": segment_index,
+                            "num_segments": count,
+                            "label": label,
+                        }
+                    )
+                    vectors.append([2.0 if label else -2.0])
+        assignments = {
+            "folds": [
+                {
+                    "fold": 0,
+                    "train_row_indices": indices_by_subject["p2"] + indices_by_subject["p3"],
+                    "validation_row_indices": indices_by_subject["p0"] + indices_by_subject["p1"],
+                },
+                {
+                    "fold": 1,
+                    "train_row_indices": indices_by_subject["p0"] + indices_by_subject["p1"],
+                    "validation_row_indices": indices_by_subject["p2"] + indices_by_subject["p3"],
+                },
+            ]
+        }
+        trial = _FakeTrial()
+        _FakeClassifier.fit_sample_weights = []
+        with mock.patch.object(optuna_xgb, "_classifier", return_value=_FakeClassifier()):
+            objective = optuna_xgb.make_objective(
+                train_x=np.asarray(vectors, dtype=np.float32),
+                train_rows=rows,
+                metadata={
+                    "dataset": "d3tec",
+                    "input_modality": "audio_text",
+                    "condition": "audio_text_normalized",
+                    "fold": 0,
+                },
+                assignments=assignments,
+                objective_name="macro_f1",
+                fixed_params=optuna_xgb.fixed_xgb_params(seed=1337, xgb_threads=1),
+            )
+            value = objective(trial)
+        self.assertEqual(value, 1.0)
+        self.assertEqual(len(_FakeClassifier.fit_sample_weights), 2)
+        for weights in _FakeClassifier.fit_sample_weights:
+            self.assertAlmostEqual(float(np.mean(weights)), 1.0)
+            self.assertGreater(float(np.max(weights)), float(np.min(weights)))
+        self.assertTrue(
+            all(
+                fold["weight_audit"]["equal_response_totals"]
+                for fold in trial.user_attrs["inner_fold_metrics"]
+            )
+        )
+
     def test_objective_uses_three_inner_fits_without_loading_final_eval(self):
         train_x = np.asarray(
             [
@@ -81,6 +151,7 @@ class OptunaObjectiveTests(unittest.TestCase):
         }
         trial = _FakeTrial()
         _FakeClassifier.fit_calls = 0
+        _FakeClassifier.fit_sample_weights = []
         with mock.patch.object(optuna_xgb, "_classifier", return_value=_FakeClassifier()):
             objective = optuna_xgb.make_objective(
                 train_x=train_x,
@@ -92,6 +163,12 @@ class OptunaObjectiveTests(unittest.TestCase):
             )
             value = objective(trial)
         self.assertEqual(_FakeClassifier.fit_calls, 3)
+        self.assertTrue(
+            all(
+                weights is not None and np.allclose(weights, 1.0)
+                for weights in _FakeClassifier.fit_sample_weights
+            )
+        )
         self.assertIn("inner_fold_metrics", trial.user_attrs)
         self.assertIn("inner_oof_metrics", trial.user_attrs)
         self.assertEqual(trial.user_attrs["inner_oof_metrics"]["support_positive"], 3)
@@ -203,6 +280,39 @@ class OptunaObjectiveTests(unittest.TestCase):
 
 
 class OptunaConfigTests(unittest.TestCase):
+    def test_d3tec_stage_counts_and_conditional_gate(self):
+        base = Path("configs/features/d3tec_hidden_optuna.yaml")
+        stage1 = d3tec_followup.build("stage1", base)
+        pilot = d3tec_followup.build("pilot", base)
+        self.assertEqual(stage1["expected_jobs"], 15)
+        self.assertEqual(pilot["expected_jobs"], 20)
+        self.assertEqual({row["inner_seed"] for row in pilot["jobs"]}, {7, 2024})
+        self.assertEqual(
+            {row["condition"] for row in pilot["jobs"]},
+            {"audio_text_normalized", "text_only"},
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "stability.json"
+            save_json(
+                {
+                    "gate_threshold": 0.03,
+                    "observed_pilot_max_range": 0.031,
+                    "expand_audio_only": True,
+                },
+                summary,
+            )
+            expansion = d3tec_followup.build("expansion", base, summary)
+            self.assertEqual(expansion["expected_jobs"], 10)
+            self.assertEqual(
+                {row["condition"] for row in expansion["jobs"]},
+                {"audio_only_normalized"},
+            )
+            payload = read_json(summary)
+            payload["expand_audio_only"] = False
+            save_json(payload, summary)
+            with self.assertRaisesRegex(ValueError, "did not trigger"):
+                d3tec_followup.build("expansion", base, summary)
+
     def test_study_config_sidecar_refuses_mismatch(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)

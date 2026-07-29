@@ -13,7 +13,16 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import numpy as np
 
-from src.aggregate import aggregate_binary_classifier_predictions
+from src.aggregate import (
+    aggregate_binary_classifier_predictions,
+    aggregate_binary_classifier_response_rows,
+)
+from src.features.hidden_classifier_policy import (
+    cache_identity,
+    canonical_sha256,
+    classifier_aggregation_policy,
+    response_normalized_sample_weights,
+)
 from src.sampling import (
     SAMPLING_MODE_NONE,
     SAMPLING_MODE_SUBJECT_OVERSAMPLE,
@@ -26,6 +35,7 @@ from src.utils import read_json, read_jsonl, save_json, write_jsonl
 PRIMARY_VARIANTS = ("logreg_raw", "xgb_raw", "xgb_pca32", "logreg_pca32", "xgb_pca64")
 CONTROL_VARIANTS = ("majority_class", "xgb_raw_shuffled_labels")
 LEGACY_SAMPLING_MODE = "legacy"
+FIXED_RESULT_SCHEMA_VERSION = "qwen_hidden_fixed_classifier.v2"
 
 
 def _load_partition(cache_dir: Path, name: str) -> tuple[np.ndarray, list[dict[str, Any]]]:
@@ -145,6 +155,20 @@ def shuffled_subject_labels(rows: list[dict[str, Any]], seed: int) -> np.ndarray
     )
 
 
+def majority_subject_control(rows: list[dict[str, Any]]) -> tuple[int, float]:
+    labels_by_subject: dict[str, int] = {}
+    for row in rows:
+        subject_id = str(row["subject_id"])
+        label = int(row["label"])
+        if subject_id in labels_by_subject and labels_by_subject[subject_id] != label:
+            raise ValueError(f"Subject {subject_id} has inconsistent training labels.")
+        labels_by_subject[subject_id] = label
+    labels = np.asarray(list(labels_by_subject.values()), dtype=np.int64)
+    if not len(labels):
+        raise ValueError("Majority control requires at least one training subject.")
+    return int(np.bincount(labels, minlength=2).argmax()), float(labels.mean())
+
+
 def run_variant(
     cache_dir: Path,
     output_root: Path,
@@ -165,8 +189,55 @@ def run_variant(
     test_y = np.asarray([int(row["label"]) for row in test_rows], dtype=np.int64)
     if set(train_y.tolist()) != {0, 1}:
         raise ValueError("Training cache must contain both classes.")
+    metadata = read_json(cache_dir / "extraction_metadata.json")
+    result_identity = {
+        "schema_version": FIXED_RESULT_SCHEMA_VERSION,
+        "variant": variant,
+        "seed": int(seed),
+        "sampling_mode": sampling_mode,
+        "oversampling_ratio": oversampling_ratio,
+        "oversampling_seed": int(oversampling_seed),
+        "cache_identity": cache_identity(cache_dir),
+        "aggregation_policy": classifier_aggregation_policy(metadata),
+    }
+    result_identity["config_sha256"] = canonical_sha256(result_identity)
     variant_dir = output_root / variant
+    identity_path = variant_dir / "result_config.json"
+    required = {
+        "predictions_sample_level.jsonl",
+        "predictions_sample_level.csv",
+        "predictions_subject_level.jsonl",
+        "predictions_subject_level.csv",
+        "metrics.json",
+        "classifier_metadata.json",
+        "sampling_audit.json",
+    }
+    if variant != "majority_class":
+        required.add("pipeline.joblib")
+    if (
+        str(metadata.get("dataset", "")).lower() == "d3tec"
+        and metadata.get("input_modality") != "text_only"
+    ):
+        required.update(
+            {
+                "predictions_response_level.jsonl",
+                "predictions_response_level.csv",
+                "metrics_response_level.json",
+            }
+        )
+    if variant_dir.exists() and any(variant_dir.iterdir()):
+        if not identity_path.is_file():
+            raise ValueError(
+                f"Non-empty fixed-head output has no result_config.json: {variant_dir}. "
+                "Refusing to overwrite partial or legacy output."
+            )
+        if read_json(identity_path) != result_identity:
+            raise ValueError(f"Existing fixed-head output is incompatible: {variant_dir}.")
+        if not all((variant_dir / name).is_file() for name in required):
+            raise ValueError(f"Existing fixed-head output is partial: {variant_dir}.")
+        return {"variant": variant, **read_json(variant_dir / "metrics.json")}
     variant_dir.mkdir(parents=True, exist_ok=True)
+    save_json(result_identity, identity_path)
     requested_components = None
     effective_components = None
     fit_y = train_y.copy()
@@ -205,10 +276,13 @@ def run_variant(
             raise ValueError("Existing fixed-head sampling configuration is incompatible.")
         save_json(sampling_identity, identity_path)
     if variant == "majority_class":
-        prediction = int(np.bincount(train_y, minlength=2).argmax())
-        probability = float(train_y.mean())
+        prediction, probability = majority_subject_control(train_rows)
         probabilities = np.full(test_y.shape, probability, dtype=np.float64)
         predictions = np.full(test_y.shape, prediction, dtype=np.int64)
+        fit_weight_audit = response_normalized_sample_weights(
+            [train_rows[index] for index in fit_indices.tolist()],
+            metadata,
+        )[1]
     else:
         fitted_variant = "xgb_raw" if variant == "xgb_raw_shuffled_labels" else variant
         fitted, requested_components = _variant_pipeline(
@@ -225,13 +299,21 @@ def run_variant(
             effective_components = requested_components
         if variant == "xgb_raw_shuffled_labels":
             fit_y = shuffled_subject_labels(train_rows, seed)
-        fitted.fit(train_x[fit_indices], fit_y[fit_indices])
+        fit_rows = [train_rows[index] for index in fit_indices.tolist()]
+        fit_weights, fit_weight_audit = response_normalized_sample_weights(
+            fit_rows,
+            metadata,
+        )
+        fitted.fit(
+            train_x[fit_indices],
+            fit_y[fit_indices],
+            classifier__sample_weight=fit_weights,
+        )
         probabilities = np.asarray(fitted.predict_proba(test_x)[:, 1], dtype=np.float64)
         predictions = (probabilities >= 0.5).astype(np.int64)
         import joblib
 
         joblib.dump(fitted, variant_dir / "pipeline.joblib")
-    metadata = read_json(cache_dir / "extraction_metadata.json")
     condition = str(metadata.get("condition") or metadata["input_modality"])
     sample_rows = []
     for row, probability, prediction in zip(test_rows, probabilities.tolist(), predictions.tolist()):
@@ -243,6 +325,11 @@ def run_variant(
                 "fold": int(metadata["fold"]),
                 "sample_id": str(row["sample_id"]),
                 "subject_id": str(row["subject_id"]),
+                **{
+                    key: row[key]
+                    for key in ("response_id", "prompt_id", "segment_index", "num_segments")
+                    if key in row
+                },
                 "label": int(row["label"]),
                 "probability": float(probability),
                 "predicted_class": int(prediction),
@@ -268,6 +355,22 @@ def run_variant(
             }
         )
     metrics = _metrics_with_negative_f1(metrics)
+    response_rows = []
+    if str(metadata["dataset"]).lower() == "d3tec" and metadata["input_modality"] != "text_only":
+        response_rows, response_metrics = aggregate_binary_classifier_response_rows(sample_rows)
+        for row in response_rows:
+            row.update(
+                {
+                    "dataset": metadata["dataset"],
+                    "modality": metadata["input_modality"],
+                    "condition": condition,
+                    "fold": int(metadata["fold"]),
+                    "classifier_variant": variant,
+                }
+            )
+        write_jsonl(response_rows, variant_dir / "predictions_response_level.jsonl")
+        _write_csv(response_rows, variant_dir / "predictions_response_level.csv")
+        save_json(response_metrics, variant_dir / "metrics_response_level.json")
     artifact_metadata = {
         "dataset": metadata["dataset"],
         "modality": metadata["input_modality"],
@@ -279,6 +382,20 @@ def run_variant(
         "oversampling_ratio": oversampling_ratio,
         "oversampling_seed": int(oversampling_seed),
         "sampling_audit": sampling.audit,
+        "fit_weight_audit": fit_weight_audit,
+        "weight_policy": fit_weight_audit["policy"],
+        "aggregation_policy": classifier_aggregation_policy(metadata),
+        "cache_identity": result_identity["cache_identity"],
+        "cache_identity_sha256": canonical_sha256(result_identity["cache_identity"]),
+        "checkpoint_hashes": {
+            "adapter_config_sha256": metadata.get("adapter_config_sha256"),
+            "adapter_sha256": metadata.get("adapter_sha256"),
+        },
+        "split_hashes": {
+            "saved_split_sha256": metadata.get("saved_split_sha256"),
+            "split_metadata_sha256": metadata.get("split_metadata_sha256"),
+            "manifest_sha256": metadata.get("manifest_sha256"),
+        },
         "threshold": 0.5,
         "input_dimension": int(train_x.shape[1]),
         "requested_pca_components": requested_components,
@@ -289,6 +406,8 @@ def run_variant(
         "shuffled_training_labels": variant == "xgb_raw_shuffled_labels",
         "label_shuffle_unit": "subject" if variant == "xgb_raw_shuffled_labels" else None,
         "extraction_metadata": str(cache_dir / "extraction_metadata.json"),
+        "result_config_sha256": result_identity["config_sha256"],
+        "response_prediction_count": len(response_rows) if response_rows else None,
     }
     write_jsonl(sample_rows, variant_dir / "predictions_sample_level.jsonl")
     write_jsonl(subject_rows, variant_dir / "predictions_subject_level.jsonl")

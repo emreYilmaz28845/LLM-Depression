@@ -10,6 +10,7 @@ import torch
 
 from src.aggregate import aggregate_binary_classifier_predictions, aggregate_original_teacher_forced_predictions
 from src.features.pooling import aligned_attention_mask, last_valid_token
+from src.features.hidden_classifier_policy import response_normalized_sample_weights
 from src.features.qwen_hidden_collator import PromptOnlyExtractionCollator
 from src.features.extract_qwen_hidden import (
     _decoder_hidden_size,
@@ -170,7 +171,7 @@ class PoolingTests(unittest.TestCase):
 class CollatorTests(unittest.TestCase):
     def test_prompt_only_never_adds_answer_or_metadata_to_model_inputs(self):
         example = {
-            "dataset": "cmdc",
+            "dataset": "d3tec",
             "sample_id": "s1",
             "subject_id": "p1",
             "label": 1,
@@ -179,6 +180,10 @@ class CollatorTests(unittest.TestCase):
             "prompt_text": "constant prompt",
             "training_text": "constant promptDepressed",
             "audio_arrays": [],
+            "response_id": "p1_p3",
+            "prompt_id": 3,
+            "segment_index": 1,
+            "num_segments": 2,
         }
         model_inputs, metadata = PromptOnlyExtractionCollator(_FakeProcessor())([example])
         decoded = "".join(chr(value) for value in model_inputs["input_ids"][0].tolist())
@@ -187,6 +192,11 @@ class CollatorTests(unittest.TestCase):
         self.assertNotIn("labels", model_inputs)
         self.assertNotIn("sample_id", model_inputs)
         self.assertEqual(metadata[0]["sample_id"], "s1")
+        self.assertEqual(metadata[0]["response_id"], "p1_p3")
+        self.assertEqual(metadata[0]["prompt_id"], 3)
+        self.assertEqual(metadata[0]["segment_index"], 1)
+        self.assertEqual(metadata[0]["num_segments"], 2)
+        self.assertNotIn("p1_p3", decoded)
 
 
 class AggregationTests(unittest.TestCase):
@@ -204,8 +214,127 @@ class AggregationTests(unittest.TestCase):
         self.assertEqual(classifier_subjects[0]["prediction"], baseline_subjects[0]["prediction"])
         self.assertEqual(classifier_subjects[0]["prediction"], 1)
 
+    def test_d3tec_hierarchy_gives_each_response_one_vote_and_uses_subject_auroc(self):
+        rows = []
+        # Subject a: one 5-segment positive response and two one-segment
+        # negative responses. A flat vote would be positive; equal response
+        # votes must be negative.
+        for index in range(5):
+            rows.append(
+                {
+                    "sample_id": f"a0-{index}",
+                    "subject_id": "a",
+                    "response_id": "a_p0",
+                    "prompt_id": 0,
+                    "segment_index": index,
+                    "num_segments": 5,
+                    "label": 0,
+                    "predicted_class": 1,
+                    "probability": 0.9,
+                }
+            )
+        for prompt in (1, 2):
+            rows.append(
+                {
+                    "sample_id": f"a{prompt}-0",
+                    "subject_id": "a",
+                    "response_id": f"a_p{prompt}",
+                    "prompt_id": prompt,
+                    "segment_index": 0,
+                    "num_segments": 1,
+                    "label": 0,
+                    "predicted_class": 0,
+                    "probability": 0.1,
+                }
+            )
+        for prompt in range(3):
+            rows.append(
+                {
+                    "sample_id": f"b{prompt}-0",
+                    "subject_id": "b",
+                    "response_id": f"b_p{prompt}",
+                    "prompt_id": prompt,
+                    "segment_index": 0,
+                    "num_segments": 1,
+                    "label": 1,
+                    "predicted_class": 1,
+                    "probability": 0.8,
+                }
+            )
+        subjects, metrics = aggregate_binary_classifier_predictions(rows)
+        by_subject = {row["subject_id"]: row for row in subjects}
+        self.assertEqual(by_subject["a"]["prediction"], 0)
+        self.assertEqual(by_subject["a"]["response_count"], 3)
+        self.assertEqual(metrics["auroc"], 1.0)
+        self.assertEqual(metrics["aggregation_level"], "response_subject")
+
+    def test_d3tec_hierarchical_ties_use_probability_margin_at_each_level(self):
+        rows = [
+            {
+                "sample_id": sample_id,
+                "subject_id": "a",
+                "response_id": response_id,
+                "prompt_id": prompt_id,
+                "segment_index": segment_index,
+                "num_segments": 2,
+                "label": 1,
+                "predicted_class": prediction,
+                "probability": probability,
+            }
+            for response_id, prompt_id, pairs in (
+                ("a_p0", 0, ((1, 0.95), (0, 0.45))),
+                ("a_p1", 1, ((0, 0.1), (1, 0.6))),
+            )
+            for segment_index, (prediction, probability) in enumerate(pairs)
+            for sample_id in (f"{response_id}-{segment_index}",)
+        ]
+        subjects, _ = aggregate_binary_classifier_predictions(rows)
+        # Response p0 resolves positive and p1 negative. Their subject vote is
+        # tied, so p0's larger probability margin resolves the subject positive.
+        self.assertEqual(subjects[0]["prediction"], 1)
+        self.assertEqual(subjects[0]["num_responses"], 2)
+
 
 class ClassifierTests(unittest.TestCase):
+    def test_majority_control_uses_subject_not_segment_prevalence(self):
+        from baselines.qwen_hidden_classifier import majority_subject_control
+
+        rows = [
+            {"subject_id": "negative-a", "label": 0},
+            {"subject_id": "negative-b", "label": 0},
+        ] + [
+            {"subject_id": "positive", "label": 1}
+            for _ in range(20)
+        ]
+        prediction, prevalence = majority_subject_control(rows)
+        self.assertEqual(prediction, 0)
+        self.assertAlmostEqual(prevalence, 1 / 3)
+
+    def test_d3tec_response_weights_have_mean_one_and_equal_response_subject_totals(self):
+        rows = []
+        for subject_id in ("a", "b"):
+            for prompt_id in range(27):
+                count = 1 + (prompt_id % 3)
+                for segment_index in range(count):
+                    rows.append(
+                        {
+                            "sample_id": f"{subject_id}-{prompt_id}-{segment_index}",
+                            "subject_id": subject_id,
+                            "response_id": f"{subject_id}_p{prompt_id}",
+                            "prompt_id": prompt_id,
+                            "segment_index": segment_index,
+                            "num_segments": count,
+                            "label": int(subject_id == "b"),
+                        }
+                    )
+        weights, audit = response_normalized_sample_weights(
+            rows,
+            {"dataset": "d3tec", "input_modality": "audio_text"},
+        )
+        self.assertAlmostEqual(float(weights.mean()), 1.0)
+        self.assertTrue(audit["equal_response_totals"])
+        self.assertTrue(audit["equal_subject_totals"])
+        self.assertEqual(set(audit["responses_per_subject"].values()), {27})
     def test_shuffled_labels_preserve_subject_groups(self):
         from baselines.qwen_hidden_classifier import shuffled_subject_labels
 
@@ -261,6 +390,14 @@ class ClassifierTests(unittest.TestCase):
                 cache / "extraction_metadata.json",
             )
             run_variant(cache, output, "logreg_pca32", seed=1337)
+            first_metadata_mtime = (
+                output / "logreg_pca32" / "classifier_metadata.json"
+            ).stat().st_mtime_ns
+            run_variant(cache, output, "logreg_pca32", seed=1337)
+            self.assertEqual(
+                (output / "logreg_pca32" / "classifier_metadata.json").stat().st_mtime_ns,
+                first_metadata_mtime,
+            )
             metadata = __import__("json").loads(
                 (output / "logreg_pca32" / "classifier_metadata.json").read_text()
             )
@@ -271,6 +408,9 @@ class ClassifierTests(unittest.TestCase):
 
             pipeline = joblib.load(output / "logreg_pca32" / "pipeline.joblib")
             np.testing.assert_allclose(pipeline.named_steps["pca"].mean_, train_x.mean(axis=0), rtol=1e-5)
+            np.savez_compressed(cache / "outer_train.npz", vectors=train_x + 1.0)
+            with self.assertRaisesRegex(ValueError, "incompatible"):
+                run_variant(cache, output, "logreg_pca32", seed=1337)
 
 
 if __name__ == "__main__":

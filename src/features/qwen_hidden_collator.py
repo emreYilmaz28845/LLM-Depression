@@ -50,6 +50,11 @@ class PromptOnlyExtractionCollator:
             "fold": int(example["fold"]),
             "prompt_text": str(example["prompt_text"]),
         }]
+        # These fields remain external metadata. In particular, prompt_id is
+        # never rendered into the prompt by this collator.
+        for key in ("response_id", "prompt_id", "segment_index", "num_segments"):
+            if key in example:
+                metadata[0][key] = example[key]
         return model_inputs, metadata
 
 

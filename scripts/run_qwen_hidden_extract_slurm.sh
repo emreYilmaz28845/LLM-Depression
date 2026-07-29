@@ -35,7 +35,7 @@ SKIP_CLASSIFIERS="${SKIP_CLASSIFIERS:-0}"
 QWEN_HIDDEN_DEPS="${QWEN_HIDDEN_DEPS:-$PROJECT_ROOT/.deps/qwen_hidden}"
 export PYTHONPATH="$QWEN_HIDDEN_DEPS:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
-LOG_ROOT="$PROJECT_ROOT/logs/slurm_qwen_hidden"
+LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/slurm_qwen_hidden}"
 mkdir -p "$LOG_ROOT"
 exec > >(tee -a "$LOG_ROOT/hidden-${SLURM_JOB_ID}.out")
 exec 2> >(tee -a "$LOG_ROOT/hidden-${SLURM_JOB_ID}.err" >&2)

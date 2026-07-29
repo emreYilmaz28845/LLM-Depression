@@ -1,0 +1,28 @@
+schema_version: d3tec_hidden_matrix.v1
+dataset: d3tec
+expected_jobs: 15
+expected_manifest_sha256: 67a62eb73b4ab7e0cd810b81af5e424f6bf9deea9cfdbc322fb32057a6e6f799
+expected_split_metadata_sha256: a672e309fb193d7fd76e7283f5f42828c33713fe770ccbbf90f1ed72bf3fc15c
+experiments:
+  - modality: audio_text
+    condition: audio_text_normalized
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/experiments/d3tec/audio_text_normalized/d3tec_prod_20260728T135954Z_d3tec_audio_text_normalized
+    variants:
+      [logreg_raw, xgb_raw, logreg_pca32, xgb_pca32, xgb_pca64,
+       majority_class, xgb_raw_shuffled_labels]
+  - modality: audio_only
+    condition: audio_only_normalized
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/experiments/d3tec/audio_only_normalized/d3tec_prod_20260728T135954Z_d3tec_audio_only_normalized
+    variants:
+      [logreg_raw, xgb_raw, logreg_pca32, xgb_pca32, xgb_pca64,
+       majority_class, xgb_raw_shuffled_labels]
+  - modality: text_only
+    condition: text_only
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/experiments/d3tec/text_only/d3tec_prod_20260728T135954Z_d3tec_text_only
+    # PCA-64 is intentionally absent: an outer-training fold has <64 subjects.
+    variants:
+      [logreg_raw, xgb_raw, logreg_pca32, xgb_pca32,
+       majority_class, xgb_raw_shuffled_labels]
