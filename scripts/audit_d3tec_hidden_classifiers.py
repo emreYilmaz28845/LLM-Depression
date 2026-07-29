@@ -192,6 +192,8 @@ def audit(
     matrix_path: Path,
     results_root: Path,
     subject_metadata_path: Path,
+    *,
+    include_optuna: bool = True,
 ) -> dict[str, Any]:
     matrix = yaml.safe_load(matrix_path.read_text(encoding="utf-8"))
     expected_manifest = matrix["expected_manifest_sha256"]
@@ -204,7 +206,7 @@ def audit(
         condition = experiment["condition"]
         modality = experiment["modality"]
         run_name = Path(experiment["run_dir"]).name
-        variants = list(experiment["variants"]) + [STAGE1_ID]
+        variants = list(experiment["variants"]) + ([STAGE1_ID] if include_optuna else [])
         for variant in variants:
             pooled = []
             folds = []
@@ -272,6 +274,7 @@ def audit(
     return {
         "schema_version": "d3tec_hidden_classifier_acceptance.v1",
         "status": "passed",
+        "scope": "fixed_and_stage1_optuna" if include_optuna else "fixed_only",
         "matrix": str(matrix_path),
         "result_count": len(all_results),
         "conditions": sorted(heldout_by_condition),
@@ -304,8 +307,18 @@ def main() -> None:
         default=Path("outputs/manifests_d3tec/d3tec_manifest.jsonl"),
     )
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--fixed-only",
+        action="store_true",
+        help="Audit the fixed-head stage before Stage-1 Optuna results exist.",
+    )
     args = parser.parse_args()
-    payload = audit(args.matrix, args.results_root, args.subject_metadata)
+    payload = audit(
+        args.matrix,
+        args.results_root,
+        args.subject_metadata,
+        include_optuna=not args.fixed_only,
+    )
     save_json(payload, args.output)
     print(f"PASS: {args.output}")
 
