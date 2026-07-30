@@ -11,6 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data.cmdc import build_cmdc_manifest
+from src.data.androids import build_androids_interview_manifest
 from src.data.daic import build_daic_manifest
 from src.data.d3tec import build_d3tec_manifest
 from src.data.edaic import build_edaic_manifest
@@ -113,7 +114,9 @@ def build_for_config(config_path: str | Path, config_overrides: list[str] | None
     dataset_name = str(config["dataset"]).lower()
     quarantine = load_quarantine(config.get("quarantine_path"))
 
-    if dataset_name == "daic":
+    if dataset_name == "androids_interview":
+        result = build_androids_interview_manifest(config, quarantine)
+    elif dataset_name == "daic":
         result = build_daic_manifest(config, quarantine)
     elif dataset_name == "d3tec":
         result = build_d3tec_manifest(config, quarantine)

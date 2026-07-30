@@ -227,6 +227,14 @@ def _resolve_subject_transcript(
 
 
 def _ordered_subject_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if rows and str(rows[0].get("dataset", "")).lower() == "androids_interview":
+        return sorted(
+            rows,
+            key=lambda row: (
+                int(row.get("turn_id", 0)),
+                int(row.get("window_index", row.get("segment_index", 0))),
+            ),
+        )
     if rows and str(rows[0].get("dataset", "")).lower() == "d3tec":
         return sorted(
             rows,
@@ -275,6 +283,21 @@ def _base_example_from_row(
     input_modality = resolve_input_modality(config)
     use_audio, use_text = _modality_flags(input_modality)
     transcript = row["transcript"] if use_text else ""
+    if use_text and str(row.get("dataset", "")).lower() == "androids_interview":
+        scope = str(
+            config.get("data", {}).get(
+                "audio_text_transcript_scope", "segment_aligned"
+            )
+        ).strip().lower()
+        if scope == "segment_aligned":
+            transcript = str(row["segment_transcript"])
+        elif scope == "full_turn":
+            transcript = str(row["full_turn_transcript"])
+        else:
+            raise ValueError(
+                "Unsupported data.audio_text_transcript_scope="
+                f"{scope!r}. Expected 'segment_aligned' or 'full_turn'."
+            )
     transcript, transcript_log = _truncate_text(transcript, transcript_max_chars)
     emotion_block = ""
     if emotion_cache is not None and use_audio:
@@ -345,7 +368,31 @@ def _build_subject_level_text_only_examples(
             )
 
         canonical_row = rows[0]
-        if str(canonical_row.get("dataset", "")).lower() == "d3tec":
+        dataset_name = str(canonical_row.get("dataset", "")).lower()
+        if dataset_name == "androids_interview":
+            turn_rows: dict[int, dict[str, Any]] = {}
+            for row in rows:
+                turn_id = int(row["turn_id"])
+                prior = turn_rows.setdefault(turn_id, row)
+                if (
+                    str(prior["full_turn_transcript"]).strip()
+                    != str(row["full_turn_transcript"]).strip()
+                ):
+                    raise ValueError(
+                        "Inconsistent ANDROIDS full transcript within "
+                        f"response_id={row['response_id']}."
+                    )
+                if str(prior["response_id"]) != str(row["response_id"]):
+                    raise ValueError(
+                        f"ANDROIDS turn_id={turn_id} maps to multiple parent turns "
+                        f"for subject_id={subject_id}."
+                    )
+            subject_transcript = "\n\n".join(
+                f"[Turn {turn_id}]\n"
+                f"{str(turn_rows[turn_id]['full_turn_transcript']).strip()}"
+                for turn_id in sorted(turn_rows)
+            )
+        elif dataset_name == "d3tec":
             response_rows: dict[int, dict[str, Any]] = {}
             for row in rows:
                 prompt_id = int(row["prompt_id"])
@@ -657,7 +704,13 @@ def build_examples(
             emotion_cache, [str(row["sample_id"]) for row in manifest_rows]
         )
 
-    if input_modality == INPUT_MODALITY_TEXT_ONLY and dataset_name in {"daic", "d3tec", "edaic", "turkish"}:
+    if input_modality == INPUT_MODALITY_TEXT_ONLY and dataset_name in {
+        "androids_interview",
+        "daic",
+        "d3tec",
+        "edaic",
+        "turkish",
+    }:
         return _build_subject_level_text_only_examples(
             manifest_rows,
             config,

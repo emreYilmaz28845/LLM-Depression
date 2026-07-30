@@ -79,11 +79,14 @@ def aggregate_response_subject_predictions(
     prediction_field: str,
     backend_name: str,
     invalid_as_wrong: bool = True,
+    score_average: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
-    """D3TEC's predeclared segment -> response -> subject hierarchy.
+    """Predeclared sample -> response -> subject hierarchy.
 
-    Segment counts never directly influence the subject vote: each response is
-    reduced first and each response then contributes exactly one subject vote.
+    Sample counts never directly influence the subject decision: each response
+    is reduced first and each response then contributes exactly one subject
+    value. ``score_average`` uses equal-weight score margins at both levels;
+    the default retains the historical majority-vote behavior.
     """
     grouped_responses: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in sample_rows:
@@ -115,6 +118,12 @@ def aggregate_response_subject_predictions(
             gold=gold,
             invalid_as_wrong=invalid_as_wrong,
         )
+        if score_average:
+            pred = (
+                1
+                if margin_sum > 0
+                else 0 if margin_sum < 0 else INVALID_PREDICTION
+            )
         invalid_segments += invalid_count
         response_rows.append(
             {
@@ -168,6 +177,12 @@ def aggregate_response_subject_predictions(
             gold=gold,
             invalid_as_wrong=invalid_as_wrong,
         )
+        if score_average:
+            pred = (
+                1
+                if margin_sum > 0
+                else 0 if margin_sum < 0 else INVALID_PREDICTION
+            )
         invalid_responses += invalid_count
         subject_rows.append(
             {

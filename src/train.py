@@ -25,6 +25,7 @@ from transformers import get_linear_schedule_with_warmup
 
 from src.data.build_manifest import build_for_config, manifest_build_signature
 from src.data.d3tec import build_d3tec_training_schedule
+from src.data.androids import apply_androids_training_weights
 from src.daic_chunking import (
     build_independent_epoch_schedule,
     gradient_accumulation_for_reference_updates,
@@ -1215,6 +1216,23 @@ def main() -> None:
         config,
         run_root,
     )
+    androids_weight_audit: dict[str, Any] | None = None
+    if (
+        str(config["dataset"]).lower() == "androids_interview"
+        and input_modality != "text_only"
+    ):
+        if int(config["training"]["per_device_train_batch_size"]) != 1:
+            raise ValueError(
+                "ANDROIDS Interview hierarchical weighting requires "
+                "per_device_train_batch_size=1."
+            )
+        train_examples, androids_weight_audit = apply_androids_training_weights(
+            train_examples
+        )
+        save_json(
+            androids_weight_audit,
+            logs_dir / "androids_training_weight_audit.json",
+        )
     d3tec_epoch_schedule: list[list[dict[str, Any]]] | None = None
     d3tec_schedule_audit: dict[str, Any] | None = None
     daic_epoch_schedule: list[list[dict[str, Any]]] | None = None
@@ -1441,7 +1459,13 @@ def main() -> None:
                 if daic_schedule_audit is not None
                 else None
             ),
+            "androids_weight_audit_path": (
+                str(logs_dir / "androids_training_weight_audit.json")
+                if androids_weight_audit is not None
+                else None
+            ),
         },
+        "subject_overlap_proof": primary_overlap_proof,
         "selection_protocol": {
             "mode": partition_plan["selection_mode"],
             "joint_selection_mode": _resolve_joint_selection_mode(config),
@@ -1572,7 +1596,10 @@ def main() -> None:
                 loss = outputs.loss
                 if loss_weights is not None:
                     if int(loss_weights.numel()) != 1:
-                        raise ValueError("Schedule-aware D3TEC weighting currently requires batch size 1.")
+                        raise ValueError(
+                            "Per-example hierarchical loss weighting currently "
+                            "requires batch size 1."
+                        )
                     loss = loss * loss_weights.reshape(-1)[0].to(loss.device)
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:

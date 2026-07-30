@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import sys
@@ -264,6 +265,17 @@ def _processor_inputs(processor, example: dict[str, Any], text: str, device: tor
 
 
 def _base_sample_row(example: dict[str, Any], checkpoint_name: str, backend_name: str) -> dict[str, Any]:
+    prompt_text = str(example.get("prompt_text", ""))
+    transcript = str(example.get("transcript", ""))
+    transcript_block = (
+        f"The transcript of the subject's speech is:\n{transcript}\n\n"
+    )
+    prompt_context = prompt_text.replace(
+        transcript_block,
+        "The transcript of the subject's speech is:\n<TRANSCRIPT>\n\n",
+        1,
+    )
+    config = example.get("config", {})
     row = {
         "checkpoint_name": checkpoint_name,
         "prediction_backend": backend_name,
@@ -280,8 +292,17 @@ def _base_sample_row(example: dict[str, Any], checkpoint_name: str, backend_name
         "start_time": example.get("start_time", ""),
         "end_time": example.get("end_time", ""),
         "segment_duration": example.get("segment_duration", ""),
+        "prompt_sha256": hashlib.sha256(prompt_text.encode("utf-8")).hexdigest(),
+        "prompt_context_sha256": hashlib.sha256(
+            prompt_context.encode("utf-8")
+        ).hexdigest(),
+        "transcript_sha256": hashlib.sha256(transcript.encode("utf-8")).hexdigest(),
+        "transcript_chars": len(transcript),
+        "audio_text_transcript_scope": config.get("data", {}).get(
+            "audio_text_transcript_scope", ""
+        ),
     }
-    evaluation = example.get("config", {}).get("evaluation", {})
+    evaluation = config.get("evaluation", {})
     if evaluation.get("subject_score_aggregation"):
         row["subject_score_aggregation"] = evaluation["subject_score_aggregation"]
     for key in ("chunk_id", "bundle_id", "bundle_chunk_ids", "bundle_coverage_count"):
@@ -572,6 +593,14 @@ def evaluate_examples(
                 prediction_field=prediction_field,
                 backend_name=mode,
                 invalid_as_wrong=mode == PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
+                score_average=(
+                    str(
+                        config.get("evaluation", {}).get(
+                            "hierarchical_score_aggregation", ""
+                        )
+                    ).lower()
+                    == "mean"
+                ),
             )
         )
         headline_rows, headline_metrics = subject_rows, subject_metrics

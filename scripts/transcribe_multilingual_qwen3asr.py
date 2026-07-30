@@ -46,6 +46,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts import transcribe_turkish_qwen3asr as core  # noqa: E402
+from src.data.androids import discover_androids_interview_windows  # noqa: E402
 from src.data.d3tec import discover_d3tec_response_windows  # noqa: E402
 from src.utils import configure_logging, ensure_dir, get_logger  # noqa: E402
 
@@ -446,10 +447,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--androids-interview-segments",
+        action="store_true",
+        help=(
+            "For preset=androids_interview, transcribe the canonical <=30s "
+            "equal-duration participant-turn windows."
+        ),
+    )
+    parser.add_argument(
         "--segment-seconds",
         type=float,
         default=30.0,
-        help="Maximum D3TEC segment duration used with --d3tec-segments.",
+        help="Maximum segment duration for a segment-aligned ASR mode.",
     )
     parser.add_argument("--limit", type=int)
     parser.add_argument(
@@ -653,12 +662,281 @@ def _run_d3tec_segments(args: argparse.Namespace, preset: Preset, out_path: Path
     return report
 
 
+def _rewrite_androids_segment_rows(
+    out_path: Path,
+    windows_by_sample: dict[str, dict[str, Any]],
+    preset: Preset,
+) -> list[dict[str, Any]]:
+    rewritten: list[dict[str, Any]] = []
+    for row in core._read_rows(out_path):
+        basename = Path(str(row["audio_path"])).stem
+        stable_id = str(row.get("sample_id") or basename)
+        window = windows_by_sample.get(stable_id) or windows_by_sample.get(basename)
+        if window is None:
+            raise ValueError(
+                f"ASR output does not match a canonical ANDROIDS window: {stable_id}"
+            )
+        rewritten.append(
+            {
+                **row,
+                **window,
+                "audio_path": str(window["audio_path"]),
+                "language": preset.language_tag,
+                "audio_duration_sec": float(window["segment_duration"]),
+                "segment_partition": "equal_duration",
+                "segment_seconds": float(window["segment_duration"]),
+            }
+        )
+    rewritten.sort(key=lambda row: core.natural_sort_key(str(row["sample_id"])))
+    tmp = out_path.with_suffix(out_path.suffix + ".segments.tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        for row in rewritten:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    if len(core._read_rows(tmp)) != len(rewritten):
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(
+            "Refusing to replace incomplete ANDROIDS segment transcript output."
+        )
+    os.replace(tmp, out_path)
+    return rewritten
+
+
+def _validate_androids_resume_rows(
+    rows: list[dict[str, Any]],
+    windows_by_sample: dict[str, dict[str, Any]],
+) -> None:
+    seen: set[str] = set()
+    for row in rows:
+        stable_id = str(
+            row.get("sample_id") or Path(str(row.get("audio_path", ""))).stem
+        ).strip()
+        if stable_id in seen:
+            raise ValueError(f"Duplicate ANDROIDS resume row: {stable_id}")
+        seen.add(stable_id)
+        window = windows_by_sample.get(stable_id)
+        if window is None:
+            raise ValueError(f"Extra ANDROIDS resume row: {stable_id}")
+        for field in ("start_time", "end_time"):
+            # A process killed after the core's fsync but before the canonical
+            # rewrite leaves a valid raw row without interval fields. Its
+            # materialized basename is still the stable window ID, so it can be
+            # safely canonicalized on the next resume.
+            if field in row and not math.isclose(
+                float(row[field]), float(window[field]), rel_tol=0.0, abs_tol=1e-6
+            ):
+                raise ValueError(
+                    f"Interval-mismatched ANDROIDS resume row {stable_id}: {field}"
+                )
+        row_audio = str(row.get("audio_path", ""))
+        if (
+            row_audio != str(window["audio_path"])
+            and Path(row_audio).stem != stable_id
+        ):
+            raise ValueError(f"Audio-mismatched ANDROIDS resume row: {stable_id}")
+
+
+def _run_androids_interview_segments(
+    args: argparse.Namespace,
+    preset: Preset,
+    out_path: Path,
+) -> dict[str, Any]:
+    if args.preset != "androids_interview":
+        raise ValueError(
+            "--androids-interview-segments is valid only with "
+            "--preset androids_interview."
+        )
+    if not math.isclose(
+        float(args.segment_seconds), 30.0, rel_tol=0.0, abs_tol=1e-9
+    ):
+        raise ValueError("ANDROIDS Interview segment ASR requires --segment-seconds 30.")
+    windows = discover_androids_interview_windows(
+        ANDROIDS_ROOT,
+        segment_seconds=float(args.segment_seconds),
+    )
+    windows_by_sample = {str(row["sample_id"]): row for row in windows}
+    virtual_paths = [Path(f"{row['sample_id']}.wav") for row in windows]
+    selected_virtual = select_files(
+        virtual_paths,
+        includes=args.include,
+        limit=args.limit,
+    )
+    selected_ids = [path.stem for path in selected_virtual]
+    limited = bool(args.include) or args.limit is not None
+    if args.list_files:
+        for stable_id in selected_ids:
+            row = windows_by_sample[stable_id]
+            print(
+                f"{stable_id}\t{row['audio_path']}\t"
+                f"{float(row['start_time']):.6f}\t{float(row['end_time']):.6f}"
+            )
+        return {"n_files": len(selected_ids)}
+
+    _configure_core_for_preset(preset)
+    batch_size = args.batch_size or preset.default_batch_size
+    max_new_tokens = args.max_new_tokens or preset.default_max_new_tokens
+    with tempfile.TemporaryDirectory(prefix="androids_interview_asr_segments_") as tmp_name:
+        tmp_dir = Path(tmp_name)
+        materialized: list[Path] = []
+        for stable_id in selected_ids:
+            window = windows_by_sample[stable_id]
+            source = Path(str(window["audio_path"]))
+            info = core.sf.info(str(source))
+            start = int(round(float(window["start_time"]) * info.samplerate))
+            stop = int(round(float(window["end_time"]) * info.samplerate))
+            audio, sample_rate = core.sf.read(
+                str(source),
+                start=start,
+                stop=stop,
+                dtype="float32",
+                always_2d=False,
+            )
+            target = tmp_dir / f"{stable_id}.wav"
+            core.sf.write(str(target), audio, sample_rate, subtype="PCM_16")
+            materialized.append(target)
+
+        if args.resume and out_path.exists():
+            resume_rows = core._read_rows(out_path)
+            _validate_androids_resume_rows(resume_rows, windows_by_sample)
+            resume_tmp = out_path.with_suffix(out_path.suffix + ".resume.tmp")
+            with resume_tmp.open("w", encoding="utf-8") as handle:
+                for row in resume_rows:
+                    stable_id = str(
+                        row.get("sample_id")
+                        or Path(str(row["audio_path"])).stem
+                    )
+                    handle.write(
+                        json.dumps(
+                            {
+                                **row,
+                                "sample_id": stable_id,
+                                "audio_path": str(tmp_dir / f"{stable_id}.wav"),
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+            os.replace(resume_tmp, out_path)
+
+        backend = core.Qwen3ASRBackend(
+            args.model,
+            device=args.device,
+            dtype=args.dtype,
+            max_inference_batch_size=batch_size,
+            max_new_tokens=max_new_tokens,
+            attn_implementation=args.attn,
+        )
+        result = core.transcribe_all(
+            backend,
+            materialized,
+            out_path=out_path,
+            model_id=args.model,
+            language_arg=preset.language_arg,
+            batch_size=batch_size,
+            resume=bool(args.resume),
+        )
+        rows = _rewrite_androids_segment_rows(
+            out_path, windows_by_sample, preset
+        )
+
+    row_ids = [str(row["sample_id"]) for row in rows]
+    duplicate_ids = sorted(
+        stable_id for stable_id, count in Counter(row_ids).items() if count > 1
+    )
+    expected_ids = set(selected_ids) if limited else set(windows_by_sample)
+    observed_ids = set(row_ids)
+    empty_ids = [
+        str(row["sample_id"])
+        for row in rows
+        if not str(row.get("transcript", "")).strip()
+    ]
+    language_mismatches = [
+        str(row["sample_id"])
+        for row in rows
+        if str(row.get("language", "")).lower() not in {"it", "italian"}
+        or (
+            row.get("asr_detected_language")
+            and str(row["asr_detected_language"]).lower()
+            not in {"it", "italian"}
+        )
+    ]
+    interval_mismatches = [
+        stable_id
+        for stable_id in observed_ids.intersection(windows_by_sample)
+        if any(
+            not math.isclose(
+                float(next(row[field] for row in rows if row["sample_id"] == stable_id)),
+                float(windows_by_sample[stable_id][field]),
+                rel_tol=0.0,
+                abs_tol=1e-6,
+            )
+            for field in ("start_time", "end_time")
+        )
+    ]
+    report = {
+        "preset": "androids_interview_segments",
+        "dataset": "androids_interview",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "out_file": str(out_path),
+        "asr_model": args.model,
+        "asr_language_arg": preset.language_arg,
+        "language_tag": preset.language_tag,
+        "segment_partition": "equal_duration",
+        "segment_seconds": float(args.segment_seconds),
+        "n_canonical_windows": len(windows),
+        "n_selected_files": len(selected_ids),
+        "n_rows": len(rows),
+        "n_unique_sample_ids": len(observed_ids),
+        "n_empty_transcripts": len(empty_ids),
+        "n_language_mismatches": len(language_mismatches),
+        "n_interval_mismatches": len(interval_mismatches),
+        "n_failures": len(result["failures"]),
+        "coverage_complete": (
+            observed_ids == expected_ids
+            and not duplicate_ids
+            and not empty_ids
+            and not language_mismatches
+            and not interval_mismatches
+            and not result["failures"]
+        ),
+        "limited_run": limited,
+        "missing_sample_ids": sorted(expected_ids - observed_ids),
+        "extra_sample_ids": sorted(observed_ids - expected_ids),
+        "duplicate_sample_ids": duplicate_ids,
+        "empty_sample_ids": empty_ids,
+        "language_mismatch_sample_ids": language_mismatches,
+        "interval_mismatch_sample_ids": interval_mismatches,
+        "failed_files": result["failures"],
+    }
+    report_path = core.write_report(report, out_path)
+    LOGGER.info(
+        "Completed ANDROIDS Interview segment ASR | rows=%d coverage=%s report=%s",
+        len(rows),
+        report["coverage_complete"],
+        report_path,
+    )
+    if not report["coverage_complete"]:
+        raise RuntimeError(
+            "ANDROIDS Interview segment ASR failed its coverage/language/interval "
+            f"contract; see {report_path}."
+        )
+    return report
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     preset = PRESETS[args.preset]
+    if args.d3tec_segments and args.androids_interview_segments:
+        raise ValueError("Select only one segment ASR mode.")
     if args.out:
         out_path = Path(args.out)
     elif args.d3tec_segments:
         out_path = D3TEC_ROOT / "transcripts_qwen3_asr_spanish_segments.jsonl"
+    elif args.androids_interview_segments:
+        out_path = (
+            ANDROIDS_ROOT
+            / "interview_transcripts_qwen3_asr_italian_segments.jsonl"
+        )
     else:
         out_path = preset.output_path
     ensure_dir(out_path.parent)
@@ -672,6 +950,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     if args.d3tec_segments:
         return _run_d3tec_segments(args, preset, out_path)
+    if args.androids_interview_segments:
+        return _run_androids_interview_segments(args, preset, out_path)
 
     all_files = discover_files(preset)
     selected_files = select_files(all_files, includes=args.include, limit=args.limit)
