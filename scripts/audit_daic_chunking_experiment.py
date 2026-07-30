@@ -245,6 +245,39 @@ def _mcnemar(baseline: list[dict], comparison: list[dict]) -> dict[str, Any]:
     return {"baseline_only_correct": b, "comparison_only_correct": c, "exact_two_sided_p": min(1.0, 2 * tail)}
 
 
+def _parse_slurm_accounting(text: str, failures: list[str]) -> list[dict[str, str]]:
+    jobs: list[dict[str, str]] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        fields = line.split("|")
+        if len(fields) < 6:
+            failures.append(f"Malformed Slurm accounting row: {line}")
+            continue
+        job_id, name, state, exit_code, elapsed, alloc_cpus, *remainder = fields
+        jobs.append(
+            {
+                "job_id": job_id,
+                "name": name,
+                "state": state,
+                "exit_code": exit_code,
+                "elapsed": elapsed,
+                "allocated_cpus": alloc_cpus,
+                "allocated_tres": remainder[0] if remainder else "",
+            }
+        )
+    if len(jobs) != 16:
+        failures.append(f"Expected 16 authoritative Slurm jobs, found {len(jobs)}")
+    if len({job["job_id"] for job in jobs}) != len(jobs):
+        failures.append("Authoritative Slurm accounting contains duplicate job IDs")
+    for job in jobs:
+        if job["state"] != "COMPLETED" or job["exit_code"] != "0:0":
+            failures.append(
+                f"Slurm job {job['job_id']} is not successful: {job['state']} exit {job['exit_code']}"
+            )
+    return jobs
+
+
 def audit(root: Path, sacct_path: Path | None) -> dict[str, Any]:
     failures: list[str] = []
     cells: list[dict[str, Any]] = []
@@ -336,6 +369,7 @@ def audit(root: Path, sacct_path: Path | None) -> dict[str, Any]:
 
     training_audit = _audit_training(root, failures)
     sacct = None
+    slurm_jobs: list[dict[str, str]] = []
     if sacct_path:
         sacct = sacct_path.read_text(encoding="utf-8")
         bad = [
@@ -345,6 +379,7 @@ def audit(root: Path, sacct_path: Path | None) -> dict[str, Any]:
         ]
         if bad:
             failures.append(f"Slurm accounting contains terminal failures: {bad}")
+        slurm_jobs = _parse_slurm_accounting(sacct, failures)
 
     comparisons = []
     for head in HEADS:
@@ -376,6 +411,7 @@ def audit(root: Path, sacct_path: Path | None) -> dict[str, Any]:
         "comparisons_against_c1": comparisons,
         "coverage_audits": coverage_audits,
         "training_audit": training_audit,
+        "slurm_jobs": slurm_jobs,
         "slurm_accounting_path": str(sacct_path) if sacct_path else None,
         "slurm_accounting_captured": sacct is not None,
     }
@@ -435,6 +471,19 @@ def _write_report(payload: dict[str, Any], root: Path) -> None:
             f"updates/epoch; peak allocated GPU memory {item.get('peak_gpu_allocated_gib', '?')} GiB; "
             f"manifest `{item.get('manifest_hash')}`; split `{item.get('split_metadata_hash')}`."
         )
+    if payload.get("slurm_jobs"):
+        lines += [
+            "",
+            "## Slurm runtime and allocations",
+            "",
+            "| Job ID | Job | State | Exit | Runtime | CPUs | Allocation |",
+            "|---:|---|---|---:|---:|---:|---|",
+        ]
+        for job in payload["slurm_jobs"]:
+            lines.append(
+                f"| {job['job_id']} | {job['name']} | {job['state']} | {job['exit_code']} | "
+                f"{job['elapsed']} | {job['allocated_cpus']} | `{job['allocated_tres']}` |"
+            )
     lines += [
         "",
         "## Coverage and statistical scope",
