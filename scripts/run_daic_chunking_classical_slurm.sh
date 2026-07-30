@@ -2,10 +2,11 @@
 #SBATCH -J daic-k-head
 #SBATCH -A etur92
 #SBATCH -q acc_ehpc
-#SBATCH -t 04:00:00
+#SBATCH -t 01:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=20
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=16G
 #SBATCH -o /dev/null
 #SBATCH -e /dev/null
 #SBATCH --chdir=/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression
