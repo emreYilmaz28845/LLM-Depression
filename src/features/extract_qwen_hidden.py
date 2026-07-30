@@ -297,8 +297,23 @@ def _validate_saved_split(
         expected_heldout = {
             str(row["subject_id"]) for row in split_metadata if str(row["partition"]) == final_partition
         }
-    if train_ids != expected_train or heldout_ids != expected_heldout:
-        raise ValueError("Checkpoint split_used.json does not match its hashed split metadata.")
+    smoke_limit = int(config.get("split", {}).get("smoke_subject_limit", 0) or 0)
+    if smoke_limit > 0:
+        if not train_ids.issubset(expected_train) or not heldout_ids.issubset(
+            expected_heldout
+        ):
+            raise ValueError(
+                "Smoke checkpoint split_used.json is not a subset of its hashed "
+                "official split metadata."
+            )
+        if len(train_ids) > smoke_limit or len(heldout_ids) > smoke_limit:
+            raise ValueError(
+                "Smoke checkpoint split exceeds split.smoke_subject_limit."
+            )
+    elif train_ids != expected_train or heldout_ids != expected_heldout:
+        raise ValueError(
+            "Checkpoint split_used.json does not match its hashed split metadata."
+        )
     return split_metadata_path
 
 

@@ -17,6 +17,8 @@ from src.daic_chunking import (
     rotary_indices,
 )
 from src.data.runtime import AUDIO_PLACEHOLDER, build_examples
+from src.features.extract_qwen_hidden import _validate_saved_split
+from src.utils import save_json
 
 
 def config(mode: str = "subject_chunks") -> dict:
@@ -180,3 +182,48 @@ def test_balanced_eval_examples_record_bundle_memberships() -> None:
         for chunk_id in example["bundle_chunk_ids"]
     )
     assert set(counts.values()) == {2}
+
+
+def test_hidden_split_validation_accepts_only_explicit_smoke_subsets(tmp_path) -> None:
+    split_metadata = [
+        {"subject_id": "train_a", "partition": "train"},
+        {"subject_id": "train_b", "partition": "train"},
+        {"subject_id": "test_a", "partition": "test"},
+        {"subject_id": "test_b", "partition": "test"},
+    ]
+    split_path = tmp_path / "split.json"
+    save_json(split_metadata, split_path)
+    base_config = {
+        "dataset": "daic",
+        "evaluation": {"subject_score_aggregation": "mean_score"},
+        "split": {
+            "train_partition": "train",
+            "selection_partition": "val",
+            "dev_pool_partitions": ["train", "val"],
+            "final_eval_partition": "test",
+            "smoke_subject_limit": 1,
+        },
+    }
+    saved = {"split_mode": "fixed", "split_metadata_path": str(split_path)}
+    assert _validate_saved_split(
+        saved,
+        base_config,
+        {"outer_train": ["train_a"], "final_eval": ["test_a"]},
+        0,
+    ) == split_path
+    with pytest.raises(ValueError, match="not a subset"):
+        _validate_saved_split(
+            saved,
+            base_config,
+            {"outer_train": ["test_a"], "final_eval": ["test_b"]},
+            0,
+        )
+    production = copy.deepcopy(base_config)
+    production["split"].pop("smoke_subject_limit")
+    with pytest.raises(ValueError, match="does not match"):
+        _validate_saved_split(
+            saved,
+            production,
+            {"outer_train": ["train_a"], "final_eval": ["test_a"]},
+            0,
+        )
