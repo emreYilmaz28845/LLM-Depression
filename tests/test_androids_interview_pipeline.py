@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import math
+import os
+import subprocess
 from collections import defaultdict
 from pathlib import Path
 
@@ -274,3 +276,56 @@ def test_androids_hierarchy_uses_equal_weight_scores_not_window_majority() -> No
     )
     assert responses[0]["prediction"] == 0
     assert subjects[0]["prediction"] == 0
+
+
+def test_result_sync_targets_run_id_directory(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    rsync_log = tmp_path / "rsync.log"
+    fake_rsync = fake_bin / "rsync"
+    fake_rsync.write_text(
+        "#!/bin/bash\n"
+        'printf "%s\\n" "${@: -1}" >> "$FAKE_RSYNC_LOG"\n',
+        encoding="utf-8",
+    )
+    fake_rsync.chmod(0o755)
+    local_root = tmp_path / "project"
+    local_root.mkdir()
+    run_id = "androids_interview_prod_test"
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "FAKE_RSYNC_LOG": str(rsync_log),
+        "DRY_RUN": "1",
+        "RUN_ID": run_id,
+        "TRANSFER_HOST": "fake-transfer",
+        "REMOTE_PROJECT_ROOT": "/remote/project",
+        "LOCAL_PROJECT_ROOT": str(local_root),
+    }
+    subprocess.run(
+        ["bash", "scripts/sync_androids_interview_results_from_mn5.sh"],
+        check=True,
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    destinations = rsync_log.read_text(encoding="utf-8").splitlines()
+    expected = {
+        str(
+            local_root
+            / "output_model"
+            / "experiments"
+            / "androids_interview"
+            / variant
+            / f"{run_id}_androids_interview_{variant}"
+        )
+        + "/"
+        for variant in (
+            "audio_only",
+            "audio_text_segment_aligned",
+            "audio_text_full_turn",
+            "text_only",
+        )
+    }
+    assert expected <= set(destinations)

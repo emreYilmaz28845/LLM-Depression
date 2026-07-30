@@ -28,9 +28,10 @@ if [ "$DRY_RUN" = "1" ]; then
 fi
 for variant in "${RUN_VARIANTS[@]}"; do
     remote_run="$REMOTE_PROJECT_ROOT/output_model/experiments/androids_interview/$variant/${RUN_ID}_androids_interview_$variant/"
-    local_parent="$LOCAL_PROJECT_ROOT/output_model/experiments/androids_interview/$variant/"
-    mkdir -p "$local_parent"
-    rsync "${RSYNC_ARGS[@]}" "$TRANSFER_HOST:$remote_run" "$local_parent"
+    local_parent="$LOCAL_PROJECT_ROOT/output_model/experiments/androids_interview/$variant"
+    local_run="$local_parent/${RUN_ID}_androids_interview_$variant/"
+    mkdir -p "$local_run"
+    rsync "${RSYNC_ARGS[@]}" "$TRANSFER_HOST:$remote_run" "$local_run"
 done
 
 ARTIFACT_DIRS=(
