@@ -37,6 +37,22 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def androids_audio_identity(path: str | Path) -> tuple[str, str, str]:
+    """Root-independent identity for a participant-turn WAV.
+
+    Transcript caches are generated locally and then copied to GPFS, so their
+    absolute ``audio_path`` roots legitimately differ from the runtime corpus
+    root.  The task directory, recording directory, and filename are stable.
+    """
+    parts = Path(str(path)).parts
+    if len(parts) < 3:
+        raise ValueError(f"Invalid ANDROIDS audio path: {path!r}")
+    identity = tuple(parts[-3:])
+    if identity[0] != "audio_clip" or not identity[2].lower().endswith(".wav"):
+        raise ValueError(f"Invalid ANDROIDS participant-turn audio path: {path!r}")
+    return identity
+
+
 def parse_androids_recording_id(recording_id: str) -> dict[str, Any]:
     text = str(recording_id).strip().strip("'\"")
     match = _RECORDING_RE.fullmatch(text)
@@ -326,7 +342,9 @@ def build_androids_interview_manifest(
                 f"ANDROIDS transcript coverage failure for {window_id}: "
                 f"full={full is not None} segment={segment is not None}"
             )
-        if str(full.get("audio_path", "")) != str(window["audio_path"]):
+        if androids_audio_identity(full.get("audio_path", "")) != androids_audio_identity(
+            window["audio_path"]
+        ):
             raise ValueError(f"ANDROIDS full-turn audio path mismatch for {turn_key}.")
         for field in ("start_time", "end_time"):
             if field not in segment or not math.isclose(
@@ -336,7 +354,9 @@ def build_androids_interview_manifest(
                     f"ANDROIDS interval mismatch for {window_id} field={field}: "
                     f"cache={segment.get(field)!r} canonical={window[field]!r}"
                 )
-        if str(segment.get("audio_path", "")) != str(window["audio_path"]):
+        if androids_audio_identity(
+            segment.get("audio_path", "")
+        ) != androids_audio_identity(window["audio_path"]):
             raise ValueError(f"ANDROIDS audio path mismatch for {window_id}.")
         used_full.add(turn_key)
         used_segments.add(window_id)

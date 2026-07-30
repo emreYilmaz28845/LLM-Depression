@@ -10,6 +10,7 @@ import soundfile as sf
 
 from src.aggregate import aggregate_response_subject_predictions
 from src.data.androids import (
+    androids_audio_identity,
     androids_window_id,
     apply_androids_training_weights,
     build_androids_interview_official_folds,
@@ -87,6 +88,11 @@ def test_identity_turn_window_and_condition_parsing() -> None:
     assert parsed["turn_id"] == 10
     assert parsed["response_id"] == "05_PM53_4_10"
     assert androids_window_id(parsed["turn_key"], 3) == "05_PM53_4_10_w03"
+    assert androids_audio_identity(
+        "/local/corpus/Interview-Task/audio_clip/05_PM53_4/05_PM53_4_10.wav"
+    ) == androids_audio_identity(
+        "/gpfs/datasets/Interview-Task/audio_clip/05_PM53_4/05_PM53_4_10.wav"
+    )
 
 
 def test_equal_windows_and_discovery_are_complete_contiguous_and_bounded(tmp_path) -> None:
