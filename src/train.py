@@ -25,6 +25,11 @@ from transformers import get_linear_schedule_with_warmup
 
 from src.data.build_manifest import build_for_config, manifest_build_signature
 from src.data.d3tec import build_d3tec_training_schedule
+from src.daic_chunking import (
+    build_independent_epoch_schedule,
+    gradient_accumulation_for_reference_updates,
+    resolve_chunking_controls,
+)
 from src.data.runtime import (
     AudioTextDataset,
     build_examples,
@@ -1212,6 +1217,8 @@ def main() -> None:
     )
     d3tec_epoch_schedule: list[list[dict[str, Any]]] | None = None
     d3tec_schedule_audit: dict[str, Any] | None = None
+    daic_epoch_schedule: list[list[dict[str, Any]]] | None = None
+    daic_schedule_audit: dict[str, Any] | None = None
     if str(config["dataset"]).lower() == "d3tec" and input_modality != "text_only":
         if int(config["training"]["per_device_train_batch_size"]) != 1:
             raise ValueError("D3TEC audio policies require per_device_train_batch_size=1.")
@@ -1243,6 +1250,42 @@ def main() -> None:
         )
         train_examples = d3tec_epoch_schedule[0]
         save_json(d3tec_schedule_audit, logs_dir / "d3tec_training_schedule_audit.json")
+    if (
+        str(config["dataset"]).lower() == "daic"
+        and str(config["data"].get("sample_mode", "")).lower() == "subject_chunks"
+    ):
+        if int(config["training"]["per_device_train_batch_size"]) != 1:
+            raise ValueError("DAIC independent chunk weighting requires per_device_train_batch_size=1.")
+        if int(config["training"]["dataloader_num_workers"]) != 0:
+            raise ValueError("DAIC rotary schedules require training.dataloader_num_workers=0.")
+        controls = resolve_chunking_controls(config)
+        daic_epoch_schedule, daic_schedule_audit = build_independent_epoch_schedule(
+            train_examples,
+            policy=controls["train_chunk_policy"],
+            chunks_per_subject=controls["train_chunks_per_subject"],
+            seed=int(config["seed"]),
+            epochs=int(config["training"]["num_train_epochs"]),
+        )
+        train_examples = daic_epoch_schedule[0]
+        if bool(config["training"].get("match_joint_optimizer_updates", True)):
+            reference_accumulation = int(
+                config["training"].get("joint_reference_gradient_accumulation_steps", 8)
+            )
+            resolved_accumulation = gradient_accumulation_for_reference_updates(
+                independent_examples_per_epoch=len(train_examples),
+                reference_subjects=len(partition_plan["train_subject_ids"]),
+                reference_gradient_accumulation=reference_accumulation,
+                world_size=int(os.environ.get("WORLD_SIZE", "1")),
+                per_device_batch_size=int(config["training"]["per_device_train_batch_size"]),
+            )
+            config["training"]["gradient_accumulation_steps"] = resolved_accumulation
+            daic_schedule_audit["gradient_accumulation"] = {
+                "policy": "match_joint_optimizer_updates_per_epoch",
+                "joint_reference_gradient_accumulation_steps": reference_accumulation,
+                "resolved_gradient_accumulation_steps": resolved_accumulation,
+                "world_size": int(os.environ.get("WORLD_SIZE", "1")),
+            }
+        save_json(daic_schedule_audit, logs_dir / "daic_chunk_schedule_audit.json")
 
     # Training is the only place stochastic per-epoch chunk sampling is allowed.
     # Selection/eval datasets stay deterministic (baked audio_paths) so reported
@@ -1280,7 +1323,7 @@ def main() -> None:
     train_loader = DataLoader(
         train_dataset,
         batch_size=int(config["training"]["per_device_train_batch_size"]),
-        shuffle=False if d3tec_epoch_schedule is not None else train_sampler is None,
+        shuffle=False if (d3tec_epoch_schedule is not None or daic_epoch_schedule is not None) else train_sampler is None,
         sampler=train_sampler,
         generator=train_shuffle_generator,
         num_workers=int(config["training"]["dataloader_num_workers"]),
@@ -1391,6 +1434,11 @@ def main() -> None:
             "d3tec_schedule_audit_path": (
                 str(logs_dir / "d3tec_training_schedule_audit.json")
                 if d3tec_schedule_audit is not None
+                else None
+            ),
+            "daic_schedule_audit_path": (
+                str(logs_dir / "daic_chunk_schedule_audit.json")
+                if daic_schedule_audit is not None
                 else None
             ),
         },
@@ -1509,6 +1557,8 @@ def main() -> None:
     for epoch in range(1, int(config["training"]["num_train_epochs"]) + 1):
         if d3tec_epoch_schedule is not None:
             train_dataset.examples = d3tec_epoch_schedule[epoch - 1]
+        if daic_epoch_schedule is not None:
+            train_dataset.examples = daic_epoch_schedule[epoch - 1]
         model.train()
         # The previous epoch's selection eval disables gradient checkpointing and
         # enables use_cache; restore the training-time memory config before this

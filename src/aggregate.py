@@ -375,9 +375,50 @@ def aggregate_likelihood_predictions(sample_rows: list[dict[str, Any]]) -> tuple
         "valid_only_positive_f1": binary_metrics["positive_f1"],
         "valid_only_macro_f1": binary_metrics["macro_f1"],
         "valid_only_weighted_f1": binary_metrics["weighted_f1"],
+        "predicted_positive_rate": (
+            sum(y_pred) / len(y_pred) if y_pred else 0.0
+        ),
     }
     metrics.update(_count_payload(subject_rows, AGGREGATION_LEVEL_SUBJECT))
     metrics.update(_diagnostic_payload(subject_rows))
+    return subject_rows, metrics
+
+
+def aggregate_mean_probability_predictions(
+    sample_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in sample_rows:
+        grouped[str(row["subject_id"])].append(row)
+    subject_rows: list[dict[str, Any]] = []
+    for subject_id, rows in sorted(grouped.items()):
+        labels = {int(row["label"]) for row in rows}
+        if len(labels) != 1:
+            raise ValueError(f"Inconsistent labels for subject {subject_id}.")
+        probability = sum(float(row["probability"]) for row in rows) / len(rows)
+        subject_rows.append(
+            {
+                "subject_id": subject_id,
+                "label": next(iter(labels)),
+                "prediction": int(probability >= 0.5),
+                "probability": probability,
+                "num_samples": len(rows),
+                "aggregation_method": "mean_depressed_probability_threshold_0.5",
+            }
+        )
+    y_true = [int(row["label"]) for row in subject_rows]
+    y_pred = [int(row["prediction"]) for row in subject_rows]
+    metrics = classification_metrics(y_true, y_pred)
+    metrics.update(
+        {
+            "auroc": binary_auroc(
+                y_true, [float(row["probability"]) for row in subject_rows]
+            ),
+            "num_subjects": len(subject_rows),
+            "predicted_positive_rate": sum(y_pred) / len(y_pred) if y_pred else 0.0,
+            "aggregation_method": "mean_depressed_probability_threshold_0.5",
+        }
+    )
     return subject_rows, metrics
 
 
@@ -486,6 +527,32 @@ def aggregate_generation_predictions(sample_rows: list[dict[str, Any]]) -> tuple
 
 
 def aggregate_original_teacher_forced_predictions(sample_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    # The DAIC chunking protocol predeclares mean score-margin aggregation.
+    # This path also produces a valid prediction when argmax-decoded label
+    # tokens are malformed, because the two teacher-forced candidate scores are
+    # the scientifically authoritative signal for this experiment.
+    if sample_rows and all(
+        str(row.get("subject_score_aggregation", "")).lower() == "mean_score"
+        for row in sample_rows
+    ):
+        rows = [dict(row) for row in sample_rows]
+        for row in rows:
+            row["likelihood_prediction"] = int(
+                float(row["dep_score"]) - float(row["non_score"]) > 0.0
+            )
+        subject_rows, metrics = aggregate_likelihood_predictions(rows)
+        for row in subject_rows:
+            row["prediction_backend"] = PREDICTION_MODE_ORIGINAL_TEACHER_FORCED
+            row["evaluation_protocol_name"] = evaluation_protocol_name(
+                PREDICTION_MODE_ORIGINAL_TEACHER_FORCED
+            )
+            row["aggregation_method"] = "mean_teacher_forced_score_margin"
+        metrics["prediction_backend"] = PREDICTION_MODE_ORIGINAL_TEACHER_FORCED
+        metrics["evaluation_protocol_name"] = evaluation_protocol_name(
+            PREDICTION_MODE_ORIGINAL_TEACHER_FORCED
+        )
+        metrics["aggregation_method"] = "mean_teacher_forced_score_margin"
+        return subject_rows, metrics
     return _aggregate_majority_vote_predictions(
         sample_rows,
         prediction_field="teacher_forced_prediction",

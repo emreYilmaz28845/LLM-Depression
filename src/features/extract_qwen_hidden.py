@@ -204,7 +204,16 @@ def _resolve_subject_partitions(
         or config.get("split", {}).get("cv_protocol")
         or ""
     )
-    if cv_protocol == "train_val":
+    is_daic_chunking = (
+        str(config.get("dataset", "")).lower() == "daic"
+        and str(config.get("evaluation", {}).get("subject_score_aggregation", "")).lower()
+        == "mean_score"
+    )
+    if is_daic_chunking:
+        train_sources = ("train_subject_ids",)
+        heldout_source = "final_eval_subject_ids"
+        evaluation_protocol = "daic_official_train_fit_locked_test_evaluation"
+    elif cv_protocol == "train_val":
         train_sources = ("train_subject_ids",)
         heldout_source = "selection_subject_ids"
         evaluation_protocol = "table_aligned_outer_validation"
@@ -264,10 +273,23 @@ def _validate_saved_split(
         expected_train = set(fold_payload["outer_train_subject_ids"])
         expected_heldout = set(fold_payload["final_eval_subject_ids"])
     else:
-        dev_partitions = set(config["split"].get("dev_pool_partitions") or [
-            config["split"]["train_partition"],
-            config["split"]["selection_partition"],
-        ])
+        is_daic_chunking = (
+            str(config.get("dataset", "")).lower() == "daic"
+            and str(
+                config.get("evaluation", {}).get(
+                    "subject_score_aggregation", ""
+                )
+            ).lower()
+            == "mean_score"
+        )
+        dev_partitions = (
+            {str(config["split"]["train_partition"])}
+            if is_daic_chunking
+            else set(config["split"].get("dev_pool_partitions") or [
+                config["split"]["train_partition"],
+                config["split"]["selection_partition"],
+            ])
+        )
         final_partition = str(config["split"]["final_eval_partition"])
         expected_train = {
             str(row["subject_id"]) for row in split_metadata if str(row["partition"]) in dev_partitions
@@ -400,6 +422,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--condition", help="Unique experiment condition used in metadata and output grouping.")
     parser.add_argument("--emotion-source", help="Predeclared source label for an emotion cache.")
     parser.add_argument("--emotion-language", help="Predeclared language label for emotion captions.")
+    parser.add_argument(
+        "--eval-chunk-policy",
+        choices=("fixed_k", "balanced_joint_cover", "all"),
+        help="DAIC evaluation-view override; recorded in cache identity.",
+    )
+    parser.add_argument("--eval-chunks-per-subject")
     return parser.parse_args()
 
 
@@ -408,6 +436,14 @@ def main() -> None:
     checkpoint_dir = args.checkpoint_dir.resolve()
     output_dir = args.output_dir.resolve()
     saved, config, run_config_path, split_path = _load_saved_run(checkpoint_dir)
+    config = json.loads(json.dumps(config))
+    if args.eval_chunk_policy:
+        config.setdefault("data", {})["eval_chunk_policy"] = args.eval_chunk_policy
+    if args.eval_chunks_per_subject:
+        value = args.eval_chunks_per_subject
+        config.setdefault("data", {})["eval_chunks_per_subject"] = (
+            value if value == "all" else int(value)
+        )
     fold = int(saved["fold"])
     if checkpoint_dir.name != "best_model":
         raise ValueError("Primary experiment requires the fold-specific best_model checkpoint.")
@@ -440,6 +476,17 @@ def main() -> None:
         "split_metadata_sha256": sha256_file(split_metadata_path),
         "manifest_sha256": canonical_manifest_hash,
         "max_examples": args.max_examples,
+        "evaluation_view": {
+            "sample_mode": config.get("data", {}).get("sample_mode"),
+            "eval_chunk_policy": config.get("data", {}).get("eval_chunk_policy"),
+            "eval_chunks_per_subject": config.get("data", {}).get(
+                "eval_chunks_per_subject",
+                config.get("data", {}).get("chunks_per_subject"),
+            ),
+            "subject_score_aggregation": config.get("evaluation", {}).get(
+                "subject_score_aggregation"
+            ),
+        },
     }
     cache_config_sha256 = sha256_text(
         json.dumps(cache_config, sort_keys=True, separators=(",", ":"))
@@ -516,6 +563,7 @@ def main() -> None:
         "saved_split": str(split_path),
         "saved_split_sha256": sha256_file(split_path),
         "evaluation_provenance": evaluation_provenance,
+        "evaluation_view": cache_config["evaluation_view"],
         "split_metadata": str(split_metadata_path),
         "split_metadata_sha256": sha256_file(split_metadata_path),
         "manifest": str(manifest_path),

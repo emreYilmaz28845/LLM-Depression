@@ -52,7 +52,16 @@ class PromptOnlyExtractionCollator:
         }]
         # These fields remain external metadata. In particular, prompt_id is
         # never rendered into the prompt by this collator.
-        for key in ("response_id", "prompt_id", "segment_index", "num_segments"):
+        for key in (
+            "response_id",
+            "prompt_id",
+            "segment_index",
+            "num_segments",
+            "chunk_id",
+            "bundle_id",
+            "bundle_chunk_ids",
+            "bundle_coverage_count",
+        ):
             if key in example:
                 metadata[0][key] = example[key]
         return model_inputs, metadata

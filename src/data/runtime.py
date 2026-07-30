@@ -20,6 +20,7 @@ from src.data.emotion import (
     single_chunk_emotion_block,
     use_emotion,
 )
+from src.daic_chunking import balanced_joint_bundles, resolve_chunking_controls
 from src.utils import (
     get_logger,
     INPUT_MODALITY_AUDIO_ONLY,
@@ -468,7 +469,15 @@ def _build_subject_level_audio_examples(
     if not use_audio:
         raise ValueError("sample_mode=subject_audio requires data.use_audio=true.")
     data_cfg = config["data"]
-    chunks_per_subject = int(data_cfg.get("chunks_per_subject", 4))
+    controls = resolve_chunking_controls(config)
+    configured_k = (
+        controls["train_chunks_per_subject"]
+        if "train" in partition_name.lower()
+        else controls["eval_chunks_per_subject"]
+    )
+    chunks_per_subject = (
+        10**9 if configured_k == "all" else int(configured_k)
+    )
     if chunks_per_subject < 1:
         raise ValueError("data.chunks_per_subject must be >= 1 for subject_audio mode.")
     raw_cap = data_cfg.get("max_audio_seconds_per_chunk", 30.0)
@@ -565,7 +574,43 @@ def _build_subject_level_audio_examples(
             example["emotion_system_prompt"] = config["prompt"]["system"]
             example["emotion_internal_label_text"] = internal_label_text
             example["emotion_audio_placeholder"] = audio_placeholder
-        examples.append(example)
+        if (
+            controls["eval_chunk_policy"] == "balanced_joint_cover"
+            and "train" not in partition_name.lower()
+        ):
+            chunk_ids = [str(row.get("chunk_id", row["sample_id"])) for row in rows]
+            bundles, coverage = balanced_joint_bundles(chunk_ids, effective_k)
+            for bundle_id, indices in enumerate(bundles):
+                bundle = dict(example)
+                bundle_paths = [chunk_paths[index] for index in indices]
+                bundle["sample_id"] = f"{subject_id}__bundle_{bundle_id:03d}"
+                bundle["audio_paths"] = bundle_paths
+                bundle["audio_clip_seconds"] = [max_seconds_per_chunk] * len(indices)
+                bundle["bundle_id"] = bundle_id
+                bundle["bundle_chunk_ids"] = [chunk_ids[index] for index in indices]
+                bundle["bundle_coverage_count"] = coverage["occurrences_per_chunk"]
+                if emotion_on:
+                    captions = [
+                        bundle["chunk_caption_by_path"].get(path)
+                        for path in bundle_paths
+                    ]
+                    bundle_prompt = build_prompt_text(
+                        system_prompt=bundle["emotion_system_prompt"],
+                        user_text=bundle["emotion_user_text"],
+                        num_audios=len(bundle_paths),
+                        use_audio=True,
+                        emotion_captions=captions,
+                        audio_placeholder=bundle.get(
+                            "emotion_audio_placeholder", AUDIO_PLACEHOLDER
+                        ),
+                    )
+                    bundle["prompt_text"] = bundle_prompt
+                    bundle["training_text"] = build_training_text(
+                        bundle_prompt, bundle["emotion_internal_label_text"]
+                    )
+                examples.append(bundle)
+        else:
+            examples.append(example)
         log_row = {
             "partition": partition_name,
             "subject_id": subject_id,
@@ -631,6 +676,30 @@ def build_examples(
             emotion_cache=emotion_cache,
             emotion_policy=emotion_policy,
         )
+
+    if sample_mode == "subject_chunks" and dataset_name == "daic":
+        controls = resolve_chunking_controls(config)
+        for row in sorted(manifest_rows, key=lambda item: item["sample_id"]):
+            example, transcript_log = _base_example_from_row(
+                row, config, transcript_max_chars, emotion_cache, emotion_policy
+            )
+            example["audio_clip_seconds"] = [
+                controls["max_audio_seconds_per_chunk"]
+            ]
+            example["chunk_id"] = str(row.get("chunk_id", row["sample_id"]))
+            examples.append(example)
+            if transcript_log:
+                truncation_logs.append(
+                    {
+                        "partition": partition_name,
+                        "subject_id": row["subject_id"],
+                        "sample_id": row["sample_id"],
+                        **transcript_log,
+                    }
+                )
+        if truncation_log_path:
+            write_jsonl(truncation_logs, truncation_log_path)
+        return examples
 
     if dataset_name != "eatd" or sample_mode == "response":
         for row in sorted(manifest_rows, key=lambda item: item["sample_id"]):

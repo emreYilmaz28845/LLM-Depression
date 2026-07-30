@@ -264,7 +264,7 @@ def _processor_inputs(processor, example: dict[str, Any], text: str, device: tor
 
 
 def _base_sample_row(example: dict[str, Any], checkpoint_name: str, backend_name: str) -> dict[str, Any]:
-    return {
+    row = {
         "checkpoint_name": checkpoint_name,
         "prediction_backend": backend_name,
         "evaluation_protocol_name": evaluation_protocol_name(backend_name),
@@ -281,6 +281,13 @@ def _base_sample_row(example: dict[str, Any], checkpoint_name: str, backend_name
         "end_time": example.get("end_time", ""),
         "segment_duration": example.get("segment_duration", ""),
     }
+    evaluation = example.get("config", {}).get("evaluation", {})
+    if evaluation.get("subject_score_aggregation"):
+        row["subject_score_aggregation"] = evaluation["subject_score_aggregation"]
+    for key in ("chunk_id", "bundle_id", "bundle_chunk_ids", "bundle_coverage_count"):
+        if key in example:
+            row[key] = example[key]
+    return row
 
 
 def score_candidate_label(
@@ -768,6 +775,14 @@ def main() -> None:
     split_mode = resolve_split_mode(config, metadata)
     cv_protocol = resolve_cv_protocol(config) if split_mode == SPLIT_MODE_CV else None
     final_eval_subject_ids = _resolve_final_eval_subject_ids(config, metadata, args.fold)
+    if int(config.get("split", {}).get("smoke_subject_limit", 0) or 0) > 0:
+        saved_split_path = Path(args.checkpoint_dir).parent / "logs" / "split_used.json"
+        if not saved_split_path.is_file():
+            raise FileNotFoundError(
+                f"Smoke evaluation requires the checkpoint's saved split: {saved_split_path}"
+            )
+        saved_split = read_json(saved_split_path)
+        final_eval_subject_ids = sorted(saved_split["final_eval_subject_ids"])
     final_eval_rows = filter_rows_by_subjects(manifest_rows, final_eval_subject_ids)
     evaluation_role = "fold_validation" if cv_protocol == CV_PROTOCOL_TRAIN_VAL else "final_eval"
     examples = build_examples(final_eval_rows, config, partition_name=evaluation_role, truncation_log_path=None)

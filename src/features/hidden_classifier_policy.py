@@ -18,6 +18,7 @@ D3TEC_AGGREGATION_POLICY = (
 D3TEC_WEIGHT_POLICY = "inverse_segments_per_response_rescaled_to_mean_one"
 TEXT_WEIGHT_POLICY = "one_vector_per_subject_unweighted"
 LEGACY_WEIGHT_POLICY = "uniform_rows"
+DAIC_SUBJECT_WEIGHT_POLICY = "inverse_chunks_per_subject_rescaled_to_mean_one"
 
 
 def is_d3tec_audio_rows(rows: list[dict[str, Any]], metadata: dict[str, Any]) -> bool:
@@ -59,6 +60,30 @@ def response_normalized_sample_weights(
         }
 
     if not is_d3tec_audio_rows(rows, metadata):
+        if str(metadata.get("dataset", "")).lower() == "daic":
+            counts = Counter(str(row["subject_id"]) for row in rows)
+            raw = np.asarray(
+                [1.0 / counts[str(row["subject_id"])] for row in rows],
+                dtype=np.float64,
+            )
+            weights = raw / raw.mean()
+            totals: dict[str, float] = defaultdict(float)
+            for row, weight in zip(rows, weights.tolist()):
+                totals[str(row["subject_id"])] += weight
+            return weights, {
+                "schema_version": "hidden_classifier_weight_audit.v1",
+                "policy": DAIC_SUBJECT_WEIGHT_POLICY,
+                "row_count": len(rows),
+                "mean_weight": float(weights.mean()),
+                "response_count": None,
+                "subject_count": len(counts),
+                "equal_response_totals": None,
+                "equal_subject_totals": len(
+                    {round(value, 12) for value in totals.values()}
+                ) == 1,
+                "subject_weight_totals": dict(sorted(totals.items())),
+                "chunks_per_subject": dict(sorted(counts.items())),
+            }
         weights = np.ones(len(rows), dtype=np.float64)
         policy = (
             TEXT_WEIGHT_POLICY
