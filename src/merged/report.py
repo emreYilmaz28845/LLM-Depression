@@ -334,6 +334,67 @@ def update_workbook(workbook_path: Path, cv_rows: list[dict[str, Any]], final_ro
     workbook.save(workbook_path)
 
 
+def validate_workbook(
+    workbook_path: str | Path,
+    *,
+    cv_rows: list[dict[str, Any]],
+    final_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Validate the two generated sheets, tables, filters, and cell values.
+
+    The report is a tracked deliverable, so a successful save is not enough:
+    verify that the workbook still contains the expected rows and that each
+    dedicated sheet has a usable table/filter range.
+    """
+
+    from openpyxl import load_workbook
+
+    path = Path(workbook_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Generated workbook is missing: {path}")
+    workbook = load_workbook(path, data_only=False)
+    expected = {
+        "Merged Symmetric CV": cv_rows,
+        "Merged DAIC Official": final_rows,
+    }
+    sheet_results: dict[str, Any] = {}
+    for title, rows in expected.items():
+        if title not in workbook.sheetnames:
+            raise ValueError(f"Generated workbook is missing sheet {title!r}: {path}")
+        sheet = workbook[title]
+        display_rows = rows if rows else [{"Status": "No completed artifacts"}]
+        headers = list(display_rows[0])
+        if [sheet.cell(1, column).value for column in range(1, len(headers) + 1)] != headers:
+            raise ValueError(f"Workbook headers do not match report rows on {title!r}.")
+        if sheet.max_row != len(display_rows) + 1:
+            raise ValueError(
+                f"Workbook row count mismatch on {title!r}: "
+                f"found={sheet.max_row - 1} expected={len(display_rows)}"
+            )
+        for row_number, row in enumerate(display_rows, start=2):
+            for column, header in enumerate(headers, start=1):
+                actual = sheet.cell(row_number, column).value
+                expected_value = row.get(header, "")
+                blank_equivalent = actual in (None, "") and expected_value in (None, "")
+                if not blank_equivalent and actual != expected_value:
+                    raise ValueError(
+                        f"Workbook value mismatch on {title!r}, row={row_number}, "
+                        f"column={header!r}."
+                    )
+        if not sheet.tables:
+            raise ValueError(f"Workbook sheet {title!r} has no table.")
+        table_refs = {table.ref for table in sheet.tables.values()}
+        if not sheet.auto_filter.ref or sheet.auto_filter.ref not in table_refs:
+            raise ValueError(f"Workbook sheet {title!r} has an invalid table/filter range.")
+        sheet_results[title] = {
+            "rows": len(display_rows),
+            "headers": headers,
+            "table_refs": sorted(table_refs),
+            "auto_filter": sheet.auto_filter.ref,
+        }
+    return {"status": "passed", "workbook": str(path), "sheets": sheet_results}
+
+
 def _execution_metadata(config_paths: list[str | Path], *, run_id: str, source_commit: str) -> dict[str, Any]:
     configs = [load_merged_config(path) for path in config_paths]
     registry_path = Path(configs[0]["output_dirs"]["merged_root"]).parents[1] / "symmetric_merged_jobs" / f"{run_id}.json"
@@ -387,19 +448,28 @@ def generate_reports(
         final_rows.extend(collect_stage_rows(config_path, run_id=run_id, stage="final"))
     cv_fold_path = output / "symmetric_merged_cv_fold_level.csv"
     cv_summary_path = output / "symmetric_merged_cv_fold_mean_std.csv"
+    cv_pooled_path = output / "symmetric_merged_cv_pooled.csv"
     cv_aggregate_path = output / "symmetric_merged_cv_aggregate.csv"
     final_path = output / "symmetric_merged_daic_official_test.csv"
     _write_rows(cv_rows, cv_fold_path)
     _write_rows(_aggregate_fold_rows(cv_rows, stage="cv"), cv_summary_path)
+    _write_rows(cv_pooled_rows, cv_pooled_path)
     cv_aggregate_rows = cv_pooled_rows + _aggregate_summary(cv_pooled_rows, stage="cv")
     _write_rows(cv_aggregate_rows, cv_aggregate_path)
     _write_rows(final_rows, final_path)
     workbook = Path(workbook_path) if workbook_path else Path("depression_results_combined_with_posf1_graphs.xlsx")
+    workbook_validation: dict[str, Any] | None = None
     if cv_rows or final_rows:
+        workbook_cv_rows = cv_rows + _aggregate_fold_rows(cv_rows, stage="cv") + cv_aggregate_rows
         update_workbook(
             workbook,
-            cv_rows + _aggregate_fold_rows(cv_rows, stage="cv") + cv_aggregate_rows,
+            workbook_cv_rows,
             final_rows,
+        )
+        workbook_validation = validate_workbook(
+            workbook,
+            cv_rows=workbook_cv_rows,
+            final_rows=final_rows,
         )
     report_path = output / "symmetric_merged_execution_results.md"
     commit = os.environ.get("SYMMETRIC_MERGED_SOURCE_COMMIT")
@@ -417,6 +487,7 @@ def generate_reports(
         f"- Run ID: `{run_id}`\n- Git commit: `{commit}`\n"
         f"- CV fold rows: {len(cv_rows)}\n- CV pooled rows: {len(cv_pooled_rows)}\n"
         f"- DAIC official-test rows: {len(final_rows)}\n"
+        f"- CV pooled CSV: `{cv_pooled_path}`\n"
         f"- Job registry: `{execution_metadata.get('job_registry')}`\n"
         f"- Job IDs: {', '.join(execution_metadata['job_ids']) or 'none'}\n"
         f"- Registry status: `{execution_metadata.get('registry_status')}`\n\n"
@@ -431,9 +502,17 @@ def generate_reports(
     )
     return {
         "cv_rows": len(cv_rows),
+        "cv_pooled_rows": len(cv_pooled_rows),
         "final_rows": len(final_rows),
-        "csv_paths": [str(cv_fold_path), str(cv_summary_path), str(cv_aggregate_path), str(final_path)],
+        "csv_paths": [
+            str(cv_fold_path),
+            str(cv_summary_path),
+            str(cv_pooled_path),
+            str(cv_aggregate_path),
+            str(final_path),
+        ],
         "workbook": str(workbook),
+        "workbook_validation": workbook_validation,
         "report": str(report_path),
         "execution_metadata": str(execution_metadata_path),
     }
