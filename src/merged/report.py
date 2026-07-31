@@ -115,6 +115,34 @@ def _metric_row(
     }
 
 
+def _prediction_rows_for_fold(fold_root: Path) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    """Read subject-level predictions without collapsing fold boundaries."""
+
+    result: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for dataset in DATASETS:
+        path = fold_root / "qwen" / dataset / "predictions_subject_level.csv"
+        if path.is_file():
+            result[(dataset, "qwen")] = _read_prediction_rows(path)
+    for method in ("logreg", "xgb_fixed", "xgb_optuna"):
+        path = fold_root / "heads" / method / "predictions_subject_level.jsonl"
+        if not path.is_file():
+            continue
+        for item in _read_prediction_rows(path):
+            dataset = str(item.get("dataset", "")).lower()
+            if dataset not in DATASETS:
+                raise ValueError(f"Unknown dataset in {path}: {dataset!r}")
+            result.setdefault((dataset, method), []).append(item)
+    return result
+
+
+def _assert_unique_prediction_ids(rows: list[dict[str, Any]], *, dataset: str, method: str, fold: int | str) -> None:
+    identities = [str(row.get("subject_id") or row.get("sample_id")) for row in rows]
+    if any(value in {"", "None"} for value in identities):
+        raise ValueError(f"Missing prediction identity for {dataset}/{method}/fold={fold}")
+    if len(identities) != len(set(identities)):
+        raise ValueError(f"Duplicate subject predictions for {dataset}/{method}/fold={fold}")
+
+
 def collect_stage_rows(config_path: str | Path, *, run_id: str, stage: str) -> list[dict[str, Any]]:
     config = load_merged_config(config_path)
     modality = str(config["modality"])
@@ -122,34 +150,15 @@ def collect_stage_rows(config_path: str | Path, *, run_id: str, stage: str) -> l
     folds = [0] if stage == "final" else list(range(5))
     rows: list[dict[str, Any]] = []
     for fold in folds:
-        fold_root = root / f"fold_{fold}"
-        method_paths: dict[str, dict[str, Path]] = {dataset: {} for dataset in DATASETS}
-        qwen_root = fold_root / "qwen"
-        for dataset in DATASETS:
-            path = qwen_root / dataset / "predictions_subject_level.csv"
-            if path.is_file():
-                method_paths[dataset]["qwen"] = path
-        for method in ("logreg", "xgb_fixed", "xgb_optuna"):
-            path = fold_root / "heads" / method / "predictions_subject_level.jsonl"
-            if path.is_file():
-                prediction_rows = _read_prediction_rows(path)
-                by_dataset: dict[str, list[dict[str, Any]]] = defaultdict(list)
-                for item in prediction_rows:
-                    by_dataset[str(item.get("dataset", "")).lower()].append(item)
-                for dataset, values in by_dataset.items():
-                    temp = fold_root / "heads" / method / f"{dataset}_predictions.jsonl"
-                    if not temp.is_file():
-                        temp.write_text("\n".join(json.dumps(value) for value in values) + "\n", encoding="utf-8")
-                    method_paths.setdefault(dataset, {})[method] = temp
+        predictions = _prediction_rows_for_fold(root / f"fold_{fold}")
         for dataset in DATASETS:
             if stage == "final" and dataset != "daic":
                 continue
             for method in METHODS:
-                path = method_paths.get(dataset, {}).get(method)
-                if path is None or not path.is_file():
+                prediction_rows = predictions.get((dataset, method))
+                if not prediction_rows:
                     continue
-                prediction_rows = _read_prediction_rows(path)
-                metrics = _metrics_from_rows(prediction_rows)
+                _assert_unique_prediction_ids(prediction_rows, dataset=dataset, method=method, fold=fold)
                 rows.append(
                     _metric_row(
                         dataset=dataset,
@@ -157,11 +166,45 @@ def collect_stage_rows(config_path: str | Path, *, run_id: str, stage: str) -> l
                         method=method,
                         stage=stage,
                         fold=fold,
-                        metrics=metrics,
+                        metrics=_metrics_from_rows(prediction_rows),
                         protocol_label="symmetric_merged_cv" if stage == "cv" else "symmetric_merged_daic_official_test",
                         fold_coverage=1,
                     )
                 )
+    return rows
+
+
+def collect_pooled_stage_rows(config_path: str | Path, *, run_id: str, stage: str = "cv") -> list[dict[str, Any]]:
+    """Pool the five non-overlapping outer-fold prediction files by dataset."""
+
+    if stage != "cv":
+        raise ValueError("Pooled outer-fold rows are defined only for stage=cv.")
+    config = load_merged_config(config_path)
+    modality = str(config["modality"])
+    root = Path(config["output_dirs"]["merged_root"]) / run_id / stage
+    grouped: dict[tuple[str, str], list[tuple[int, list[dict[str, Any]]]]] = defaultdict(list)
+    for fold in range(5):
+        predictions = _prediction_rows_for_fold(root / f"fold_{fold}")
+        for key, prediction_rows in predictions.items():
+            dataset, method = key
+            _assert_unique_prediction_ids(prediction_rows, dataset=dataset, method=method, fold=fold)
+            grouped[key].append((fold, prediction_rows))
+    rows: list[dict[str, Any]] = []
+    for (dataset, method), fold_values in sorted(grouped.items()):
+        combined = [item for _, values in sorted(fold_values) for item in values]
+        _assert_unique_prediction_ids(combined, dataset=dataset, method=method, fold="pooled")
+        rows.append(
+            _metric_row(
+                dataset=dataset,
+                modality=modality,
+                method=method,
+                stage=stage,
+                fold="pooled",
+                metrics=_metrics_from_rows(combined),
+                protocol_label="symmetric_merged_cv_pooled",
+                fold_coverage=len(fold_values),
+            )
+        )
     return rows
 
 
@@ -207,6 +250,11 @@ def _aggregate_summary(rows: list[dict[str, Any]], *, stage: str) -> list[dict[s
     result: list[dict[str, Any]] = []
     for (modality, method), values in sorted(grouped.items()):
         by_dataset = {row["Dataset"]: float(row["Macro-F1"]) for row in values}
+        if stage == "cv" and set(by_dataset) != set(DATASETS):
+            raise ValueError(
+                f"Pooled CV summary for {modality}/{method} does not cover all datasets: "
+                f"{sorted(by_dataset)}"
+            )
         result.append(
             {
                 "Dataset": "five_dataset_mean",
@@ -289,9 +337,11 @@ def generate_reports(
 ) -> dict[str, Any]:
     output = ensure_dir(output_dir)
     cv_rows: list[dict[str, Any]] = []
+    cv_pooled_rows: list[dict[str, Any]] = []
     final_rows: list[dict[str, Any]] = []
     for config_path in config_paths:
         cv_rows.extend(collect_stage_rows(config_path, run_id=run_id, stage="cv"))
+        cv_pooled_rows.extend(collect_pooled_stage_rows(config_path, run_id=run_id, stage="cv"))
         final_rows.extend(collect_stage_rows(config_path, run_id=run_id, stage="final"))
     cv_fold_path = output / "symmetric_merged_cv_fold_level.csv"
     cv_summary_path = output / "symmetric_merged_cv_fold_mean_std.csv"
@@ -299,11 +349,16 @@ def generate_reports(
     final_path = output / "symmetric_merged_daic_official_test.csv"
     _write_rows(cv_rows, cv_fold_path)
     _write_rows(_aggregate_fold_rows(cv_rows, stage="cv"), cv_summary_path)
-    _write_rows(_aggregate_summary(cv_rows, stage="cv"), cv_aggregate_path)
+    cv_aggregate_rows = cv_pooled_rows + _aggregate_summary(cv_pooled_rows, stage="cv")
+    _write_rows(cv_aggregate_rows, cv_aggregate_path)
     _write_rows(final_rows, final_path)
     workbook = Path(workbook_path) if workbook_path else Path("depression_results_combined_with_posf1_graphs.xlsx")
     if cv_rows or final_rows:
-        update_workbook(workbook, cv_rows + _aggregate_fold_rows(cv_rows, stage="cv") + _aggregate_summary(cv_rows, stage="cv"), final_rows)
+        update_workbook(
+            workbook,
+            cv_rows + _aggregate_fold_rows(cv_rows, stage="cv") + cv_aggregate_rows,
+            final_rows,
+        )
     report_path = output / "symmetric_merged_execution_results.md"
     commit = os.environ.get("SYMMETRIC_MERGED_SOURCE_COMMIT")
     if not commit:
@@ -311,7 +366,8 @@ def generate_reports(
     report_path.write_text(
         "# Symmetric merged execution/results\n\n"
         f"- Run ID: `{run_id}`\n- Git commit: `{commit}`\n"
-        f"- CV rows: {len(cv_rows)}\n- DAIC official-test rows: {len(final_rows)}\n"
+        f"- CV fold rows: {len(cv_rows)}\n- CV pooled rows: {len(cv_pooled_rows)}\n"
+        f"- DAIC official-test rows: {len(final_rows)}\n"
         "- Protocol: five datasets, three modalities, Qwen + Logistic Regression + fixed XGBoost + 150-trial grouped Optuna XGBoost.\n",
         encoding="utf-8",
     )
