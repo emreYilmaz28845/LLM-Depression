@@ -37,7 +37,8 @@ def _state(job_id: str) -> tuple[str, str]:
         line = next((line for line in accounting.splitlines() if line.strip()), "")
         fields = line.split("|")
         if fields:
-            return fields[0].split("+", 1)[0].strip().upper(), fields[1].strip() if len(fields) > 1 else ""
+            state = fields[0].split("+", 1)[0].strip().upper().split(None, 1)[0]
+            return state, fields[1].strip() if len(fields) > 1 else ""
     queue = _command(["squeue", "-h", "-j", str(job_id), "-o", "%T"])
     if queue:
         return queue.splitlines()[0].strip().upper(), ""
