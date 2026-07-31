@@ -24,6 +24,7 @@ STAGE="${STAGE:?STAGE is required}"
 FOLD="${FOLD:-0}"
 RUN_ID="${RUN_ID:?RUN_ID is required}"
 CHECKPOINT_DIR="${CHECKPOINT_DIR:?CHECKPOINT_DIR is required}"
+SUBJECTS_PER_CLASS="${SUBJECTS_PER_CLASS:-}"
 LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/symmetric_merged}"
 
 if [ ! -f "$ENV_ACTIVATE" ]; then
@@ -38,6 +39,8 @@ exec > >(tee -a "$LOG_ROOT/postprocess-${SLURM_JOB_ID}.out")
 exec 2> >(tee -a "$LOG_ROOT/postprocess-${SLURM_JOB_ID}.err" >&2)
 export PROJECT_ROOT PYTHONHASHSEED="${PYTHONHASHSEED:-0}"
 export PYTHONPATH="$PROJECT_ROOT/.deps/qwen_hidden:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
-python -m src.merged.postprocess \
+CMD=(python -m src.merged.postprocess \
     --config "$CONFIG" --stage "$STAGE" --fold "$FOLD" --run-id "$RUN_ID" \
-    --checkpoint-dir "$CHECKPOINT_DIR"
+    --checkpoint-dir "$CHECKPOINT_DIR")
+if [ -n "$SUBJECTS_PER_CLASS" ]; then CMD+=(--subjects-per-class "$SUBJECTS_PER_CLASS"); fi
+"${CMD[@]}"
