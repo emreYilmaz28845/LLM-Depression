@@ -10,9 +10,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.merged.protocol import DATASETS, METHODS, OUTER_FOLDS, audit_protocol_splits
+from src.merged.protocol import (
+    DATASETS,
+    METHODS,
+    OUTER_FOLDS,
+    audit_protocol_splits,
+    canonical_sha256,
+)
 from src.merged.runtime import load_merged_config, load_protocol_artifact
-from src.utils import configure_logging, read_json, save_json
+from src.utils import configure_logging, read_json, read_jsonl, save_json
 
 
 def _check_required(path: Path, failures: list[str], label: str) -> None:
@@ -23,6 +29,37 @@ def _check_required(path: Path, failures: list[str], label: str) -> None:
 def _check_present(path: Path, failures: list[str], label: str) -> None:
     if not path.exists():
         failures.append(f"missing:{label}:{path}")
+
+
+def _feature_subjects(
+    rows_path: Path,
+    metadata: dict[str, Any],
+    partition: str,
+    failures: list[str],
+    fold: int,
+) -> tuple[set[str], set[str]]:
+    """Return feature subjects/sample IDs while checking row-level provenance."""
+
+    if not rows_path.is_file():
+        return set(), set()
+    rows = read_jsonl(rows_path)
+    sample_ids = [str(row.get("sample_id", "")) for row in rows]
+    subject_ids = {str(row.get("subject_id", "")) for row in rows}
+    if any(not value or value == "None" for value in sample_ids + list(subject_ids)):
+        failures.append(f"feature_identity_missing:{fold}:{partition}")
+    if len(sample_ids) != len(set(sample_ids)):
+        failures.append(f"feature_sample_duplicates:{fold}:{partition}")
+    if any("::" not in value for value in subject_ids):
+        failures.append(f"feature_subject_namespace:{fold}:{partition}")
+    expected_hash = (metadata.get("row_hashes") or {}).get(partition)
+    if expected_hash and canonical_sha256(rows) != expected_hash:
+        failures.append(f"feature_row_hash_mismatch:{fold}:{partition}")
+    summary = (metadata.get("partitions") or {}).get(partition) or {}
+    if int(summary.get("row_count", len(rows))) != len(rows):
+        failures.append(f"feature_row_count_mismatch:{fold}:{partition}")
+    if int(summary.get("subject_count", len(subject_ids))) != len(subject_ids):
+        failures.append(f"feature_subject_count_mismatch:{fold}:{partition}")
+    return subject_ids, set(sample_ids)
 
 
 def audit_symmetric_run(
@@ -102,6 +139,8 @@ def audit_symmetric_run(
         if head_complete.is_file() and read_json(head_complete).get("status") != "completed":
             failures.append(f"heads_not_completed:{fold}")
         feature_metadata_path = fold_root / "features" / "feature_metadata.json"
+        feature_subjects: dict[str, set[str]] = {}
+        feature_samples: dict[str, set[str]] = {}
         if feature_metadata_path.is_file():
             feature_metadata = read_json(feature_metadata_path)
             if feature_metadata.get("manifest_hash") != protocol["manifest"]["manifest_hash"]:
@@ -119,6 +158,56 @@ def audit_symmetric_run(
                 failures.append(f"feature_dimension_invalid:{fold}")
             if feature_metadata.get("gold_label_protection", {}).get("labels_passed_to_model") is not False:
                 failures.append(f"feature_label_protection_failed:{fold}")
+            for partition in ("outer_train", "outer_holdout"):
+                subjects, samples = _feature_subjects(
+                    fold_root / "features" / f"{partition}_rows.jsonl",
+                    feature_metadata,
+                    partition,
+                    failures,
+                    fold,
+                )
+                feature_subjects[partition] = subjects
+                feature_samples[partition] = samples
+            train_subjects = feature_subjects.get("outer_train", set())
+            holdout_subjects = feature_subjects.get("outer_holdout", set())
+            if train_subjects & holdout_subjects:
+                failures.append(f"feature_train_holdout_overlap:{fold}")
+            daic_official = set(
+                protocol["protocol"]["components"]["daic"].get(
+                    "official_test_subject_ids", []
+                )
+            )
+            if (train_subjects | holdout_subjects) & daic_official:
+                failures.append(f"official_test_in_features:{fold}")
+            observed_datasets = {
+                value.split("::", 1)[0]
+                for value in train_subjects | holdout_subjects
+                if "::" in value
+            }
+            # Final features contain all non-test training datasets plus the
+            # untouched DAIC official-test holdout, so their combined dataset
+            # coverage is still the complete five-dataset protocol.
+            expected_feature_datasets = set(DATASETS)
+            if observed_datasets != expected_feature_datasets:
+                failures.append(
+                    f"feature_dataset_coverage:{fold}:found={sorted(observed_datasets)}"
+                )
+            if stage == "cv":
+                expected_fold = protocol["protocol"]["folds"].get(str(fold), {})
+                if train_subjects != set(expected_fold.get("outer_train_subject_ids", [])):
+                    failures.append(f"feature_train_subject_mismatch:{fold}")
+                if holdout_subjects != set(expected_fold.get("outer_holdout_subject_ids", [])):
+                    failures.append(f"feature_holdout_subject_mismatch:{fold}")
+            elif stage == "final":
+                expected_train = set(protocol["final_partitions"].get("train_subject_ids", []))
+                expected_test = set(protocol["final_partitions"].get("daic_official_test_subject_ids", []))
+                if train_subjects != expected_train:
+                    failures.append(f"final_feature_train_subject_mismatch:{fold}")
+                if holdout_subjects != expected_test:
+                    failures.append(f"final_feature_holdout_subject_mismatch:{fold}")
+            fold_payload["feature_subject_counts"] = {
+                partition: len(values) for partition, values in feature_subjects.items()
+            }
             fold_payload["feature_dimension"] = feature_metadata.get("feature_dimension")
         qwen_summary_path = fold_root / "qwen" / "summary.json"
         if qwen_summary_path.is_file():
@@ -141,6 +230,13 @@ def audit_symmetric_run(
                 method_dir = fold_root / "heads" / method
                 for filename in ("classifier_metadata.json", "classifier.joblib", "metrics_by_dataset.json", "predictions_subject_level.jsonl"):
                     _check_required(method_dir / filename, failures, f"fold_{fold}:{method}:{filename}")
+                metadata_path = method_dir / "classifier_metadata.json"
+                if metadata_path.is_file() and feature_subjects:
+                    classifier_metadata = read_json(metadata_path)
+                    if set(classifier_metadata.get("training_subject_ids", [])) != feature_subjects.get("outer_train", set()):
+                        failures.append(f"head_train_subject_mismatch:{fold}:{method}")
+                    if set(classifier_metadata.get("holdout_subject_ids", [])) != feature_subjects.get("outer_holdout", set()):
+                        failures.append(f"head_holdout_subject_mismatch:{fold}:{method}")
             optuna_summary = fold_root / "heads" / "xgb_optuna" / "optuna" / "study_summary.json"
             if stage != "smoke":
                 _check_required(optuna_summary, failures, f"fold_{fold}:optuna_summary")
