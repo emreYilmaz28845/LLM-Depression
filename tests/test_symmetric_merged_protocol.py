@@ -12,6 +12,7 @@ from src.merged.protocol import (
     build_protocol_splits,
     compute_hierarchical_example_weights,
 )
+from src.merged.runtime import fold_subject_ids
 
 
 def _records():
@@ -84,6 +85,13 @@ def test_final_partitions_keep_only_daic_official_test_outside_training() -> Non
     assert len(final["daic_official_test_subject_ids"]) == 2
     assert not set(final["train_subject_ids"]) & set(final["daic_official_test_subject_ids"])
     assert final["by_dataset"]["cmdc"]["official_test_count"] == 0
+
+
+def test_runtime_reads_folds_from_saved_protocol_artifact_shape() -> None:
+    protocol = build_protocol_splits(_records(), seed=1337, inner_val_ratio=0.2)
+    subjects = fold_subject_ids({"protocol": protocol}, 0, "qwen_train")
+    assert set(subjects) == set(DATASETS)
+    assert all(value.startswith(f"{dataset}::") for dataset, values in subjects.items() for value in values)
 
 
 def test_hierarchical_weights_equalize_dataset_subject_response_and_windows() -> None:
