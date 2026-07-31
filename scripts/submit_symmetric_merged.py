@@ -232,6 +232,8 @@ def submit_registry(registry: dict[str, Any], *, dry_run: bool) -> dict[str, Any
         else:
             submitted_id = _submit_job(job, worker=worker_by_kind[job["kind"]], dependency_id=dependency_id)
         job["job_id"] = submitted_id
+        if dependency_id:
+            job["dependency_job_id"] = dependency_id
         job["submission_time_utc"] = datetime.now(timezone.utc).isoformat()
         job["state"] = "planned_dry_run" if dry_run else "submitted"
         previous_ids[job["job_key"]] = submitted_id
