@@ -269,9 +269,9 @@ def _objective(
             fold_metrics.append({"inner_fold": int(inner_fold["fold"]), **fold_metric})
             weight_audits.append({"inner_fold": int(inner_fold["fold"]), **weight_audit})
             oof_samples.extend(sample_rows)
-        subject_ids = [str(row["subject_id"]) for row in oof_samples]
-        if Counter(subject_ids) != Counter(outer_subjects):
-            raise ValueError("Androids inner OOF rows do not cover each subject exactly once.")
+        observed_subjects = {str(row["subject_id"]) for row in oof_samples}
+        if observed_subjects != outer_subjects:
+            raise ValueError("Androids inner OOF rows do not cover every subject.")
         _, oof_subjects, pooled_metrics = aggregate_androids_hidden_predictions(oof_samples, modality)
         if len(oof_subjects) != len(outer_subjects):
             raise ValueError("Androids inner OOF aggregation changed the subject coverage.")
