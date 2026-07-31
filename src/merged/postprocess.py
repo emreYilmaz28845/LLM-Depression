@@ -216,6 +216,7 @@ def postprocess_merged_fold(
         raise ValueError(f"Refusing to overwrite incomplete merged postprocess output: {output_root}")
     ensure_dir(output_root)
     save_json(identity, identity_path)
+    save_json(merged_config, output_root / "resolved_merged_config.json")
     write_slurm_provenance(
         output_root / "slurm_provenance.json",
         worker="src.merged.postprocess",

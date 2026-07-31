@@ -426,6 +426,7 @@ def run_merged_heads(
         raise ValueError(f"Refusing to overwrite incomplete merged heads: {output_root}")
     ensure_dir(output_root)
     save_json(identity, identity_path)
+    save_json(merged_config, output_root / "resolved_merged_config.json")
     write_slurm_provenance(
         output_root / "slurm_provenance.json",
         worker="src.merged.heads",

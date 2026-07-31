@@ -58,6 +58,7 @@ def audit_symmetric_run(
             _check_required(path, failures, f"fold_{fold}:{label}")
         for path, label in (
             (train_fold_root / "training_identity.json", "training_identity"),
+            (train_fold_root / "resolved_merged_config.json", "training_resolved_config"),
             (train_fold_root / "slurm_provenance.json", "train_provenance"),
             (train_fold_root / "logs" / "composition.json", "composition"),
             (train_fold_root / "logs" / "weighting_audit.json", "weighting_audit"),
@@ -66,6 +67,7 @@ def audit_symmetric_run(
             (train_fold_root / "logs" / "selected_checkpoint.json", "selected_checkpoint"),
             (train_fold_root / "best_model", "best_model"),
             (fold_root / "postprocess_identity.json", "postprocess_identity"),
+            (fold_root / "resolved_merged_config.json", "postprocess_resolved_config"),
             (fold_root / "slurm_provenance.json", "postprocess_provenance"),
             (fold_root / "features" / "outer_train.npz", "outer_train_features"),
             (fold_root / "features" / "outer_train_rows.jsonl", "outer_train_feature_rows"),
@@ -74,6 +76,7 @@ def audit_symmetric_run(
             (fold_root / "features" / "feature_metadata.json", "feature_metadata"),
             (fold_root / "qwen" / "summary.json", "qwen_summary"),
             (fold_root / "heads" / "summary.json", "heads_summary"),
+            (fold_root / "heads" / "resolved_merged_config.json", "heads_resolved_config"),
             (fold_root / "heads" / "inner_folds.json", "head_inner_folds"),
             (fold_root / "heads" / "slurm_provenance.json", "head_provenance"),
         ):

@@ -213,6 +213,7 @@ def train_merged_fold(
         raise ValueError(f"Refusing to overwrite an incomplete merged training output: {run_root}")
     ensure_dir(run_root)
     save_json(identity, run_root / "training_identity.json")
+    save_json(merged_config, run_root / "resolved_merged_config.json")
     write_slurm_provenance(
         run_root / "slurm_provenance.json",
         worker="src.merged.train",
