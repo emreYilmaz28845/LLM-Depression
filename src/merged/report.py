@@ -5,9 +5,11 @@ import csv
 import json
 import math
 import os
+import shutil
 import statistics
 import subprocess
 import sys
+from datetime import datetime, timezone
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -332,6 +334,46 @@ def update_workbook(workbook_path: Path, cv_rows: list[dict[str, Any]], final_ro
     workbook.save(workbook_path)
 
 
+def _execution_metadata(config_paths: list[str | Path], *, run_id: str, source_commit: str) -> dict[str, Any]:
+    configs = [load_merged_config(path) for path in config_paths]
+    registry_path = Path(configs[0]["output_dirs"]["merged_root"]).parents[1] / "symmetric_merged_jobs" / f"{run_id}.json"
+    registry = read_json(registry_path) if registry_path.is_file() else None
+    jobs = (registry or {}).get("jobs", [])
+    audits: dict[str, dict[str, Any]] = {}
+    for config in configs:
+        modality = str(config["modality"])
+        audits[modality] = {}
+        for stage in ("smoke", "cv", "final"):
+            path = Path(config["output_dirs"]["merged_root"]) / run_id / stage / "acceptance_audit.json"
+            if path.is_file():
+                audits[modality][stage] = read_json(path).get("status", "unknown")
+    return {
+        "schema_version": "symmetric_merged_execution_metadata.v1",
+        "run_id": run_id,
+        "source_commit": source_commit,
+        "generated_utc": datetime.now(timezone.utc).isoformat(),
+        "configs": [str(path) for path in config_paths],
+        "job_registry": str(registry_path) if registry is not None else None,
+        "registry_status": (registry or {}).get("registry_status"),
+        "job_ids": sorted(str(job["job_id"]) for job in jobs if job.get("job_id")),
+        "job_count": len(jobs),
+        "job_states": {
+            state: sum(1 for job in jobs if str(job.get("observed_state", job.get("state", ""))).upper() == state)
+            for state in sorted({str(job.get("observed_state", job.get("state", ""))).upper() for job in jobs})
+        },
+        "acceptance_audits": audits,
+        "project_disk": {
+            "path": str(PROJECT_ROOT),
+            "free_bytes_at_report": shutil.disk_usage(PROJECT_ROOT).free,
+            "used_bytes_at_report": shutil.disk_usage(PROJECT_ROOT).used,
+        },
+        "limitations": [
+            "Best-model checkpoints, hidden feature arrays, classifier joblibs, and Optuna SQLite databases remain on MN5 GPFS.",
+            "Reported CV headline metrics are pooled from non-overlapping subject-level outer-fold predictions by dataset.",
+        ],
+    }
+
+
 def generate_reports(
     config_paths: list[str | Path], *, run_id: str, output_dir: str | Path, workbook_path: str | Path | None = None
 ) -> dict[str, Any]:
@@ -363,12 +405,28 @@ def generate_reports(
     commit = os.environ.get("SYMMETRIC_MERGED_SOURCE_COMMIT")
     if not commit:
         commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    execution_metadata = _execution_metadata(config_paths, run_id=run_id, source_commit=commit)
+    execution_metadata_path = output / "symmetric_merged_execution_metadata.json"
+    save_json(execution_metadata, execution_metadata_path)
+    audit_lines = [
+        f"- `{modality}`: " + ", ".join(f"{stage}={status}" for stage, status in stages.items())
+        for modality, stages in execution_metadata["acceptance_audits"].items()
+    ]
     report_path.write_text(
         "# Symmetric merged execution/results\n\n"
         f"- Run ID: `{run_id}`\n- Git commit: `{commit}`\n"
         f"- CV fold rows: {len(cv_rows)}\n- CV pooled rows: {len(cv_pooled_rows)}\n"
         f"- DAIC official-test rows: {len(final_rows)}\n"
-        "- Protocol: five datasets, three modalities, Qwen + Logistic Regression + fixed XGBoost + 150-trial grouped Optuna XGBoost.\n",
+        f"- Job registry: `{execution_metadata.get('job_registry')}`\n"
+        f"- Job IDs: {', '.join(execution_metadata['job_ids']) or 'none'}\n"
+        f"- Registry status: `{execution_metadata.get('registry_status')}`\n\n"
+        "## Acceptance audits\n\n"
+        + ("\n".join(audit_lines) if audit_lines else "- No acceptance audits found.")
+        + "\n\n## Protocol\n\n"
+        "Five datasets, three modalities, Qwen + standardized Logistic Regression + fixed XGBoost + 150-trial grouped Optuna XGBoost.\n\n"
+        "## Limitations\n\n"
+        + "\n".join(f"- {item}" for item in execution_metadata["limitations"])
+        + "\n",
         encoding="utf-8",
     )
     return {
@@ -377,6 +435,7 @@ def generate_reports(
         "csv_paths": [str(cv_fold_path), str(cv_summary_path), str(cv_aggregate_path), str(final_path)],
         "workbook": str(workbook),
         "report": str(report_path),
+        "execution_metadata": str(execution_metadata_path),
     }
 
 
