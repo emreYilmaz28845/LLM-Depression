@@ -55,14 +55,65 @@ def _run_roots(config: dict[str, Any], run_id: str, stage: str, fold: int) -> di
     }
 
 
-def _completed(config: dict[str, Any], run_id: str, stage: str, fold: int, kind: str) -> bool:
+def _completed(
+    config: dict[str, Any],
+    run_id: str,
+    stage: str,
+    fold: int,
+    kind: str,
+    *,
+    epochs: int | None = None,
+    subjects_per_class: int | None = None,
+    trials: int | None = None,
+) -> bool:
     roots = _run_roots(config, run_id, stage, fold)
     if kind == "train":
-        return (roots["train"] / "training_complete.json").is_file() and (roots["train"] / "best_model").is_dir()
+        complete = roots["train"] / "training_complete.json"
+        if not complete.is_file() or not (roots["train"] / "best_model").is_dir():
+            return False
+        payload = read_json(complete)
+        identity = payload.get("identity", {})
+        expected_epochs = int(epochs if epochs is not None else config["training"].get("num_train_epochs", 20))
+        return (
+            payload.get("status") == "completed"
+            and identity.get("config_name") == config.get("name")
+            and identity.get("stage") == stage
+            and int(identity.get("fold", -1)) == int(fold)
+            and identity.get("run_id") == run_id
+            and int(identity.get("epochs", -1)) == expected_epochs
+            and identity.get("subjects_per_class") == subjects_per_class
+        )
     if kind == "postprocess":
-        return (roots["post"] / "postprocess_complete.json").is_file() and (roots["post"] / "features" / "feature_metadata.json").is_file()
+        complete = roots["post"] / "postprocess_complete.json"
+        identity_path = roots["post"] / "postprocess_identity.json"
+        if not complete.is_file() or not identity_path.is_file() or not (roots["post"] / "features" / "feature_metadata.json").is_file():
+            return False
+        identity = read_json(identity_path)
+        return (
+            read_json(complete).get("status") == "completed"
+            and identity.get("config_name") == config.get("name")
+            and identity.get("stage") == stage
+            and int(identity.get("fold", -1)) == int(fold)
+            and identity.get("run_id") == run_id
+            and identity.get("modality") == config.get("modality")
+            and identity.get("checkpoint_dir") == str((roots["train"] / "best_model").resolve())
+            and identity.get("subjects_per_class") == (subjects_per_class if stage == "smoke" else None)
+        )
     if kind == "head":
-        return (roots["post"] / "heads" / "heads_complete.json").is_file()
+        complete = roots["post"] / "heads" / "heads_complete.json"
+        identity_path = roots["post"] / "heads" / "heads_identity.json"
+        if not complete.is_file() or not identity_path.is_file():
+            return False
+        identity = read_json(identity_path)
+        expected_trials = int(trials if trials is not None else 150)
+        return (
+            read_json(complete).get("status") == "completed"
+            and identity.get("stage") == stage
+            and int(identity.get("fold", -1)) == int(fold)
+            and identity.get("run_id") == run_id
+            and identity.get("feature_metadata") == str((roots["post"] / "features" / "feature_metadata.json").resolve())
+            and int(identity.get("optuna_trials", -1)) == expected_trials
+        )
     raise ValueError(kind)
 
 
@@ -165,7 +216,16 @@ def build_job_specs(
                     f"{modality}:{stage}:fold_{fold}:{'train' if job['kind'] == 'postprocess' else 'postprocess'}"
                     if job["kind"] != "train" else None
                 )
-                job["completed_before_submission"] = _completed(config, run_id, stage, fold, job["kind"])
+                job["completed_before_submission"] = _completed(
+                    config,
+                    run_id,
+                    stage,
+                    fold,
+                    job["kind"],
+                    epochs=job.get("epochs"),
+                    subjects_per_class=job.get("subjects_per_class"),
+                    trials=job.get("trials"),
+                )
                 if job["completed_before_submission"]:
                     job["state"] = "skipped_compatible_complete"
                     previous_id = None
