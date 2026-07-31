@@ -20,7 +20,7 @@ if [[ ! -d "$LOCAL_PROJECT_ROOT" ]]; then
 fi
 
 RSYNC_ARGS=(
-    -av --protect-args --itemize-changes
+    -avc --protect-args --itemize-changes
     --exclude='best_model/'
     --exclude='last_model/'
     --exclude='*.safetensors'
