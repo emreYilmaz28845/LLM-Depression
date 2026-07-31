@@ -292,7 +292,7 @@ def main() -> None:
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
-        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent, delete=False
+        prefix=f".{destination.stem}.", suffix=destination.suffix, dir=destination.parent, delete=False
     ) as handle:
         temporary = Path(handle.name)
     try:

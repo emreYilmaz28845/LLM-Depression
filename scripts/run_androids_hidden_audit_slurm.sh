@@ -45,9 +45,9 @@ ACCOUNTING_TEXT="$LOG_ROOT/sacct_${SLURM_JOB_ID}.txt"
 if [ "$MODE" = "production" ] && [ -n "$JOB_REGISTRY" ]; then
     ids="$(awk -F '\t' 'NR > 1 && $2 != "audit" {print $3}' "$JOB_REGISTRY" | paste -sd, -)"
     if [ -n "$ids" ]; then
-        accounting="$(sacct -X -n -P -j "$ids" --format=JobIDRaw,State,ExitCode)"
+        accounting="$(sacct -X -n -P -j "$ids" --format=JobIDRaw,State,ExitCode,Elapsed)"
         printf '%s\n' "$accounting" > "$ACCOUNTING_TEXT"
-        while IFS='|' read -r job_id state exit_code; do
+        while IFS='|' read -r job_id state exit_code _elapsed; do
             [ -z "$job_id" ] && continue
             if [ "$state" != "COMPLETED" ] || [ "$exit_code" != "0:0" ]; then
                 echo "Upstream Androids hidden job did not complete cleanly: $job_id $state $exit_code" >&2
