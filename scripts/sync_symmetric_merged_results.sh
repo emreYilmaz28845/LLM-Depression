@@ -38,12 +38,17 @@ fi
 for modality in "${MODALITIES[@]}"; do
     mkdir -p "$LOCAL_PROJECT_ROOT/outputs/symmetric_merged/$modality" \
         "$LOCAL_PROJECT_ROOT/output_model/symmetric_merged/$modality"
+    for artifact in merged_manifest.jsonl merged_protocol.json; do
+        rsync "${RSYNC_ARGS[@]}" \
+            "$TRANSFER_HOST:$REMOTE_PROJECT_ROOT/outputs/symmetric_merged/$modality/$artifact" \
+            "$LOCAL_PROJECT_ROOT/outputs/symmetric_merged/$modality/$artifact"
+    done
     rsync "${RSYNC_ARGS[@]}" \
-        "$TRANSFER_HOST:$REMOTE_PROJECT_ROOT/outputs/symmetric_merged/$modality/" \
-        "$LOCAL_PROJECT_ROOT/outputs/symmetric_merged/$modality/"
+        "$TRANSFER_HOST:$REMOTE_PROJECT_ROOT/outputs/symmetric_merged/$modality/$RUN_ID/" \
+        "$LOCAL_PROJECT_ROOT/outputs/symmetric_merged/$modality/$RUN_ID/"
     rsync "${RSYNC_ARGS[@]}" \
-        "$TRANSFER_HOST:$REMOTE_PROJECT_ROOT/output_model/symmetric_merged/$modality/" \
-        "$LOCAL_PROJECT_ROOT/output_model/symmetric_merged/$modality/"
+        "$TRANSFER_HOST:$REMOTE_PROJECT_ROOT/output_model/symmetric_merged/$modality/$RUN_ID/" \
+        "$LOCAL_PROJECT_ROOT/output_model/symmetric_merged/$modality/$RUN_ID/"
 done
 
 mkdir -p "$LOCAL_PROJECT_ROOT/outputs/symmetric_merged_jobs" "$LOCAL_PROJECT_ROOT/logs/symmetric_merged"
