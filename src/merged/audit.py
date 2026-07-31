@@ -62,6 +62,24 @@ def _feature_subjects(
     return subject_ids, set(sample_ids)
 
 
+def _audit_provenance(
+    path: Path,
+    failures: list[str],
+    label: str,
+    expected_worker: str,
+) -> None:
+    if not path.is_file():
+        return
+    payload = read_json(path)
+    if not str(payload.get("source_commit", "")).strip():
+        failures.append(f"provenance_source_commit_missing:{label}")
+    if payload.get("worker") != expected_worker:
+        failures.append(f"provenance_worker_mismatch:{label}")
+    scheduler = payload.get("scheduler") or {}
+    if not str(scheduler.get("SLURM_JOB_ID", "")).strip():
+        failures.append(f"provenance_slurm_job_missing:{label}")
+
+
 def audit_symmetric_run(
     config_path: str | Path,
     *,
@@ -121,6 +139,12 @@ def audit_symmetric_run(
                 _check_present(path, failures, f"fold_{fold}:{label}")
             else:
                 _check_required(path, failures, f"fold_{fold}:{label}")
+        for path, label, worker in (
+            (train_fold_root / "slurm_provenance.json", "train", "src.merged.train"),
+            (fold_root / "slurm_provenance.json", "postprocess", "src.merged.postprocess"),
+            (fold_root / "heads" / "slurm_provenance.json", "heads", "src.merged.heads"),
+        ):
+            _audit_provenance(path, failures, f"fold_{fold}:{label}", worker)
         fold_payload: dict[str, Any] = {"fold": fold, "root": str(fold_root), "train_root": str(train_fold_root)}
         if train_complete.is_file():
             train = read_json(train_complete)
@@ -128,7 +152,13 @@ def audit_symmetric_run(
                 failures.append(f"training_not_completed:{fold}")
             fold_payload["selected_epoch"] = train.get("selected_epoch")
             identity = read_json(train_fold_root / "training_identity.json") if (train_fold_root / "training_identity.json").is_file() else {}
-            if identity.get("stage") != stage or int(identity.get("fold", -1)) != fold:
+            if (
+                identity.get("config_name") != config.get("name")
+                or identity.get("stage") != stage
+                or int(identity.get("fold", -1)) != fold
+                or identity.get("run_id") != run_id
+                or identity.get("manifest_hash") != protocol["manifest"].get("manifest_hash")
+            ):
                 failures.append(f"training_identity_mismatch:{fold}")
             if int(train.get("selected_epoch", 0)) < 1 or int(train.get("selected_epoch", 0)) > 20:
                 failures.append(f"selected_epoch_out_of_range:{fold}")
@@ -136,8 +166,29 @@ def audit_symmetric_run(
                 failures.append(f"training_split_hash_mismatch:{fold}")
         if post_complete.is_file() and read_json(post_complete).get("status") != "completed":
             failures.append(f"postprocess_not_completed:{fold}")
+        post_identity_path = fold_root / "postprocess_identity.json"
+        if post_identity_path.is_file():
+            post_identity = read_json(post_identity_path)
+            if (
+                post_identity.get("config_name") != config.get("name")
+                or post_identity.get("modality") != config.get("modality")
+                or post_identity.get("stage") != stage
+                or int(post_identity.get("fold", -1)) != fold
+                or post_identity.get("run_id") != run_id
+                or post_identity.get("manifest_hash") != protocol["manifest"].get("manifest_hash")
+            ):
+                failures.append(f"postprocess_identity_mismatch:{fold}")
         if head_complete.is_file() and read_json(head_complete).get("status") != "completed":
             failures.append(f"heads_not_completed:{fold}")
+        head_identity_path = fold_root / "heads" / "heads_identity.json"
+        if head_identity_path.is_file():
+            head_identity = read_json(head_identity_path)
+            if (
+                head_identity.get("stage") != stage
+                or int(head_identity.get("fold", -1)) != fold
+                or head_identity.get("run_id") != run_id
+            ):
+                failures.append(f"heads_identity_mismatch:{fold}")
         feature_metadata_path = fold_root / "features" / "feature_metadata.json"
         feature_subjects: dict[str, set[str]] = {}
         feature_samples: dict[str, set[str]] = {}
@@ -251,6 +302,10 @@ def audit_symmetric_run(
         failures.append(f"missing:job_registry:{registry_path}")
     else:
         registry = read_json(registry_path)
+        if not str(registry.get("source_commit", "")).strip():
+            failures.append("job_registry_source_commit_missing")
+        if not str(registry.get("plan_hash", "")).strip():
+            failures.append("job_registry_plan_hash_missing")
         matching_jobs = [
             row for row in registry.get("jobs", [])
             if str(row.get("modality")) == str(config.get("modality"))
