@@ -95,6 +95,12 @@ def audit_symmetric_run(
                 failures.append(f"training_identity_mismatch:{fold}")
             if int(train.get("selected_epoch", 0)) < 1 or int(train.get("selected_epoch", 0)) > 20:
                 failures.append(f"selected_epoch_out_of_range:{fold}")
+            if identity.get("protocol_split_hash") != protocol["protocol"].get("split_hash"):
+                failures.append(f"training_split_hash_mismatch:{fold}")
+        if post_complete.is_file() and read_json(post_complete).get("status") != "completed":
+            failures.append(f"postprocess_not_completed:{fold}")
+        if head_complete.is_file() and read_json(head_complete).get("status") != "completed":
+            failures.append(f"heads_not_completed:{fold}")
         feature_metadata_path = fold_root / "features" / "feature_metadata.json"
         if feature_metadata_path.is_file():
             feature_metadata = read_json(feature_metadata_path)
@@ -102,6 +108,9 @@ def audit_symmetric_run(
                 failures.append(f"feature_manifest_hash_mismatch:{fold}")
             if stage == "cv" and feature_metadata.get("split_hash") != protocol["protocol"]["split_hash"]:
                 failures.append(f"feature_split_hash_mismatch:{fold}")
+            expected_fold_hash = protocol["protocol"].get("folds", {}).get(str(fold), {}).get("fold_hash")
+            if stage != "final" and feature_metadata.get("fold_hash") != expected_fold_hash:
+                failures.append(f"feature_fold_hash_mismatch:{fold}")
             if feature_metadata.get("stage") != stage or int(feature_metadata.get("fold", -1)) != fold:
                 failures.append(f"feature_identity_mismatch:{fold}")
             if feature_metadata.get("modality") != config.get("modality"):
