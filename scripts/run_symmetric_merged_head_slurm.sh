@@ -16,8 +16,7 @@ module load bsc/1.0
 module load miniforge/24.3.0-0
 
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
-ENV_ACTIVATE="${ENV_ACTIVATE:-/gpfs/projects/etur92/venvs/qwen_mn5_rebuilt/bin/activate}"
-export PYTHONPATH="$PROJECT_ROOT/.deps/qwen_hidden${PYTHONPATH:+:$PYTHONPATH}"
+ENV_ACTIVATE="${ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate}"
 CONFIG="${CONFIG:?CONFIG is required}"
 STAGE="${STAGE:?STAGE is required}"
 FOLD="${FOLD:-0}"
@@ -37,6 +36,7 @@ mkdir -p "$LOG_ROOT"
 exec > >(tee -a "$LOG_ROOT/head-${SLURM_JOB_ID}.out")
 exec 2> >(tee -a "$LOG_ROOT/head-${SLURM_JOB_ID}.err" >&2)
 export PROJECT_ROOT PYTHONHASHSEED="${PYTHONHASHSEED:-0}"
+export PYTHONPATH="$PROJECT_ROOT/.deps/qwen_hidden:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 CMD=(python -m src.merged.heads --config "$CONFIG" --stage "$STAGE" --fold "$FOLD" --run-id "$RUN_ID" --features-dir "$FEATURES_DIR")
 if [ -n "$TRIALS" ]; then CMD+=(--trials "$TRIALS"); fi
 "${CMD[@]}"

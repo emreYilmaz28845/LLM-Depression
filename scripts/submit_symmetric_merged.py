@@ -123,7 +123,7 @@ def build_job_specs(
                     "fold": fold,
                     "run_id": run_id,
                     "run_root": str(roots["train"]),
-                    "resource": {"gpus": 4, "cpus": 20, "time": config["execution"]["qwen_time"]},
+                    "resource": {"gpus": 4, "cpus": 80, "time": config["execution"]["qwen_time"]},
                     "epochs": final_epochs if stage == "final" else (smoke_epochs if stage == "smoke" else None),
                     "subjects_per_class": smoke_subjects if stage == "smoke" else None,
                 },
@@ -137,7 +137,7 @@ def build_job_specs(
                     "run_root": str(roots["post"]),
                     "checkpoint_dir": str(roots["train"] / "best_model"),
                     "subjects_per_class": smoke_subjects if stage == "smoke" else None,
-                    "resource": {"gpus": 1, "cpus": 8, "time": config["execution"]["postprocess_time"]},
+                    "resource": {"gpus": 1, "cpus": 20, "time": config["execution"]["postprocess_time"]},
                 },
                 {
                     "kind": "head",
