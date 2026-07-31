@@ -163,7 +163,8 @@ def limit_grouped_subjects(
 
 
 def fold_subject_ids(protocol: dict[str, Any], fold: int, partition: str) -> dict[str, list[str]]:
-    payload = protocol.get("folds", {}).get(str(int(fold)))
+    protocol_payload = protocol.get("protocol", protocol)
+    payload = protocol_payload.get("folds", {}).get(str(int(fold)))
     if payload is None:
         raise ValueError(f"Merged protocol has no outer fold {fold}.")
     if partition not in {"outer_train", "qwen_train", "inner_val", "outer_holdout"}:
