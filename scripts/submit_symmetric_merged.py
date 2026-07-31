@@ -246,7 +246,7 @@ def merge_existing_registry(registry: dict[str, Any], existing: dict[str, Any]) 
         old = old_jobs.get(str(job["job_key"]))
         if not old:
             continue
-        old_state = str(old.get("state", "")).lower()
+        old_state = str(old.get("observed_state", old.get("state", ""))).lower()
         old_job_id = old.get("job_id")
         if old_job_id and not str(old_job_id).startswith("dry_") and old_state not in failed_states:
             job["state"] = old.get("state", "submitted")

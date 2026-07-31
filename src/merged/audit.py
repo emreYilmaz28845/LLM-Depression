@@ -86,9 +86,14 @@ def audit_symmetric_run(
     registry = None
     if registry_path.is_file():
         registry = read_json(registry_path)
+        failed_states = {"failed", "cancelled", "timeout", "oom", "out_of_memory", "node_fail", "preempted"}
         bad_jobs = [
             row for row in registry.get("jobs", [])
-            if str(row.get("state", "")).lower() in {"failed", "cancelled", "timeout", "oom"}
+            if str(row.get("observed_state", row.get("state", ""))).lower() in failed_states
+            or (
+                str(row.get("observed_state", "")).upper() == "COMPLETED"
+                and str(row.get("exit_code", "0:0")) not in {"", "0:0"}
+            )
         ]
         if bad_jobs:
             failures.append(f"failed_registry_jobs:{len(bad_jobs)}")
