@@ -41,12 +41,38 @@ def _registry_rows(path: Path | None) -> list[dict[str, str]]:
         return list(csv.DictReader(handle, delimiter="\t"))
 
 
+def _elapsed_seconds(value: str | None) -> float | None:
+    if not value:
+        return None
+    text = str(value)
+    days = 0
+    if "-" in text:
+        day_text, text = text.split("-", 1)
+        days = int(day_text)
+    parts = text.split(":")
+    if len(parts) != 3:
+        return None
+    hours, minutes, seconds = (float(part) for part in parts)
+    return days * 86400.0 + hours * 3600.0 + minutes * 60.0 + seconds
+
+
 def main() -> None:
     args = _parse_args()
     acceptance = json.loads(args.acceptance.read_text(encoding="utf-8"))
     if acceptance.get("status") != "passed" or acceptance.get("mode") != "production":
         raise ValueError("Report generation requires a passed production acceptance audit.")
     registry = _registry_rows(args.registry)
+    accounting = acceptance.get("job_accounting") or {}
+    accounting_jobs = accounting.get("jobs", []) if isinstance(accounting, dict) else []
+    state_counts: dict[str, int] = {}
+    elapsed_values: list[float] = []
+    for job in accounting_jobs:
+        state = str(job.get("state", "UNKNOWN"))
+        state_counts[state] = state_counts.get(state, 0) + 1
+        seconds = _elapsed_seconds(job.get("elapsed"))
+        if seconds is not None:
+            elapsed_values.append(seconds)
+    storage = accounting.get("storage", {}) if isinstance(accounting, dict) else {}
     pooled = acceptance["pooled_results"]
     lines = [
         "# Androids Interview Hidden-State Classifier Report",
@@ -94,6 +120,8 @@ def main() -> None:
             "",
             f"The audit recorded `{acceptance['counts']['fold_head_results']}` fold/head results across five outer folds and `{acceptance['counts']['pooled_results']}` pooled results.",
             f"The synchronized job registry contains `{len(registry)}` rows" + ("." if registry else "; the registry path was not supplied to the report command."),
+            f"Scheduler accounting captured `{len(accounting_jobs)}` top-level jobs with states `{json.dumps(state_counts, sort_keys=True)}`; summed recorded elapsed time is `{sum(elapsed_values):.1f}` seconds and the longest recorded job is `{max(elapsed_values):.1f}` seconds." if elapsed_values else "Scheduler accounting did not contain parseable elapsed times.",
+            f"GPFS accounting at audit time: `{storage.get('available_bytes')}` bytes available on `{storage.get('mountpoint')}` ({storage.get('use_percent', 'unknown')} used)." if storage.get("available_bytes") is not None else "GPFS storage accounting was unavailable in the audit payload.",
             "Each Optuna result was required to contain exactly 150 COMPLETE trials with zero failed trials; inner validation assignments were subject-disjoint and covered each outer-training subject exactly once.",
             "",
             "## Retrieval and limitations",

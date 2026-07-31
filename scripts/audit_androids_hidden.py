@@ -55,6 +55,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--job-registry", type=Path)
+    parser.add_argument("--job-accounting", type=Path)
     parser.add_argument("--smoke-extraction-dir", type=Path)
     parser.add_argument("--smoke-fixed-root", type=Path)
     parser.add_argument("--smoke-optuna-dir", type=Path)
@@ -265,6 +266,12 @@ def _read_registry(path: Path | None) -> list[dict[str, str]]:
         return list(csv.DictReader(handle, delimiter="\t"))
 
 
+def _read_optional_json(path: Path | None) -> Any:
+    if path is None or not path.is_file():
+        return None
+    return read_json(path)
+
+
 def _production_audit(args: argparse.Namespace) -> dict[str, Any]:
     if args.cache_root is None or args.classifier_root is None:
         raise ValueError("Production audit requires --cache-root and --classifier-root.")
@@ -353,6 +360,7 @@ def _production_audit(args: argparse.Namespace) -> dict[str, Any]:
         "pooled_results": pooled_reports,
         "cache_inventory": [caches[key] for key in sorted(caches)],
         "job_registry": _read_registry(args.job_registry),
+        "job_accounting": _read_optional_json(args.job_accounting),
     }
     return result
 
@@ -417,6 +425,7 @@ def _smoke_audit(args: argparse.Namespace) -> dict[str, Any]:
         },
         "fixed_results": fixed_reports,
         "optuna_result": optuna_report,
+        "job_accounting": _read_optional_json(args.job_accounting),
     }
 
 
