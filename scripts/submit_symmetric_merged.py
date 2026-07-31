@@ -155,9 +155,17 @@ def build_job_specs(
     else:
         folds = [0]
     jobs: list[dict[str, Any]] = []
+    config_identities: list[dict[str, str]] = []
     for config_path in configs:
         config = load_merged_config(config_path)
         modality = str(config["modality"])
+        config_identities.append(
+            {
+                "path": str(config_path),
+                "sha256": sha256_file(config_path),
+                "modality": modality,
+            }
+        )
         if stage == "final":
             # This gate is evaluated by the real submit path. A dry-run still
             # reports the exact deterministic epoch input when available.
@@ -236,11 +244,20 @@ def build_job_specs(
                     previous_id = job["expected_job_id"]
                 jobs.append(job)
     expected = 3 if stage == "smoke" else 45 if stage == "cv" else 9
+    plan_identity = {
+        "stage": stage,
+        "configs": config_identities,
+        "smoke_subjects": int(smoke_subjects),
+        "smoke_epochs": int(smoke_epochs),
+        "smoke_trials": int(smoke_trials),
+    }
     return {
         "schema_version": "symmetric_merged_job_registry.v1",
         "run_id": run_id,
         "stage": stage,
         "source_commit": _source_commit(),
+        "plan_identity": plan_identity,
+        "plan_hash": canonical_sha256(plan_identity),
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "expected_fresh_job_count": expected,
         "planned_job_count": sum(job["state"] == "planned" for job in jobs),
@@ -369,6 +386,20 @@ def main() -> None:
         # A rerun may reuse a registry only when it is the same protocol plan.
         if existing.get("expected_fresh_job_count") != registry.get("expected_fresh_job_count"):
             raise ValueError(f"Existing registry is incompatible: {registry_path}")
+        if existing.get("plan_hash") and existing.get("plan_hash") != registry.get("plan_hash"):
+            raise ValueError(f"Existing registry has an incompatible protocol plan: {registry_path}")
+        existing_configs = {
+            str(job.get("job_key")): str(job.get("config"))
+            for job in existing.get("jobs", [])
+            if job.get("job_key")
+        }
+        current_configs = {
+            str(job.get("job_key")): str(job.get("config"))
+            for job in registry.get("jobs", [])
+            if job.get("job_key")
+        }
+        if existing_configs and existing_configs != current_configs:
+            raise ValueError(f"Existing registry has incompatible job/config identities: {registry_path}")
         registry = merge_existing_registry(registry, existing)
     registry = submit_registry(registry, dry_run=args.dry_run)
     save_json(registry, registry_path)
