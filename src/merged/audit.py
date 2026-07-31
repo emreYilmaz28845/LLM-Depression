@@ -58,6 +58,7 @@ def audit_symmetric_run(
             _check_required(path, failures, f"fold_{fold}:{label}")
         for path, label in (
             (train_fold_root / "training_identity.json", "training_identity"),
+            (train_fold_root / "slurm_provenance.json", "train_provenance"),
             (train_fold_root / "logs" / "composition.json", "composition"),
             (train_fold_root / "logs" / "weighting_audit.json", "weighting_audit"),
             (train_fold_root / "logs" / "schedule_audit.json", "schedule_audit"),
