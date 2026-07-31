@@ -778,33 +778,54 @@ def build_grouped_inner_folds(
     return result
 
 
-def audit_protocol_splits(protocol: dict[str, Any]) -> dict[str, Any]:
+def audit_protocol_splits(
+    protocol: dict[str, Any], *, require_daic_official_test_count: bool = False
+) -> dict[str, Any]:
     failures: list[str] = []
     for dataset in DATASETS:
         component = protocol.get("components", {}).get(dataset)
         if not component:
             failures.append(f"missing_component:{dataset}")
             continue
-        official = set(component.get("official_test_subject_ids", []))
-        observed: set[str] = set()
+        official = {str(value) for value in component.get("official_test_subject_ids", [])}
+        observed: Counter[str] = Counter()
+        development_subjects: set[str] | None = None
         for fold in range(OUTER_FOLDS):
             payload = component.get("folds", {}).get(str(fold))
             if not payload:
                 failures.append(f"missing_fold:{dataset}:{fold}")
                 continue
-            train = set(payload["outer_train_subject_ids"])
-            inner = set(payload["inner_val_subject_ids"])
-            qwen_train = set(payload["qwen_train_subject_ids"])
-            holdout = set(payload["outer_holdout_subject_ids"])
-            if train & holdout or qwen_train & inner or train & holdout:
+            train = {str(value) for value in payload["outer_train_subject_ids"]}
+            inner = {str(value) for value in payload["inner_val_subject_ids"]}
+            qwen_train = {str(value) for value in payload["qwen_train_subject_ids"]}
+            holdout = {str(value) for value in payload["outer_holdout_subject_ids"]}
+            for identity in train | inner | qwen_train | holdout:
+                if not identity.startswith(f"{dataset}::"):
+                    failures.append(f"namespace_mismatch:{dataset}:{fold}:{identity}")
+            if train & holdout or qwen_train & inner or qwen_train & holdout or inner & holdout:
                 failures.append(f"overlap:{dataset}:{fold}")
             if holdout & official:
                 failures.append(f"official_test_in_cv:{dataset}:{fold}")
-            if qwen_train | inner != train:
+            if qwen_train | inner != train or qwen_train & inner:
                 failures.append(f"inner_partition_not_complete:{dataset}:{fold}")
+            if (train | holdout) & official:
+                failures.append(f"official_test_in_outer_training:{dataset}:{fold}")
+            fold_development = train | holdout
+            if development_subjects is None:
+                development_subjects = fold_development
+            elif fold_development != development_subjects:
+                failures.append(f"development_pool_changed:{dataset}:{fold}")
+            if fold_development & official:
+                failures.append(f"official_test_in_development_pool:{dataset}:{fold}")
             observed.update(holdout)
-        if len(observed) != len({subject for payload in component.get("folds", {}).values() for subject in payload.get("outer_holdout_subject_ids", [])}):
-            failures.append(f"outer_holdout_duplicate:{dataset}")
+        if any(count != 1 for count in observed.values()) or (
+            development_subjects is not None and set(observed) != development_subjects
+        ):
+            failures.append(f"outer_holdout_coverage_mismatch:{dataset}")
+        if require_daic_official_test_count and len(official) != 47 and dataset == "daic":
+            failures.append(f"daic_official_test_count:{len(official)}")
+        if dataset != "daic" and official:
+            failures.append(f"non_daic_official_test_subjects:{dataset}")
     return {
         "schema_version": "symmetric_protocol_split_audit.v1",
         "status": "passed" if not failures else "failed",
@@ -840,7 +861,12 @@ def save_protocol_artifacts(
         "manifest_file_sha256": sha256_file(manifest_path),
         "protocol": protocol,
         "final_partitions": final_partitions,
-        "split_audit": audit_protocol_splits(protocol),
+        "split_audit": audit_protocol_splits(
+            protocol,
+            require_daic_official_test_count=bool(
+                (merged_config.get("protocol_settings") or {}).get("daic_official_test_only", False)
+            ),
+        ),
     }
     payload["artifact_hash"] = canonical_sha256(payload)
     (output / "merged_protocol.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
