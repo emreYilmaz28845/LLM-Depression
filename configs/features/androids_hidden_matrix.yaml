@@ -1,0 +1,38 @@
+# Protocol-frozen Androids hidden-state classifier matrix.
+dataset: androids_interview
+source_production_run_id: androids_interview_prod_20260730T145948Z
+modalities:
+  audio_only:
+    source_condition: audio_only
+    checkpoint_subdir: audio_only
+  audio_text:
+    source_condition: audio_text_segment_aligned
+    checkpoint_subdir: audio_text_segment_aligned
+  text_only:
+    source_condition: text_only
+    checkpoint_subdir: text_only
+folds: [0, 1, 2, 3, 4]
+manifest_path: outputs/manifests_androids_interview/androids_interview_manifest.jsonl
+manifest_sha256: 01a351f7277e4763a8bb9e4983bba190b265becafafca6d7ee04bdcfc948cbed
+split_path: outputs/splits_androids_interview/androids_interview_folds.json
+split_sha256: f75dd2ba7bb324af26de8c5ae3497d2108e6b50815c0ef6cbcade7de70992518
+fixed_heads: [logreg_raw, xgb_raw]
+optuna_head: xgb_optuna_150t_d6
+optuna:
+  objective: macro_f1
+  target_trials: 150
+  inner_folds: 3
+  seed: 1337
+  inner_seed: 1337
+  search_profile: standard_d6
+  xgb_threads: 20
+aggregation:
+  audio: window_mean_to_turn_mean_to_subject_mean
+  text_only: one_vector_per_subject
+  threshold: 0.5
+  exact_tie_policy: invalid_and_counted_wrong
+prohibited:
+  full_turn: true
+  pca: true
+  oversampling: true
+  controls: true
