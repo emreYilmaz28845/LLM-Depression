@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import statistics
 import subprocess
 import sys
@@ -304,7 +305,9 @@ def generate_reports(
     if cv_rows or final_rows:
         update_workbook(workbook, cv_rows + _aggregate_fold_rows(cv_rows, stage="cv") + _aggregate_summary(cv_rows, stage="cv"), final_rows)
     report_path = output / "symmetric_merged_execution_results.md"
-    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    commit = os.environ.get("SYMMETRIC_MERGED_SOURCE_COMMIT")
+    if not commit:
+        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     report_path.write_text(
         "# Symmetric merged execution/results\n\n"
         f"- Run ID: `{run_id}`\n- Git commit: `{commit}`\n"

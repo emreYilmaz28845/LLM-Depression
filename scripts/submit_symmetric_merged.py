@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -31,6 +32,9 @@ CONFIG_BY_MODALITY = {
 
 
 def _source_commit() -> str:
+    explicit = str(os.environ.get("SYMMETRIC_MERGED_SOURCE_COMMIT", "")).strip()
+    if explicit:
+        return explicit
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, text=True, stderr=subprocess.DEVNULL
@@ -192,6 +196,7 @@ def _submit_job(job: dict[str, Any], *, worker: Path, dependency_id: str | None)
         "STAGE": job["stage"],
         "FOLD": str(job["fold"]),
         "RUN_ID": job["run_id"],
+        "SOURCE_COMMIT": _source_commit(),
     }
     for key in ("epochs", "subjects_per_class", "trials", "checkpoint_dir", "features_dir"):
         if job.get(key) is not None:

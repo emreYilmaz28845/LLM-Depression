@@ -23,17 +23,18 @@ def write_slurm_provenance(path: str | Path, *, worker: str, **payload: Any) -> 
         "SLURM_JOB_ACCOUNT",
         "SLURM_JOB_QOS",
     )
-    save_json(
-        {
-            "schema_version": "symmetric_merged_slurm_provenance.v1",
-            "worker": worker,
-            "hostname": socket.gethostname(),
-            "platform": platform.platform(),
-            "python": sys.executable,
-            "python_version": platform.python_version(),
-            "cwd": os.getcwd(),
-            "scheduler": {key: os.environ.get(key) for key in keys if os.environ.get(key) is not None},
-            **payload,
-        },
-        path,
-    )
+    source_commit = os.environ.get("SOURCE_COMMIT") or os.environ.get("SYMMETRIC_MERGED_SOURCE_COMMIT")
+    provenance = {
+        "schema_version": "symmetric_merged_slurm_provenance.v1",
+        "worker": worker,
+        "hostname": socket.gethostname(),
+        "platform": platform.platform(),
+        "python": sys.executable,
+        "python_version": platform.python_version(),
+        "cwd": os.getcwd(),
+        "scheduler": {key: os.environ.get(key) for key in keys if os.environ.get(key) is not None},
+        **payload,
+    }
+    if source_commit:
+        provenance["source_commit"] = str(source_commit)
+    save_json(provenance, path)
