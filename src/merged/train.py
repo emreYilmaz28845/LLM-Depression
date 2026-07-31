@@ -323,7 +323,7 @@ def train_merged_fold(
                 scale = weight / global_weight * process_count
                 context = (
                     accelerator.no_sync(model)
-                    if local_position < len(local_indices) - 1
+                    if local_position < len(local_items) - 1
                     else torch.enable_grad()
                 )
                 with context:
