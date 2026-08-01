@@ -5,21 +5,25 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from src.utils import read_json, save_json
-
-
 TERMINAL_SUCCESS = {"COMPLETED"}
 TERMINAL_FAILURE = {"FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL", "PREEMPTED"}
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _save_json(payload: dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
 
 
 def _command(args: list[str]) -> str:
@@ -61,7 +65,7 @@ def _state(job_id: str) -> tuple[str, str, dict[str, str]]:
 
 
 def refresh_registry(path: Path) -> dict[str, Any]:
-    registry = read_json(path)
+    registry = _read_json(path)
     failures: list[dict[str, Any]] = []
     terminal = True
     for job in registry.get("jobs", []):
@@ -83,7 +87,7 @@ def refresh_registry(path: Path) -> dict[str, Any]:
     registry["terminal"] = terminal
     registry["observed_failures"] = failures
     registry["registry_status"] = "failed" if failures else "terminal_success" if terminal else "active"
-    save_json(registry, path)
+    _save_json(registry, path)
     return registry
 
 
