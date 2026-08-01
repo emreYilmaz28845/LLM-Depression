@@ -10,6 +10,7 @@ from scripts.submit_symmetric_merged import (
     _stage_plans,
     merge_existing_registry,
 )
+from src.merged.runtime import load_merged_config
 
 
 def _stage_plan(stage: str, plan_hash: str) -> dict:
@@ -126,3 +127,9 @@ def test_qwen_worker_uses_all_allocated_gpus() -> None:
     assert "torchrun --standalone" in worker
     assert "--nproc_per_node=\"$NPROC_PER_NODE\"" in worker
     assert "python -m src.merged.train" not in worker
+
+
+def test_merged_text_only_uses_the_dense_text_backbone() -> None:
+    config = load_merged_config(CONFIG_BY_MODALITY["text_only"])
+    assert config["modality"] == "text_only"
+    assert config["model_name_or_path"].endswith("/Qwen2-7B-Instruct")
