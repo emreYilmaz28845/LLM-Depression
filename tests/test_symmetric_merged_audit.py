@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.merged.audit import _audit_head_inner_folds, _audit_training_artifacts
+from src.merged.audit import (
+    _audit_feature_test_protection,
+    _audit_head_inner_folds,
+    _audit_training_artifacts,
+)
 from src.merged.protocol import DATASETS, canonical_sha256
 
 
@@ -100,3 +104,28 @@ def test_training_artifact_audit_checks_schedule_and_selection_mean(tmp_path: Pa
     failures = []
     _audit_training_artifacts(tmp_path, stage="cv", failures=failures, fold=0)
     assert "selection_mean_mismatch:0:1" in failures
+
+
+def test_final_feature_audit_allows_official_test_only_in_holdout() -> None:
+    official = {"daic::999"}
+    failures: list[str] = []
+    _audit_feature_test_protection(
+        stage="final",
+        train_subjects={"daic::1", "cmdc::1"},
+        holdout_subjects=official,
+        daic_official_subjects=official,
+        failures=failures,
+        fold=0,
+    )
+    assert failures == []
+
+    failures = []
+    _audit_feature_test_protection(
+        stage="final",
+        train_subjects=official,
+        holdout_subjects=set(),
+        daic_official_subjects=official,
+        failures=failures,
+        fold=0,
+    )
+    assert failures == ["official_test_in_final_training_features:0"]

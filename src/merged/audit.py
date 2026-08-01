@@ -134,6 +134,26 @@ def _audit_head_inner_folds(
         failures.append(f"head_inner_validation_subject_coverage:{fold}")
 
 
+def _audit_feature_test_protection(
+    *,
+    stage: str,
+    train_subjects: set[str],
+    holdout_subjects: set[str],
+    daic_official_subjects: set[str],
+    failures: list[str],
+    fold: int,
+) -> None:
+    """Enforce DAIC test protection with the final-stage holdout exception."""
+
+    # CV/smoke features must never contain the untouched DAIC official-test
+    # subjects. The final stage deliberately evaluates on those subjects, but
+    # they must still remain absent from final training features.
+    if stage != "final" and (train_subjects | holdout_subjects) & daic_official_subjects:
+        failures.append(f"official_test_in_features:{fold}")
+    if stage == "final" and train_subjects & daic_official_subjects:
+        failures.append(f"official_test_in_final_training_features:{fold}")
+
+
 def _audit_training_artifacts(
     train_root: Path,
     *,
@@ -342,8 +362,14 @@ def audit_symmetric_run(
                     "official_test_subject_ids", []
                 )
             )
-            if (train_subjects | holdout_subjects) & daic_official:
-                failures.append(f"official_test_in_features:{fold}")
+            _audit_feature_test_protection(
+                stage=stage,
+                train_subjects=train_subjects,
+                holdout_subjects=holdout_subjects,
+                daic_official_subjects=daic_official,
+                failures=failures,
+                fold=fold,
+            )
             observed_datasets = {
                 value.split("::", 1)[0]
                 for value in train_subjects | holdout_subjects
