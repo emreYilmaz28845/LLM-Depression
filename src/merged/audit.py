@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import statistics
 import sys
 from pathlib import Path
 from typing import Any
@@ -262,6 +263,18 @@ def audit_symmetric_run(
     train_stage_root = Path(config["output_dirs"]["run_root"]) / run_id / stage
     fold_results: list[dict[str, Any]] = []
     omitted_heavy_artifacts: list[str] = []
+    expected_final_epoch: int | None = None
+    if stage == "final":
+        cv_train_root = train_stage_root.parent / "cv"
+        cv_epochs: list[int] = []
+        for cv_fold in range(OUTER_FOLDS):
+            selection_path = cv_train_root / f"fold_{cv_fold}" / "logs" / "selected_checkpoint.json"
+            if not selection_path.is_file():
+                failures.append(f"final_cv_selection_missing:{cv_fold}")
+                continue
+            cv_epochs.append(int(read_json(selection_path).get("selected_epoch", -1)))
+        if len(cv_epochs) == OUTER_FOLDS and all(1 <= epoch <= 20 for epoch in cv_epochs):
+            expected_final_epoch = int(math.floor(float(statistics.median(cv_epochs)) + 0.5))
     for fold in range(fold_count):
         fold_root = root / f"fold_{fold}"
         train_fold_root = train_stage_root / f"fold_{fold}"
@@ -344,6 +357,11 @@ def audit_symmetric_run(
                 failures.append(f"training_identity_mismatch:{fold}")
             if int(train.get("selected_epoch", 0)) < 1 or int(train.get("selected_epoch", 0)) > 20:
                 failures.append(f"selected_epoch_out_of_range:{fold}")
+            if stage == "final" and expected_final_epoch is not None:
+                if int(identity.get("epochs", -1)) != expected_final_epoch:
+                    failures.append(f"final_epoch_median_mismatch:{fold}")
+                if int(train.get("selected_epoch", -1)) != expected_final_epoch:
+                    failures.append(f"final_selected_epoch_median_mismatch:{fold}")
             if identity.get("protocol_split_hash") != protocol["protocol"].get("split_hash"):
                 failures.append(f"training_split_hash_mismatch:{fold}")
         if post_complete.is_file() and read_json(post_complete).get("status") != "completed":
@@ -551,6 +569,7 @@ def audit_symmetric_run(
         "stage": stage,
         "run_id": run_id,
         "expected_folds": fold_count,
+        "expected_final_epoch": expected_final_epoch,
         "protocol_split_hash": protocol["protocol"].get("split_hash"),
         "manifest_hash": protocol["manifest"].get("manifest_hash"),
         "failures": failures,
