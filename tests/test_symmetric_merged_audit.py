@@ -97,6 +97,9 @@ def test_training_artifact_audit_checks_schedule_and_selection_mean(tmp_path: Pa
         json.dumps([{"epoch": 1, "component_selection_metrics": metrics, "mean_dataset_macro_f1": 0.5}]),
         encoding="utf-8",
     )
+    (logs / "selected_checkpoint.json").write_text(
+        json.dumps({"selected_epoch": 1}), encoding="utf-8"
+    )
     failures: list[str] = []
     _audit_training_artifacts(tmp_path, stage="cv", failures=failures, fold=0)
     assert failures == []

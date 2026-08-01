@@ -221,6 +221,7 @@ def _audit_training_artifacts(
         failures.append(f"training_history_empty:{fold}")
         return
     if stage != "final":
+        selection_rows: list[tuple[int, float]] = []
         for row in history:
             metrics = row.get("component_selection_metrics") or {}
             if set(metrics) != set(DATASETS):
@@ -230,6 +231,13 @@ def _audit_training_artifacts(
             expected = sum(values) / len(values)
             if not math.isclose(float(row.get("mean_dataset_macro_f1", float("nan"))), expected, rel_tol=0.0, abs_tol=1e-10):
                 failures.append(f"selection_mean_mismatch:{fold}:{row.get('epoch')}")
+            selection_rows.append((int(row.get("epoch", -1)), float(expected)))
+        selected_path = train_root / "logs" / "selected_checkpoint.json"
+        if selection_rows and selected_path.is_file():
+            selected_epoch = int(read_json(selected_path).get("selected_epoch", -1))
+            expected_epoch = max(selection_rows, key=lambda item: (item[1], -item[0]))[0]
+            if selected_epoch != expected_epoch:
+                failures.append(f"selected_epoch_not_best_mean_macro_f1:{fold}")
 
 
 def audit_symmetric_run(
