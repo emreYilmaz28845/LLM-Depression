@@ -276,7 +276,11 @@ def build_job_specs(
                         job["dependency_job_id"] = previous_id
                     previous_id = job["expected_job_id"]
                 jobs.append(job)
-    expected = 3 if stage == "smoke" else 45 if stage == "cv" else 9
+    # The default production invocation has three modalities (45 CV or 9
+    # final jobs), while targeted retries may intentionally pass one or more
+    # configs. Count the actual planned chain so retry registries remain
+    # truthful without changing the default protocol scope.
+    expected = len(configs) * len(folds) * 3
     plan_identity = {
         "stage": stage,
         "configs": config_identities,

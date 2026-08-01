@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from scripts.submit_symmetric_merged import (
+    CONFIG_BY_MODALITY,
+    build_job_specs,
     _set_combined_registry_metadata,
     _final_epoch_for_dry_run,
     _stage_plans,
@@ -102,3 +104,17 @@ def test_final_dry_run_resolves_frozen_median_epoch_when_cv_is_accepted(tmp_path
         '{"status": "failed"}\n', encoding="utf-8"
     )
     assert _final_epoch_for_dry_run(config, run_id, "audio_text") is None
+
+
+def test_targeted_retry_job_count_matches_selected_configs() -> None:
+    registry = build_job_specs(
+        [CONFIG_BY_MODALITY["audio_text"]],
+        stage="cv",
+        run_id="targeted_retry_count",
+        dry_run=True,
+        smoke_subjects=2,
+        smoke_epochs=1,
+        smoke_trials=2,
+    )
+    assert registry["expected_fresh_job_count"] == 15
+    assert len(registry["jobs"]) == 15
