@@ -137,6 +137,7 @@ def test_merged_train_preflight_does_not_self_create_an_incomplete_run() -> None
     assert source.index("accelerator = Accelerator(") < source.index("if complete_path.is_file()")
     assert source.count("accelerator.wait_for_everyone()") >= 2
     assert "if is_local_main_process:" in source
+    assert source.index("with context:") < source.index("outputs = model(**batch)")
 
 
 def test_merged_postprocess_preflight_does_not_self_create_an_incomplete_run() -> None:

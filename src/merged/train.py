@@ -352,10 +352,7 @@ def train_merged_fold(
                     for key, value in batch.items()
                 }
                 batch.pop("loss_weight", None)
-                outputs = model(**batch)
                 weight = 0.0 if dummy else float(weighted_examples[example_index]["loss_weight"])
-                local_loss_numerator += float(outputs.loss.detach().item()) * weight
-                local_loss_denominator += weight
                 scale = weight / global_weight * process_count
                 context = (
                     accelerator.no_sync(model)
@@ -363,7 +360,13 @@ def train_merged_fold(
                     else torch.enable_grad()
                 )
                 with context:
+                    # DDP observes the no-sync flag during the forward pass;
+                    # entering it only around backward still performs an
+                    # all-reduce for every microbatch.
+                    outputs = model(**batch)
                     accelerator.backward(outputs.loss * float(scale))
+                local_loss_numerator += float(outputs.loss.detach().item()) * weight
+                local_loss_denominator += weight
             loss_stats = torch.tensor(
                 [local_loss_numerator, local_loss_denominator],
                 dtype=torch.float64,
