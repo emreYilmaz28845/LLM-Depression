@@ -408,6 +408,25 @@ def _execution_metadata(config_paths: list[str | Path], *, run_id: str, source_c
             path = Path(config["output_dirs"]["merged_root"]) / run_id / stage / "acceptance_audit.json"
             if path.is_file():
                 audits[modality][stage] = read_json(path).get("status", "unknown")
+    job_accounting = [
+        {
+            "job_id": str(job.get("job_id")),
+            "job_key": job.get("job_key"),
+            "stage": job.get("stage"),
+            "modality": job.get("modality"),
+            "fold": job.get("fold"),
+            "kind": job.get("kind"),
+            "state": job.get("observed_state", job.get("state")),
+            "exit_code": job.get("exit_code", ""),
+            "elapsed": job.get("elapsed", ""),
+            "max_rss": job.get("max_rss", ""),
+            "allocated_cpus": job.get("allocated_cpus", ""),
+            "allocated_tres": job.get("allocated_tres", ""),
+            "node_list": job.get("node_list", ""),
+        }
+        for job in jobs
+        if job.get("job_id")
+    ]
     return {
         "schema_version": "symmetric_merged_execution_metadata.v1",
         "run_id": run_id,
@@ -421,6 +440,23 @@ def _execution_metadata(config_paths: list[str | Path], *, run_id: str, source_c
         "job_states": {
             state: sum(1 for job in jobs if str(job.get("observed_state", job.get("state", ""))).upper() == state)
             for state in sorted({str(job.get("observed_state", job.get("state", ""))).upper() for job in jobs})
+        },
+        "job_accounting": job_accounting,
+        "runtime_storage": {
+            "accounted_job_count": sum(
+                bool(row.get("elapsed") or row.get("max_rss") or row.get("allocated_tres"))
+                for row in job_accounting
+            ),
+            "job_accounting_fields": [
+                "elapsed",
+                "max_rss",
+                "allocated_cpus",
+                "allocated_tres",
+                "node_list",
+            ],
+            "project_disk_path": str(PROJECT_ROOT),
+            "project_disk_free_bytes": shutil.disk_usage(PROJECT_ROOT).free,
+            "project_disk_used_bytes": shutil.disk_usage(PROJECT_ROOT).used,
         },
         "acceptance_audits": audits,
         "project_disk": {
@@ -491,6 +527,9 @@ def generate_reports(
         f"- Job registry: `{execution_metadata.get('job_registry')}`\n"
         f"- Job IDs: {', '.join(execution_metadata['job_ids']) or 'none'}\n"
         f"- Registry status: `{execution_metadata.get('registry_status')}`\n\n"
+        f"- Slurm accounting rows: {len(execution_metadata['job_accounting'])}; "
+        f"accounted runtime/resource rows: {execution_metadata['runtime_storage']['accounted_job_count']}\n"
+        f"- Runtime/storage metadata: `{execution_metadata_path}`\n\n"
         "## Acceptance audits\n\n"
         + ("\n".join(audit_lines) if audit_lines else "- No acceptance audits found.")
         + "\n\n## Protocol\n\n"

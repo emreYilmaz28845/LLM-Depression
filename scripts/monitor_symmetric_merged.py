@@ -29,20 +29,35 @@ def _command(args: list[str]) -> str:
         return ""
 
 
-def _state(job_id: str) -> tuple[str, str]:
+def _state(job_id: str) -> tuple[str, str, dict[str, str]]:
     accounting = _command(
-        ["sacct", "-X", "-n", "-P", "-j", str(job_id), "--format=State,ExitCode"]
+        [
+            "sacct",
+            "-X",
+            "-n",
+            "-P",
+            "-j",
+            str(job_id),
+            "--format=State,ExitCode,Elapsed,MaxRSS,AllocCPUS,AllocTRES,NodeList",
+        ]
     )
     if accounting:
         line = next((line for line in accounting.splitlines() if line.strip()), "")
         fields = line.split("|")
         if fields:
             state = fields[0].split("+", 1)[0].strip().upper().split(None, 1)[0]
-            return state, fields[1].strip() if len(fields) > 1 else ""
+            values = fields + [""] * 7
+            return state, values[1].strip(), {
+                "elapsed": values[2].strip(),
+                "max_rss": values[3].strip(),
+                "allocated_cpus": values[4].strip(),
+                "allocated_tres": values[5].strip(),
+                "node_list": values[6].strip(),
+            }
     queue = _command(["squeue", "-h", "-j", str(job_id), "-o", "%T"])
     if queue:
-        return queue.splitlines()[0].strip().upper(), ""
-    return "UNKNOWN", ""
+        return queue.splitlines()[0].strip().upper(), "", {}
+    return "UNKNOWN", "", {}
 
 
 def refresh_registry(path: Path) -> dict[str, Any]:
@@ -55,9 +70,12 @@ def refresh_registry(path: Path) -> dict[str, Any]:
             if job.get("state") == "planned_dry_run":
                 job["observed_state"] = "DRY_RUN"
             continue
-        state, exit_code = _state(str(job_id))
+        state, exit_code, accounting = _state(str(job_id))
         job["observed_state"] = state
         job["exit_code"] = exit_code
+        for key, value in accounting.items():
+            if value:
+                job[key] = value
         if state not in TERMINAL_SUCCESS | TERMINAL_FAILURE:
             terminal = False
         if state in TERMINAL_FAILURE or (state == "COMPLETED" and exit_code not in {"", "0:0"}):

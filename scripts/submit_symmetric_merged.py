@@ -255,14 +255,22 @@ def build_job_specs(
         "smoke_epochs": int(smoke_epochs),
         "smoke_trials": int(smoke_trials),
     }
+    stage_plan = {
+        "stage": stage,
+        "plan_identity": plan_identity,
+        "plan_hash": canonical_sha256(plan_identity),
+        "expected_fresh_job_count": expected,
+    }
     return {
-        "schema_version": "symmetric_merged_job_registry.v1",
+        "schema_version": "symmetric_merged_job_registry.v2",
         "run_id": run_id,
         "stage": stage,
         "source_commit": _source_commit(),
         "reservation": _reservation() or None,
         "plan_identity": plan_identity,
-        "plan_hash": canonical_sha256(plan_identity),
+        "plan_hash": stage_plan["plan_hash"],
+        "stages": [stage],
+        "stage_plans": {stage: stage_plan},
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "expected_fresh_job_count": expected,
         "planned_job_count": sum(job["state"] == "planned" for job in jobs),
@@ -348,6 +356,68 @@ def merge_existing_registry(registry: dict[str, Any], existing: dict[str, Any]) 
                     job[key] = old[key]
         elif old_state in failed_states:
             job["retry"] = int(old.get("retry", 0)) + 1
+    current_keys = {str(job.get("job_key")) for job in registry.get("jobs", [])}
+    for old in existing.get("jobs", []):
+        if str(old.get("job_key")) not in current_keys:
+            registry.setdefault("jobs", []).append(old)
+    registry["jobs"].sort(
+        key=lambda job: (
+            str(job.get("stage", "")),
+            str(job.get("modality", "")),
+            int(job.get("fold", 0)),
+            str(job.get("kind", "")),
+        )
+    )
+    return registry
+
+
+def _stage_plans(registry: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Read stage plans from v2 registries and legacy single-stage files."""
+
+    plans = registry.get("stage_plans")
+    if isinstance(plans, dict) and plans:
+        return {
+            str(stage): dict(payload)
+            for stage, payload in plans.items()
+            if isinstance(payload, dict)
+        }
+    stage = str(registry.get("stage", "")).strip()
+    if stage and stage != "multi":
+        return {
+            stage: {
+                "stage": stage,
+                "plan_identity": registry.get("plan_identity", {}),
+                "plan_hash": registry.get("plan_hash"),
+                "expected_fresh_job_count": registry.get("expected_fresh_job_count"),
+            }
+        }
+    return {}
+
+
+def _set_combined_registry_metadata(
+    registry: dict[str, Any], stage_plans: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """Make one registry authoritative for all stages sharing a run ID."""
+
+    ordered = {stage: stage_plans[stage] for stage in sorted(stage_plans)}
+    stages = list(ordered)
+    registry["schema_version"] = "symmetric_merged_job_registry.v2"
+    registry["stages"] = stages
+    registry["stage"] = stages[0] if len(stages) == 1 else "multi"
+    registry["stage_plans"] = ordered
+    registry["plan_identity"] = {
+        "stages": {
+            stage: ordered[stage].get("plan_identity", {})
+            for stage in stages
+        }
+    }
+    registry["plan_hash"] = canonical_sha256(
+        {stage: ordered[stage].get("plan_hash") for stage in stages}
+    )
+    registry["expected_job_count"] = sum(
+        int(ordered[stage].get("expected_fresh_job_count", 0) or 0)
+        for stage in stages
+    )
     return registry
 
 
@@ -389,17 +459,20 @@ def main() -> None:
     registry_path = resolve_project_path(args.registry) if args.registry else PROJECT_ROOT / "outputs/symmetric_merged_jobs" / f"{run_id}.json"
     if registry_path.exists():
         existing = read_json(registry_path)
-        if existing.get("run_id") != run_id or existing.get("stage") != args.stage:
+        if existing.get("run_id") != run_id:
             raise ValueError(f"Refusing colliding symmetric merged registry: {registry_path}")
-        # A rerun may reuse a registry only when it is the same protocol plan.
-        if existing.get("expected_fresh_job_count") != registry.get("expected_fresh_job_count"):
-            raise ValueError(f"Existing registry is incompatible: {registry_path}")
-        if existing.get("plan_hash") and existing.get("plan_hash") != registry.get("plan_hash"):
-            raise ValueError(f"Existing registry has an incompatible protocol plan: {registry_path}")
+        # A rerun may reuse a stage only when it is the same protocol plan.
+        # A new stage may be appended to the same run ID: final needs the CV
+        # artifacts and epoch selections under that shared run root.
+        existing_stage_plans = _stage_plans(existing)
+        current_stage_plan = _stage_plans(registry)[args.stage]
+        if args.stage in existing_stage_plans:
+            if existing_stage_plans[args.stage].get("plan_hash") != current_stage_plan.get("plan_hash"):
+                raise ValueError(f"Existing registry has an incompatible protocol plan: {registry_path}")
         existing_configs = {
             str(job.get("job_key")): str(job.get("config"))
             for job in existing.get("jobs", [])
-            if job.get("job_key")
+            if job.get("job_key") and str(job.get("stage")) == args.stage
         }
         current_configs = {
             str(job.get("job_key")): str(job.get("config"))
@@ -409,6 +482,10 @@ def main() -> None:
         if existing_configs and existing_configs != current_configs:
             raise ValueError(f"Existing registry has incompatible job/config identities: {registry_path}")
         registry = merge_existing_registry(registry, existing)
+        existing_stage_plans[args.stage] = current_stage_plan
+        registry = _set_combined_registry_metadata(registry, existing_stage_plans)
+    else:
+        registry = _set_combined_registry_metadata(registry, _stage_plans(registry))
     registry = submit_registry(registry, dry_run=args.dry_run)
     save_json(registry, registry_path)
     print(json.dumps({

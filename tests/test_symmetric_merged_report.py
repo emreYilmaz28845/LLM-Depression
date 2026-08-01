@@ -84,6 +84,18 @@ def test_report_writes_pooled_csv_and_validates_workbook(tmp_path: Path) -> None
     assert result["cv_rows"] == 3 * 5 * 5 * 4
     assert result["cv_pooled_rows"] == 3 * 5 * 4
     assert Path(tmp_path / "report" / "symmetric_merged_cv_pooled.csv").is_file()
+    metadata = json.loads(
+        (tmp_path / "report" / "symmetric_merged_execution_metadata.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert metadata["runtime_storage"]["job_accounting_fields"] == [
+        "elapsed",
+        "max_rss",
+        "allocated_cpus",
+        "allocated_tres",
+        "node_list",
+    ]
     assert result["workbook_validation"]["status"] == "passed"
     assert set(result["workbook_validation"]["sheets"]) == {
         "Merged Symmetric CV",
