@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -133,6 +134,60 @@ def _audit_head_inner_folds(
         failures.append(f"head_inner_validation_subject_coverage:{fold}")
 
 
+def _audit_training_artifacts(
+    train_root: Path,
+    *,
+    stage: str,
+    failures: list[str],
+    fold: int,
+) -> None:
+    """Check persisted weighting, schedule, and selection invariants."""
+
+    weighting_path = train_root / "logs" / "weighting_audit.json"
+    if weighting_path.is_file():
+        weighting = read_json(weighting_path)
+        for key in ("equal_dataset_totals", "natural_class_prevalence_preserved", "no_sampling", "no_duplication"):
+            if weighting.get(key) is not True:
+                failures.append(f"weighting_invariant_failed:{fold}:{key}")
+        if not math.isclose(float(weighting.get("mean_loss_weight", 0.0)), 1.0, rel_tol=0.0, abs_tol=1e-8):
+            failures.append(f"weighting_mean_not_normalized:{fold}")
+        if len(weighting.get("datasets", [])) != len(DATASETS):
+            failures.append(f"weighting_dataset_coverage:{fold}")
+
+    schedule_path = train_root / "logs" / "schedule_audit.json"
+    schedule_payload = read_json(schedule_path) if schedule_path.is_file() else {}
+    epochs = schedule_payload.get("epochs") or []
+    if not epochs:
+        failures.append(f"schedule_epochs_missing:{fold}")
+    for epoch in epochs:
+        example_count = int(epoch.get("example_count", -1))
+        occurrences = {int(index): int(count) for index, count in (epoch.get("sample_occurrence_counts") or {}).items()}
+        if example_count < 1 or set(occurrences) != set(range(example_count)) or set(occurrences.values()) != {1}:
+            failures.append(f"schedule_one_time_coverage:{fold}:{epoch.get('epoch')}")
+        blocks = epoch.get("blocks") or []
+        flattened = [int(index) for block in blocks for index in block.get("example_indices", [])]
+        if sorted(flattened) != list(range(example_count)):
+            failures.append(f"schedule_block_coverage:{fold}:{epoch.get('epoch')}")
+
+    history_path = train_root / "logs" / "training_history.json"
+    if not history_path.is_file():
+        return
+    history = read_json(history_path)
+    if not isinstance(history, list) or not history:
+        failures.append(f"training_history_empty:{fold}")
+        return
+    if stage != "final":
+        for row in history:
+            metrics = row.get("component_selection_metrics") or {}
+            if set(metrics) != set(DATASETS):
+                failures.append(f"selection_dataset_coverage:{fold}:{row.get('epoch')}")
+                continue
+            values = [float(metrics[dataset]["macro_f1"]) for dataset in DATASETS]
+            expected = sum(values) / len(values)
+            if not math.isclose(float(row.get("mean_dataset_macro_f1", float("nan"))), expected, rel_tol=0.0, abs_tol=1e-10):
+                failures.append(f"selection_mean_mismatch:{fold}:{row.get('epoch')}")
+
+
 def audit_symmetric_run(
     config_path: str | Path,
     *,
@@ -198,6 +253,12 @@ def audit_symmetric_run(
             (fold_root / "heads" / "slurm_provenance.json", "heads", "src.merged.heads"),
         ):
             _audit_provenance(path, failures, f"fold_{fold}:{label}", worker)
+        _audit_training_artifacts(
+            train_fold_root,
+            stage=stage,
+            failures=failures,
+            fold=fold,
+        )
         fold_payload: dict[str, Any] = {"fold": fold, "root": str(fold_root), "train_root": str(train_fold_root)}
         if train_complete.is_file():
             train = read_json(train_complete)
