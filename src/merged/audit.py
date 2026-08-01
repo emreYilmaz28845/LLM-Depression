@@ -214,6 +214,7 @@ def audit_symmetric_run(
     stage: str,
     run_id: str,
     expected_folds: int | None = None,
+    allow_omitted_heavy_artifacts: bool = False,
 ) -> dict[str, Any]:
     config = load_merged_config(config_path)
     protocol = load_protocol_artifact(config)
@@ -227,6 +228,7 @@ def audit_symmetric_run(
     root = Path(config["output_dirs"]["merged_root"]) / run_id / stage
     train_stage_root = Path(config["output_dirs"]["run_root"]) / run_id / stage
     fold_results: list[dict[str, Any]] = []
+    omitted_heavy_artifacts: list[str] = []
     for fold in range(fold_count):
         fold_root = root / f"fold_{fold}"
         train_fold_root = train_stage_root / f"fold_{fold}"
@@ -248,13 +250,10 @@ def audit_symmetric_run(
             (train_fold_root / "logs" / "schedule_audit.json", "schedule_audit"),
             (train_fold_root / "logs" / "training_history.json", "training_history"),
             (train_fold_root / "logs" / "selected_checkpoint.json", "selected_checkpoint"),
-            (train_fold_root / "best_model", "best_model"),
             (fold_root / "postprocess_identity.json", "postprocess_identity"),
             (fold_root / "resolved_merged_config.json", "postprocess_resolved_config"),
             (fold_root / "slurm_provenance.json", "postprocess_provenance"),
-            (fold_root / "features" / "outer_train.npz", "outer_train_features"),
             (fold_root / "features" / "outer_train_rows.jsonl", "outer_train_feature_rows"),
-            (fold_root / "features" / "outer_holdout.npz", "outer_holdout_features"),
             (fold_root / "features" / "outer_holdout_rows.jsonl", "outer_holdout_feature_rows"),
             (fold_root / "features" / "feature_metadata.json", "feature_metadata"),
             (fold_root / "qwen" / "summary.json", "qwen_summary"),
@@ -263,8 +262,21 @@ def audit_symmetric_run(
             (fold_root / "heads" / "inner_folds.json", "head_inner_folds"),
             (fold_root / "heads" / "slurm_provenance.json", "head_provenance"),
         ):
-            if label == "best_model":
-                _check_present(path, failures, f"fold_{fold}:{label}")
+            _check_required(path, failures, f"fold_{fold}:{label}")
+        heavy_paths = (
+            (train_fold_root / "best_model", "best_model"),
+            (fold_root / "features" / "outer_train.npz", "outer_train_features"),
+            (fold_root / "features" / "outer_holdout.npz", "outer_holdout_features"),
+        )
+        for method in ("logreg", "xgb_fixed", "xgb_optuna"):
+            heavy_paths += (
+                (fold_root / "heads" / method / "classifier.joblib", f"{method}:classifier"),
+            )
+        for path, label in heavy_paths:
+            if path.exists():
+                continue
+            if allow_omitted_heavy_artifacts:
+                omitted_heavy_artifacts.append(f"fold_{fold}:{label}")
             else:
                 _check_required(path, failures, f"fold_{fold}:{label}")
         for path, label, worker in (
@@ -419,7 +431,7 @@ def audit_symmetric_run(
                 failures.append(f"head_method_coverage:{fold}:found={sorted(heads)}")
             for method in ("logreg", "xgb_fixed", "xgb_optuna"):
                 method_dir = fold_root / "heads" / method
-                for filename in ("classifier_metadata.json", "classifier.joblib", "metrics_by_dataset.json", "predictions_subject_level.jsonl"):
+                for filename in ("classifier_metadata.json", "metrics_by_dataset.json", "predictions_subject_level.jsonl"):
                     _check_required(method_dir / filename, failures, f"fold_{fold}:{method}:{filename}")
                 metadata_path = method_dir / "classifier_metadata.json"
                 if metadata_path.is_file() and feature_subjects:
@@ -488,6 +500,8 @@ def audit_symmetric_run(
         "protocol_split_hash": protocol["protocol"].get("split_hash"),
         "manifest_hash": protocol["manifest"].get("manifest_hash"),
         "failures": failures,
+        "allow_omitted_heavy_artifacts": bool(allow_omitted_heavy_artifacts),
+        "omitted_heavy_artifacts": sorted(omitted_heavy_artifacts),
         "folds": fold_results,
         "job_registry": str(registry_path) if registry is not None else None,
         "requirements": {
@@ -510,6 +524,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stage", choices=("smoke", "cv", "final"), required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--expected-folds", type=int)
+    parser.add_argument(
+        "--allow-omitted-heavy-artifacts",
+        action="store_true",
+        help="Allow compact local result syncs to omit checkpoints, dense feature arrays, and classifier joblibs.",
+    )
     return parser.parse_args()
 
 
@@ -521,6 +540,7 @@ def main() -> None:
         stage=args.stage,
         run_id=args.run_id,
         expected_folds=args.expected_folds,
+        allow_omitted_heavy_artifacts=args.allow_omitted_heavy_artifacts,
     )
     print(json.dumps(result, indent=2), flush=True)
     raise SystemExit(0 if result["status"] == "passed" else 1)
