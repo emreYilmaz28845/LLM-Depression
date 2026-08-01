@@ -32,6 +32,62 @@ RSYNC_ARGS=(
     --exclude='**/classifier.joblib'
     --exclude='**/*.db'
 )
+
+hash_file() {
+    local path="$1"
+    local prefix="$2"
+    [[ -f "$path" ]] || {
+        echo "Cannot hash missing result file: $path" >&2
+        return 1
+    }
+    local digest
+    digest="$(sha256sum -- "$path" | awk '{print $1}')"
+    printf '%s  %s\n' "$digest" "$prefix"
+}
+
+hash_tree() {
+    local root="$1"
+    local prefix="$2"
+    [[ -d "$root" ]] || {
+        echo "Cannot hash missing result directory: $root" >&2
+        return 1
+    }
+    (
+        cd "$root"
+        find . -type f \
+            ! -path '*/best_model/*' \
+            ! -path '*/last_model/*' \
+            ! -name '*.safetensors' \
+            ! -name '*.bin' \
+            ! -name '*.pt' \
+            ! -path '*/features/*.npz' \
+            ! -name 'classifier.joblib' \
+            ! -name '*.db' \
+            -print0 \
+            | sort -z \
+            | while IFS= read -r -d '' relative_path; do
+                local digest
+                digest="$(sha256sum -- "$relative_path" | awk '{print $1}')"
+                printf '%s  %s/%s\n' "$digest" "$prefix" "${relative_path#./}"
+            done
+    )
+}
+
+collect_hashes() {
+    local project_root="$1"
+    local run_id="$2"
+    {
+        for modality in "${MODALITIES[@]}"; do
+            hash_file "$project_root/outputs/symmetric_merged/$modality/merged_manifest.jsonl" "outputs/symmetric_merged/$modality/merged_manifest.jsonl"
+            hash_file "$project_root/outputs/symmetric_merged/$modality/merged_protocol.json" "outputs/symmetric_merged/$modality/merged_protocol.json"
+            hash_tree "$project_root/outputs/symmetric_merged/$modality/$run_id" "outputs/symmetric_merged/$modality/$run_id"
+            hash_tree "$project_root/output_model/symmetric_merged/$modality/$run_id" "output_model/symmetric_merged/$modality/$run_id"
+        done
+        hash_file "$project_root/outputs/symmetric_merged_jobs/$run_id.json" "outputs/symmetric_merged_jobs/$run_id.json"
+        hash_tree "$project_root/logs/symmetric_merged" "logs/symmetric_merged"
+    } | LC_ALL=C sort
+}
+
 if [[ "$DRY_RUN" == "1" ]]; then
     RSYNC_ARGS+=(--dry-run)
 fi
@@ -63,10 +119,71 @@ rsync "${RSYNC_ARGS[@]}" \
 if [[ "$DRY_RUN" == "1" ]]; then
     echo "Dry run only; no symmetric merged result artifacts were transferred."
 else
-    echo "Retrieved symmetric merged reporting artifacts for $RUN_ID without heavy model/feature artifacts."
-    find "$LOCAL_PROJECT_ROOT/outputs/symmetric_merged" \
-        "$LOCAL_PROJECT_ROOT/output_model/symmetric_merged" \
-        -type f -path "*" -not -name '*.npz' -not -name '*.safetensors' \
-        -not -name '*.joblib' -not -name '*.db' -print0 \
-        | sort -z | xargs -0 sha256sum > "$LOCAL_PROJECT_ROOT/outputs/symmetric_merged_jobs/${RUN_ID}_local_result_hashes.sha256"
+    hash_tmp_dir="$(mktemp -d)"
+    trap 'rm -rf "$hash_tmp_dir"' EXIT
+    remote_hashes="$hash_tmp_dir/remote.sha256"
+    local_hashes="$hash_tmp_dir/local.sha256"
+    ssh "$TRANSFER_HOST" bash -s -- "$REMOTE_PROJECT_ROOT" "$RUN_ID" > "$remote_hashes" <<'REMOTE_HASH'
+set -euo pipefail
+REMOTE_PROJECT_ROOT="$1"
+RUN_ID="$2"
+MODALITIES=(audio_text audio_only text_only)
+
+hash_file() {
+    local path="$1"
+    local prefix="$2"
+    [[ -f "$path" ]] || { echo "Cannot hash missing result file: $path" >&2; return 1; }
+    local digest
+    digest="$(sha256sum -- "$path" | awk '{print $1}')"
+    printf '%s  %s\n' "$digest" "$prefix"
+}
+
+hash_tree() {
+    local root="$1"
+    local prefix="$2"
+    [[ -d "$root" ]] || { echo "Cannot hash missing result directory: $root" >&2; return 1; }
+    (
+        cd "$root"
+        find . -type f \
+            ! -path '*/best_model/*' \
+            ! -path '*/last_model/*' \
+            ! -name '*.safetensors' \
+            ! -name '*.bin' \
+            ! -name '*.pt' \
+            ! -path '*/features/*.npz' \
+            ! -name 'classifier.joblib' \
+            ! -name '*.db' \
+            -print0 \
+            | sort -z \
+            | while IFS= read -r -d '' relative_path; do
+                digest="$(sha256sum -- "$relative_path" | awk '{print $1}')"
+                printf '%s  %s/%s\n' "$digest" "$prefix" "${relative_path#./}"
+            done
+    )
+}
+
+collect_hashes() {
+    {
+        for modality in "${MODALITIES[@]}"; do
+            hash_file "$REMOTE_PROJECT_ROOT/outputs/symmetric_merged/$modality/merged_manifest.jsonl" "outputs/symmetric_merged/$modality/merged_manifest.jsonl"
+            hash_file "$REMOTE_PROJECT_ROOT/outputs/symmetric_merged/$modality/merged_protocol.json" "outputs/symmetric_merged/$modality/merged_protocol.json"
+            hash_tree "$REMOTE_PROJECT_ROOT/outputs/symmetric_merged/$modality/$RUN_ID" "outputs/symmetric_merged/$modality/$RUN_ID"
+            hash_tree "$REMOTE_PROJECT_ROOT/output_model/symmetric_merged/$modality/$RUN_ID" "output_model/symmetric_merged/$modality/$RUN_ID"
+        done
+        hash_file "$REMOTE_PROJECT_ROOT/outputs/symmetric_merged_jobs/$RUN_ID.json" "outputs/symmetric_merged_jobs/$RUN_ID.json"
+        hash_tree "$REMOTE_PROJECT_ROOT/logs/symmetric_merged" "logs/symmetric_merged"
+    } | LC_ALL=C sort
+}
+
+collect_hashes
+REMOTE_HASH
+    collect_hashes "$LOCAL_PROJECT_ROOT" "$RUN_ID" > "$local_hashes"
+    missing_hashes="$(comm -23 "$remote_hashes" "$local_hashes")"
+    if [[ -n "$missing_hashes" ]]; then
+        echo "Transferred result checksum verification failed; remote entries missing or mismatched locally:" >&2
+        printf '%s\n' "$missing_hashes" >&2
+        exit 1
+    fi
+    cp "$local_hashes" "$LOCAL_PROJECT_ROOT/outputs/symmetric_merged_jobs/${RUN_ID}_local_result_hashes.sha256"
+    echo "Retrieved and checksum-verified symmetric merged reporting artifacts for $RUN_ID without heavy model/feature artifacts."
 fi
