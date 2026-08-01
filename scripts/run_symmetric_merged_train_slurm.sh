@@ -35,6 +35,7 @@ FOLD="${FOLD:-0}"
 RUN_ID="${RUN_ID:?RUN_ID is required}"
 EPOCHS="${EPOCHS:-}"
 SUBJECTS_PER_CLASS="${SUBJECTS_PER_CLASS:-}"
+NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
 LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/symmetric_merged}"
 
 if [ ! -f "$ENV_ACTIVATE" ]; then
@@ -50,7 +51,16 @@ exec 2> >(tee -a "$LOG_ROOT/train-${SLURM_JOB_ID}.err" >&2)
 export PROJECT_ROOT CUBLAS_WORKSPACE_CONFIG="${CUBLAS_WORKSPACE_CONFIG:-:4096:8}" PYTHONHASHSEED="${PYTHONHASHSEED:-0}"
 export PYTHONPATH="$PROJECT_ROOT/.deps/qwen_hidden:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
-CMD=(python -m src.merged.train --config "$CONFIG" --stage "$STAGE" --fold "$FOLD" --run-id "$RUN_ID")
+if [ "$NPROC_PER_NODE" -ne 4 ]; then
+    echo "The symmetric merged Qwen worker requires exactly four local processes; got NPROC_PER_NODE=$NPROC_PER_NODE" >&2
+    exit 1
+fi
+
+# The job requests four GPUs and the worker uses Accelerate/DDP.  A plain
+# `python` invocation would initialize one process on only one of the four
+# allocated GPUs, so launch the local process group explicitly.
+CMD=(torchrun --standalone --nnodes=1 --nproc_per_node="$NPROC_PER_NODE" -m src.merged.train
+    --config "$CONFIG" --stage "$STAGE" --fold "$FOLD" --run-id "$RUN_ID")
 if [ -n "$EPOCHS" ]; then CMD+=(--epochs "$EPOCHS"); fi
 if [ -n "$SUBJECTS_PER_CLASS" ]; then CMD+=(--subjects-per-class "$SUBJECTS_PER_CLASS"); fi
 "${CMD[@]}"

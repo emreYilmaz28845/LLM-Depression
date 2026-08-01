@@ -118,3 +118,11 @@ def test_targeted_retry_job_count_matches_selected_configs() -> None:
     )
     assert registry["expected_fresh_job_count"] == 15
     assert len(registry["jobs"]) == 15
+
+
+def test_qwen_worker_uses_all_allocated_gpus() -> None:
+    worker = Path("scripts/run_symmetric_merged_train_slurm.sh").read_text(encoding="utf-8")
+    assert "#SBATCH --gres=gpu:4" in worker
+    assert "torchrun --standalone" in worker
+    assert "--nproc_per_node=\"$NPROC_PER_NODE\"" in worker
+    assert "python -m src.merged.train" not in worker
