@@ -187,8 +187,8 @@ def postprocess_merged_fold(
     holdout_grouped = _prepare_examples(holdout_grouped, fold=fold, partition="outer_holdout")
 
     output_root = Path(merged_config["output_dirs"]["merged_root"]) / run_id / stage / f"fold_{int(fold)}"
-    features_dir = ensure_dir(output_root / "features")
-    qwen_dir = ensure_dir(output_root / "qwen")
+    features_dir = output_root / "features"
+    qwen_dir = output_root / "qwen"
     identity = {
         "schema_version": "symmetric_merged_postprocess_identity.v1",
         "config_name": merged_config.get("name"),
@@ -215,6 +215,8 @@ def postprocess_merged_fold(
     if output_root.exists() and any(output_root.iterdir()) and not identity_path.is_file():
         raise ValueError(f"Refusing to overwrite incomplete merged postprocess output: {output_root}")
     ensure_dir(output_root)
+    ensure_dir(features_dir)
+    ensure_dir(qwen_dir)
     save_json(identity, identity_path)
     save_json(merged_config, output_root / "resolved_merged_config.json")
     write_slurm_provenance(

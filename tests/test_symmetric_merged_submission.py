@@ -139,6 +139,17 @@ def test_merged_train_preflight_does_not_self_create_an_incomplete_run() -> None
     assert "if is_local_main_process:" in source
 
 
+def test_merged_postprocess_preflight_does_not_self_create_an_incomplete_run() -> None:
+    source = Path("src/merged/postprocess.py").read_text(encoding="utf-8")
+    assert 'features_dir = output_root / "features"' in source
+    assert 'qwen_dir = output_root / "qwen"' in source
+    assert 'features_dir = ensure_dir(output_root / "features")' not in source
+    assert 'qwen_dir = ensure_dir(output_root / "qwen")' not in source
+    assert source.index("if output_root.exists() and any(output_root.iterdir())") < source.index(
+        "ensure_dir(output_root)"
+    )
+
+
 def test_merged_text_only_uses_the_dense_text_backbone() -> None:
     config = load_merged_config(CONFIG_BY_MODALITY["text_only"])
     assert config["modality"] == "text_only"
