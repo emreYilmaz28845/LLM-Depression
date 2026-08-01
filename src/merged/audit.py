@@ -195,6 +195,14 @@ def _audit_training_artifacts(
         occurrences = {int(index): int(count) for index, count in (epoch.get("sample_occurrence_counts") or {}).items()}
         if example_count < 1 or set(occurrences) != set(range(example_count)) or set(occurrences.values()) != {1}:
             failures.append(f"schedule_one_time_coverage:{fold}:{epoch.get('epoch')}")
+        contributions = {
+            str(dataset): float(value)
+            for dataset, value in (epoch.get("realized_dataset_weight_contributions") or {}).items()
+        }
+        if set(contributions) != set(DATASETS):
+            failures.append(f"schedule_dataset_contribution_coverage:{fold}:{epoch.get('epoch')}")
+        elif max(contributions.values()) - min(contributions.values()) > 1e-8:
+            failures.append(f"schedule_dataset_contribution_imbalance:{fold}:{epoch.get('epoch')}")
         blocks = epoch.get("blocks") or []
         flattened = [int(index) for block in blocks for index in block.get("example_indices", [])]
         if sorted(flattened) != list(range(example_count)):

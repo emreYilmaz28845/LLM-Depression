@@ -84,6 +84,7 @@ def test_training_artifact_audit_checks_schedule_and_selection_mean(tmp_path: Pa
         "epoch": 1,
         "example_count": 4,
         "sample_occurrence_counts": {str(index): 1 for index in range(4)},
+        "realized_dataset_weight_contributions": {dataset: 1.0 for dataset in DATASETS},
         "blocks": [
             {"example_indices": [0, 1]},
             {"example_indices": [2, 3]},
