@@ -215,10 +215,17 @@ def train_merged_fold(
         train_examples, expected_datasets=DATASETS
     )
 
+    accelerator = Accelerator(
+        mixed_precision="bf16" if bool(model_config["training"].get("bf16", False)) else "no",
+        kwargs_handlers=[DistributedDataParallelKwargs(find_unused_parameters=True)],
+    )
+    accelerator.wait_for_everyone()
+
     run_root = Path(merged_config["output_dirs"]["run_root"]) / run_id / stage / f"fold_{int(fold)}"
-    logs_dir = ensure_dir(run_root / "logs")
+    logs_dir = run_root / "logs"
     best_dir = run_root / "best_model"
     complete_path = run_root / "training_complete.json"
+    is_local_main_process = accelerator.is_main_process
     identity = {
         "schema_version": "symmetric_merged_training_identity.v1",
         "config_name": merged_config.get("name"),
@@ -240,31 +247,34 @@ def train_merged_fold(
     if run_root.exists() and any(run_root.iterdir()) and not complete_path.is_file():
         raise ValueError(f"Refusing to overwrite an incomplete merged training output: {run_root}")
     ensure_dir(run_root)
-    save_json(identity, run_root / "training_identity.json")
-    save_json(merged_config, run_root / "resolved_merged_config.json")
-    write_slurm_provenance(
-        run_root / "slurm_provenance.json",
-        worker="src.merged.train",
-        stage=stage,
-        fold=int(fold),
-        run_id=run_id,
-        config_name=merged_config.get("name"),
-        modality=merged_config.get("modality"),
-        protocol_split_hash=protocol["protocol"]["split_hash"],
-    )
-    _write_composition(
-        logs_dir / "composition.json",
-        stage=stage,
-        fold=fold,
-        train_examples=weighted_examples,
-        selection_examples=selection_examples,
-        outer_train_subjects=outer_train_subjects,
-        selection_subjects=selection_subjects,
-        holdout_subjects=holdout_subjects,
-        weighting_audit=weighting_audit,
-        smoke_subject_ids=smoke_subject_ids,
-    )
-    save_json(weighting_audit, logs_dir / "weighting_audit.json")
+    ensure_dir(logs_dir)
+    if is_local_main_process:
+        save_json(identity, run_root / "training_identity.json")
+        save_json(merged_config, run_root / "resolved_merged_config.json")
+        write_slurm_provenance(
+            run_root / "slurm_provenance.json",
+            worker="src.merged.train",
+            stage=stage,
+            fold=int(fold),
+            run_id=run_id,
+            config_name=merged_config.get("name"),
+            modality=merged_config.get("modality"),
+            protocol_split_hash=protocol["protocol"]["split_hash"],
+        )
+        _write_composition(
+            logs_dir / "composition.json",
+            stage=stage,
+            fold=fold,
+            train_examples=weighted_examples,
+            selection_examples=selection_examples,
+            outer_train_subjects=outer_train_subjects,
+            selection_subjects=selection_subjects,
+            holdout_subjects=holdout_subjects,
+            weighting_audit=weighting_audit,
+            smoke_subject_ids=smoke_subject_ids,
+        )
+        save_json(weighting_audit, logs_dir / "weighting_audit.json")
+    accelerator.wait_for_everyone()
 
     model_name = str(resolve_model_name_or_path(None, model_config))
     processor = load_processor(model_name, model_config)
@@ -292,19 +302,16 @@ def train_merged_fold(
         )
         for epoch in range(1, resolved_epochs + 1)
     ]
-    save_json(
-        {"epochs": [schedule["audit"] for schedule in schedules]},
-        logs_dir / "schedule_audit.json",
-    )
+    if is_local_main_process:
+        save_json(
+            {"epochs": [schedule["audit"] for schedule in schedules]},
+            logs_dir / "schedule_audit.json",
+        )
     total_steps = sum(len(schedule["blocks"]) for schedule in schedules)
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
         num_warmup_steps=int(total_steps * float(model_config["training"].get("warmup_ratio", 0.03))),
         num_training_steps=max(1, total_steps),
-    )
-    accelerator = Accelerator(
-        mixed_precision="bf16" if bool(model_config["training"].get("bf16", False)) else "no",
-        kwargs_handlers=[DistributedDataParallelKwargs(find_unused_parameters=True)],
     )
     model, optimizer, scheduler = accelerator.prepare(model, optimizer, scheduler)
 

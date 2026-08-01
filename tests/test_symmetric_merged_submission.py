@@ -129,6 +129,16 @@ def test_qwen_worker_uses_all_allocated_gpus() -> None:
     assert "python -m src.merged.train" not in worker
 
 
+def test_merged_train_preflight_does_not_self_create_an_incomplete_run() -> None:
+    source = Path("src/merged/train.py").read_text(encoding="utf-8")
+    assert 'logs_dir = run_root / "logs"' in source
+    assert 'logs_dir = ensure_dir(run_root / "logs")' not in source
+    assert "is_local_main_process = accelerator.is_main_process" in source
+    assert source.index("accelerator = Accelerator(") < source.index("if complete_path.is_file()")
+    assert source.count("accelerator.wait_for_everyone()") >= 2
+    assert "if is_local_main_process:" in source
+
+
 def test_merged_text_only_uses_the_dense_text_backbone() -> None:
     config = load_merged_config(CONFIG_BY_MODALITY["text_only"])
     assert config["modality"] == "text_only"
