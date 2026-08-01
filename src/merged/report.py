@@ -150,16 +150,31 @@ def collect_stage_rows(config_path: str | Path, *, run_id: str, stage: str) -> l
     modality = str(config["modality"])
     root = Path(config["output_dirs"]["merged_root"]) / run_id / stage
     folds = [0] if stage == "final" else list(range(5))
+    expected_datasets = {"daic"} if stage == "final" else set(DATASETS)
+    expected_keys = {
+        (dataset, method) for dataset in expected_datasets for method in METHODS
+    }
     rows: list[dict[str, Any]] = []
     for fold in folds:
         predictions = _prediction_rows_for_fold(root / f"fold_{fold}")
+        observed_keys = set(predictions)
+        missing_keys = sorted(expected_keys - observed_keys)
+        unexpected_keys = sorted(observed_keys - expected_keys)
+        if missing_keys or unexpected_keys:
+            raise ValueError(
+                f"Incomplete {stage} prediction coverage for {modality}/fold={fold}: "
+                f"missing={missing_keys} unexpected={unexpected_keys}"
+            )
         for dataset in DATASETS:
             if stage == "final" and dataset != "daic":
                 continue
             for method in METHODS:
                 prediction_rows = predictions.get((dataset, method))
                 if not prediction_rows:
-                    continue
+                    raise ValueError(
+                        f"Empty {stage} prediction file for "
+                        f"{modality}/{dataset}/{method}/fold={fold}"
+                    )
                 _assert_unique_prediction_ids(prediction_rows, dataset=dataset, method=method, fold=fold)
                 rows.append(
                     _metric_row(
@@ -185,14 +200,35 @@ def collect_pooled_stage_rows(config_path: str | Path, *, run_id: str, stage: st
     modality = str(config["modality"])
     root = Path(config["output_dirs"]["merged_root"]) / run_id / stage
     grouped: dict[tuple[str, str], list[tuple[int, list[dict[str, Any]]]]] = defaultdict(list)
+    expected_keys = {(dataset, method) for dataset in DATASETS for method in METHODS}
     for fold in range(5):
         predictions = _prediction_rows_for_fold(root / f"fold_{fold}")
         for key, prediction_rows in predictions.items():
             dataset, method = key
+            if not prediction_rows:
+                raise ValueError(
+                    f"Empty pooled CV prediction file for "
+                    f"{modality}/{dataset}/{method}/fold={fold}"
+                )
             _assert_unique_prediction_ids(prediction_rows, dataset=dataset, method=method, fold=fold)
             grouped[key].append((fold, prediction_rows))
+    observed_keys = set(grouped)
+    missing_keys = sorted(expected_keys - observed_keys)
+    unexpected_keys = sorted(observed_keys - expected_keys)
+    if missing_keys or unexpected_keys:
+        raise ValueError(
+            f"Incomplete pooled CV prediction coverage for {modality}: "
+            f"missing={missing_keys} unexpected={unexpected_keys}"
+        )
     rows: list[dict[str, Any]] = []
     for (dataset, method), fold_values in sorted(grouped.items()):
+        observed_folds = sorted(fold for fold, _ in fold_values)
+        if observed_folds != list(range(5)):
+            raise ValueError(
+                f"Incomplete pooled CV prediction coverage for "
+                f"{modality}/{dataset}/{method} "
+                f"is {observed_folds}, expected five outer folds"
+            )
         combined = [item for _, values in sorted(fold_values) for item in values]
         _assert_unique_prediction_ids(combined, dataset=dataset, method=method, fold="pooled")
         rows.append(

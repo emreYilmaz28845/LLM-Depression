@@ -5,8 +5,9 @@ import json
 from pathlib import Path
 
 import yaml
+import pytest
 
-from src.merged.report import generate_reports
+from src.merged.report import collect_pooled_stage_rows, generate_reports
 
 
 DATASETS = ("daic", "cmdc", "turkish", "d3tec", "androids_interview")
@@ -67,6 +68,40 @@ def _write_predictions(root: Path, run_id: str, modality: str) -> None:
                 "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
             )
 
+    final_root = root / "merged" / modality / run_id / "final" / "fold_0"
+    final_rows = [
+        {
+            "subject_id": f"daic::official_{label}",
+            "label": label,
+            "prediction": label,
+            "probability": float(label),
+            "prediction_text": "0" if label == 0 else "1",
+        }
+        for label in (0, 1)
+    ]
+    qwen_path = final_root / "qwen" / "daic" / "predictions_subject_level.csv"
+    qwen_path.parent.mkdir(parents=True, exist_ok=True)
+    with qwen_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(final_rows[0]))
+        writer.writeheader()
+        writer.writerows(final_rows)
+    for method in ("logreg", "xgb_fixed", "xgb_optuna"):
+        rows = [
+            {
+                "dataset": "daic",
+                "subject_id": f"daic::official_{label}",
+                "label": label,
+                "prediction": label,
+                "probability": float(label),
+            }
+            for label in (0, 1)
+        ]
+        head_path = final_root / "heads" / method / "predictions_subject_level.jsonl"
+        head_path.parent.mkdir(parents=True, exist_ok=True)
+        head_path.write_text(
+            "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+        )
+
 
 def test_report_writes_pooled_csv_and_validates_workbook(tmp_path: Path) -> None:
     run_id = "synthetic_report_run"
@@ -101,3 +136,24 @@ def test_report_writes_pooled_csv_and_validates_workbook(tmp_path: Path) -> None
         "Merged Symmetric CV",
         "Merged DAIC Official",
     }
+
+
+def test_report_rejects_incomplete_cv_prediction_coverage(tmp_path: Path) -> None:
+    run_id = "incomplete_report_run"
+    config = _write_config(tmp_path, "audio_text")
+    _write_predictions(tmp_path, run_id, "audio_text")
+    missing = (
+        tmp_path
+        / "merged"
+        / "audio_text"
+        / run_id
+        / "cv"
+        / "fold_3"
+        / "heads"
+        / "xgb_optuna"
+        / "predictions_subject_level.jsonl"
+    )
+    missing.unlink()
+
+    with pytest.raises(ValueError, match="Incomplete pooled CV prediction coverage"):
+        collect_pooled_stage_rows(config, run_id=run_id, stage="cv")
