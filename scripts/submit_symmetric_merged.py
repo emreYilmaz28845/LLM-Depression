@@ -20,7 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.merged.protocol import canonical_sha256
-from src.merged.runtime import load_merged_config
+from src.merged.runtime import load_merged_config, load_protocol_artifact
 from src.utils import read_json, resolve_project_path, save_json, sha256_file
 
 
@@ -59,8 +59,58 @@ def _run_roots(config: dict[str, Any], run_id: str, stage: str, fold: int) -> di
     }
 
 
+def _expected_protocol_identity(
+    config: dict[str, Any], config_path: str | Path, fold: int
+) -> dict[str, str] | None:
+    """Resolve the hashes required before a completed artifact may be reused."""
+
+    try:
+        protocol = load_protocol_artifact(config)
+        fold_payload = protocol["protocol"]["folds"][str(int(fold))]
+        expected = {
+            "merged_config_sha256": sha256_file(config_path),
+            "manifest_hash": str(protocol["manifest"]["manifest_hash"]),
+            "split_hash": str(protocol["protocol"]["split_hash"]),
+            "fold_hash": str(fold_payload["fold_hash"]),
+        }
+    except (FileNotFoundError, KeyError, TypeError, ValueError):
+        # A dry-run may be planned before the generated protocol artifact has
+        # been materialized. In that case there is no evidence strong enough
+        # to skip an existing output, so force the normal compatibility gate.
+        return None
+    if any(not value or value == "None" for value in expected.values()):
+        return None
+    return expected
+
+
+def _provenance_matches(path: Path) -> bool:
+    """Require the artifact's recorded source commit to match this submission."""
+
+    if not path.is_file():
+        return False
+    current = _source_commit()
+    if not current or current == "unknown":
+        return False
+    try:
+        return str(read_json(path).get("source_commit", "")) == current
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _identity_hashes_match(
+    identity: dict[str, Any], expected: dict[str, str], *, split_key: str
+) -> bool:
+    return (
+        identity.get("merged_config_sha256") == expected["merged_config_sha256"]
+        and identity.get("manifest_hash") == expected["manifest_hash"]
+        and identity.get(split_key) == expected["split_hash"]
+        and identity.get("fold_hash") == expected["fold_hash"]
+    )
+
+
 def _completed(
     config: dict[str, Any],
+    config_path: str | Path,
     run_id: str,
     stage: str,
     fold: int,
@@ -71,9 +121,14 @@ def _completed(
     trials: int | None = None,
 ) -> bool:
     roots = _run_roots(config, run_id, stage, fold)
+    expected_identity = _expected_protocol_identity(config, config_path, fold)
+    if expected_identity is None:
+        return False
     if kind == "train":
         complete = roots["train"] / "training_complete.json"
         if not complete.is_file() or not (roots["train"] / "best_model").is_dir():
+            return False
+        if not _provenance_matches(roots["train"] / "slurm_provenance.json"):
             return False
         payload = read_json(complete)
         identity = payload.get("identity", {})
@@ -86,11 +141,16 @@ def _completed(
             and identity.get("run_id") == run_id
             and int(identity.get("epochs", -1)) == expected_epochs
             and identity.get("subjects_per_class") == subjects_per_class
+            and _identity_hashes_match(
+                identity, expected_identity, split_key="protocol_split_hash"
+            )
         )
     if kind == "postprocess":
         complete = roots["post"] / "postprocess_complete.json"
         identity_path = roots["post"] / "postprocess_identity.json"
         if not complete.is_file() or not identity_path.is_file() or not (roots["post"] / "features" / "feature_metadata.json").is_file():
+            return False
+        if not _provenance_matches(roots["post"] / "slurm_provenance.json"):
             return False
         identity = read_json(identity_path)
         return (
@@ -102,11 +162,14 @@ def _completed(
             and identity.get("modality") == config.get("modality")
             and identity.get("checkpoint_dir") == str((roots["train"] / "best_model").resolve())
             and identity.get("subjects_per_class") == (subjects_per_class if stage == "smoke" else None)
+            and _identity_hashes_match(identity, expected_identity, split_key="split_hash")
         )
     if kind == "head":
         complete = roots["post"] / "heads" / "heads_complete.json"
         identity_path = roots["post"] / "heads" / "heads_identity.json"
         if not complete.is_file() or not identity_path.is_file():
+            return False
+        if not _provenance_matches(roots["post"] / "heads" / "slurm_provenance.json"):
             return False
         identity = read_json(identity_path)
         expected_trials = int(trials if trials is not None else 150)
@@ -117,6 +180,7 @@ def _completed(
             and identity.get("run_id") == run_id
             and identity.get("feature_metadata") == str((roots["post"] / "features" / "feature_metadata.json").resolve())
             and int(identity.get("optuna_trials", -1)) == expected_trials
+            and _identity_hashes_match(identity, expected_identity, split_key="split_hash")
         )
     raise ValueError(kind)
 
@@ -259,6 +323,7 @@ def build_job_specs(
                 )
                 job["completed_before_submission"] = _completed(
                     config,
+                    config_path,
                     run_id,
                     stage,
                     fold,

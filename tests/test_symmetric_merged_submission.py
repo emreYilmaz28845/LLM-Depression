@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts.submit_symmetric_merged import (
     CONFIG_BY_MODALITY,
+    _completed,
     build_job_specs,
     _set_combined_registry_metadata,
     _final_epoch_for_dry_run,
@@ -119,6 +123,58 @@ def test_targeted_retry_job_count_matches_selected_configs() -> None:
     )
     assert registry["expected_fresh_job_count"] == 15
     assert len(registry["jobs"]) == 15
+
+
+def test_completed_artifact_reuse_requires_current_hashes_and_provenance(tmp_path: Path) -> None:
+    config_path = tmp_path / "merged.yaml"
+    config_path.write_text("name: synthetic\n", encoding="utf-8")
+    config = {
+        "name": "synthetic",
+        "training": {"num_train_epochs": 1},
+        "output_dirs": {
+            "merged_root": str(tmp_path / "merged"),
+            "run_root": str(tmp_path / "models"),
+        },
+    }
+    run_id = "restart_safe_run"
+    train_root = tmp_path / "models" / run_id / "cv" / "fold_0"
+    (train_root / "best_model").mkdir(parents=True)
+    identity = {
+        "config_name": "synthetic",
+        "stage": "cv",
+        "fold": 0,
+        "run_id": run_id,
+        "epochs": 1,
+        "subjects_per_class": None,
+        "merged_config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+        "manifest_hash": "manifest",
+        "protocol_split_hash": "split",
+        "fold_hash": "fold",
+    }
+    (train_root / "training_complete.json").write_text(
+        json.dumps({"status": "completed", "identity": identity}),
+        encoding="utf-8",
+    )
+    (train_root / "slurm_provenance.json").write_text(
+        json.dumps({"source_commit": "commit"}), encoding="utf-8"
+    )
+    protocol = {
+        "manifest": {"manifest_hash": "manifest"},
+        "protocol": {
+            "split_hash": "split",
+            "folds": {"0": {"fold_hash": "fold"}},
+        },
+    }
+    with patch("scripts.submit_symmetric_merged.load_protocol_artifact", return_value=protocol), patch(
+        "scripts.submit_symmetric_merged._source_commit", return_value="commit"
+    ):
+        assert _completed(config, config_path, run_id, "cv", 0, "train", epochs=1)
+        identity["merged_config_sha256"] = "changed"
+        (train_root / "training_complete.json").write_text(
+            json.dumps({"status": "completed", "identity": identity}),
+            encoding="utf-8",
+        )
+        assert not _completed(config, config_path, run_id, "cv", 0, "train", epochs=1)
 
 
 def test_qwen_worker_uses_all_allocated_gpus() -> None:
