@@ -4,6 +4,7 @@ import argparse
 import gc
 import json
 import math
+import os
 import shutil
 import sys
 from collections import Counter
@@ -60,6 +61,52 @@ LOGGER = get_logger(__name__)
 
 
 _model_config = model_config
+
+
+def _relaunch_four_gpu_slurm_worker() -> None:
+    """Guard against a stale plain-Python batch-script submission.
+
+    ``sbatch`` stores the script body at submission time.  If an older
+    submission still invokes this module with plain ``python`` while holding
+    a four-GPU allocation, relaunch the same arguments through a local
+    ``torchrun`` process group.  Torchrun children expose ``LOCAL_RANK`` and
+    therefore pass through without recursively spawning another group.
+    """
+
+    if os.environ.get("LOCAL_RANK") is not None:
+        return
+    if not os.environ.get("SLURM_JOB_ID"):
+        return
+    raw_gpu_count = (
+        os.environ.get("SLURM_GPUS_ON_NODE")
+        or os.environ.get("SLURM_GPUS_PER_NODE")
+        or ""
+    )
+    try:
+        allocated_gpu_count = int(str(raw_gpu_count).split("(", 1)[0].split(";", 1)[0])
+    except ValueError:
+        allocated_gpu_count = 0
+    if allocated_gpu_count != 4:
+        return
+    torchrun = shutil.which("torchrun")
+    if not torchrun:
+        raise RuntimeError(
+            "A four-GPU merged Slurm job was launched without torchrun in PATH."
+        )
+    command = [
+        torchrun,
+        "--standalone",
+        "--nnodes=1",
+        "--nproc_per_node=4",
+        "-m",
+        "src.merged.train",
+        *sys.argv[1:],
+    ]
+    LOGGER.warning(
+        "Direct four-GPU Slurm invocation detected; relaunching under torchrun: %s",
+        " ".join(command),
+    )
+    os.execvpe(torchrun, command, os.environ.copy())
 
 
 def _component_examples(partitions: dict[str, Any], partition: str) -> dict[str, list[dict[str, Any]]]:
@@ -453,4 +500,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    _relaunch_four_gpu_slurm_worker()
     main()
