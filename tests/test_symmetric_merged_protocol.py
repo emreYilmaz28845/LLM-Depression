@@ -12,6 +12,7 @@ from src.merged.protocol import (
     build_protocol_splits,
     compute_hierarchical_example_weights,
     limit_examples_by_dataset_subjects_per_class,
+    resolve_head_inner_folds,
 )
 from src.merged.runtime import fold_subject_ids
 from src.merged.heads import aggregate_head_predictions
@@ -171,3 +172,29 @@ def test_schedule_and_head_inner_folds_are_deterministic_and_one_time() -> None:
     assert sorted(validation) == list(range(len(weighted)))
     for fold in folds["folds"]:
         assert set(fold["train_subject_ids"]).isdisjoint(fold["validation_subject_ids"])
+
+
+def test_smoke_head_folds_are_nonempty_for_two_subjects_per_class() -> None:
+    rows = [
+        {
+            "dataset": dataset,
+            "subject_id": f"{dataset}::{subject_index}",
+            "sample_id": f"{dataset}::{subject_index}::sample",
+            "label": subject_index % 2,
+        }
+        for dataset in DATASETS
+        for subject_index in range(4)
+    ]
+    assignments = build_grouped_inner_folds(rows, inner_folds=2, seed=1337)
+    assert len(assignments["folds"]) == 2
+    assert all(fold["validation_row_indices"] for fold in assignments["folds"])
+    assert resolve_head_inner_folds(
+        {
+            "protocol_settings": {"head_inner_folds": 3},
+            "execution": {"smoke_head_inner_folds": 2},
+        },
+        "smoke",
+    ) == 2
+    assert resolve_head_inner_folds(
+        {"protocol_settings": {"head_inner_folds": 3}}, "cv"
+    ) == 3

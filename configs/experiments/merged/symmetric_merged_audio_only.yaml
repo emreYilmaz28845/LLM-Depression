@@ -54,6 +54,7 @@ heads:
   optuna: {target_trials: 150, inner_folds: 3, seed: 1337, xgb_threads: 20, study_name: symmetric_merged_xgb}
 execution:
   smoke_subjects_per_class: 2
+  smoke_head_inner_folds: 2
   smoke_epochs: 1
   smoke_optuna_trials: 2
   qwen_gpus: 4

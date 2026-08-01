@@ -41,6 +41,34 @@ def canonical_sha256(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def resolve_head_inner_folds(config: dict[str, Any], stage: str) -> int:
+    """Resolve grouped head folds, using a valid tiny smoke override.
+
+    Production CV/final stages use the protocol's three grouped folds.  The
+    smoke cohort is deliberately only two subjects per class, so three folds
+    would create an empty validation fold for every dataset.  Smoke therefore
+    uses the explicit two-fold execution override while retaining the
+    production protocol setting.
+    """
+
+    stage_name = str(stage).strip().lower()
+    if stage_name not in {"smoke", "cv", "final"}:
+        raise ValueError(f"Unsupported merged stage for head folds: {stage!r}")
+    protocol_settings = config.get("protocol_settings") or {}
+    execution = config.get("execution") or {}
+    if stage_name == "smoke":
+        value = execution.get("smoke_head_inner_folds", 2)
+    else:
+        value = protocol_settings.get("head_inner_folds", HEAD_INNER_FOLDS)
+    resolved = int(value)
+    if resolved < 2 or resolved > HEAD_INNER_FOLDS:
+        raise ValueError(
+            f"Merged head tuning requires 2..{HEAD_INNER_FOLDS} grouped folds; "
+            f"stage={stage_name} value={resolved}."
+        )
+    return resolved
+
+
 def namespace_id(dataset: str, value: Any) -> str:
     """Return the protocol identity used in every merged artifact."""
 
@@ -750,23 +778,25 @@ def build_grouped_inner_folds(
 ) -> dict[str, Any]:
     """Create subject-grouped inner folds independently inside each dataset."""
 
-    if int(inner_folds) != HEAD_INNER_FOLDS:
-        raise ValueError("The symmetric head protocol is fixed to three inner folds.")
+    if int(inner_folds) < 2 or int(inner_folds) > HEAD_INNER_FOLDS:
+        raise ValueError(
+            f"The symmetric head protocol supports 2..{HEAD_INNER_FOLDS} inner folds."
+        )
     by_dataset: dict[str, list[tuple[int, dict[str, Any]]]] = defaultdict(list)
     for global_index, row in enumerate(rows):
         by_dataset[str(row["dataset"]).lower()].append((global_index, row))
     fold_assignments: dict[str, dict[int, dict[str, list[str]]]] = {}
     for dataset, indexed_rows in sorted(by_dataset.items()):
         labels = _label_map([row for _, row in indexed_rows])
-        if len(labels) < HEAD_INNER_FOLDS:
+        if len(labels) < int(inner_folds):
             raise ValueError(
-                f"Head tuning needs at least {HEAD_INNER_FOLDS} subjects in {dataset}; found {len(labels)}."
+                f"Head tuning needs at least {inner_folds} subjects in {dataset}; found {len(labels)}."
             )
         fold_assignments[dataset] = assign_stratified_group_folds(
-            labels, n_splits=HEAD_INNER_FOLDS, seed=int(seed)
+            labels, n_splits=int(inner_folds), seed=int(seed)
         )
     assignments: list[dict[str, Any]] = []
-    for fold in range(HEAD_INNER_FOLDS):
+    for fold in range(int(inner_folds)):
         train_indices: list[int] = []
         validation_indices: list[int] = []
         train_subjects: list[str] = []
@@ -776,9 +806,9 @@ def build_grouped_inner_folds(
             dataset_rows = [row for _, row in indexed_rows]
             labels = _label_map(dataset_rows)
             subjects = sorted(labels)
-            if len(subjects) < HEAD_INNER_FOLDS:
+            if len(subjects) < int(inner_folds):
                 raise ValueError(
-                    f"Head tuning needs at least {HEAD_INNER_FOLDS} subjects in {dataset}; found {len(subjects)}."
+                    f"Head tuning needs at least {inner_folds} subjects in {dataset}; found {len(subjects)}."
                 )
             payload = fold_assignments[dataset][fold]
             train_set = set(payload["outer_train_subject_ids"])
@@ -810,7 +840,7 @@ def build_grouped_inner_folds(
         raise AssertionError("Head inner folds do not cover each row exactly once for validation.")
     result = {
         "schema_version": "symmetric_grouped_head_folds.v1",
-        "inner_folds": HEAD_INNER_FOLDS,
+        "inner_folds": int(inner_folds),
         "seed": int(seed),
         "folds": assignments,
     }

@@ -19,6 +19,7 @@ from src.merged.protocol import (
     build_grouped_inner_folds,
     canonical_sha256,
     compute_hierarchical_example_weights,
+    resolve_head_inner_folds,
 )
 from src.merged.runtime import load_merged_config, load_records_and_protocol
 from src.metrics import binary_auroc, classification_metrics
@@ -315,7 +316,7 @@ def _run_optuna(
         "schema_version": "symmetric_merged_optuna_identity.v1",
         "objective": "unweighted_mean_per_dataset_macro_f1",
         "target_trials": int(trials),
-        "inner_folds": 3,
+        "inner_folds": int(len(assignments["folds"])),
         "seed": seed,
         "inner_assignments_hash": assignments["assignments_hash"],
         "feature_dimension": int(train_x.shape[1]),
@@ -424,6 +425,7 @@ def run_merged_heads(
         "merged_config_sha256": sha256_file(resolved_config_path),
         "fold_hash": feature_metadata.get("fold_hash"),
         "optuna_trials": expected_trial_count,
+        "inner_folds": resolve_head_inner_folds(merged_config, stage),
         "threshold": float((merged_config.get("protocol_settings") or {}).get("threshold", 0.5)),
     }
     identity_path = output_root / "heads_identity.json"
@@ -447,9 +449,10 @@ def run_merged_heads(
         manifest_hash=feature_metadata.get("manifest_hash"),
         split_hash=feature_metadata.get("split_hash"),
     )
+    inner_folds = int(identity["inner_folds"])
     assignments = build_grouped_inner_folds(
         train_rows,
-        inner_folds=3,
+        inner_folds=inner_folds,
         seed=int(((merged_config.get("heads") or {}).get("optuna") or {}).get("inner_seed", 1337)),
     )
     save_json(assignments, output_root / "inner_folds.json")

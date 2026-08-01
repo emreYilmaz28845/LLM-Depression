@@ -121,7 +121,10 @@ monitoring, result retrieval, auditing, workbook updates, and Git publication.
 - Submit one uniquely named audio+text fold-0 smoke chain:
   - one epoch;
   - two subjects per class per dataset;
-  - two Optuna trials;
+  - two Optuna trials with a smoke-only two-fold grouped head tuner (the
+    production CV/final stages retain three grouped inner folds; three folds
+    cannot form non-empty validation folds from the two-subjects-per-class
+    smoke cohort);
   - real train, postprocess, and head workers.
 - Monitor the three smoke jobs through `squeue`, `sacct`, logs, exit codes,
   and artifact audits. Reinvoke the smoke to verify completed outputs are

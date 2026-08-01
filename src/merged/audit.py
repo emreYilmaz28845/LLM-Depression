@@ -18,6 +18,7 @@ from src.merged.protocol import (
     OUTER_FOLDS,
     audit_protocol_splits,
     canonical_sha256,
+    resolve_head_inner_folds,
 )
 from src.merged.runtime import load_merged_config, load_protocol_artifact
 from src.utils import configure_logging, read_json, read_jsonl, save_json, sha256_file
@@ -100,6 +101,7 @@ def _audit_head_inner_folds(
     expected_subjects: set[str],
     failures: list[str],
     fold: int,
+    expected_inner_folds: int = 3,
 ) -> None:
     """Validate grouped head-tuning assignments against outer-train rows."""
 
@@ -107,7 +109,7 @@ def _audit_head_inner_folds(
         return
     payload = read_json(path)
     assignments = payload.get("folds") or []
-    if int(payload.get("inner_folds", -1)) != 3 or len(assignments) != 3:
+    if int(payload.get("inner_folds", -1)) != int(expected_inner_folds) or len(assignments) != int(expected_inner_folds):
         failures.append(f"head_inner_fold_count:{fold}")
         return
     hash_payload = {key: value for key, value in payload.items() if key != "assignments_hash"}
@@ -264,6 +266,7 @@ def audit_symmetric_run(
     fold_results: list[dict[str, Any]] = []
     omitted_heavy_artifacts: list[str] = []
     expected_final_epoch: int | None = None
+    expected_head_inner_folds = resolve_head_inner_folds(config, stage)
     if stage == "final":
         cv_train_root = train_stage_root.parent / "cv"
         cv_epochs: list[int] = []
@@ -393,6 +396,7 @@ def audit_symmetric_run(
                 or head_identity.get("run_id") != run_id
                 or head_identity.get("merged_config_sha256") != config_sha256
                 or head_identity.get("manifest_hash") != protocol["manifest"].get("manifest_hash")
+                or int(head_identity.get("inner_folds", -1)) != expected_head_inner_folds
             ):
                 failures.append(f"heads_identity_mismatch:{fold}")
         feature_metadata_path = fold_root / "features" / "feature_metadata.json"
@@ -520,6 +524,7 @@ def audit_symmetric_run(
                 expected_subjects=feature_subjects.get("outer_train", set()),
                 failures=failures,
                 fold=fold,
+                expected_inner_folds=expected_head_inner_folds,
             )
             optuna_summary = fold_root / "heads" / "xgb_optuna" / "optuna" / "study_summary.json"
             if stage != "smoke":

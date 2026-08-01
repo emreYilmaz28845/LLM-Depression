@@ -70,6 +70,7 @@ heads:
     study_name: symmetric_merged_xgb
 execution:
   smoke_subjects_per_class: 2
+  smoke_head_inner_folds: 2
   smoke_epochs: 1
   smoke_optuna_trials: 2
   qwen_gpus: 4
