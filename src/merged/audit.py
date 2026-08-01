@@ -186,6 +186,15 @@ def _audit_training_artifacts(
         for key in ("equal_dataset_totals", "natural_class_prevalence_preserved", "no_sampling", "no_duplication"):
             if weighting.get(key) is not True:
                 failures.append(f"weighting_invariant_failed:{fold}:{key}")
+        for key in (
+            "equal_dataset_totals",
+            "equal_subject_totals_within_dataset",
+            "equal_response_totals_within_subject",
+            "equal_window_totals_within_response",
+            "mean_loss_weight_one",
+        ):
+            if weighting.get("hierarchical_invariants", {}).get(key) is not True:
+                failures.append(f"hierarchical_weighting_invariant_failed:{fold}:{key}")
         if not math.isclose(float(weighting.get("mean_loss_weight", 0.0)), 1.0, rel_tol=0.0, abs_tol=1e-8):
             failures.append(f"weighting_mean_not_normalized:{fold}")
         if len(weighting.get("datasets", [])) != len(DATASETS):

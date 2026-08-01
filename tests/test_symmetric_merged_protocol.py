@@ -157,6 +157,13 @@ def test_hierarchical_weights_equalize_dataset_subject_response_and_windows() ->
         response_totals[row["response_id"]] += row["loss_weight"]
     assert len({round(value, 10) for value in subject_totals.values()}) == 1
     assert len({round(value, 10) for value in response_totals.values()}) == 1
+    assert audit["hierarchical_invariants"] == {
+        "equal_dataset_totals": True,
+        "equal_subject_totals_within_dataset": True,
+        "equal_response_totals_within_subject": True,
+        "equal_window_totals_within_response": True,
+        "mean_loss_weight_one": True,
+    }
 
 
 def test_hierarchical_weights_are_stable_for_large_merged_pools() -> None:

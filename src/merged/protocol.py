@@ -630,14 +630,27 @@ def compute_hierarchical_example_weights(
     dataset_totals: dict[str, float] = defaultdict(float)
     subject_totals: dict[str, float] = defaultdict(float)
     response_totals: dict[str, float] = defaultdict(float)
+    subject_totals_by_dataset: dict[str, dict[str, float]] = defaultdict(
+        lambda: defaultdict(float)
+    )
+    response_totals_by_subject: dict[str, dict[str, dict[str, float]]] = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(float))
+    )
+    window_weights_by_response: dict[str, dict[str, dict[str, list[float]]]] = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(list))
+    )
     for example in weighted:
         dataset = str(example["dataset"]).lower()
         subject = _subject_key(example)
         response = _response_key(example)
+        normalized_weight = float(example["loss_weight"])
         dataset_raw_totals[dataset] += float(example["raw_loss_weight"])
-        dataset_totals[dataset] += float(example["loss_weight"])
-        subject_totals[subject] += float(example["loss_weight"])
-        response_totals[response] += float(example["loss_weight"])
+        dataset_totals[dataset] += normalized_weight
+        subject_totals[subject] += normalized_weight
+        response_totals[response] += normalized_weight
+        subject_totals_by_dataset[dataset][subject] += normalized_weight
+        response_totals_by_subject[dataset][subject][response] += normalized_weight
+        window_weights_by_response[dataset][subject][response].append(normalized_weight)
     raw_reference = next(iter(dataset_raw_totals.values()))
     normalized_reference = next(iter(dataset_totals.values()))
     equal_dataset_raw = all(
@@ -648,9 +661,46 @@ def compute_hierarchical_example_weights(
         math.isclose(value, normalized_reference, rel_tol=1e-12, abs_tol=1e-12)
         for value in dataset_totals.values()
     )
+    equal_subject_within_dataset = all(
+        all(
+            math.isclose(value, next(iter(totals.values())), rel_tol=1e-12, abs_tol=1e-12)
+            for value in totals.values()
+        )
+        for totals in subject_totals_by_dataset.values()
+        if totals
+    )
+    equal_response_within_subject = all(
+        all(
+            math.isclose(value, next(iter(totals.values())), rel_tol=1e-12, abs_tol=1e-12)
+            for value in totals.values()
+        )
+        for subject_totals_for_dataset in response_totals_by_subject.values()
+        for totals in subject_totals_for_dataset.values()
+        if totals
+    )
+    equal_windows_within_response = all(
+        all(
+            math.isclose(value, weights[0], rel_tol=1e-12, abs_tol=1e-12)
+            for value in weights[1:]
+        )
+        for subjects in window_weights_by_response.values()
+        for responses in subjects.values()
+        for weights in responses.values()
+        if weights
+    )
+    mean_loss_weight_one = (
+        abs(sum(float(row["loss_weight"]) for row in weighted) / len(weighted) - 1.0)
+        <= 1e-10
+    )
     if not equal_dataset_raw or not equal_dataset:
         raise AssertionError("Merged weighting did not equalize dataset totals.")
-    if abs(sum(float(row["loss_weight"]) for row in weighted) / len(weighted) - 1.0) > 1e-10:
+    if not equal_subject_within_dataset:
+        raise AssertionError("Merged weighting did not equalize subject totals within datasets.")
+    if not equal_response_within_subject:
+        raise AssertionError("Merged weighting did not equalize response totals within subjects.")
+    if not equal_windows_within_response:
+        raise AssertionError("Merged weighting did not equalize window totals within responses.")
+    if not mean_loss_weight_one:
         raise AssertionError("Merged weighting was not normalized to global mean one.")
     audit = {
         "schema_version": WEIGHT_SCHEMA_VERSION,
@@ -664,6 +714,13 @@ def compute_hierarchical_example_weights(
         "dataset_weight_totals": dict(sorted(dataset_totals.items())),
         "subject_weight_totals": dict(sorted(subject_totals.items())),
         "response_weight_totals": dict(sorted(response_totals.items())),
+        "hierarchical_invariants": {
+            "equal_dataset_totals": equal_dataset,
+            "equal_subject_totals_within_dataset": equal_subject_within_dataset,
+            "equal_response_totals_within_subject": equal_response_within_subject,
+            "equal_window_totals_within_response": equal_windows_within_response,
+            "mean_loss_weight_one": mean_loss_weight_one,
+        },
         "dataset_subject_counts": {dataset: len(values) for dataset, values in sorted(subjects_by_dataset.items())},
         "dataset_row_counts": dict(sorted(Counter(str(row["dataset"]).lower() for row in weighted).items())),
         "class_counts": {

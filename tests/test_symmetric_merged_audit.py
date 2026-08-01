@@ -77,6 +77,13 @@ def test_training_artifact_audit_checks_schedule_and_selection_mean(tmp_path: Pa
                 "no_sampling": True,
                 "no_duplication": True,
                 "mean_loss_weight": 1.0,
+                "hierarchical_invariants": {
+                    "equal_dataset_totals": True,
+                    "equal_subject_totals_within_dataset": True,
+                    "equal_response_totals_within_subject": True,
+                    "equal_window_totals_within_response": True,
+                    "mean_loss_weight_one": True,
+                },
             }
         ),
         encoding="utf-8",
