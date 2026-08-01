@@ -89,6 +89,16 @@ def _negative_f1(metrics: dict[str, Any]) -> float:
     return float(2 * precision * recall / (precision + recall)) if precision + recall else 0.0
 
 
+def _prediction_response_id(row: dict[str, Any]) -> str:
+    """Use the same response hierarchy as merged training weights."""
+
+    for field in ("response_id", "turn_key", "question_id", "sample_id"):
+        value = row.get(field)
+        if value not in (None, ""):
+            return str(value)
+    raise ValueError(f"Head prediction row has no response identity: {row}")
+
+
 def aggregate_head_predictions(
     rows: list[dict[str, Any]], probabilities: np.ndarray, *, threshold: float = 0.5
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, dict[str, Any]]]:
@@ -103,7 +113,7 @@ def aggregate_head_predictions(
                 "dataset": str(row["dataset"]).lower(),
                 "sample_id": str(row["sample_id"]),
                 "subject_id": str(row["subject_id"]),
-                "response_id": str(row.get("response_id") or row.get("sample_id")),
+                "response_id": _prediction_response_id(row),
                 "label": int(row["label"]),
                 "probability": float(probability),
                 "prediction": int(float(probability) >= float(threshold)),

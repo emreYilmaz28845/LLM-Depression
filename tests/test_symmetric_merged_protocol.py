@@ -14,6 +14,7 @@ from src.merged.protocol import (
     limit_examples_by_dataset_subjects_per_class,
 )
 from src.merged.runtime import fold_subject_ids
+from src.merged.heads import aggregate_head_predictions
 
 
 def _records():
@@ -110,6 +111,30 @@ def test_smoke_subject_limit_is_per_dataset_and_per_class() -> None:
         }
         assert len(dataset_subjects) == 4
         assert {row["label"] for row in selected if row["dataset"] == dataset} == {0, 1}
+
+
+def test_head_aggregation_matches_question_response_hierarchy() -> None:
+    rows = [
+        {
+            "dataset": "cmdc",
+            "subject_id": "cmdc::HC01",
+            "sample_id": "cmdc::HC01_Q1_window0",
+            "question_id": "Q1",
+            "label": 0,
+        },
+        {
+            "dataset": "cmdc",
+            "subject_id": "cmdc::HC01",
+            "sample_id": "cmdc::HC01_Q1_window1",
+            "question_id": "Q1",
+            "label": 0,
+        },
+    ]
+    grouped, metrics = aggregate_head_predictions(rows, [0.2, 0.8])
+    assert grouped["cmdc"][0]["response_count"] == 1
+    assert grouped["cmdc"][0]["sample_count"] == 2
+    assert grouped["cmdc"][0]["probability"] == 0.5
+    assert metrics["cmdc"]["subject_count"] == 1
 
 
 def test_runtime_reads_folds_from_saved_protocol_artifact_shape() -> None:
