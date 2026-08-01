@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from scripts.submit_symmetric_merged import (
     _set_combined_registry_metadata,
+    _final_epoch_for_dry_run,
     _stage_plans,
     merge_existing_registry,
 )
@@ -67,3 +70,35 @@ def test_registry_reuses_legacy_single_stage_plan() -> None:
         "expected_fresh_job_count": 45,
     }
     assert _stage_plans(legacy)["cv"]["plan_hash"] == "legacy-hash"
+
+
+def test_final_dry_run_resolves_frozen_median_epoch_when_cv_is_accepted(tmp_path: Path) -> None:
+    config = {
+        "output_dirs": {
+            "merged_root": str(tmp_path / "merged"),
+            "run_root": str(tmp_path / "models"),
+        }
+    }
+    run_id = "shared-run"
+    audit_path = tmp_path / "merged" / run_id / "cv" / "acceptance_audit.json"
+    audit_path.parent.mkdir(parents=True)
+    audit_path.write_text('{"status": "passed"}\n', encoding="utf-8")
+    for fold, epoch in enumerate((1, 4, 3, 2, 3)):
+        path = (
+            tmp_path
+            / "models"
+            / run_id
+            / "cv"
+            / f"fold_{fold}"
+            / "logs"
+            / "selected_checkpoint.json"
+        )
+        path.parent.mkdir(parents=True)
+        path.write_text(f'{{"selected_epoch": {epoch}}}\n', encoding="utf-8")
+
+    assert _final_epoch_for_dry_run(config, run_id, "audio_text") == 3
+
+    (tmp_path / "merged" / run_id / "cv" / "acceptance_audit.json").write_text(
+        '{"status": "failed"}\n', encoding="utf-8"
+    )
+    assert _final_epoch_for_dry_run(config, run_id, "audio_text") is None

@@ -134,6 +134,31 @@ def _final_epoch(config: dict[str, Any], run_id: str, modality: str) -> int:
     return result
 
 
+def _final_epoch_for_dry_run(
+    config: dict[str, Any], run_id: str, modality: str
+) -> int | None:
+    """Use the frozen CV epoch when a post-CV dry-run can resolve it.
+
+    Dry-runs remain useful before CV exists, so missing gate artifacts do not
+    fail planning. Once the passed CV audit and all five selections exist,
+    however, using the real median epoch lets restart checks recognize a
+    completed final training job instead of comparing it with the default 20.
+    """
+
+    audit_path = Path(config["output_dirs"]["merged_root"]) / run_id / "cv" / "acceptance_audit.json"
+    if not audit_path.is_file() or read_json(audit_path).get("status") != "passed":
+        return None
+    selection_paths = [
+        _run_roots(config, run_id, "cv", fold)["train"]
+        / "logs"
+        / "selected_checkpoint.json"
+        for fold in range(5)
+    ]
+    if not all(path.is_file() for path in selection_paths):
+        return None
+    return _final_epoch(config, run_id, modality)
+
+
 def _check_final_gate(config: dict[str, Any], run_id: str, modality: str) -> Path:
     path = _run_roots(config, run_id, "cv", 0)["post"] / "acceptance_audit.json"
     # The audit is written once per modality at the stage root, not per fold.
@@ -173,7 +198,11 @@ def build_job_specs(
         if stage == "final":
             # This gate is evaluated by the real submit path. A dry-run still
             # reports the exact deterministic epoch input when available.
-            final_epochs = None
+            final_epochs = (
+                _final_epoch_for_dry_run(config, run_id, modality)
+                if dry_run
+                else None
+            )
             if not dry_run:
                 _check_final_gate(config, run_id, modality)
                 final_epochs = _final_epoch(config, run_id, modality)
