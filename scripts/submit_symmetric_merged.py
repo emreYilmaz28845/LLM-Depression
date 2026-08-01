@@ -43,6 +43,10 @@ def _source_commit() -> str:
         return "unknown"
 
 
+def _reservation() -> str:
+    return str(os.environ.get("SYMMETRIC_MERGED_RESERVATION", "")).strip()
+
+
 def _job_id(run_id: str, modality: str, stage: str, fold: int, kind: str) -> str:
     value = f"{run_id}|{modality}|{stage}|{fold}|{kind}"
     return "dry_" + hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
@@ -256,6 +260,7 @@ def build_job_specs(
         "run_id": run_id,
         "stage": stage,
         "source_commit": _source_commit(),
+        "reservation": _reservation() or None,
         "plan_identity": plan_identity,
         "plan_hash": canonical_sha256(plan_identity),
         "created_utc": datetime.now(timezone.utc).isoformat(),
@@ -282,6 +287,9 @@ def _submit_job(job: dict[str, Any], *, worker: Path, dependency_id: str | None)
     arguments = ["sbatch", "--parsable", f"--job-name=sym-{job['modality'][:4]}-{job['stage'][:4]}-{job['fold']}-{job['kind'][:4]}"]
     if dependency_id:
         arguments.append(f"--dependency=afterok:{dependency_id}")
+    reservation = _reservation()
+    if reservation:
+        arguments.append(f"--reservation={reservation}")
     arguments.extend([f"--export={export_text}", str(worker)])
     output = subprocess.check_output(arguments, cwd=PROJECT_ROOT, text=True).strip()
     return output.split(";", 1)[0]
