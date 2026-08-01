@@ -26,8 +26,9 @@ RSYNC_ARGS=(
     --exclude='*.safetensors'
     --exclude='*.bin'
     --exclude='*.pt'
+    # Keep feature provenance rows for local acceptance audits; exclude only
+    # the dense hidden-vector arrays.
     --exclude='features/*.npz'
-    --exclude='features/*_rows.jsonl'
     --exclude='**/classifier.joblib'
     --exclude='**/*.db'
 )
