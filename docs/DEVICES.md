@@ -1,6 +1,6 @@
 # Devices, Hosts, and Runtime Environments
 
-Last verified: 2026-07-25 (Europe/Istanbul).
+Last verified: 2026-08-01 (Europe/Istanbul).
 
 This file is an operational handoff for agents working on this repository. Read it before running commands locally, transferring files, or submitting cluster jobs. Paths and resource availability can change, so re-run the lightweight checks below before expensive or destructive actions.
 
@@ -10,7 +10,7 @@ This file is an operational handoff for agents working on this repository. Read 
 |---|---|---|---|---|
 | Local workspace | `audiolab-server1` | Development, analysis, lightweight tests, storing synced results/checkpoints | One NVIDIA RTX 4090, 24 GB | `/home/emre/Projects/AudioLLM/LLM-Depression` |
 | BSC transfer endpoint | `ozu647717@transfer1.bsc.es` | Moving data to/from the shared GPFS filesystem and read-only inspection | Do not run training directly here; `sinfo` currently shows storage partitions only | `/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression` |
-| MN5 scheduler login | `ozu647717@alogin1.bsc.es` | `sbatch`, `squeue`, `sacct`, and job/log inspection | Submit jobs here; do not run training directly on the login node | Same GPFS repository path |
+| MN5 scheduler login | `ozu647717@alogin1.bsc.es` (or the currently available equivalent, presently `alogin2.bsc.es`) | `sbatch`, `squeue`, `sacct`, and job/log inspection | Submit jobs here; do not run training directly on the login node | Same GPFS repository path |
 | MareNostrum 5 Slurm jobs | Allocated compute nodes such as `as01...` / `as02...` | GPU training and evaluation | Existing logs show NVIDIA H100 64/65 GB nodes; jobs use Slurm account `etur92` and QoS `acc_ehpc` | Same GPFS repository path |
 
 The local and BSC repository trees intentionally have the same relative structure. They are separate copies; a change in one does not appear in the other until it is synchronized.
@@ -73,11 +73,12 @@ Therefore:
 
 1. Use `transfer1` freely for authorized read-only inspection and file transfer.
 2. Never run Python training directly on `transfer1`.
-3. Use the currently designated MN5 scheduler login,
-   `ozu647717@alogin1.bsc.es`, for `sbatch`, `squeue`, and `sacct`.
-4. `sinfo` on `alogin1` returned an access/permission error on 2026-07-25,
-   although `sbatch`, `squeue`, and `sacct` were present and prior jobs had
-   completed successfully. Treat a failed `sinfo` as a reason to verify with a
+3. Use the currently reachable MN5 scheduler login (`alogin2` during the
+   current migration; `alogin1` otherwise) for `sbatch`, `squeue`, and
+   `sacct`.
+4. `alogin2` was verified on 2026-08-01 with all three scheduler commands and
+   the project environment. The earlier `sinfo` check on `alogin1` returned an
+   access/permission error; treat a failed `sinfo` as a reason to verify with a
    smoke job, not as permission to submit through `transfer1`.
 
 Safe connectivity checks:
@@ -87,8 +88,11 @@ ssh -o BatchMode=yes -o ConnectTimeout=15 \
   ozu647717@transfer1.bsc.es 'hostname; command -v rsync; command -v sbatch; sinfo'
 
 ssh -o BatchMode=yes -o ConnectTimeout=15 \
-  ozu647717@alogin1.bsc.es \
+  ozu647717@alogin2.bsc.es \
   'hostname; command -v sbatch; command -v squeue; command -v sacct'
+
+# If alogin2 is unavailable after the migration, repeat the check against
+# alogin1 and use whichever scheduler login is currently reachable.
 ```
 
 Do not print private keys, tokens, credential files, or unrelated shell history.
@@ -97,10 +101,11 @@ Do not print private keys, tokens, credential files, or unrelated shell history.
 
 Training and evaluation must be scheduled through Slurm. Existing repository scripts currently declare:
 
-Submit and monitor from:
+Submit and monitor from the currently reachable scheduler login (currently
+`alogin2`; use `alogin1` when it is available):
 
 ```text
-ozu647717@alogin1.bsc.es
+ozu647717@alogin2.bsc.es
 ```
 
 Use `transfer1` for rsync. Both endpoints see the same GPFS project tree.
