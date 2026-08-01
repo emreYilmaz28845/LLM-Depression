@@ -19,7 +19,7 @@ from src.merged.protocol import (
     canonical_sha256,
 )
 from src.merged.runtime import load_merged_config, load_protocol_artifact
-from src.utils import configure_logging, read_json, read_jsonl, save_json
+from src.utils import configure_logging, read_json, read_jsonl, save_json, sha256_file
 
 
 def _check_required(path: Path, failures: list[str], label: str) -> None:
@@ -229,6 +229,7 @@ def audit_symmetric_run(
 ) -> dict[str, Any]:
     config = load_merged_config(config_path)
     protocol = load_protocol_artifact(config)
+    config_sha256 = sha256_file(config_path)
     failures: list[str] = []
     split_audit = audit_protocol_splits(
         protocol["protocol"], require_daic_official_test_count=True
@@ -315,6 +316,9 @@ def audit_symmetric_run(
                 or int(identity.get("fold", -1)) != fold
                 or identity.get("run_id") != run_id
                 or identity.get("manifest_hash") != protocol["manifest"].get("manifest_hash")
+                or identity.get("merged_config_sha256") != config_sha256
+                or identity.get("fold_hash")
+                != protocol["protocol"].get("folds", {}).get(str(fold), {}).get("fold_hash")
             ):
                 failures.append(f"training_identity_mismatch:{fold}")
             if int(train.get("selected_epoch", 0)) < 1 or int(train.get("selected_epoch", 0)) > 20:
@@ -333,6 +337,10 @@ def audit_symmetric_run(
                 or int(post_identity.get("fold", -1)) != fold
                 or post_identity.get("run_id") != run_id
                 or post_identity.get("manifest_hash") != protocol["manifest"].get("manifest_hash")
+                or post_identity.get("split_hash") != protocol["protocol"].get("split_hash")
+                or post_identity.get("merged_config_sha256") != config_sha256
+                or post_identity.get("fold_hash")
+                != protocol["protocol"].get("folds", {}).get(str(fold), {}).get("fold_hash")
             ):
                 failures.append(f"postprocess_identity_mismatch:{fold}")
         if head_complete.is_file() and read_json(head_complete).get("status") != "completed":
@@ -344,6 +352,8 @@ def audit_symmetric_run(
                 head_identity.get("stage") != stage
                 or int(head_identity.get("fold", -1)) != fold
                 or head_identity.get("run_id") != run_id
+                or head_identity.get("merged_config_sha256") != config_sha256
+                or head_identity.get("manifest_hash") != protocol["manifest"].get("manifest_hash")
             ):
                 failures.append(f"heads_identity_mismatch:{fold}")
         feature_metadata_path = fold_root / "features" / "feature_metadata.json"
@@ -353,6 +363,8 @@ def audit_symmetric_run(
             feature_metadata = read_json(feature_metadata_path)
             if feature_metadata.get("manifest_hash") != protocol["manifest"]["manifest_hash"]:
                 failures.append(f"feature_manifest_hash_mismatch:{fold}")
+            if feature_metadata.get("merged_config_sha256") != config_sha256:
+                failures.append(f"feature_config_hash_mismatch:{fold}")
             if stage == "cv" and feature_metadata.get("split_hash") != protocol["protocol"]["split_hash"]:
                 failures.append(f"feature_split_hash_mismatch:{fold}")
             expected_fold_hash = protocol["protocol"].get("folds", {}).get(str(fold), {}).get("fold_hash")
@@ -453,6 +465,10 @@ def audit_symmetric_run(
                 metadata_path = method_dir / "classifier_metadata.json"
                 if metadata_path.is_file() and feature_subjects:
                     classifier_metadata = read_json(metadata_path)
+                    if classifier_metadata.get("manifest_hash") != protocol["manifest"]["manifest_hash"]:
+                        failures.append(f"head_manifest_hash_mismatch:{fold}:{method}")
+                    if classifier_metadata.get("split_hash") != protocol["protocol"]["split_hash"]:
+                        failures.append(f"head_split_hash_mismatch:{fold}:{method}")
                     if set(classifier_metadata.get("training_subject_ids", [])) != feature_subjects.get("outer_train", set()):
                         failures.append(f"head_train_subject_mismatch:{fold}:{method}")
                     if set(classifier_metadata.get("holdout_subject_ids", [])) != feature_subjects.get("outer_holdout", set()):
