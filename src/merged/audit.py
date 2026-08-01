@@ -175,8 +175,11 @@ def _audit_training_artifacts(
     """Check persisted weighting, schedule, and selection invariants."""
 
     weighting_path = train_root / "logs" / "weighting_audit.json"
+    expected_example_count: int | None = None
     if weighting_path.is_file():
         weighting = read_json(weighting_path)
+        if weighting.get("row_count") is not None:
+            expected_example_count = int(weighting["row_count"])
         for key in ("equal_dataset_totals", "natural_class_prevalence_preserved", "no_sampling", "no_duplication"):
             if weighting.get(key) is not True:
                 failures.append(f"weighting_invariant_failed:{fold}:{key}")
@@ -192,6 +195,8 @@ def _audit_training_artifacts(
         failures.append(f"schedule_epochs_missing:{fold}")
     for epoch in epochs:
         example_count = int(epoch.get("example_count", -1))
+        if expected_example_count is not None and example_count != expected_example_count:
+            failures.append(f"schedule_example_count_mismatch:{fold}:{epoch.get('epoch')}")
         occurrences = {int(index): int(count) for index, count in (epoch.get("sample_occurrence_counts") or {}).items()}
         if example_count < 1 or set(occurrences) != set(range(example_count)) or set(occurrences.values()) != {1}:
             failures.append(f"schedule_one_time_coverage:{fold}:{epoch.get('epoch')}")

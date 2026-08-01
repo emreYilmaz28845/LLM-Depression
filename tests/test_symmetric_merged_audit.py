@@ -71,6 +71,7 @@ def test_training_artifact_audit_checks_schedule_and_selection_mean(tmp_path: Pa
         json.dumps(
             {
                 "datasets": list(DATASETS),
+                "row_count": 4,
                 "equal_dataset_totals": True,
                 "natural_class_prevalence_preserved": True,
                 "no_sampling": True,
