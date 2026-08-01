@@ -32,6 +32,17 @@ def _check_present(path: Path, failures: list[str], label: str) -> None:
         failures.append(f"missing:{label}:{path}")
 
 
+def _resolve_qwen_prediction_path(
+    fold_root: Path, dataset: str, recorded_output_dir: str | Path
+) -> Path:
+    """Resolve Qwen predictions across remote execution and compact sync paths."""
+
+    local_path = fold_root / "qwen" / str(dataset) / "predictions_subject_level.csv"
+    if local_path.is_file():
+        return local_path
+    return Path(recorded_output_dir) / "predictions_subject_level.csv"
+
+
 def _feature_subjects(
     rows_path: Path,
     metadata: dict[str, Any],
@@ -422,7 +433,13 @@ def audit_symmetric_run(
                 item = qwen.get(dataset, {})
                 if int(item.get("sample_count", 0)) <= 0 or int(item.get("subject_count", 0)) <= 0:
                     failures.append(f"qwen_empty_predictions:{fold}:{dataset}")
-                prediction_path = Path(item.get("output_dir", "")) / "predictions_subject_level.csv"
+                # The summary records the execution-time GPFS path. After a
+                # compact result sync that path is intentionally stale, so
+                # resolve the canonical local fold path before falling back to
+                # the recorded path for an unsynchronized/remote audit.
+                prediction_path = _resolve_qwen_prediction_path(
+                    fold_root, dataset, item.get("output_dir", "")
+                )
                 _check_required(prediction_path, failures, f"fold_{fold}:qwen_predictions:{dataset}")
         heads_summary_path = fold_root / "heads" / "summary.json"
         if heads_summary_path.is_file():

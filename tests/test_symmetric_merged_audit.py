@@ -6,6 +6,7 @@ from pathlib import Path
 from src.merged.audit import (
     _audit_feature_test_protection,
     _audit_head_inner_folds,
+    _resolve_qwen_prediction_path,
     _audit_training_artifacts,
 )
 from src.merged.protocol import DATASETS, canonical_sha256
@@ -129,3 +130,15 @@ def test_final_feature_audit_allows_official_test_only_in_holdout() -> None:
         fold=0,
     )
     assert failures == ["official_test_in_final_training_features:0"]
+
+
+def test_compact_audit_uses_local_qwen_prediction_path(tmp_path: Path) -> None:
+    fold_root = tmp_path / "fold_0"
+    local_prediction = fold_root / "qwen" / "daic" / "predictions_subject_level.csv"
+    local_prediction.parent.mkdir(parents=True)
+    local_prediction.write_text("subject_id,label,prediction\n", encoding="utf-8")
+
+    resolved = _resolve_qwen_prediction_path(
+        fold_root, "daic", "/gpfs/projects/etur92/remote/qwen/daic"
+    )
+    assert resolved == local_prediction
