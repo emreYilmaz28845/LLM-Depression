@@ -1,6 +1,6 @@
 # MN5 Agent Execution Runbook
 
-Last verified: 2026-07-25 (Europe/Istanbul).
+Last verified: 2026-08-01 (Europe/Istanbul).
 
 This is the operational playbook for an agent that must do more than implement
 an experiment. It covers transferring tested code to MareNostrum 5 (MN5),
@@ -23,7 +23,7 @@ The BSC endpoints have different jobs:
 | Purpose | Endpoint | What to do there |
 |---|---|---|
 | File transfer | `ozu647717@transfer1.bsc.es` | `rsync`, remote file inspection, `du`, checksums |
-| MN5 scheduler login | `ozu647717@alogin1.bsc.es` | `sbatch`, `squeue`, `sacct`, job/log inspection |
+| MN5 scheduler login | `ozu647717@alogin1.bsc.es` (or the currently available equivalent, presently `alogin2.bsc.es`) | `sbatch`, `squeue`, `sacct`, job/log inspection |
 | Compute | Slurm-allocated nodes | Python training/evaluation launched by `sbatch` |
 
 Known project path on the shared GPFS filesystem:
@@ -33,18 +33,23 @@ Known project path on the shared GPFS filesystem:
 ```
 
 Both endpoints see that same GPFS project tree. Transfer through `transfer1`;
-submit and monitor through `alogin1`. Never run the experiment directly on
-either login endpoint.
+submit and monitor through the available scheduler login. During the current
+MN5 migration, `alogin1` may be unavailable and `alogin2` is the appropriate
+replacement; the Slurm commands and project path are unchanged. Never run
+the experiment directly on either login endpoint.
 
-As verified on 2026-07-25:
+As verified on 2026-07-25 for the original login, and rechecked on
+2026-08-01 through `alogin2` during the operating-system migration:
 
 - `transfer1` accepted non-interactive SSH and exposed `rsync`.
-- `alogin1` accepted non-interactive SSH and exposed `sbatch`, `squeue`, and
-  `sacct`.
-- `sinfo` on `alogin1` returned an access/permission error. This is not by
-  itself proof that submission is unavailable; the completed experiments used
-  `sbatch` there successfully. Verify account/QoS from the selected Slurm
-  script and use a smoke job.
+- The reachable scheduler login (`alogin2` during the migration) accepted
+  non-interactive SSH and exposed `sbatch`, `squeue`, and `sacct`.
+- `alogin1` may be unavailable while its migration is in progress; this does
+  not change the scheduler commands or the shared GPFS project path.
+- The earlier `sinfo` check on `alogin1` returned an access/permission error.
+  This is not by itself proof that submission is unavailable; verify
+  account/QoS from the selected Slurm script and use a smoke job on whichever
+  scheduler login is reachable.
 
 Always re-run the lightweight connectivity checks because endpoints and
 policies can change:
@@ -55,8 +60,11 @@ ssh -o BatchMode=yes -o ConnectTimeout=15 \
   'hostname; command -v rsync; test -d /gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression'
 
 ssh -o BatchMode=yes -o ConnectTimeout=15 \
-  ozu647717@alogin1.bsc.es \
+  ozu647717@alogin2.bsc.es \
   'hostname; command -v sbatch; command -v squeue; command -v sacct'
+
+# If alogin2 is unavailable after the migration, repeat the check against
+# alogin1 and use whichever scheduler login is currently reachable.
 ```
 
 If either command fails, report the exact error. Do not invent another
@@ -64,8 +72,9 @@ hostname, alter SSH configuration, or expose credentials.
 
 ## 2. Runtime environment
 
-On `alogin1`, enter the project and initialize the environment before running
-preflight commands or submission wrappers:
+On the reachable scheduler login (currently `alogin2`), enter the project and
+initialize the environment before running preflight commands or submission
+wrappers:
 
 ```bash
 cd /gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression
@@ -267,12 +276,13 @@ Also inspect the remote provenance snapshot or exact file headers. Do not
 overwrite remote results, caches, checkpoints, or unrelated configs while
 transferring code.
 
-## 6. Remote preflight on `alogin1`
+## 6. Remote preflight on the scheduler login
 
-Open the scheduler-login session:
+Open the scheduler-login session (currently `alogin2`; use `alogin1` if it is
+the reachable equivalent):
 
 ```bash
-ssh ozu647717@alogin1.bsc.es
+ssh ozu647717@alogin2.bsc.es
 ```
 
 Then:
@@ -342,7 +352,7 @@ same smoke again, and verify that it remains at exactly two completed trials
 instead of adding two more.
 
 Submit through the repository wrapper or `sbatch`; never invoke the Python
-training command directly on `alogin1`.
+training command directly on a login node.
 
 Immediately record:
 
@@ -524,7 +534,7 @@ audit.
 
 ## 12. Safe GPFS-to-local synchronization
 
-Use `transfer1`, not `alogin1`, for artifact transfer.
+Use `transfer1`, not a scheduler login, for artifact transfer.
 
 Define:
 
@@ -675,8 +685,9 @@ ozu647717@transfer1.bsc.es. Use
 /gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression as the remote project.
 Verify remote checksums.
 
-Use ozu647717@alogin1.bsc.es for Slurm submission and monitoring. Do not run
-Python training on a login or transfer node. Initialize the documented module,
+Use the currently reachable scheduler login (`alogin2` during the current
+migration; `alogin1` otherwise) for Slurm submission and monitoring. Do not
+run Python training on a login or transfer node. Initialize the documented module,
 environment, and project-local PYTHONPATH. Dry-run the submission and verify
 the exact expected job count, resources, paths, experiment IDs, and collision
 behavior.
@@ -712,7 +723,7 @@ Git state is reported. Keep the user informed during long-running work.
 [ ] Inspect local Git state and selected scripts/configs
 [ ] Run local tests and dry runs
 [ ] Record commit, IDs, expected jobs, resources, output paths
-[ ] Verify transfer1 and alogin1 connectivity
+[ ] Verify transfer1 and the currently reachable scheduler-login connectivity
 [ ] Dry-run selective local-to-GPFS rsync
 [ ] Sync and verify remote checksums
 [ ] Initialize modules, environment, and PYTHONPATH
