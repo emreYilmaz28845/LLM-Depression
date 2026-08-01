@@ -159,6 +159,38 @@ def test_hierarchical_weights_equalize_dataset_subject_response_and_windows() ->
     assert len({round(value, 10) for value in response_totals.values()}) == 1
 
 
+def test_hierarchical_weights_are_stable_for_large_merged_pools() -> None:
+    rows = []
+    subject_counts = {
+        "daic": 90,
+        "cmdc": 49,
+        "turkish": 76,
+        "d3tec": 39,
+        "androids_interview": 74,
+    }
+    for dataset, subject_count in subject_counts.items():
+        for subject_index in range(subject_count):
+            subject = f"{dataset}::{subject_index}"
+            response_count = 1 + (subject_index % 7)
+            for response_index in range(response_count):
+                window_count = 1 + ((subject_index + response_index) % 5)
+                for window_index in range(window_count):
+                    rows.append(
+                        {
+                            "dataset": dataset,
+                            "subject_id": subject,
+                            "response_id": f"{subject}::response_{response_index}",
+                            "sample_id": f"{subject}::response_{response_index}::window_{window_index}",
+                            "label": subject_index % 2,
+                        }
+                    )
+
+    weighted, audit = compute_hierarchical_example_weights(rows)
+    assert len(weighted) == len(rows)
+    assert audit["equal_dataset_totals"] is True
+    assert abs(sum(row["loss_weight"] for row in weighted) / len(weighted) - 1.0) < 1e-12
+
+
 def test_schedule_and_head_inner_folds_are_deterministic_and_one_time() -> None:
     rows, _ = build_merged_manifest(_records())
     weighted, _ = compute_hierarchical_example_weights(rows)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import random
 from collections import Counter, defaultdict, deque
 from pathlib import Path
@@ -637,8 +638,16 @@ def compute_hierarchical_example_weights(
         dataset_totals[dataset] += float(example["loss_weight"])
         subject_totals[subject] += float(example["loss_weight"])
         response_totals[response] += float(example["loss_weight"])
-    equal_dataset_raw = len({round(value, 12) for value in dataset_raw_totals.values()}) == 1
-    equal_dataset = len({round(value, 12) for value in dataset_totals.values()}) == 1
+    raw_reference = next(iter(dataset_raw_totals.values()))
+    normalized_reference = next(iter(dataset_totals.values()))
+    equal_dataset_raw = all(
+        math.isclose(value, raw_reference, rel_tol=1e-12, abs_tol=1e-12)
+        for value in dataset_raw_totals.values()
+    )
+    equal_dataset = all(
+        math.isclose(value, normalized_reference, rel_tol=1e-12, abs_tol=1e-12)
+        for value in dataset_totals.values()
+    )
     if not equal_dataset_raw or not equal_dataset:
         raise AssertionError("Merged weighting did not equalize dataset totals.")
     if abs(sum(float(row["loss_weight"]) for row in weighted) / len(weighted) - 1.0) > 1e-10:
