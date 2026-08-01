@@ -493,6 +493,46 @@ def build_final_partitions(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def limit_examples_by_dataset_subjects_per_class(
+    examples: list[dict[str, Any]], *, subjects_per_class: int
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Select a deterministic smoke cohort independently in every dataset."""
+
+    limit = int(subjects_per_class)
+    if limit < 1:
+        raise ValueError("subjects_per_class must be positive.")
+    labels_by_dataset: dict[str, dict[str, int]] = defaultdict(dict)
+    for example in examples:
+        dataset = str(example.get("dataset", "")).lower()
+        if not dataset:
+            raise ValueError("Every smoke example requires dataset.")
+        subject = _subject_key(example)
+        label = int(example["label"])
+        if label not in (0, 1):
+            raise ValueError(f"Expected binary labels, got {label} for {subject}.")
+        prior = labels_by_dataset[dataset].setdefault(subject, label)
+        if prior != label:
+            raise ValueError(f"Subject {dataset}::{subject} has inconsistent labels.")
+
+    selected_keys: set[tuple[str, str]] = set()
+    selected_ids: list[str] = []
+    for dataset in sorted(labels_by_dataset):
+        labels = labels_by_dataset[dataset]
+        for label in (0, 1):
+            subjects = sorted(subject for subject, value in labels.items() if value == label)[:limit]
+            selected_keys.update((dataset, subject) for subject in subjects)
+            selected_ids.extend(
+                namespace_id(dataset, subject) if "::" not in subject else subject
+                for subject in subjects
+            )
+    selected = [
+        example
+        for example in examples
+        if (str(example["dataset"]).lower(), _subject_key(example)) in selected_keys
+    ]
+    return selected, sorted(set(selected_ids))
+
+
 def _response_key(row: dict[str, Any]) -> str:
     for field in ("response_id", "turn_key", "question_id", "sample_id"):
         value = row.get(field)

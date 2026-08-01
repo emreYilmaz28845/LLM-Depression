@@ -25,6 +25,7 @@ from src.merged.protocol import (
     DATASETS,
     build_dataset_aware_schedule,
     compute_hierarchical_example_weights,
+    limit_examples_by_dataset_subjects_per_class,
 )
 from src.merged.configuration import model_config
 from src.merged.provenance import write_slurm_provenance
@@ -59,26 +60,6 @@ LOGGER = get_logger(__name__)
 
 
 _model_config = model_config
-
-
-def _limit_subjects_per_class(
-    examples: list[dict[str, Any]], *, subjects_per_class: int, seed: int
-) -> tuple[list[dict[str, Any]], list[str]]:
-    by_subject: dict[str, list[dict[str, Any]]] = {}
-    labels: dict[str, int] = {}
-    for example in examples:
-        subject = str(example["subject_id"])
-        by_subject.setdefault(subject, []).append(example)
-        labels[subject] = int(example["label"])
-    selected: list[str] = []
-    for label in (0, 1):
-        candidates = sorted(subject for subject, value in labels.items() if value == label)
-        # The protocol uses deterministic lexicographic selection after the
-        # split has already been seeded. The seed is recorded for an explicit
-        # smoke identity without changing the component fold assignment.
-        selected.extend(candidates[: int(subjects_per_class)])
-    selected_set = set(selected)
-    return [example for example in examples if str(example["subject_id"]) in selected_set], sorted(selected)
 
 
 def _component_examples(partitions: dict[str, Any], partition: str) -> dict[str, list[dict[str, Any]]]:
@@ -174,8 +155,8 @@ def train_merged_fold(
 
     smoke_subject_ids: list[str] | None = None
     if subjects_per_class is not None:
-        train_examples, selected_train = _limit_subjects_per_class(
-            train_examples, subjects_per_class=int(subjects_per_class), seed=int(merged_config.get("seed", 1337))
+        train_examples, selected_train = limit_examples_by_dataset_subjects_per_class(
+            train_examples, subjects_per_class=int(subjects_per_class)
         )
         smoke_subject_ids = list(selected_train)
         selection_examples, selected = limit_grouped_subjects(

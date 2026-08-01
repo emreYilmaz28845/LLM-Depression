@@ -11,6 +11,7 @@ from src.merged.protocol import (
     build_merged_manifest,
     build_protocol_splits,
     compute_hierarchical_example_weights,
+    limit_examples_by_dataset_subjects_per_class,
 )
 from src.merged.runtime import fold_subject_ids
 
@@ -85,6 +86,30 @@ def test_final_partitions_keep_only_daic_official_test_outside_training() -> Non
     assert len(final["daic_official_test_subject_ids"]) == 2
     assert not set(final["train_subject_ids"]) & set(final["daic_official_test_subject_ids"])
     assert final["by_dataset"]["cmdc"]["official_test_count"] == 0
+
+
+def test_smoke_subject_limit_is_per_dataset_and_per_class() -> None:
+    examples = [
+        {
+            "dataset": dataset,
+            "subject_id": f"{dataset}::{index}",
+            "label": index % 2,
+            "sample_id": f"{dataset}::{index}::sample",
+        }
+        for dataset in DATASETS
+        for index in range(6)
+    ]
+    selected, subject_ids = limit_examples_by_dataset_subjects_per_class(
+        examples, subjects_per_class=2
+    )
+    assert len(selected) == len(DATASETS) * 2 * 2
+    assert len(subject_ids) == len(DATASETS) * 2 * 2
+    for dataset in DATASETS:
+        dataset_subjects = {
+            row["subject_id"] for row in selected if row["dataset"] == dataset
+        }
+        assert len(dataset_subjects) == 4
+        assert {row["label"] for row in selected if row["dataset"] == dataset} == {0, 1}
 
 
 def test_runtime_reads_folds_from_saved_protocol_artifact_shape() -> None:
