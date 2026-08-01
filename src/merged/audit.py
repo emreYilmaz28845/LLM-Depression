@@ -80,6 +80,59 @@ def _audit_provenance(
         failures.append(f"provenance_slurm_job_missing:{label}")
 
 
+def _audit_head_inner_folds(
+    path: Path,
+    rows_path: Path,
+    *,
+    expected_subjects: set[str],
+    failures: list[str],
+    fold: int,
+) -> None:
+    """Validate grouped head-tuning assignments against outer-train rows."""
+
+    if not path.is_file() or not rows_path.is_file():
+        return
+    payload = read_json(path)
+    assignments = payload.get("folds") or []
+    if int(payload.get("inner_folds", -1)) != 3 or len(assignments) != 3:
+        failures.append(f"head_inner_fold_count:{fold}")
+        return
+    hash_payload = {key: value for key, value in payload.items() if key != "assignments_hash"}
+    if payload.get("assignments_hash") != canonical_sha256(hash_payload):
+        failures.append(f"head_inner_fold_hash_mismatch:{fold}")
+    rows = read_jsonl(rows_path)
+    all_indices = set(range(len(rows)))
+    validation_indices: list[int] = []
+    validation_subjects: list[str] = []
+    for inner_fold in assignments:
+        train_indices = [int(value) for value in inner_fold.get("train_row_indices", [])]
+        inner_validation_indices = [int(value) for value in inner_fold.get("validation_row_indices", [])]
+        if set(train_indices) & set(inner_validation_indices):
+            failures.append(f"head_inner_row_overlap:{fold}:{inner_fold.get('fold')}")
+        if not set(train_indices) <= all_indices or not set(inner_validation_indices) <= all_indices:
+            failures.append(f"head_inner_row_out_of_range:{fold}:{inner_fold.get('fold')}")
+        row_train_subjects = {str(rows[index]["subject_id"]) for index in train_indices if index in all_indices}
+        row_validation_subjects = {
+            str(rows[index]["subject_id"])
+            for index in inner_validation_indices
+            if index in all_indices
+        }
+        if row_train_subjects != set(str(value) for value in inner_fold.get("train_subject_ids", [])):
+            failures.append(f"head_inner_train_subject_mismatch:{fold}:{inner_fold.get('fold')}")
+        if row_validation_subjects != set(str(value) for value in inner_fold.get("validation_subject_ids", [])):
+            failures.append(f"head_inner_validation_subject_mismatch:{fold}:{inner_fold.get('fold')}")
+        if row_train_subjects & row_validation_subjects:
+            failures.append(f"head_inner_subject_overlap:{fold}:{inner_fold.get('fold')}")
+        if row_train_subjects | row_validation_subjects != expected_subjects:
+            failures.append(f"head_inner_outer_pool_mismatch:{fold}:{inner_fold.get('fold')}")
+        validation_indices.extend(inner_validation_indices)
+        validation_subjects.extend(sorted(row_validation_subjects))
+    if sorted(validation_indices) != sorted(all_indices) or len(validation_indices) != len(set(validation_indices)):
+        failures.append(f"head_inner_validation_row_coverage:{fold}")
+    if len(validation_subjects) != len(set(validation_subjects)):
+        failures.append(f"head_inner_validation_subject_coverage:{fold}")
+
+
 def audit_symmetric_run(
     config_path: str | Path,
     *,
@@ -288,6 +341,15 @@ def audit_symmetric_run(
                         failures.append(f"head_train_subject_mismatch:{fold}:{method}")
                     if set(classifier_metadata.get("holdout_subject_ids", [])) != feature_subjects.get("outer_holdout", set()):
                         failures.append(f"head_holdout_subject_mismatch:{fold}:{method}")
+                    if int(classifier_metadata.get("input_dimension", -1)) != int(fold_payload.get("feature_dimension") or -1):
+                        failures.append(f"head_feature_dimension_mismatch:{fold}:{method}")
+            _audit_head_inner_folds(
+                fold_root / "heads" / "inner_folds.json",
+                fold_root / "features" / "outer_train_rows.jsonl",
+                expected_subjects=feature_subjects.get("outer_train", set()),
+                failures=failures,
+                fold=fold,
+            )
             optuna_summary = fold_root / "heads" / "xgb_optuna" / "optuna" / "study_summary.json"
             if stage != "smoke":
                 _check_required(optuna_summary, failures, f"fold_{fold}:optuna_summary")
