@@ -17,6 +17,7 @@ import torch
 
 from src.features.pooling import aligned_attention_mask, last_valid_token
 from src.features.qwen_hidden_collator import PromptOnlyExtractionCollator, load_prompt_audio
+from src.evaluate import evaluate_examples
 from src.merged.protocol import DATASETS, canonical_sha256
 from src.merged.runtime import (
     limit_grouped_subjects,
