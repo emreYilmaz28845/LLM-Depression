@@ -280,6 +280,40 @@ def test_retry_propagates_failed_dependency_to_descendants() -> None:
     assert "stale-head" not in {job.get("job_id") for job in registry["jobs"]}
 
 
+def test_retry_replaces_terminal_job_when_its_artifact_is_missing() -> None:
+    train_key = "audio_text:cv:fold_0:train"
+    registry = {
+        "jobs": [
+            {
+                "job_key": train_key,
+                "kind": "train",
+                "state": "planned",
+                "expected_job_id": "dry-train",
+                "dependency_job_key": None,
+                "completed_before_submission": False,
+            }
+        ]
+    }
+    existing = {
+        "jobs": [
+            {
+                "job_key": train_key,
+                "state": "submitted",
+                "job_id": "stale-completed-train",
+                "observed_state": "COMPLETED",
+                "exit_code": "0:0",
+            }
+        ]
+    }
+
+    registry = merge_existing_registry(registry, existing)
+    registry = submit_registry(registry, dry_run=True)
+    job = registry["jobs"][0]
+    assert job["job_id"] == "dry-train"
+    assert job["state"] == "planned_dry_run"
+    assert job["retry"] == 1
+
+
 def test_completed_artifact_reuse_requires_current_hashes_and_provenance(tmp_path: Path) -> None:
     config_path = tmp_path / "merged.yaml"
     config_path.write_text("name: synthetic\n", encoding="utf-8")

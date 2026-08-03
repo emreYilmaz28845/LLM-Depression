@@ -243,7 +243,54 @@ def train_merged_fold(
         existing = json.loads(complete_path.read_text(encoding="utf-8"))
         if existing.get("identity") != identity:
             raise ValueError(f"Incompatible completed merged training output: {run_root}")
-        return {"status": "skipped_compatible_complete", "run_root": str(run_root), **existing}
+        expected_source_commit = (
+            os.environ.get("SOURCE_COMMIT")
+            or os.environ.get("SYMMETRIC_MERGED_SOURCE_COMMIT")
+        )
+        provenance_path = run_root / "slurm_provenance.json"
+        existing_source_commit: str | None = None
+        if provenance_path.is_file():
+            provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+            existing_source_commit = provenance.get("source_commit")
+        if not expected_source_commit or existing_source_commit == expected_source_commit:
+            return {"status": "skipped_compatible_complete", "run_root": str(run_root), **existing}
+
+    expected_source_commit = (
+        os.environ.get("SOURCE_COMMIT")
+        or os.environ.get("SYMMETRIC_MERGED_SOURCE_COMMIT")
+    )
+    provenance_path = run_root / "slurm_provenance.json"
+    existing_source_commit: str | None = None
+    if provenance_path.is_file():
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        existing_source_commit = provenance.get("source_commit")
+    stale_source_output = bool(
+        expected_source_commit and existing_source_commit != expected_source_commit
+    )
+    if stale_source_output and run_root.exists() and any(run_root.iterdir()):
+        source_label = "".join(
+            character if character.isalnum() else "_"
+            for character in str(existing_source_commit or "missing")
+        )[:16]
+        job_label = os.environ.get("SLURM_JOB_ID", "retry")
+        archive_root = run_root.with_name(
+            f"{run_root.name}.stale_{source_label}_{job_label}"
+        )
+        suffix = 1
+        while archive_root.exists():
+            archive_root = run_root.with_name(
+                f"{run_root.name}.stale_{source_label}_{job_label}_{suffix}"
+            )
+            suffix += 1
+        if is_local_main_process:
+            run_root.rename(archive_root)
+            LOGGER.warning(
+                "Archived stale merged training output source_commit=%s expected=%s path=%s",
+                existing_source_commit,
+                expected_source_commit,
+                archive_root,
+            )
+        accelerator.wait_for_everyone()
     if run_root.exists() and any(run_root.iterdir()) and not complete_path.is_file():
         raise ValueError(f"Refusing to overwrite an incomplete merged training output: {run_root}")
     ensure_dir(run_root)

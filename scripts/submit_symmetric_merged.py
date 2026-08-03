@@ -470,13 +470,21 @@ def merge_existing_registry(registry: dict[str, Any], existing: dict[str, Any]) 
             continue
         old_state = state_token(old.get("observed_state", old.get("state", "")))
         old_job_id = old.get("job_id")
-        if old_job_id and not str(old_job_id).startswith("dry_") and old_state not in failed_states:
+        terminal_success_without_artifact = (
+            old_state == "completed" and not job.get("completed_before_submission")
+        )
+        if (
+            old_job_id
+            and not str(old_job_id).startswith("dry_")
+            and old_state not in failed_states
+            and not terminal_success_without_artifact
+        ):
             job["state"] = old.get("state", "submitted")
             job["job_id"] = old_job_id
             for key in ("submission_time_utc", "observed_state", "exit_code"):
                 if key in old:
                     job[key] = old[key]
-        elif old_state in failed_states:
+        elif old_state in failed_states or terminal_success_without_artifact:
             job["retry"] = int(old.get("retry", 0)) + 1
             retry_job_keys.add(str(job["job_key"]))
 
