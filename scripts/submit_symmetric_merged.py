@@ -20,6 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.merged.protocol import canonical_sha256
+from src.merged.provenance import source_commits_match
 from src.merged.runtime import load_merged_config, load_protocol_artifact
 from src.utils import read_json, resolve_project_path, save_json, sha256_file
 
@@ -92,7 +93,7 @@ def _provenance_matches(path: Path) -> bool:
     if not current or current == "unknown":
         return False
     try:
-        return str(read_json(path).get("source_commit", "")) == current
+        return source_commits_match(read_json(path).get("source_commit"), current)
     except (OSError, TypeError, ValueError):
         return False
 

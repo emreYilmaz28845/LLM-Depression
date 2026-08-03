@@ -16,6 +16,7 @@ from scripts.submit_symmetric_merged import (
     submit_registry,
 )
 from src.merged.runtime import load_merged_config
+from src.merged.provenance import source_commits_match
 
 
 def _stage_plan(stage: str, plan_hash: str) -> dict:
@@ -411,6 +412,15 @@ def test_completed_artifact_reuse_requires_current_hashes_and_provenance(tmp_pat
             encoding="utf-8",
         )
         assert not _completed(config, config_path, run_id, "cv", 0, "train", epochs=1)
+
+
+def test_source_commit_comparison_accepts_git_abbreviations_only() -> None:
+    full = "9888e814872c37d14535cf3555a814b62ba56b59"
+    assert source_commits_match("9888e81", full)
+    assert source_commits_match(full, "9888e814")
+    assert not source_commits_match("9888e80", full)
+    assert not source_commits_match("9888", full)
+    assert not source_commits_match("", full)
 
 
 def test_qwen_worker_uses_all_allocated_gpus() -> None:

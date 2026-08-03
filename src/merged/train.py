@@ -29,7 +29,7 @@ from src.merged.protocol import (
     limit_examples_by_dataset_subjects_per_class,
 )
 from src.merged.configuration import model_config
-from src.merged.provenance import write_slurm_provenance
+from src.merged.provenance import source_commits_match, write_slurm_provenance
 from src.merged.runtime import (
     limit_grouped_subjects,
     load_merged_config,
@@ -252,7 +252,7 @@ def train_merged_fold(
         if provenance_path.is_file():
             provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
             existing_source_commit = provenance.get("source_commit")
-        if not expected_source_commit or existing_source_commit == expected_source_commit:
+        if not expected_source_commit or source_commits_match(existing_source_commit, expected_source_commit):
             return {"status": "skipped_compatible_complete", "run_root": str(run_root), **existing}
 
     expected_source_commit = (
@@ -265,7 +265,8 @@ def train_merged_fold(
         provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
         existing_source_commit = provenance.get("source_commit")
     stale_source_output = bool(
-        expected_source_commit and existing_source_commit != expected_source_commit
+        expected_source_commit
+        and not source_commits_match(existing_source_commit, expected_source_commit)
     )
     if stale_source_output and run_root.exists() and any(run_root.iterdir()):
         source_label = "".join(
