@@ -8,3 +8,5 @@ logs/
 output_model
 .provenance/
 docs/
+opencode.json
+AGENTS.md
