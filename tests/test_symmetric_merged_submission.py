@@ -212,6 +212,74 @@ def test_retry_omits_dependency_on_completed_prior_job() -> None:
     assert by_key[head_key]["dependency_job_id"] == by_key[post_key]["job_id"]
 
 
+def test_retry_propagates_failed_dependency_to_descendants() -> None:
+    train_key = "audio_text:cv:fold_0:train"
+    post_key = "audio_text:cv:fold_0:postprocess"
+    head_key = "audio_text:cv:fold_0:head"
+    registry = {
+        "jobs": [
+            {
+                "job_key": train_key,
+                "kind": "train",
+                "state": "planned",
+                "expected_job_id": "dry-train",
+                "dependency_job_key": None,
+            },
+            {
+                "job_key": post_key,
+                "kind": "postprocess",
+                "state": "planned",
+                "expected_job_id": "dry-post",
+                "dependency_job_key": train_key,
+            },
+            {
+                "job_key": head_key,
+                "kind": "head",
+                "state": "planned",
+                "expected_job_id": "dry-head",
+                "dependency_job_key": post_key,
+            },
+        ]
+    }
+    existing = {
+        "jobs": [
+            {
+                "job_key": train_key,
+                "state": "submitted",
+                "job_id": "failed-train",
+                "observed_state": "FAILED",
+                "exit_code": "1:0",
+            },
+            {
+                "job_key": post_key,
+                "state": "submitted",
+                "job_id": "stale-post",
+                "observed_state": "DependencyNeverSatisfied",
+                "exit_code": "0:0",
+            },
+            {
+                "job_key": head_key,
+                "state": "submitted",
+                "job_id": "stale-head",
+                "observed_state": "PENDING",
+                "exit_code": "0:0",
+            },
+        ]
+    }
+
+    registry = merge_existing_registry(registry, existing)
+    registry = submit_registry(registry, dry_run=True)
+    by_key = {job["job_key"]: job for job in registry["jobs"]}
+
+    assert by_key[train_key]["job_id"] == "dry-train"
+    assert by_key[post_key]["state"] == "planned_dry_run"
+    assert by_key[post_key]["dependency_job_id"] == by_key[train_key]["job_id"]
+    assert by_key[head_key]["state"] == "planned_dry_run"
+    assert by_key[head_key]["dependency_job_id"] == by_key[post_key]["job_id"]
+    assert "stale-post" not in {job.get("job_id") for job in registry["jobs"]}
+    assert "stale-head" not in {job.get("job_id") for job in registry["jobs"]}
+
+
 def test_completed_artifact_reuse_requires_current_hashes_and_provenance(tmp_path: Path) -> None:
     config_path = tmp_path / "merged.yaml"
     config_path.write_text("name: synthetic\n", encoding="utf-8")

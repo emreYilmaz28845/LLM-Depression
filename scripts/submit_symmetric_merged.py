@@ -443,12 +443,32 @@ def merge_existing_registry(registry: dict[str, Any], existing: dict[str, Any]) 
     """Carry forward submitted/terminal jobs so reruns are restart-safe."""
 
     old_jobs = {str(job.get("job_key")): job for job in existing.get("jobs", [])}
-    failed_states = {"failed", "cancelled", "timeout", "oom", "node_fail", "preempted"}
+    # Slurm can expose dependency failures with several spellings (for
+    # example, ``DependencyNeverSatisfied``).  Normalize the state before
+    # deciding whether an old job can be carried forward.  A failed train
+    # also invalidates any already-submitted descendants: leaving those old
+    # jobs in place would keep them attached to the failed job ID forever.
+    failed_states = {
+        "failed",
+        "cancelled",
+        "canceled",
+        "timeout",
+        "oom",
+        "outofmemory",
+        "nodefail",
+        "preempted",
+        "dependencyneversatisfied",
+    }
+
+    def state_token(value: Any) -> str:
+        return "".join(character for character in str(value).lower() if character.isalnum())
+
+    retry_job_keys: set[str] = set()
     for job in registry.get("jobs", []):
         old = old_jobs.get(str(job["job_key"]))
         if not old:
             continue
-        old_state = str(old.get("observed_state", old.get("state", ""))).lower()
+        old_state = state_token(old.get("observed_state", old.get("state", "")))
         old_job_id = old.get("job_id")
         if old_job_id and not str(old_job_id).startswith("dry_") and old_state not in failed_states:
             job["state"] = old.get("state", "submitted")
@@ -458,6 +478,43 @@ def merge_existing_registry(registry: dict[str, Any], existing: dict[str, Any]) 
                     job[key] = old[key]
         elif old_state in failed_states:
             job["retry"] = int(old.get("retry", 0)) + 1
+            retry_job_keys.add(str(job["job_key"]))
+
+    def reset_for_retry(job: dict[str, Any]) -> None:
+        job["state"] = "planned"
+        for key in (
+            "job_id",
+            "dependency_job_id",
+            "submission_time_utc",
+            "observed_state",
+            "exit_code",
+            "elapsed",
+            "node_list",
+            "allocated_cpus",
+        ):
+            job.pop(key, None)
+
+    # Propagate a retry through the dependency chain.  The loop is
+    # intentionally order-independent so a registry loaded from an older
+    # run cannot submit a postprocess/head job before its replacement train
+    # job.  Compatible artifacts remain reusable if they already exist.
+    changed = True
+    while changed:
+        changed = False
+        for job in registry.get("jobs", []):
+            job_key = str(job["job_key"])
+            dependency_key = job.get("dependency_job_key")
+            if not dependency_key or str(dependency_key) not in retry_job_keys:
+                continue
+            if job.get("completed_before_submission"):
+                continue
+            old = old_jobs.get(job_key)
+            if old:
+                job["retry"] = int(old.get("retry", 0)) + 1
+            reset_for_retry(job)
+            if job_key not in retry_job_keys:
+                retry_job_keys.add(job_key)
+                changed = True
     current_keys = {str(job.get("job_key")) for job in registry.get("jobs", [])}
     for old in existing.get("jobs", []):
         if str(old.get("job_key")) not in current_keys:
