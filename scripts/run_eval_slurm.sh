@@ -44,6 +44,7 @@ FOLD="${FOLD:-0}"
 OUTPUT_DIR="${OUTPUT_DIR:-$CHECKPOINT_DIR/standalone_eval}"
 MODEL_PATH="${MODEL_PATH:-}"
 EXTRA_EVAL_ARGS="${EXTRA_EVAL_ARGS:-}"
+SKIP_MANIFEST_BUILD="${SKIP_MANIFEST_BUILD:-0}"
 DATASET_NAME="$(python - <<PY
 import sys
 from pathlib import Path
@@ -77,6 +78,7 @@ echo "Checkpoint Dir: $CHECKPOINT_DIR" | tee -a "$RUN_LOG_FILE"
 echo "Output Dir: $OUTPUT_DIR" | tee -a "$RUN_LOG_FILE"
 echo "MODEL_PATH: ${MODEL_PATH:-<from YAML or checkpoint base model>}" | tee -a "$RUN_LOG_FILE"
 echo "EXTRA_EVAL_ARGS: ${EXTRA_EVAL_ARGS:-<none>}" | tee -a "$RUN_LOG_FILE"
+echo "SKIP_MANIFEST_BUILD: $SKIP_MANIFEST_BUILD" | tee -a "$RUN_LOG_FILE"
 echo "DATASET_BASE_ROOT: $DATASET_BASE_ROOT" | tee -a "$RUN_LOG_FILE"
 echo "DAIC_DATASET_ROOT: $DAIC_DATASET_ROOT" | tee -a "$RUN_LOG_FILE"
 echo "CMDC_DATASET_ROOT: $CMDC_DATASET_ROOT" | tee -a "$RUN_LOG_FILE"
@@ -134,11 +136,15 @@ if [ -n "$EXTRA_EVAL_ARGS" ]; then
     done
 fi
 
-echo "Building or refreshing manifests before evaluation" | tee -a "$RUN_LOG_FILE"
-printf 'Manifest command: ' | tee -a "$RUN_LOG_FILE"
-printf '%q ' "${MANIFEST_CMD[@]}" | tee -a "$RUN_LOG_FILE"
-printf '\n' | tee -a "$RUN_LOG_FILE"
-"${MANIFEST_CMD[@]}" 2>&1 | tee -a "$RUN_LOG_FILE"
+if [ "$SKIP_MANIFEST_BUILD" = "1" ]; then
+    echo "Skipping manifest rebuild; using the manifest prepared by the orchestration job." | tee -a "$RUN_LOG_FILE"
+else
+    echo "Building or refreshing manifests before evaluation" | tee -a "$RUN_LOG_FILE"
+    printf 'Manifest command: ' | tee -a "$RUN_LOG_FILE"
+    printf '%q ' "${MANIFEST_CMD[@]}" | tee -a "$RUN_LOG_FILE"
+    printf '\n' | tee -a "$RUN_LOG_FILE"
+    "${MANIFEST_CMD[@]}" 2>&1 | tee -a "$RUN_LOG_FILE"
+fi
 
 CMD=(
     python

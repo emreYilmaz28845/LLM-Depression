@@ -589,6 +589,8 @@ def aggregate_margin_predictions(
     supported = {"mean_score", "median_score", "trimmed_mean_10", "majority_margin_tiebreak", "max_score"}
     if method not in supported:
         raise ValueError(f"Unsupported subject score aggregation {method!r}.")
+    if not sample_rows:
+        raise ValueError("Subject score aggregation requires at least one sample row.")
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in sample_rows:
         grouped[str(row["subject_id"])].append(row)
@@ -598,8 +600,10 @@ def aggregate_margin_predictions(
         if len(labels) != 1:
             raise ValueError(f"Subject {subject_id} has inconsistent labels.")
         margins = [float(row["dep_score"]) - float(row["non_score"]) for row in rows]
+        mean_margin = sum(margins) / len(margins)
+        prediction = int(mean_margin > 0.0)
         if method == "mean_score":
-            margin = sum(margins) / len(margins)
+            margin = mean_margin
         elif method == "median_score":
             margin = float(statistics.median(margins))
         elif method == "trimmed_mean_10":
@@ -611,10 +615,20 @@ def aggregate_margin_predictions(
             margin = max(margins)
         else:
             votes = Counter(int(value > 0.0) for value in margins)
-            margin = 1.0 if votes[1] > votes[0] else -1.0 if votes[0] > votes[1] else sum(margins) / len(margins)
+            # The vote decides the binary prediction, while the continuous
+            # score remains the mean margin so AUROC and downstream reports do
+            # not invent a magnitude of exactly +/-1.
+            margin = mean_margin
+            prediction = (
+                1 if votes[1] > votes[0]
+                else 0 if votes[0] > votes[1]
+                else int(mean_margin > 0.0)
+            )
+        if method != "majority_margin_tiebreak":
+            prediction = int(margin > 0.0)
         subjects.append({
             "subject_id": subject_id, "label": next(iter(labels)),
-            "prediction": int(margin > 0.0), "score_margin": margin,
+            "prediction": prediction, "score_margin": margin,
             "num_samples": len(rows), "aggregation_method": method,
         })
     metrics = _metrics_from_prediction_rows(

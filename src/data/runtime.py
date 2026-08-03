@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -254,6 +255,17 @@ def _ordered_subject_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             return (int(chunk_id) if chunk_id.isdigit() else 10**9, str(row["sample_id"]))
 
         return sorted(rows, key=turkish_key)
+    if rows and str(rows[0].get("dataset", "")).lower() == "daic":
+        def daic_key(row: dict[str, Any]) -> tuple[int, int, str]:
+            raw_chunk_id = str(row.get("chunk_id", "")).strip()
+            match = re.search(r"(\d+)$", raw_chunk_id)
+            return (
+                0 if match else 1,
+                int(match.group(1)) if match else 10**9,
+                str(row["sample_id"]),
+            )
+
+        return sorted(rows, key=daic_key)
     return sorted(rows, key=lambda item: item["sample_id"])
 
 
@@ -613,6 +625,7 @@ def _build_subject_level_audio_examples(
             "audio_clip_seconds": clip_seconds,
             "subject_chunk_paths": chunk_paths,
             "subject_chunk_ids": chunk_ids,
+            "subject_chunk_clip_seconds": [max_seconds_per_chunk] * len(chunk_paths),
             "chunks_per_subject": effective_k,
             "input_modality": input_modality,
             "prompt_text": prompt_text,
@@ -743,7 +756,7 @@ def build_examples(
 
     if sample_mode in {"subject_chunks", "subject_mil"} and dataset_name == "daic":
         controls = resolve_chunking_controls(config)
-        selected_rows = sorted(manifest_rows, key=lambda item: item["sample_id"])
+        selected_rows = _ordered_subject_rows(list(manifest_rows))
         if controls["eval_chunk_policy"] == "matched_k" and "train" not in partition_name.lower():
             grouped_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
             for row in selected_rows:
@@ -751,7 +764,7 @@ def build_examples(
             selected_rows = [
                 rows[index]
                 for subject_id in sorted(grouped_rows)
-                for rows in [sorted(grouped_rows[subject_id], key=lambda item: item["sample_id"])]
+                for rows in [_ordered_subject_rows(grouped_rows[subject_id])]
                 for index in evenly_spaced_indices(len(rows), int(controls["eval_chunks_per_subject"]))
             ]
         for row in selected_rows:

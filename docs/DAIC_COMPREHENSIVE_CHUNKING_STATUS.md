@@ -25,8 +25,9 @@ Important repository state:
 - Joint `fixed4`, minimum-cover, and exactly-15-bundle views. Fixed-15 gives every 10-chunk subject six occurrences per chunk and every 15-chunk subject four.
 - Independent all-chunk, deterministic matched-10, and 1,000 cached matched-10 resamples.
 - Mean, median, 10% trimmed mean, majority vote with margin tie-break, and maximum-margin aggregation.
+- Evaluation materializes one subject row plus metrics/prediction artifacts for every configured secondary aggregation.
 - Exact two-pass subject mean-margin MIL. It uses evaluation-identical mean token log-probability candidate margins and performs no optimizer update until all chunks of a subject have backpropagated.
-- Matrix expansion for `smoke`, `core`, `focused`, and `final`; config/selection hashes; collision-safe matrix creation; staged Slurm arrays; distinct four-GPU standard training and one-GPU MIL array submission.
+- Matrix expansion for `smoke`, `core`, `focused`, and `final`; config/selection/implementation hashes; collision-safe matrix creation; staged Slurm arrays; distinct four-GPU standard training and one-GPU MIL array submission.
 - Comprehensive structural/schedule/Slurm audit helpers, paired bootstrap/McNemar/Holm utilities, and reproducible report/CSV entrypoints.
 
 Primary files to read before operating:
@@ -43,6 +44,8 @@ scripts/run_daic_comprehensive_task.py
 scripts/audit_daic_comprehensive.py
 scripts/collect_daic_slurm_accounting.py
 scripts/select_daic_comprehensive_protocol.py
+scripts/authorize_daic_comprehensive_test.py
+scripts/collect_daic_comprehensive_oof.py
 ```
 
 ## Local validation already completed
@@ -54,13 +57,18 @@ cd /home/emre/Projects/AudioLLM/LLM-Depression
 /home/emre/miniconda3/envs/llmdep4090/bin/python -m py_compile \
   src/aggregate.py src/daic_chunking.py src/daic_mil.py \
   src/daic_comprehensive_audit.py src/daic_statistics.py \
-  src/data/runtime.py src/features/extract_qwen_hidden.py src/train.py \
+  src/data/runtime.py src/data/build_manifest.py src/evaluate.py \
+  src/features/extract_qwen_hidden.py src/train.py \
   scripts/build_daic_comprehensive_matrix.py \
   scripts/run_daic_comprehensive_task.py \
-  scripts/audit_daic_comprehensive.py scripts/report_daic_comprehensive.py
+  scripts/audit_daic_comprehensive.py scripts/report_daic_comprehensive.py \
+  scripts/select_daic_comprehensive_protocol.py \
+  scripts/authorize_daic_comprehensive_test.py \
+  scripts/collect_daic_comprehensive_oof.py
 bash -n \
   scripts/submit_daic_comprehensive_matrix.sh \
   scripts/run_daic_comprehensive_array_slurm.sh \
+  scripts/run_eval_slurm.sh \
   scripts/run_daic_chunking_hidden_slurm.sh \
   scripts/run_daic_chunking_classical_slurm.sh
 /home/emre/miniconda3/envs/llmdep4090/bin/python -m pytest -q \
@@ -85,6 +93,8 @@ src/daic_mil.py
 src/daic_comprehensive_audit.py
 src/daic_statistics.py
 src/data/runtime.py
+src/data/build_manifest.py
+src/evaluate.py
 src/features/extract_qwen_hidden.py
 src/train.py
 configs/experiments/daic_chunking/comprehensive_matrix.yaml
@@ -93,9 +103,13 @@ scripts/build_daic_comprehensive_matrix.py
 scripts/collect_daic_slurm_accounting.py
 scripts/report_daic_comprehensive.py
 scripts/select_daic_comprehensive_protocol.py
+scripts/authorize_daic_comprehensive_test.py
+scripts/collect_daic_comprehensive_oof.py
 scripts/run_daic_comprehensive_array_slurm.sh
 scripts/run_daic_comprehensive_task.py
 scripts/submit_daic_comprehensive_matrix.sh
+scripts/run_train_slurm.sh
+scripts/run_eval_slurm.sh
 scripts/run_daic_chunking_hidden_slurm.sh
 scripts/run_daic_chunking_classical_slurm.sh
 tests/test_daic_comprehensive_chunking.py

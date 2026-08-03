@@ -146,7 +146,33 @@ def build_for_config(config_path: str | Path, config_overrides: list[str] | None
         "manifest_path": serialize_project_path(output_paths["manifest_jsonl"]),
         "manifest_hash": manifest_hash,
         "build_signature": manifest_build_signature(config),
+        "manifest_row_count": len(manifest_rows),
+        "manifest_subject_count": len({str(row["subject_id"]) for row in manifest_rows}),
     }
+    if dataset_name == "daic":
+        subject_rows_by_id: dict[str, list[dict[str, Any]]] = {}
+        for row in manifest_rows:
+            subject_rows_by_id.setdefault(str(row["subject_id"]), []).append(row)
+        metadata["manifest_subject_counts_by_label"] = {
+            str(label): sum(
+                1
+                for subject_rows in subject_rows_by_id.values()
+                if int(subject_rows[0]["label"]) == label
+            )
+            for label in (0, 1)
+        }
+        metadata["manifest_chunk_counts_by_label"] = {
+            str(label): sorted(
+                {
+                    len(subject_rows)
+                    for subject_rows in subject_rows_by_id.values()
+                    if int(subject_rows[0]["label"]) == label
+                }
+            )
+            for label in (0, 1)
+        }
+        metadata["split_seed"] = int(config.get("split", {}).get("seed", 1337))
+        metadata["fold_count"] = len(result.get("folds", {})) if result.get("folds") else 0
     if "subject_partition_rows" in result:
         partition_path = split_dir / f"{dataset_name}_subject_partitions.json"
         save_json(result["subject_partition_rows"], partition_path)

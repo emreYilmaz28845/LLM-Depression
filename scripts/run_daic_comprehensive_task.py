@@ -13,6 +13,8 @@ PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().pare
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.daic_comprehensive_audit import validate_final_test_authorization
+
 
 def override_args(overrides: dict[str, Any]) -> str:
     def scalar(value: Any) -> str:
@@ -39,6 +41,23 @@ def run(env: dict[str, str], script: str) -> None:
     subprocess.run(["bash", str(PROJECT_ROOT / script)], cwd=PROJECT_ROOT, env={**os.environ, **env}, check=True)
 
 
+def require_final_authorization(matrix: dict[str, Any], matrix_path: Path) -> None:
+    if str(matrix.get("stage", "")) != "final":
+        return
+    marker_value = (matrix.get("test_authorization") or {}).get("path")
+    marker = Path(marker_value) if marker_value else matrix_path.parent / "FINAL_TEST_AUTHORIZED.json"
+    if not marker.is_absolute():
+        marker = matrix_path.parent / marker
+    ok, failures, _ = validate_final_test_authorization(
+        marker,
+        selection_hash=matrix.get("selection_hash"),
+        implementation_commit=matrix.get("implementation_commit"),
+        spec_hash=matrix.get("spec_hash"),
+    )
+    if not ok:
+        raise SystemExit("Final-test authorization rejected: " + ", ".join(failures))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--matrix", type=Path, required=True)
@@ -46,6 +65,7 @@ def main() -> None:
     parser.add_argument("--index", type=int, default=int(os.environ.get("SLURM_ARRAY_TASK_ID", "0")))
     args = parser.parse_args()
     matrix = json.loads(args.matrix.read_text(encoding="utf-8"))
+    require_final_authorization(matrix, args.matrix)
     tasks = [task for task in matrix["tasks"] if task["kind"] == args.kind]
     if not 0 <= args.index < len(tasks):
         raise SystemExit(f"Array index {args.index} is outside {args.kind} task count {len(tasks)}")
@@ -75,6 +95,8 @@ def main() -> None:
         }, "scripts/run_train_slurm.sh")
         return
     if args.kind == "evaluation":
+        if not checkpoint.exists():
+            raise SystemExit(f"Missing authoritative best_model checkpoint: {checkpoint}")
         for view in task["views"]:
             view_overrides = evaluation_override(view)
             if view_overrides is None:
@@ -89,6 +111,7 @@ def main() -> None:
                 "PROJECT_ROOT": str(PROJECT_ROOT), "CONFIG": str(config), "FOLD": str(task["fold"]),
                 "CHECKPOINT_DIR": str(checkpoint), "OUTPUT_DIR": str(output_root / "evaluation" / view),
                 "EXTRA_EVAL_ARGS": override_args({**common_overrides, **view_overrides}),
+                "SKIP_MANIFEST_BUILD": "1",
                 "LOG_ROOT": str(logs / view),
             }, "scripts/run_eval_slurm.sh")
         if "matched10_resampled" in task["views"]:

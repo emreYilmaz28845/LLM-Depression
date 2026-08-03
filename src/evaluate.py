@@ -16,7 +16,11 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import torch
 
-from src.aggregate import aggregate_predictions, aggregate_response_subject_predictions
+from src.aggregate import (
+    aggregate_margin_predictions,
+    aggregate_predictions,
+    aggregate_response_subject_predictions,
+)
 from src.data.build_manifest import build_for_config, manifest_build_signature
 from src.data.runtime import (
     build_examples,
@@ -615,6 +619,44 @@ def evaluate_examples(
     subject_metrics_payload = dict(subject_metrics)
     subject_metrics_payload["checkpoint_name"] = checkpoint_name
 
+    secondary_aggregations: dict[str, Any] = {}
+    requested_secondary = config.get("evaluation", {}).get("secondary_aggregations") or []
+    if requested_secondary and sample_rows and all(
+        row.get("dep_score") is not None and row.get("non_score") is not None
+        for row in sample_rows
+    ):
+        expected_subjects = {str(row["subject_id"]) for row in sample_rows}
+        for method in requested_secondary:
+            method = str(method)
+            secondary_rows, secondary_metrics = aggregate_margin_predictions(sample_rows, method)
+            observed_subjects = {str(row["subject_id"]) for row in secondary_rows}
+            if observed_subjects != expected_subjects or len(secondary_rows) != len(observed_subjects):
+                raise ValueError(
+                    f"Secondary aggregation {method!r} did not produce exactly one row per subject."
+                )
+            secondary_metrics = dict(secondary_metrics)
+            secondary_metrics["checkpoint_name"] = checkpoint_name
+            secondary_metrics["aggregation_method"] = method
+            write_jsonl(
+                secondary_rows,
+                output_dir / f"predictions_subject_level_{method}.jsonl",
+            )
+            save_json(secondary_metrics, output_dir / f"metrics_secondary_{method}.json")
+            secondary_aggregations[method] = {
+                "metrics": secondary_metrics,
+                "prediction_path": str(output_dir / f"predictions_subject_level_{method}.jsonl"),
+            }
+    elif requested_secondary:
+        secondary_aggregations = {"status": "not_applicable"}
+    if requested_secondary:
+        save_json(
+            {
+                "requested": [str(method) for method in requested_secondary],
+                "results": secondary_aggregations,
+            },
+            output_dir / "secondary_aggregations.json",
+        )
+
     sample_csv_path = output_dir / "predictions_sample_level.csv"
     headline_csv_path = output_dir / "predictions_headline_level.csv"
     subject_csv_path = output_dir / "predictions_subject_level.csv"
@@ -718,6 +760,7 @@ def evaluate_examples(
         "subject_metrics": subject_metrics_payload,
         "response_rows": response_rows,
         "response_metrics": response_metrics,
+        "secondary_aggregations": secondary_aggregations,
         "backend_results": {
             mode: {
                 "headline_rows": headline_rows,

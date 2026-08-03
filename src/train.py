@@ -1454,6 +1454,17 @@ def main() -> None:
         weight_decay=float(config["training"]["weight_decay"]),
     )
     objective = str(config.get("training", {}).get("objective", "token_ce"))
+    if objective not in {"token_ce", "subject_mean_margin_mil"}:
+        raise ValueError(f"Unsupported training.objective={objective!r}.")
+    if objective == "subject_mean_margin_mil":
+        if str(config["dataset"]).lower() != "daic" or str(config["data"].get("sample_mode", "")).lower() != "subject_mil":
+            raise ValueError("subject_mean_margin_mil requires dataset=daic and data.sample_mode=subject_mil.")
+        if int(config["training"]["per_device_train_batch_size"]) != 1:
+            raise ValueError("subject_mean_margin_mil requires per_device_train_batch_size=1.")
+        if int(config["training"]["dataloader_num_workers"]) != 0:
+            raise ValueError("subject_mean_margin_mil requires dataloader_num_workers=0.")
+        if int(config["training"].get("gradient_accumulation_steps", 1)) != 1:
+            raise ValueError("subject_mean_margin_mil requires gradient_accumulation_steps=1 so a subject cannot be split across updates.")
     micro_batches_per_epoch = len(train_loader)
     if objective == "subject_mean_margin_mil":
         micro_batches_per_epoch = len({str(row["subject_id"]) for row in train_examples})
@@ -1470,6 +1481,21 @@ def main() -> None:
         kwargs_handlers=[ddp_kwargs],
     )
     model, optimizer, train_loader, scheduler = accelerator.prepare(model, optimizer, train_loader, scheduler)
+    if daic_schedule_audit is not None:
+        gradient_accumulation = int(config["training"].get("gradient_accumulation_steps", 1))
+        schedule_micro_batches = len(train_loader)
+        schedule_epochs = int(daic_schedule_audit.get("epochs", len(daic_epoch_schedule or [])))
+        schedule_updates = math.ceil(schedule_micro_batches / max(1, gradient_accumulation))
+        daic_schedule_audit.update(
+            {
+                "micro_batches_per_epoch": [schedule_micro_batches] * schedule_epochs,
+                "optimizer_updates_per_epoch": [schedule_updates] * schedule_epochs,
+                "gradient_accumulation_steps": gradient_accumulation,
+                "world_size": int(os.environ.get("WORLD_SIZE", "1")),
+                "optimizer_step_unit": "weighted_chunk_or_bundle_example",
+            }
+        )
+        save_json(daic_schedule_audit, logs_dir / "daic_chunk_schedule_audit.json")
 
     run_config = {
         "config": config,
@@ -1602,6 +1628,7 @@ def main() -> None:
     stop_epoch: int | None = None
     stop_reason: str | None = None
     history: list[dict[str, Any]] = []
+    mil_training_audit: list[dict[str, Any]] = []
 
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
@@ -1712,6 +1739,27 @@ def main() -> None:
                 LOGGER.info("epoch=%s step=%s loss=%.6f", epoch, step, sum(epoch_losses) / len(epoch_losses))
         if mil_batches:
             epoch_losses.extend(float(row["loss"]) for row in mil_batches)
+            mil_training_audit.append(
+                {
+                    "epoch": epoch,
+                    "subject_updates": len(mil_batches),
+                    "class_updates": {
+                        "non_depressed": sum(
+                            int(int(grouped_mil[str(subject_id)][0]["label"]) == 0)
+                            for subject_id in mil_subjects
+                        ),
+                        "depressed": sum(
+                            int(int(grouped_mil[str(subject_id)][0]["label"]) == 1)
+                            for subject_id in mil_subjects
+                        ),
+                    },
+                    "complete_subject_updates": len(mil_batches),
+                    "mean_subject_loss": sum(float(row["loss"]) for row in mil_batches) / len(mil_batches),
+                    "subject_chunk_counts": {
+                        str(subject_id): len(grouped_mil[str(subject_id)]) for subject_id in mil_subjects
+                    },
+                }
+            )
             LOGGER.info(
                 "epoch=%s MIL subjects=%s mean_loss=%.6f", epoch, len(mil_batches),
                 sum(epoch_losses) / len(epoch_losses),
@@ -1944,6 +1992,21 @@ def main() -> None:
 
     if accelerator.is_main_process:
         unwrapped = accelerator.unwrap_model(model)
+        if objective == "subject_mean_margin_mil":
+            save_json(
+                {
+                    "schema_version": "daic_subject_mean_margin_mil_audit.v1",
+                    "objective": objective,
+                    "epochs": mil_training_audit,
+                    "complete_subject_updates": sum(
+                        int(row["complete_subject_updates"]) for row in mil_training_audit
+                    ),
+                    "subjects_per_epoch": [int(row["subject_updates"]) for row in mil_training_audit],
+                    "gradient_passes_per_subject": 2,
+                    "optimizer_step_unit": "complete_subject",
+                },
+                logs_dir / "mil_training_audit.json",
+            )
         completed_epochs = len(history)
         save_json(history, logs_dir / "training_history.json")
         selected_history_row = next(

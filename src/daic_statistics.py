@@ -12,13 +12,22 @@ def stratified_paired_bootstrap(
     baseline: Sequence[dict[str, Any]], comparison: Sequence[dict[str, Any]], *,
     metric: str = "macro_f1", iterations: int = 10000, seed: int = 1337,
 ) -> dict[str, float]:
-    left = {(str(row["subject_id"]), int(row.get("seed", 0))): row for row in baseline}
-    right = {(str(row["subject_id"]), int(row.get("seed", 0))): row for row in comparison}
+    if int(iterations) < 1:
+        raise ValueError("Bootstrap iterations must be positive.")
+    left_keys = [(str(row["subject_id"]), int(row.get("seed", 0))) for row in baseline]
+    right_keys = [(str(row["subject_id"]), int(row.get("seed", 0))) for row in comparison]
+    if len(left_keys) != len(set(left_keys)) or len(right_keys) != len(set(right_keys)):
+        raise ValueError("Paired bootstrap inputs must contain one row per subject/seed key.")
+    left = dict(zip(left_keys, baseline))
+    right = dict(zip(right_keys, comparison))
     if set(left) != set(right):
         raise ValueError("Paired bootstrap requires identical subject/seed keys.")
     by_seed_label: dict[tuple[int, int], list[str]] = defaultdict(list)
     for subject_id, run_seed in left:
         by_seed_label[(run_seed, int(left[(subject_id, run_seed)]["label"]))].append(subject_id)
+    for run_seed in sorted({key[1] for key in left}):
+        if not by_seed_label[(run_seed, 0)] or not by_seed_label[(run_seed, 1)]:
+            raise ValueError("Stratified bootstrap requires both labels for every seed.")
     rng = random.Random(seed)
     deltas = []
     for _ in range(iterations):
@@ -29,8 +38,16 @@ def stratified_paired_bootstrap(
                 pool = by_seed_label[(run_seed, label)]
                 sampled.extend(rng.choice(pool) for _ in pool)
             y = [int(left[(subject, run_seed)]["label"]) for subject in sampled]
-            lm = classification_metrics(y, [int(left[(subject, run_seed)]["prediction"]) for subject in sampled])[metric]
-            rm = classification_metrics(y, [int(right[(subject, run_seed)]["prediction"]) for subject in sampled])[metric]
+            left_metric = classification_metrics(
+                y, [int(left[(subject, run_seed)]["prediction"]) for subject in sampled]
+            )
+            right_metric = classification_metrics(
+                y, [int(right[(subject, run_seed)]["prediction"]) for subject in sampled]
+            )
+            if metric not in left_metric or metric not in right_metric:
+                raise ValueError(f"Unsupported bootstrap metric: {metric!r}")
+            lm = left_metric[metric]
+            rm = right_metric[metric]
             per_seed.append(rm - lm)
         deltas.append(sum(per_seed) / len(per_seed))
     deltas.sort()
@@ -43,13 +60,19 @@ def stratified_paired_bootstrap(
 
 
 def exact_mcnemar(baseline: Sequence[dict[str, Any]], comparison: Sequence[dict[str, Any]]) -> dict[str, Any]:
-    left = {str(row["subject_id"]): row for row in baseline}
-    right = {str(row["subject_id"]): row for row in comparison}
+    left_keys = [str(row["subject_id"]) for row in baseline]
+    right_keys = [str(row["subject_id"]) for row in comparison]
+    if len(left_keys) != len(set(left_keys)) or len(right_keys) != len(set(right_keys)):
+        raise ValueError("McNemar inputs must contain one row per subject.")
+    left = dict(zip(left_keys, baseline))
+    right = dict(zip(right_keys, comparison))
     if set(left) != set(right):
         raise ValueError("McNemar requires identical subject keys.")
     b = c = 0
     for subject_id, row in left.items():
         gold = int(row["label"])
+        if int(right[subject_id]["label"]) != gold:
+            raise ValueError(f"McNemar label mismatch for subject {subject_id}.")
         b += int(int(row["prediction"]) == gold and int(right[subject_id]["prediction"]) != gold)
         c += int(int(row["prediction"]) != gold and int(right[subject_id]["prediction"]) == gold)
     n = b + c
@@ -58,6 +81,8 @@ def exact_mcnemar(baseline: Sequence[dict[str, Any]], comparison: Sequence[dict[
 
 
 def holm_adjust(p_values: Sequence[float]) -> list[float]:
+    if any(not math.isfinite(float(value)) or not 0.0 <= float(value) <= 1.0 for value in p_values):
+        raise ValueError("Holm adjustment requires p-values in [0, 1].")
     order = sorted(range(len(p_values)), key=lambda index: p_values[index])
     adjusted = [1.0] * len(p_values)
     running = 0.0

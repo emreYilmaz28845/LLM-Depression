@@ -7,10 +7,43 @@ DRY_RUN="${DRY_RUN:-1}"
 MAX_CONCURRENT_TRAIN="${MAX_CONCURRENT_TRAIN:-4}"
 RESUME="${RESUME:-0}"
 MATRIX_PATH="${MATRIX_PATH:-$PROJECT_ROOT/outputs/daic_chunking_comprehensive/$RUN_ID/matrix_${STAGE}.json}"
+export MAX_CONCURRENT_TRAIN
 case "$STAGE" in smoke|core|focused|final) ;; *) echo "Invalid STAGE=$STAGE" >&2; exit 2;; esac
 case "$DRY_RUN" in 0|1) ;; *) echo "DRY_RUN must be 0 or 1" >&2; exit 2;; esac
 case "$RESUME" in 0|1) ;; *) echo "RESUME must be 0 or 1" >&2; exit 2;; esac
+case "$MAX_CONCURRENT_TRAIN" in ''|*[!0-9]*) echo "MAX_CONCURRENT_TRAIN must be a positive integer" >&2; exit 2;; esac
+[ "$MAX_CONCURRENT_TRAIN" -ge 1 ] || { echo "MAX_CONCURRENT_TRAIN must be a positive integer" >&2; exit 2; }
 [ -f "$MATRIX_PATH" ] || { echo "Missing matrix: $MATRIX_PATH" >&2; exit 3; }
+
+python - "$MATRIX_PATH" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(__file__).resolve().parents[1] if __file__ != "<stdin>" else Path.cwd()
+if str(root) not in sys.path:
+    sys.path.insert(0, str(root))
+from src.daic_comprehensive_audit import audit_matrix, validate_final_test_authorization
+
+matrix_path = Path(sys.argv[1])
+matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
+failures = audit_matrix(matrix)
+if str(matrix.get("stage")) == "final":
+    marker_value = (matrix.get("test_authorization") or {}).get("path")
+    marker = Path(marker_value) if marker_value else matrix_path.parent / "FINAL_TEST_AUTHORIZED.json"
+    if not marker.is_absolute():
+        marker = matrix_path.parent / marker
+    ok, gate_failures, _ = validate_final_test_authorization(
+        marker,
+        selection_hash=matrix.get("selection_hash"),
+        implementation_commit=matrix.get("implementation_commit"),
+        spec_hash=matrix.get("spec_hash"),
+    )
+    if not ok:
+        failures.extend(gate_failures)
+if failures:
+    raise SystemExit("Matrix rejected: " + ", ".join(failures))
+PY
 
 readarray -t COUNTS < <(python - "$MATRIX_PATH" <<'PY'
 import json, sys
@@ -68,9 +101,15 @@ export TRAIN_JOB_IDS="${train_jobs[*]}" REGULAR_INDICES="${COUNTS[4]}" MIL_INDIC
 export EVALUATION_JOB_ID="$evaluation_job" HIDDEN_JOB_ID="$hidden_job" CLASSICAL_JOB_ID="$classical_job"
 python - <<'PY'
 import json, os
+from pathlib import Path
+matrix = json.loads(Path(os.environ["MATRIX_PATH"]).read_text(encoding="utf-8"))
 payload = {
   "run_id": os.environ["RUN_ID"], "stage": os.environ["STAGE"],
   "matrix_path": os.environ["MATRIX_PATH"], "dry_run": os.environ["DRY_RUN"] == "1",
+  "matrix_hash": matrix.get("matrix_hash"),
+  "task_count": int(matrix.get("task_count", 0)),
+  "kind_counts": matrix.get("kind_counts", {}),
+  "maximum_concurrent_train": int(os.environ["MAX_CONCURRENT_TRAIN"]),
   "arrays": {
     "train": {"job_ids": os.environ["TRAIN_JOB_IDS"].split(), "regular_indices": os.environ["REGULAR_INDICES"], "mil_indices": os.environ["MIL_INDICES"]},
     "evaluation": {"job_ids": [os.environ["EVALUATION_JOB_ID"]]},
