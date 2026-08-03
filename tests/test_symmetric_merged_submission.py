@@ -13,6 +13,7 @@ from scripts.submit_symmetric_merged import (
     _final_epoch_for_dry_run,
     _stage_plans,
     merge_existing_registry,
+    submit_registry,
 )
 from src.merged.runtime import load_merged_config
 
@@ -123,6 +124,55 @@ def test_targeted_retry_job_count_matches_selected_configs() -> None:
     )
     assert registry["expected_fresh_job_count"] == 15
     assert len(registry["jobs"]) == 15
+
+
+def test_retry_registry_submits_chain_in_dependency_order() -> None:
+    run_id = "retry_dependency_order"
+    train_key = "audio_text:smoke:fold_0:train"
+    post_key = "audio_text:smoke:fold_0:postprocess"
+    head_key = "audio_text:smoke:fold_0:head"
+    registry = {
+        "jobs": [
+            {
+                "job_key": head_key,
+                "kind": "head",
+                "stage": "smoke",
+                "modality": "audio_text",
+                "fold": 0,
+                "run_id": run_id,
+                "state": "planned",
+                "expected_job_id": "dry_head",
+                "dependency_job_key": post_key,
+            },
+            {
+                "job_key": post_key,
+                "kind": "postprocess",
+                "stage": "smoke",
+                "modality": "audio_text",
+                "fold": 0,
+                "run_id": run_id,
+                "state": "planned",
+                "expected_job_id": "dry_post",
+                "dependency_job_key": train_key,
+            },
+            {
+                "job_key": train_key,
+                "kind": "train",
+                "stage": "smoke",
+                "modality": "audio_text",
+                "fold": 0,
+                "run_id": run_id,
+                "state": "planned",
+                "expected_job_id": "dry_train",
+                "dependency_job_key": None,
+            },
+        ]
+    }
+    registry = merge_existing_registry(registry, {"jobs": []})
+    registry = submit_registry(registry, dry_run=True)
+    by_key = {job["job_key"]: job for job in registry["jobs"]}
+    assert by_key[post_key]["dependency_job_id"] == by_key[train_key]["job_id"]
+    assert by_key[head_key]["dependency_job_id"] == by_key[post_key]["job_id"]
 
 
 def test_completed_artifact_reuse_requires_current_hashes_and_provenance(tmp_path: Path) -> None:

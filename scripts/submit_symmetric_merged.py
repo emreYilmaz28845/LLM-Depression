@@ -458,11 +458,13 @@ def merge_existing_registry(registry: dict[str, Any], existing: dict[str, Any]) 
     for old in existing.get("jobs", []):
         if str(old.get("job_key")) not in current_keys:
             registry.setdefault("jobs", []).append(old)
+    dependency_order = {"train": 0, "postprocess": 1, "head": 2}
     registry["jobs"].sort(
         key=lambda job: (
             str(job.get("stage", "")),
             str(job.get("modality", "")),
             int(job.get("fold", 0)),
+            dependency_order.get(str(job.get("kind", "")), 99),
             str(job.get("kind", "")),
         )
     )
