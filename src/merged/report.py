@@ -351,6 +351,7 @@ def _write_symmetric_summary_sheet(
 
     from openpyxl.chart import BarChart, Reference
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.worksheet.table import Table, TableStyleInfo
 
     title = "Merged Symmetric Summary"
     if title in workbook.sheetnames:
@@ -388,7 +389,8 @@ def _write_symmetric_summary_sheet(
     sheet["A2"] = (
         f"Run: {run_id or 'not specified'}. Macro-F1 only; higher is better. "
         "CV values are pooled subject-level predictions across the five datasets; "
-        "final values are from the protected DAIC official holdout."
+        "final values are from the protected DAIC official holdout. The dataset-level "
+        "CV table below shows every dataset and modality."
     )
     sheet["A2"].font = body_font
     sheet["A2"].fill = blue_fill
@@ -414,12 +416,18 @@ def _write_symmetric_summary_sheet(
         for row in final_rows
     }
     cv_values: dict[tuple[str, str], list[float]] = defaultdict(list)
+    cv_dataset_values: dict[tuple[str, str, str], float] = {}
     for row in cv_pooled_rows or []:
         if row.get("Dataset") not in DATASETS:
             continue
         value = row.get("Macro-F1")
         if value not in (None, ""):
-            cv_values[(str(row.get("Modality")), str(row.get("Method")))].append(float(value))
+            numeric_value = float(value)
+            modality = str(row.get("Modality"))
+            method = str(row.get("Method"))
+            dataset = str(row.get("Dataset"))
+            cv_values[(modality, method)].append(numeric_value)
+            cv_dataset_values[(dataset, modality, method)] = numeric_value
 
     def section(row: int, label: str) -> None:
         sheet.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
@@ -470,17 +478,63 @@ def _write_symmetric_summary_sheet(
     section(17, "Five-Dataset CV — Worst-Dataset Macro-F1")
     table(18, {key: min(values) for key, values in cv_values.items() if values})
 
-    sheet.merge_cells("A23:E24")
-    sheet["A23"] = (
+    section(27, "Five-Dataset CV — Macro-F1 by Dataset and Modality")
+    dataset_header_row = 28
+    for column, value in enumerate(headers, start=1):
+        cell = sheet.cell(dataset_header_row, column, value)
+        cell.font = white_font
+        cell.fill = dark_fill
+        cell.alignment = center
+        cell.border = border
+    dataset_labels = {
+        "daic": "DAIC",
+        "cmdc": "CMDC",
+        "turkish": "Turkish",
+        "d3tec": "D3TEC",
+        "androids_interview": "Androids Interview",
+    }
+    dataset_row = dataset_header_row + 1
+    for dataset in DATASETS:
+        for modality, modality_label in modalities:
+            label_cell = sheet.cell(dataset_row, 1, f"{dataset_labels[dataset]} — {modality_label}")
+            label_cell.font = body_font
+            label_cell.fill = body_fill
+            label_cell.alignment = left
+            label_cell.border = border
+            for column, (method, _) in enumerate(methods, start=2):
+                value = cv_dataset_values.get((dataset, modality, method), "")
+                cell = sheet.cell(dataset_row, column, value)
+                cell.font = body_font
+                cell.fill = body_fill
+                cell.alignment = center
+                cell.border = border
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    cell.number_format = "0.000"
+            sheet.row_dimensions[dataset_row].height = 21
+            dataset_row += 1
+    dataset_ref = f"A{dataset_header_row}:E{dataset_row - 1}"
+    dataset_table = Table(displayName="MergedCVByDataset", ref=dataset_ref)
+    dataset_table.tableStyleInfo = TableStyleInfo(
+        name="TableStyleMedium2",
+        showFirstColumn=False,
+        showLastColumn=False,
+        showRowStripes=True,
+        showColumnStripes=False,
+    )
+    sheet.add_table(dataset_table)
+    sheet.auto_filter.ref = dataset_ref
+
+    sheet.merge_cells("A45:E46")
+    sheet["A45"] = (
         "Methods: fine-tuned Qwen, standardized Logistic Regression, fixed XGBoost, "
         "and grouped 150-trial Optuna XGBoost. Blank cells indicate that the corresponding "
         "compact artifact was unavailable."
     )
-    sheet["A23"].font = body_font
-    sheet["A23"].fill = note_fill
-    sheet["A23"].alignment = wrap_left
-    sheet.row_dimensions[23].height = 21
-    sheet.row_dimensions[24].height = 21
+    sheet["A45"].font = body_font
+    sheet["A45"].fill = note_fill
+    sheet["A45"].alignment = wrap_left
+    sheet.row_dimensions[45].height = 21
+    sheet.row_dimensions[46].height = 21
 
     if final_rows:
         chart = BarChart()
@@ -630,12 +684,19 @@ def validate_workbook(
             raise ValueError(
                 f"Generated workbook has invalid summary headers on row {header_row}: {path}"
             )
+    dataset_header_row = 28
+    actual_dataset_headers = [summary.cell(dataset_header_row, column).value for column in range(1, 6)]
+    if actual_dataset_headers != expected_summary_headers:
+        raise ValueError(f"Generated workbook has invalid dataset summary headers: {path}")
+    if summary.max_row < 43 or "MergedCVByDataset" not in summary.tables:
+        raise ValueError(f"Generated workbook is missing the dataset-level CV summary table: {path}")
     if not summary._charts:
         raise ValueError(f"Generated workbook summary has no comparison chart: {path}")
     sheet_results[summary_title] = {
-        "rows": 18,
+        "rows": 43,
         "headers": expected_summary_headers,
         "charts": len(summary._charts),
+        "dataset_table": "A28:E43",
     }
     return {"status": "passed", "workbook": str(path), "sheets": sheet_results}
 
