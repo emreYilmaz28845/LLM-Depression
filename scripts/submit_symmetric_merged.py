@@ -406,6 +406,10 @@ def submit_registry(registry: dict[str, Any], *, dry_run: bool) -> dict[str, Any
         str(job["job_key"]): str(job["job_id"])
         for job in registry.get("jobs", [])
         if job.get("job_id") and not str(job.get("job_id")).startswith("dry_")
+        and not (
+            str(job.get("observed_state", "")).upper().split(None, 1)[0] == "COMPLETED"
+            and str(job.get("exit_code", "")) == "0:0"
+        )
     }
     worker_by_kind = {
         "train": PROJECT_ROOT / "scripts/run_symmetric_merged_train_slurm.sh",

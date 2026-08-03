@@ -175,6 +175,43 @@ def test_retry_registry_submits_chain_in_dependency_order() -> None:
     assert by_key[head_key]["dependency_job_id"] == by_key[post_key]["job_id"]
 
 
+def test_retry_omits_dependency_on_completed_prior_job() -> None:
+    train_key = "audio_text:smoke:fold_0:train"
+    post_key = "audio_text:smoke:fold_0:postprocess"
+    head_key = "audio_text:smoke:fold_0:head"
+    registry = {
+        "jobs": [
+            {
+                "job_key": train_key,
+                "kind": "train",
+                "state": "submitted",
+                "job_id": "completed-training-id",
+                "observed_state": "COMPLETED",
+                "exit_code": "0:0",
+            },
+            {
+                "job_key": post_key,
+                "kind": "postprocess",
+                "state": "planned",
+                "expected_job_id": "dry-post",
+                "dependency_job_key": train_key,
+            },
+            {
+                "job_key": head_key,
+                "kind": "head",
+                "state": "planned",
+                "expected_job_id": "dry-head",
+                "dependency_job_key": post_key,
+            },
+        ]
+    }
+    registry = merge_existing_registry(registry, {"jobs": []})
+    registry = submit_registry(registry, dry_run=True)
+    by_key = {job["job_key"]: job for job in registry["jobs"]}
+    assert "dependency_job_id" not in by_key[post_key]
+    assert by_key[head_key]["dependency_job_id"] == by_key[post_key]["job_id"]
+
+
 def test_completed_artifact_reuse_requires_current_hashes_and_provenance(tmp_path: Path) -> None:
     config_path = tmp_path / "merged.yaml"
     config_path.write_text("name: synthetic\n", encoding="utf-8")
