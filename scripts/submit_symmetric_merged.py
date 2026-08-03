@@ -402,14 +402,15 @@ def _submit_job(job: dict[str, Any], *, worker: Path, dependency_id: str | None)
 
 
 def submit_registry(registry: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
+    def _successful_slurm_job(job: dict[str, Any]) -> bool:
+        state_tokens = str(job.get("observed_state", "")).upper().split(None, 1)
+        return bool(state_tokens) and state_tokens[0] == "COMPLETED" and str(job.get("exit_code", "")) == "0:0"
+
     previous_ids: dict[str, str] = {
         str(job["job_key"]): str(job["job_id"])
         for job in registry.get("jobs", [])
         if job.get("job_id") and not str(job.get("job_id")).startswith("dry_")
-        and not (
-            str(job.get("observed_state", "")).upper().split(None, 1)[0] == "COMPLETED"
-            and str(job.get("exit_code", "")) == "0:0"
-        )
+        and not _successful_slurm_job(job)
     }
     worker_by_kind = {
         "train": PROJECT_ROOT / "scripts/run_symmetric_merged_train_slurm.sh",
@@ -432,6 +433,17 @@ def submit_registry(registry: dict[str, Any], *, dry_run: bool) -> dict[str, Any
         job["submission_time_utc"] = datetime.now(timezone.utc).isoformat()
         job["state"] = "planned_dry_run" if dry_run else "submitted"
         previous_ids[job["job_key"]] = submitted_id
+    # A dry-run or a restart can carry already-submitted jobs forward without
+    # visiting them in the loop above.  Refresh their recorded dependency IDs
+    # from the authoritative job-key map so the registry cannot retain a
+    # stale dry-run ID even though Slurm received the real dependency.
+    for job in registry["jobs"]:
+        dependency_key = job.get("dependency_job_key")
+        dependency_id = previous_ids.get(str(dependency_key)) if dependency_key else None
+        if dependency_id and not str(dependency_id).startswith("dry_"):
+            job["dependency_job_id"] = dependency_id
+        elif not dependency_id:
+            job.pop("dependency_job_id", None)
     registry["submission_mode"] = "dry_run" if dry_run else "sbatch"
     registry["terminal"] = False
     registry["planned_job_count"] = active_before
@@ -468,6 +480,13 @@ def merge_existing_registry(registry: dict[str, Any], existing: dict[str, Any]) 
         old = old_jobs.get(str(job["job_key"]))
         if not old:
             continue
+        # Preserve retry metadata and the last known dependency while a
+        # planned dry-run registry is promoted to a real submission.  The
+        # dependency is refreshed from current job IDs in submit_registry.
+        if "retry" in old:
+            job["retry"] = old["retry"]
+        if "dependency_job_id" in old:
+            job["dependency_job_id"] = old["dependency_job_id"]
         old_state = state_token(old.get("observed_state", old.get("state", "")))
         old_job_id = old.get("job_id")
         terminal_success_without_artifact = (

@@ -314,6 +314,53 @@ def test_retry_replaces_terminal_job_when_its_artifact_is_missing() -> None:
     assert job["retry"] == 1
 
 
+def test_real_submission_promotes_dry_run_dependencies_and_retry_metadata() -> None:
+    train_key = "audio_text:cv:fold_0:train"
+    post_key = "audio_text:cv:fold_0:postprocess"
+    registry = {
+        "jobs": [
+            {
+                "job_key": train_key,
+                "kind": "train",
+                "state": "planned",
+                "expected_job_id": "dry-train",
+                "dependency_job_key": None,
+            },
+            {
+                "job_key": post_key,
+                "kind": "postprocess",
+                "state": "planned",
+                "expected_job_id": "dry-post",
+                "dependency_job_key": train_key,
+            },
+        ]
+    }
+    dry_existing = {
+        "jobs": [
+            {
+                "job_key": train_key,
+                "state": "planned_dry_run",
+                "job_id": "dry_train",
+                "retry": 1,
+            },
+            {
+                "job_key": post_key,
+                "state": "planned_dry_run",
+                "job_id": "dry_post",
+                "retry": 1,
+                "dependency_job_id": "dry_train",
+            },
+        ]
+    }
+    registry = merge_existing_registry(registry, dry_existing)
+    with patch("scripts.submit_symmetric_merged._submit_job", side_effect=["real-train", "real-post"]):
+        registry = submit_registry(registry, dry_run=False)
+    by_key = {job["job_key"]: job for job in registry["jobs"]}
+    assert by_key[train_key]["retry"] == 1
+    assert by_key[post_key]["retry"] == 1
+    assert by_key[post_key]["dependency_job_id"] == "real-train"
+
+
 def test_completed_artifact_reuse_requires_current_hashes_and_provenance(tmp_path: Path) -> None:
     config_path = tmp_path / "merged.yaml"
     config_path.write_text("name: synthetic\n", encoding="utf-8")
