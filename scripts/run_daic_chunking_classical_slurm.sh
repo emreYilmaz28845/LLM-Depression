@@ -21,6 +21,8 @@ cd "$PROJECT_ROOT"
 CACHE_ROOT="${CACHE_ROOT:?Set CACHE_ROOT}"
 OUTPUT_ROOT="${OUTPUT_ROOT:?Set OUTPUT_ROOT}"
 STRATEGY="${STRATEGY:?Set STRATEGY}"
+PROTOCOL_ID="${PROTOCOL_ID:-}"
+EVALUATION_VIEWS="${EVALUATION_VIEWS:-}"
 VARIANT="${VARIANT:?Set VARIANT}"
 LOG_ROOT="${LOG_ROOT:?Set unique LOG_ROOT}"
 mkdir -p "$LOG_ROOT"
@@ -31,7 +33,23 @@ run_head() {
   python "$PROJECT_ROOT/baselines/daic_chunking_heads.py" "$@"
 }
 
-if [ "$STRATEGY" = "joint" ]; then
+if [ -n "$PROTOCOL_ID" ]; then
+  IFS=',' read -r -a views <<< "$EVALUATION_VIEWS"
+  fit_view="${views[0]}"
+  for view in "${views[@]}"; do
+    if [ "$view" = fixed4 ] || [ "$view" = all ]; then fit_view="$view"; break; fi
+  done
+  FIT_OUT="$OUTPUT_ROOT/$fit_view/$VARIANT"
+  run_head --fit-cache "$CACHE_ROOT/$fit_view" --eval-cache "$CACHE_ROOT/$fit_view" \
+    --output-dir "$FIT_OUT" --variant "$VARIANT" --seed 1337
+  for view in "${views[@]}"; do
+    [ "$view" = "$fit_view" ] && continue
+    [ "$view" = matched10_resampled ] && continue
+    run_head --fit-cache "$CACHE_ROOT/$fit_view" --eval-cache "$CACHE_ROOT/$view" \
+      --output-dir "$OUTPUT_ROOT/$view/$VARIANT" --variant "$VARIANT" --seed 1337 \
+      --fitted-model-dir "$FIT_OUT"
+  done
+elif [ "$STRATEGY" = "joint" ]; then
   C1_OUT="$OUTPUT_ROOT/c1/$VARIANT"
   run_head --fit-cache "$CACHE_ROOT/c1_fixed" --eval-cache "$CACHE_ROOT/c1_fixed" \
     --output-dir "$C1_OUT" --variant "$VARIANT" --seed 1337

@@ -20,7 +20,12 @@ from src.data.emotion import (
     single_chunk_emotion_block,
     use_emotion,
 )
-from src.daic_chunking import balanced_joint_bundles, resolve_chunking_controls
+from src.daic_chunking import (
+    balanced_joint_bundles,
+    evenly_spaced_indices,
+    fixed_count_balanced_joint_bundles,
+    resolve_chunking_controls,
+)
 from src.utils import (
     get_logger,
     INPUT_MODALITY_AUDIO_ONLY,
@@ -546,6 +551,7 @@ def _build_subject_level_audio_examples(
             )
         canonical_row = rows[0]
         chunk_paths = [row["audio_path"] for row in rows]
+        chunk_ids = [str(row.get("chunk_id", row["sample_id"])) for row in rows]
         emotion_on = emotion_cache is not None
         chunk_caption_by_path: dict[str, str | None] = {}
         if emotion_on:
@@ -606,6 +612,7 @@ def _build_subject_level_audio_examples(
             "audio_paths": deterministic_paths,
             "audio_clip_seconds": clip_seconds,
             "subject_chunk_paths": chunk_paths,
+            "subject_chunk_ids": chunk_ids,
             "chunks_per_subject": effective_k,
             "input_modality": input_modality,
             "prompt_text": prompt_text,
@@ -622,11 +629,15 @@ def _build_subject_level_audio_examples(
             example["emotion_internal_label_text"] = internal_label_text
             example["emotion_audio_placeholder"] = audio_placeholder
         if (
-            controls["eval_chunk_policy"] == "balanced_joint_cover"
+            controls["eval_chunk_policy"] in {"balanced_joint_cover", "fixed_count_balanced_joint_cover"}
             and "train" not in partition_name.lower()
         ):
-            chunk_ids = [str(row.get("chunk_id", row["sample_id"])) for row in rows]
-            bundles, coverage = balanced_joint_bundles(chunk_ids, effective_k)
+            if controls["eval_chunk_policy"] == "fixed_count_balanced_joint_cover":
+                bundles, coverage = fixed_count_balanced_joint_bundles(
+                    chunk_ids, effective_k, controls["eval_bundles_per_subject"]
+                )
+            else:
+                bundles, coverage = balanced_joint_bundles(chunk_ids, effective_k)
             for bundle_id, indices in enumerate(bundles):
                 bundle = dict(example)
                 bundle_paths = [chunk_paths[index] for index in indices]
@@ -730,9 +741,20 @@ def build_examples(
             emotion_policy=emotion_policy,
         )
 
-    if sample_mode == "subject_chunks" and dataset_name == "daic":
+    if sample_mode in {"subject_chunks", "subject_mil"} and dataset_name == "daic":
         controls = resolve_chunking_controls(config)
-        for row in sorted(manifest_rows, key=lambda item: item["sample_id"]):
+        selected_rows = sorted(manifest_rows, key=lambda item: item["sample_id"])
+        if controls["eval_chunk_policy"] == "matched_k" and "train" not in partition_name.lower():
+            grouped_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for row in selected_rows:
+                grouped_rows[str(row["subject_id"])].append(row)
+            selected_rows = [
+                rows[index]
+                for subject_id in sorted(grouped_rows)
+                for rows in [sorted(grouped_rows[subject_id], key=lambda item: item["sample_id"])]
+                for index in evenly_spaced_indices(len(rows), int(controls["eval_chunks_per_subject"]))
+            ]
+        for row in selected_rows:
             example, transcript_log = _base_example_from_row(
                 row, config, transcript_max_chars, emotion_cache, emotion_policy
             )

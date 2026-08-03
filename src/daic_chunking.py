@@ -9,8 +9,9 @@ from typing import Any, Sequence
 
 SUBJECT_AUDIO = "subject_audio"
 SUBJECT_CHUNKS = "subject_chunks"
-TRAIN_POLICIES = {"random_k", "rotary_k", "all"}
-EVAL_POLICIES = {"fixed_k", "balanced_joint_cover", "all"}
+SUBJECT_MIL = "subject_mil"
+TRAIN_POLICIES = {"random_k", "rotary_k", "all", "joint_random_k", "joint_rotary_k", "joint_balanced_cover"}
+EVAL_POLICIES = {"fixed_k", "balanced_joint_cover", "fixed_count_balanced_joint_cover", "all", "matched_k"}
 
 
 def _integer_or_all(value: Any, *, name: str) -> int | str:
@@ -26,7 +27,7 @@ def resolve_chunking_controls(config: dict[str, Any]) -> dict[str, Any]:
     """Resolve the new controls while preserving legacy subject_audio K behavior."""
     data = config.get("data", {})
     mode = str(data.get("sample_mode", "response")).strip().lower()
-    if mode not in {SUBJECT_AUDIO, SUBJECT_CHUNKS}:
+    if mode not in {SUBJECT_AUDIO, SUBJECT_CHUNKS, SUBJECT_MIL}:
         return {"enabled": False, "sample_mode": mode}
     legacy_k = data.get("chunks_per_subject", 4)
     train_policy = str(data.get("train_chunk_policy", "random_k")).strip().lower()
@@ -47,12 +48,14 @@ def resolve_chunking_controls(config: dict[str, Any]) -> dict[str, Any]:
         train_k = "all"
     if eval_policy == "all":
         eval_k = "all"
-    if mode == SUBJECT_AUDIO and train_policy not in {"random_k", "all"}:
-        raise ValueError("subject_audio supports train_chunk_policy=random_k or all.")
+    if mode == SUBJECT_AUDIO and train_policy not in {"random_k", "all", "joint_random_k", "joint_rotary_k", "joint_balanced_cover"}:
+        raise ValueError("Unsupported subject_audio train chunk policy.")
     if mode == SUBJECT_CHUNKS and train_policy == "random_k":
         raise ValueError("subject_chunks supports train_chunk_policy=rotary_k or all.")
-    if mode == SUBJECT_CHUNKS and eval_policy != "all":
-        raise ValueError("subject_chunks requires eval_chunk_policy=all.")
+    if mode == SUBJECT_CHUNKS and eval_policy not in {"all", "matched_k"}:
+        raise ValueError("subject_chunks requires eval_chunk_policy=all or matched_k.")
+    if mode == SUBJECT_MIL and (train_policy != "all" or eval_policy not in {"all", "matched_k"}):
+        raise ValueError("subject_mil requires all-chunk training and all/matched_k evaluation.")
     return {
         "enabled": True,
         "sample_mode": mode,
@@ -60,6 +63,8 @@ def resolve_chunking_controls(config: dict[str, Any]) -> dict[str, Any]:
         "train_chunks_per_subject": train_k,
         "eval_chunk_policy": eval_policy,
         "eval_chunks_per_subject": eval_k,
+        "eval_bundles_per_subject": int(data.get("eval_bundles_per_subject", 15)),
+        "loss_weight_rescale": str(data.get("loss_weight_rescale", "none")).lower(),
         "max_audio_seconds_per_chunk": float(
             data.get("max_audio_seconds_per_chunk", 30.0)
         ),
@@ -85,6 +90,14 @@ def rotary_indices(
     permutation = subject_permutation(size, subject_id=subject_id, seed=seed)
     start = (int(epoch) * k) % size
     return [permutation[(start + offset) % size] for offset in range(k)]
+
+
+def random_k_indices(size: int, k: int, *, subject_id: str, seed: int, epoch: int) -> list[int]:
+    if size < 1:
+        return []
+    k = min(int(k), size)
+    digest = hashlib.sha256(f"{seed}:{subject_id}:random_k:{epoch}".encode()).digest()
+    return random.Random(int.from_bytes(digest[:8], "big")).sample(range(size), k)
 
 
 def balanced_joint_bundles(
@@ -129,6 +142,71 @@ def balanced_joint_bundles(
     }
 
 
+def fixed_count_balanced_joint_bundles(
+    chunk_ids: Sequence[str], k: int, bundle_count: int
+) -> tuple[list[list[int]], dict[str, Any]]:
+    """Build exactly B cyclic bundles, failing unless coverage is equal."""
+    n = len(chunk_ids)
+    k = int(k)
+    bundle_count = int(bundle_count)
+    if n < 1 or k < 1 or k > n or bundle_count < 1:
+        raise ValueError("Fixed-count bundles require 1 <= K <= N and B >= 1.")
+    if (bundle_count * k) % n:
+        raise ValueError(
+            f"Cannot equally cover {n} chunks with B={bundle_count}, K={k}; B*K must be divisible by N."
+        )
+    bundles = [
+        [((bundle_id * k) + offset) % n for offset in range(k)]
+        for bundle_id in range(bundle_count)
+    ]
+    counts = Counter(index for bundle in bundles for index in bundle)
+    expected = bundle_count * k // n
+    if set(counts) != set(range(n)) or set(counts.values()) != {expected}:
+        raise AssertionError("Internal fixed-count bundle construction error.")
+    return bundles, {
+        "num_chunks": n,
+        "chunks_per_bundle": k,
+        "num_bundles": bundle_count,
+        "occurrences_per_chunk": expected,
+        "coverage_by_chunk_id": {str(chunk_ids[index]): counts[index] for index in range(n)},
+    }
+
+
+def evenly_spaced_indices(total: int, count: int) -> list[int]:
+    """Return a deterministic endpoint-preserving matched-count view."""
+    if total < 1 or count < 1:
+        return []
+    if count > total:
+        raise ValueError(f"Cannot choose {count} unique chunks from {total}.")
+    if count == total:
+        return list(range(total))
+    if count == 1:
+        return [0]
+    chosen = [int(round(i * (total - 1) / (count - 1))) for i in range(count)]
+    if len(set(chosen)) != count:
+        raise AssertionError("Evenly-spaced construction produced duplicate indices.")
+    return chosen
+
+
+def deterministic_subject_order(subject_ids: Sequence[str], *, seed: int, epoch: int) -> list[str]:
+    """Shuffle complete subject blocks independently of label-ordered IDs."""
+    ordered = sorted(map(str, subject_ids))
+    digest = hashlib.sha256(f"{int(seed)}:subject_order:{int(epoch)}".encode()).digest()
+    random.Random(int.from_bytes(digest[:8], "big")).shuffle(ordered)
+    return ordered
+
+
+def _rescale_weights(rows: list[dict[str, Any]], mode: str) -> float:
+    if mode not in {"none", "mean_one"}:
+        raise ValueError("loss_weight_rescale must be none or mean_one.")
+    mean_raw = sum(float(row["raw_loss_weight"]) for row in rows) / len(rows)
+    scale = 1.0 if mode == "none" else 1.0 / mean_raw
+    for row in rows:
+        row["loss_weight"] = float(row["raw_loss_weight"]) * scale
+        row["effective_loss_weight"] = row["loss_weight"]
+    return scale
+
+
 def build_independent_epoch_schedule(
     examples: Sequence[dict[str, Any]],
     *,
@@ -136,6 +214,9 @@ def build_independent_epoch_schedule(
     chunks_per_subject: int | str,
     seed: int,
     epochs: int,
+    loss_weight_rescale: str = "none",
+    equal_row_weight: bool = False,
+    class_balance: bool = False,
 ) -> tuple[list[list[dict[str, Any]]], dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for example in examples:
@@ -145,9 +226,14 @@ def build_independent_epoch_schedule(
         subject_id: Counter() for subject_id in grouped
     }
     weight_totals: dict[str, list[float]] = defaultdict(list)
+    effective_weight_totals: dict[str, list[float]] = defaultdict(list)
+    scales: list[float] = []
+    audit_rows: list[dict[str, Any]] = []
+    class_counts = Counter(int(rows[0]["label"]) for rows in grouped.values())
     for epoch in range(epochs):
         epoch_rows: list[dict[str, Any]] = []
-        for subject_id in sorted(grouped):
+        epoch_subject_raw: dict[str, float] = {}
+        for subject_id in deterministic_subject_order(grouped, seed=seed, epoch=epoch):
             rows = sorted(grouped[subject_id], key=lambda row: str(row["sample_id"]))
             n = len(rows)
             if policy == "all":
@@ -160,34 +246,117 @@ def build_independent_epoch_schedule(
                 )
             else:
                 raise ValueError(f"Unsupported independent policy {policy!r}.")
-            weight = 1.0 / len(selected)
+            class_factor = 1.0 / class_counts[int(rows[0]["label"])] if class_balance else 1.0
+            weight = class_factor if equal_row_weight else class_factor / len(selected)
             subject_total = 0.0
             for index in selected:
                 row = dict(rows[index])
-                row["loss_weight"] = weight
+                row["raw_loss_weight"] = weight
                 row["chunk_schedule_epoch"] = epoch
                 row["chunk_schedule_position"] = len(epoch_rows)
                 epoch_rows.append(row)
                 exposure[subject_id][str(row["sample_id"])] += 1
                 subject_total += weight
             weight_totals[subject_id].append(subject_total)
+            epoch_subject_raw[subject_id] = subject_total
+        scale = _rescale_weights(epoch_rows, loss_weight_rescale)
+        scales.append(scale)
+        for subject_id in grouped:
+            effective_weight_totals[subject_id].append(epoch_subject_raw[subject_id] * scale)
+        for row in epoch_rows:
+            clip_seconds = row.get("audio_clip_seconds") or []
+            audit_rows.append({
+                "epoch": epoch, "position": int(row["chunk_schedule_position"]),
+                "subject_id": str(row["subject_id"]), "sample_id": str(row["sample_id"]),
+                "chunk_id": str(row.get("chunk_id", row["sample_id"])),
+                "raw_loss_weight": float(row["raw_loss_weight"]),
+                "effective_loss_weight": float(row["loss_weight"]),
+                "weight_scale": scale,
+                "audio_seconds": sum(float(value) for value in clip_seconds if value is not None),
+            })
         schedules.append(epoch_rows)
     return schedules, {
-        "schema_version": "daic_independent_schedule.v1",
+        "schema_version": "daic_independent_schedule.v2",
         "policy": policy,
         "seed": int(seed),
         "epochs": int(epochs),
         "chunks_per_subject": chunks_per_subject,
+        "loss_weight_rescale": loss_weight_rescale,
+        "equal_row_weight": bool(equal_row_weight),
+        "class_balance": bool(class_balance),
         "epoch_example_counts": [len(rows) for rows in schedules],
+        "epoch_weight_scales": scales,
+        "epoch_mean_effective_weights": [
+            sum(float(row["loss_weight"]) for row in rows) / len(rows) for rows in schedules
+        ],
+        "rows": audit_rows,
         "exposure_counts_by_subject": {
             subject_id: dict(sorted(counts.items()))
             for subject_id, counts in sorted(exposure.items())
         },
         "subject_epoch_weight_totals": dict(sorted(weight_totals.items())),
-        "equal_total_subject_weight": all(
-            all(abs(value - 1.0) < 1e-9 for value in values)
+        "subject_epoch_effective_weight_totals": dict(sorted(effective_weight_totals.items())),
+        "equal_total_subject_weight": (not equal_row_weight) and all(
+            max(values) - min(values) < 1e-9
             for values in weight_totals.values()
         ),
+    }
+
+
+def build_joint_epoch_schedule(
+    subjects: Sequence[dict[str, Any]], *, policy: str, k: int, seed: int,
+    epochs: int, loss_weight_rescale: str = "mean_one", class_balance: bool = False,
+) -> tuple[list[list[dict[str, Any]]], dict[str, Any]]:
+    """Materialize rotary or minimum-cover joint bundles for every epoch."""
+    by_id = {str(row["subject_id"]): dict(row) for row in subjects}
+    class_counts = Counter(int(row["label"]) for row in by_id.values())
+    schedules: list[list[dict[str, Any]]] = []
+    audit_rows: list[dict[str, Any]] = []
+    for epoch in range(int(epochs)):
+        rows: list[dict[str, Any]] = []
+        for subject_id in deterministic_subject_order(by_id, seed=seed, epoch=epoch):
+            source = by_id[subject_id]
+            chunk_paths = list(source["subject_chunk_paths"])
+            chunk_ids = list(map(str, source.get("subject_chunk_ids", range(len(chunk_paths)))))
+            if policy == "joint_random_k":
+                memberships = [random_k_indices(len(chunk_paths), k, subject_id=subject_id, seed=seed, epoch=epoch)]
+            elif policy == "joint_rotary_k":
+                memberships = [rotary_indices(len(chunk_paths), k, subject_id=subject_id, seed=seed, epoch=epoch)]
+            elif policy == "joint_balanced_cover":
+                memberships, _ = balanced_joint_bundles(chunk_ids, k)
+            else:
+                raise ValueError(f"Unsupported joint policy {policy!r}.")
+            class_factor = 1.0 / class_counts[int(source["label"])] if class_balance else 1.0
+            for bundle_id, indices in enumerate(memberships):
+                row = dict(source)
+                row["sample_id"] = f"{subject_id}__epoch_{epoch:03d}__bundle_{bundle_id:03d}"
+                row["audio_paths"] = [chunk_paths[index] for index in indices]
+                row["audio_clip_seconds"] = [source["audio_clip_seconds"][0]] * len(indices)
+                row["bundle_id"] = bundle_id
+                row["bundle_chunk_ids"] = [chunk_ids[index] for index in indices]
+                row["raw_loss_weight"] = class_factor / len(memberships)
+                row["chunk_schedule_epoch"] = epoch
+                rows.append(row)
+        scale = _rescale_weights(rows, loss_weight_rescale)
+        for position, row in enumerate(rows):
+            row["chunk_schedule_position"] = position
+            audit_rows.append({
+                "epoch": epoch, "position": position, "subject_id": row["subject_id"],
+                "sample_id": row["sample_id"], "bundle_chunk_ids": row["bundle_chunk_ids"],
+                "raw_loss_weight": row["raw_loss_weight"],
+                "effective_loss_weight": row["loss_weight"], "weight_scale": scale,
+                "audio_seconds": sum(row["audio_clip_seconds"]),
+            })
+        schedules.append(rows)
+    return schedules, {
+        "schema_version": "daic_joint_schedule.v2", "policy": policy,
+        "seed": int(seed), "epochs": int(epochs), "k": int(k),
+        "loss_weight_rescale": loss_weight_rescale,
+        "epoch_example_counts": [len(rows) for rows in schedules],
+        "epoch_mean_effective_weights": [
+            sum(float(row["loss_weight"]) for row in rows) / len(rows) for rows in schedules
+        ],
+        "rows": audit_rows,
     }
 
 
@@ -208,3 +377,31 @@ def gradient_accumulation_for_reference_updates(
         independent_examples_per_epoch / max(1, world_size * per_device_batch_size)
     )
     return max(1, math.ceil(micro_batches / max(1, reference_updates)))
+
+
+def matched_k_resamples(
+    sample_rows: Sequence[dict[str, Any]], *, k: int = 10, iterations: int = 1000,
+    seed: int = 1337,
+) -> list[dict[str, Any]]:
+    """Resample cached per-chunk scores; this performs no model inference."""
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in sample_rows:
+        grouped[str(row["subject_id"])].append(dict(row))
+    output: list[dict[str, Any]] = []
+    for subject_id, rows in sorted(grouped.items()):
+        rows = sorted(rows, key=lambda row: str(row["sample_id"]))
+        if len(rows) < k:
+            raise ValueError(f"Subject {subject_id} has only {len(rows)} chunks; matched k={k}.")
+        digest = hashlib.sha256(f"{seed}:matched:{subject_id}".encode()).digest()
+        rng = random.Random(int.from_bytes(digest[:8], "big"))
+        for resample_id in range(iterations):
+            chosen = rng.sample(range(len(rows)), k)
+            margins = [float(rows[index]["dep_score"]) - float(rows[index]["non_score"]) for index in chosen]
+            output.append({
+                "subject_id": subject_id, "label": int(rows[0]["label"]),
+                "resample_id": resample_id,
+                "sample_ids": [str(rows[index]["sample_id"]) for index in chosen],
+                "score_margin": sum(margins) / k,
+                "prediction": int(sum(margins) / k > 0.0),
+            })
+    return output

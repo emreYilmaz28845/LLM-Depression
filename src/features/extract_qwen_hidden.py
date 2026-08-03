@@ -439,10 +439,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--emotion-language", help="Predeclared language label for emotion captions.")
     parser.add_argument(
         "--eval-chunk-policy",
-        choices=("fixed_k", "balanced_joint_cover", "all"),
+        choices=("fixed_k", "balanced_joint_cover", "fixed_count_balanced_joint_cover", "all", "matched_k"),
         help="DAIC evaluation-view override; recorded in cache identity.",
     )
     parser.add_argument("--eval-chunks-per-subject")
+    parser.add_argument("--eval-bundles-per-subject", type=int)
     return parser.parse_args()
 
 
@@ -459,6 +460,8 @@ def main() -> None:
         config.setdefault("data", {})["eval_chunks_per_subject"] = (
             value if value == "all" else int(value)
         )
+    if args.eval_bundles_per_subject is not None:
+        config.setdefault("data", {})["eval_bundles_per_subject"] = args.eval_bundles_per_subject
     fold = int(saved["fold"])
     if checkpoint_dir.name != "best_model":
         raise ValueError("Primary experiment requires the fold-specific best_model checkpoint.")

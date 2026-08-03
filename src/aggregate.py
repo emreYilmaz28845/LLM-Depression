@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from typing import Any
+import math
+import statistics
 
 from src.metrics import binary_auroc, classification_metrics, multiclass_macro_f1
 from src.utils import (
@@ -578,6 +580,53 @@ def aggregate_original_teacher_forced_predictions(sample_rows: list[dict[str, An
         tie_break_negative_score_field="non_score",
         count_invalid_as_wrong_vote=True,
     )
+
+
+def aggregate_margin_predictions(
+    sample_rows: list[dict[str, Any]], method: str = "mean_score"
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Apply a declared chunk/bundle aggregation with one output per subject."""
+    supported = {"mean_score", "median_score", "trimmed_mean_10", "majority_margin_tiebreak", "max_score"}
+    if method not in supported:
+        raise ValueError(f"Unsupported subject score aggregation {method!r}.")
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in sample_rows:
+        grouped[str(row["subject_id"])].append(row)
+    subjects: list[dict[str, Any]] = []
+    for subject_id, rows in sorted(grouped.items()):
+        labels = {int(row["label"]) for row in rows}
+        if len(labels) != 1:
+            raise ValueError(f"Subject {subject_id} has inconsistent labels.")
+        margins = [float(row["dep_score"]) - float(row["non_score"]) for row in rows]
+        if method == "mean_score":
+            margin = sum(margins) / len(margins)
+        elif method == "median_score":
+            margin = float(statistics.median(margins))
+        elif method == "trimmed_mean_10":
+            trim = math.floor(0.1 * len(margins))
+            ordered = sorted(margins)
+            kept = ordered[trim:len(ordered) - trim] if trim else ordered
+            margin = sum(kept) / len(kept)
+        elif method == "max_score":
+            margin = max(margins)
+        else:
+            votes = Counter(int(value > 0.0) for value in margins)
+            margin = 1.0 if votes[1] > votes[0] else -1.0 if votes[0] > votes[1] else sum(margins) / len(margins)
+        subjects.append({
+            "subject_id": subject_id, "label": next(iter(labels)),
+            "prediction": int(margin > 0.0), "score_margin": margin,
+            "num_samples": len(rows), "aggregation_method": method,
+        })
+    metrics = _metrics_from_prediction_rows(
+        subjects, backend_name=PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
+        aggregation_level=AGGREGATION_LEVEL_SUBJECT,
+    )
+    metrics["aggregation_method"] = method
+    metrics["auroc"] = binary_auroc(
+        [int(row["label"]) for row in subjects],
+        [float(row["score_margin"]) for row in subjects],
+    )
+    return subjects, metrics
 
 
 def aggregate_binary_classifier_predictions(

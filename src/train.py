@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
-from collections import Counter
+from collections import Counter, defaultdict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -28,9 +28,11 @@ from src.data.d3tec import build_d3tec_training_schedule
 from src.data.androids import apply_androids_training_weights
 from src.daic_chunking import (
     build_independent_epoch_schedule,
+    build_joint_epoch_schedule,
     gradient_accumulation_for_reference_updates,
     resolve_chunking_controls,
 )
+from src.daic_mil import candidate_mean_token_logprob, streaming_subject_mil_backward
 from src.data.runtime import (
     AudioTextDataset,
     build_examples,
@@ -55,7 +57,7 @@ from src.data.split_utils import (
     resolve_split_mode,
     subject_ids_for_partitions,
 )
-from src.evaluate import evaluate_examples
+from src.evaluate import _processor_inputs, evaluate_examples
 from src.model.collator import Qwen2AudioSFTCollator
 from src.model.runtime import (
     load_model_for_inference,
@@ -77,6 +79,7 @@ from src.utils import (
     ensure_dir,
     evaluation_protocol_name,
     get_logger,
+    internal_label_text_from_int,
     load_yaml_with_overrides,
     log_resolved_config,
     read_json,
@@ -662,7 +665,7 @@ def _build_weighted_train_sampler(
     config: dict[str, Any],
 ) -> WeightedRandomSampler | None:
     mode = str(config.get("training", {}).get("class_balance", "none")).strip().lower()
-    if mode in {"", "none", "off", "false"}:
+    if mode in {"", "none", "off", "false", "subject_inverse_frequency"}:
         return None
     if mode == SAMPLING_MODE_SUBJECT_OVERSAMPLE:
         return None
@@ -1270,7 +1273,8 @@ def main() -> None:
         save_json(d3tec_schedule_audit, logs_dir / "d3tec_training_schedule_audit.json")
     if (
         str(config["dataset"]).lower() == "daic"
-        and str(config["data"].get("sample_mode", "")).lower() == "subject_chunks"
+        and str(config["data"].get("sample_mode", "")).lower() in {"subject_chunks", "subject_mil"}
+        and str(config.get("training", {}).get("objective", "token_ce")) == "token_ce"
     ):
         if int(config["training"]["per_device_train_batch_size"]) != 1:
             raise ValueError("DAIC independent chunk weighting requires per_device_train_batch_size=1.")
@@ -1283,6 +1287,9 @@ def main() -> None:
             chunks_per_subject=controls["train_chunks_per_subject"],
             seed=int(config["seed"]),
             epochs=int(config["training"]["num_train_epochs"]),
+            loss_weight_rescale=controls["loss_weight_rescale"],
+            equal_row_weight=bool(config["data"].get("equal_row_weight", False)),
+            class_balance=str(config["training"].get("class_balance", "none")) == "subject_inverse_frequency",
         )
         train_examples = daic_epoch_schedule[0]
         if bool(config["training"].get("match_joint_optimizer_updates", True)):
@@ -1304,12 +1311,52 @@ def main() -> None:
                 "world_size": int(os.environ.get("WORLD_SIZE", "1")),
             }
         save_json(daic_schedule_audit, logs_dir / "daic_chunk_schedule_audit.json")
+    if (
+        str(config["dataset"]).lower() == "daic"
+        and str(config["data"].get("sample_mode", "")).lower() == "subject_audio"
+        and str(config["data"].get("train_chunk_policy", "random_k")) in {"joint_random_k", "joint_rotary_k", "joint_balanced_cover"}
+    ):
+        if int(config["training"]["per_device_train_batch_size"]) != 1:
+            raise ValueError("DAIC joint weighted schedules require per_device_train_batch_size=1.")
+        if int(config["training"]["dataloader_num_workers"]) != 0:
+            raise ValueError("DAIC joint schedules require training.dataloader_num_workers=0.")
+        controls = resolve_chunking_controls(config)
+        daic_epoch_schedule, daic_schedule_audit = build_joint_epoch_schedule(
+            train_examples,
+            policy=controls["train_chunk_policy"],
+            k=int(controls["train_chunks_per_subject"]),
+            seed=int(config["seed"]),
+            epochs=int(config["training"]["num_train_epochs"]),
+            loss_weight_rescale=controls["loss_weight_rescale"],
+            class_balance=str(config["training"].get("class_balance", "none")) == "subject_inverse_frequency",
+        )
+        train_examples = daic_epoch_schedule[0]
+        if bool(config["training"].get("match_joint_optimizer_updates", True)):
+            reference_accumulation = int(config["training"].get("joint_reference_gradient_accumulation_steps", 8))
+            resolved_accumulation = gradient_accumulation_for_reference_updates(
+                independent_examples_per_epoch=len(train_examples),
+                reference_subjects=len(partition_plan["train_subject_ids"]),
+                reference_gradient_accumulation=reference_accumulation,
+                world_size=int(os.environ.get("WORLD_SIZE", "1")),
+                per_device_batch_size=int(config["training"]["per_device_train_batch_size"]),
+            )
+            config["training"]["gradient_accumulation_steps"] = resolved_accumulation
+            daic_schedule_audit["gradient_accumulation"] = {
+                "policy": "match_jr4_optimizer_updates_per_epoch",
+                "joint_reference_gradient_accumulation_steps": reference_accumulation,
+                "resolved_gradient_accumulation_steps": resolved_accumulation,
+                "world_size": int(os.environ.get("WORLD_SIZE", "1")),
+            }
+        save_json(daic_schedule_audit, logs_dir / "daic_chunk_schedule_audit.json")
 
     # Training is the only place stochastic per-epoch chunk sampling is allowed.
     # Selection/eval datasets stay deterministic (baked audio_paths) so reported
     # validation/test metrics never depend on random sampling.
     train_chunk_sampling = (
-        "random" if str(config["data"].get("sample_mode", "")).lower() == "subject_audio" else None
+        "random" if (
+            str(config["data"].get("sample_mode", "")).lower() == "subject_audio"
+            and str(config["data"].get("train_chunk_policy", "random_k")) == "random_k"
+        ) else None
     )
     # Train-only waveform acoustic augmentation. Passed ONLY to the train dataset;
     # selection/audit stay clean and eval never touches AudioTextDataset, so the
@@ -1406,9 +1453,13 @@ def main() -> None:
         lr=float(config["training"]["learning_rate"]),
         weight_decay=float(config["training"]["weight_decay"]),
     )
+    objective = str(config.get("training", {}).get("objective", "token_ce"))
+    micro_batches_per_epoch = len(train_loader)
+    if objective == "subject_mean_margin_mil":
+        micro_batches_per_epoch = len({str(row["subject_id"]) for row in train_examples})
     total_steps = max(
         1,
-        math.ceil(len(train_loader) / int(config["training"]["gradient_accumulation_steps"])) * int(config["training"]["num_train_epochs"]),
+        math.ceil(micro_batches_per_epoch / int(config["training"]["gradient_accumulation_steps"])) * int(config["training"]["num_train_epochs"]),
     )
     warmup_steps = int(total_steps * float(config["training"]["warmup_ratio"]))
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps)
@@ -1589,7 +1640,56 @@ def main() -> None:
         # epoch's forward, or activations balloon and OOM the heaviest configs.
         restore_model_for_training(accelerator.unwrap_model(model), config)
         epoch_losses: list[float] = []
-        for step, batch in enumerate(train_loader, start=1):
+        objective = str(config.get("training", {}).get("objective", "token_ce"))
+        if objective == "subject_mean_margin_mil":
+            if accelerator.num_processes != 1:
+                raise ValueError("subject_mean_margin_mil requires exactly one process/GPU.")
+            grouped_mil: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for example in train_examples:
+                grouped_mil[str(example["subject_id"])].append(example)
+            from src.daic_chunking import deterministic_subject_order
+            mil_subjects = deterministic_subject_order(grouped_mil, seed=int(config["seed"]), epoch=epoch - 1)
+            mil_batches = []
+            for subject_id in mil_subjects:
+                subject_examples = sorted(grouped_mil[subject_id], key=lambda row: str(row["sample_id"]))
+                label = int(subject_examples[0]["label"])
+
+                def margin_fn(example):
+                    prompt_inputs = _processor_inputs(
+                        processor, example, example["prompt_text"], accelerator.device,
+                        bool(config["data"].get("silence_audio", False)),
+                    )
+                    prompt_len = int(prompt_inputs["input_ids"].shape[1])
+                    scores = []
+                    for candidate_label in (
+                        internal_label_text_from_int(config, 1),
+                        internal_label_text_from_int(config, 0),
+                    ):
+                        full_inputs = _processor_inputs(
+                            processor, example, example["prompt_text"] + candidate_label,
+                            accelerator.device, bool(config["data"].get("silence_audio", False)),
+                        )
+                        scores.append(candidate_mean_token_logprob(model, full_inputs, prompt_len))
+                    return scores[0] - scores[1]
+
+                with accelerator.accumulate(model):
+                    result = streaming_subject_mil_backward(
+                        subject_examples, label=label, margin_fn=margin_fn,
+                        backward_fn=accelerator.backward,
+                    )
+                    if accelerator.sync_gradients:
+                        accelerator.clip_grad_norm_(model.parameters(), float(config["training"]["max_grad_norm"]))
+                    optimizer.step()
+                    scheduler.step()
+                    optimizer.zero_grad()
+                mil_batches.append(result)
+            training_batches = []
+        elif objective == "token_ce":
+            mil_batches = []
+            training_batches = train_loader
+        else:
+            raise ValueError(f"Unsupported training.objective={objective!r}.")
+        for step, batch in enumerate(training_batches, start=1):
             with accelerator.accumulate(model):
                 loss_weights = batch.pop("loss_weight", None)
                 outputs = model(**batch)
@@ -1610,6 +1710,12 @@ def main() -> None:
             epoch_losses.append(float(loss.detach().item()))
             if accelerator.is_main_process and step % int(config["training"]["logging_steps"]) == 0:
                 LOGGER.info("epoch=%s step=%s loss=%.6f", epoch, step, sum(epoch_losses) / len(epoch_losses))
+        if mil_batches:
+            epoch_losses.extend(float(row["loss"]) for row in mil_batches)
+            LOGGER.info(
+                "epoch=%s MIL subjects=%s mean_loss=%.6f", epoch, len(mil_batches),
+                sum(epoch_losses) / len(epoch_losses),
+            )
 
         accelerator.wait_for_everyone()
         if accelerator.is_main_process:

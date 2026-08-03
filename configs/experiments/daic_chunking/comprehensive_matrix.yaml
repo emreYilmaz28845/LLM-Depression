@@ -1,0 +1,50 @@
+schema_version: daic_chunking_comprehensive.v1
+split_seed: 1337
+folds: [0, 1, 2, 3, 4]
+seeds: [1337, 2027, 3407]
+maximum_concurrent_train: 4
+resources:
+  train: {gpus: 4, cpus_per_task: 20, time: "72:00:00"}
+  evaluation: {gpus: 1, cpus_per_task: 20, time: "24:00:00"}
+  hidden: {gpus: 1, cpus_per_task: 20, time: "24:00:00"}
+  classical: {gpus: 0, cpus_per_task: 20, time: "02:00:00"}
+protocols:
+  jr4:
+    base_config: configs/experiments/daic_chunking/joint_random_k4.yaml
+    overrides: {data.sample_mode: subject_audio, data.train_chunk_policy: joint_random_k, data.train_chunks_per_subject: 4, data.loss_weight_rescale: mean_one}
+    evaluation_views: [fixed4, mincover4, fixed15]
+  jt4:
+    base_config: configs/experiments/daic_chunking/joint_random_k4.yaml
+    overrides: {data.sample_mode: subject_audio, data.train_chunk_policy: joint_rotary_k, data.train_chunks_per_subject: 4, data.loss_weight_rescale: mean_one}
+    evaluation_views: [fixed4, mincover4, fixed15]
+  ja4:
+    base_config: configs/experiments/daic_chunking/joint_random_k4.yaml
+    overrides: {data.sample_mode: subject_audio, data.train_chunk_policy: joint_balanced_cover, data.train_chunks_per_subject: 4, data.loss_weight_rescale: mean_one}
+    evaluation_views: [fixed4, mincover4, fixed15]
+  ir4:
+    base_config: configs/experiments/daic_chunking/independent_rotary_k4.yaml
+    overrides: {data.sample_mode: subject_chunks, data.train_chunk_policy: rotary_k, data.train_chunks_per_subject: 4, data.eval_chunk_policy: matched_k, data.eval_chunks_per_subject: 4, data.loss_weight_rescale: mean_one}
+    evaluation_views: [all, matched10_even, matched10_resampled]
+  ian:
+    base_config: configs/experiments/daic_chunking/independent_all.yaml
+    overrides: {data.sample_mode: subject_chunks, data.train_chunk_policy: all, data.train_chunks_per_subject: all, data.eval_chunk_policy: matched_k, data.eval_chunks_per_subject: 4, data.loss_weight_rescale: mean_one}
+    evaluation_views: [all, matched10_even, matched10_resampled]
+  iaf:
+    base_config: configs/experiments/daic_chunking/independent_all.yaml
+    overrides: {data.sample_mode: subject_chunks, data.train_chunk_policy: all, data.train_chunks_per_subject: all, data.eval_chunk_policy: matched_k, data.eval_chunks_per_subject: 4, data.loss_weight_rescale: mean_one, data.equal_row_weight: true}
+    evaluation_views: [all, matched10_even, matched10_resampled]
+common_overrides:
+  split.mode: cv
+  split.cv_protocol: train_val_test
+  split.outer_folds: 5
+  split.seed: 1337
+  training.objective: token_ce
+  training.num_train_epochs: 20
+  training.selection_metric: inner_val_macro_f1
+  training.selection_metric_mode: max
+  training.early_stopping.enabled: true
+  training.early_stopping.metric: inner_val_macro_f1
+  training.early_stopping.mode: max
+  training.early_stopping.patience: 3
+  evaluation.subject_score_aggregation: mean_score
+  evaluation.secondary_aggregations: [median_score, trimmed_mean_10, majority_margin_tiebreak, max_score]
