@@ -7,7 +7,12 @@ from pathlib import Path
 import yaml
 import pytest
 
-from src.merged.report import collect_pooled_stage_rows, generate_reports
+from src.merged.report import (
+    collect_pooled_stage_rows,
+    generate_reports,
+    update_workbook,
+    validate_workbook,
+)
 
 
 DATASETS = ("daic", "cmdc", "turkish", "d3tec", "androids_interview")
@@ -157,3 +162,18 @@ def test_report_rejects_incomplete_cv_prediction_coverage(tmp_path: Path) -> Non
 
     with pytest.raises(ValueError, match="Incomplete pooled CV prediction coverage"):
         collect_pooled_stage_rows(config, run_id=run_id, stage="cv")
+
+
+def test_workbook_validation_allows_excel_float_rounding(tmp_path: Path) -> None:
+    rows = [{"Metric": 0.23529411764705882}]
+    workbook_path = tmp_path / "rounded.xlsx"
+    update_workbook(workbook_path, rows, rows)
+
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(workbook_path)
+    workbook["Merged Symmetric CV"]["A2"] = 0.2352941176470588
+    workbook.save(workbook_path)
+
+    result = validate_workbook(workbook_path, cv_rows=rows, final_rows=rows)
+    assert result["status"] == "passed"

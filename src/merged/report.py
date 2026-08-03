@@ -250,7 +250,7 @@ def _write_rows(rows: list[dict[str, Any]], path: Path) -> None:
     ensure_dir(path.parent)
     fields = list(rows[0]) if rows else ["Dataset", "Modality", "Method"]
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer = csv.DictWriter(handle, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -412,7 +412,16 @@ def validate_workbook(
                 actual = sheet.cell(row_number, column).value
                 expected_value = row.get(header, "")
                 blank_equivalent = actual in (None, "") and expected_value in (None, "")
-                if not blank_equivalent and actual != expected_value:
+                numeric_equivalent = (
+                    isinstance(actual, (int, float))
+                    and not isinstance(actual, bool)
+                    and isinstance(expected_value, (int, float))
+                    and not isinstance(expected_value, bool)
+                    and math.isclose(
+                        float(actual), float(expected_value), rel_tol=1e-12, abs_tol=1e-12
+                    )
+                )
+                if not blank_equivalent and not numeric_equivalent and actual != expected_value:
                     raise ValueError(
                         f"Workbook value mismatch on {title!r}, row={row_number}, "
                         f"column={header!r}."
