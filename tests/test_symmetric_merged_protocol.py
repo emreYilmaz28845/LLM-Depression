@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 from collections import defaultdict
+from pathlib import Path
 
 from src.merged.protocol import (
     DATASETS,
@@ -16,6 +18,30 @@ from src.merged.protocol import (
 )
 from src.merged.runtime import fold_subject_ids
 from src.merged.heads import aggregate_head_predictions
+
+
+def test_merged_early_stop_broadcasts_before_any_rank_breaks() -> None:
+    source_path = Path(__file__).parents[1] / "src" / "merged" / "train.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    train_function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "train_merged_fold"
+    )
+    broadcast_lines = [
+        node.lineno
+        for node in ast.walk(train_function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "broadcast"
+    ]
+    assert broadcast_lines
+    first_broadcast_line = min(broadcast_lines)
+    assert all(
+        node.lineno > first_broadcast_line
+        for node in ast.walk(train_function)
+        if isinstance(node, ast.Break)
+    )
 
 
 def _records():

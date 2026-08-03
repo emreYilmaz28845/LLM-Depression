@@ -434,8 +434,6 @@ def train_merged_fold(
                 )
                 if bad_epochs >= patience:
                     row["stopped_early"] = True
-                    history.append(row)
-                    break
             else:
                 row["stopped_early"] = False
             history.append(row)
