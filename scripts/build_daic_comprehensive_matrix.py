@@ -57,7 +57,14 @@ def implementation_commit() -> str:
         ["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, text=True,
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
     )
-    return result.stdout.strip() if result.returncode == 0 else "unknown"
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    provenance = PROJECT_ROOT / ".provenance" / "git_commit.txt"
+    if provenance.is_file():
+        recorded = provenance.read_text(encoding="utf-8").strip()
+        if recorded:
+            return recorded
+    return "unknown"
 
 
 def implementation_hash() -> str:

@@ -27,7 +27,14 @@ def git_commit() -> str:
         stderr=subprocess.DEVNULL,
         check=False,
     )
-    return result.stdout.strip() if result.returncode == 0 else "unknown"
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    provenance = ROOT / ".provenance" / "git_commit.txt"
+    if provenance.is_file():
+        recorded = provenance.read_text(encoding="utf-8").strip()
+        if recorded:
+            return recorded
+    return "unknown"
 
 
 def main() -> None:
