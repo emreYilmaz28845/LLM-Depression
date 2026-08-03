@@ -2,7 +2,7 @@
   "schema_version": "symmetric_merged_execution_metadata.v1",
   "run_id": "symmetric_merged_smoke_6fba6e632653",
   "source_commit": "9888e814872c37d14535cf3555a814b62ba56b59",
-  "generated_utc": "2026-08-03T19:31:14.925726+00:00",
+  "generated_utc": "2026-08-03T21:20:03.894970+00:00",
   "configs": [
     "configs/experiments/merged/symmetric_merged_audio_text.yaml",
     "configs/experiments/merged/symmetric_merged_audio_only.yaml",
@@ -940,8 +940,8 @@
       "node_list"
     ],
     "project_disk_path": "/home/emre/Projects/AudioLLM/LLM-Depression",
-    "project_disk_free_bytes": 140204949504,
-    "project_disk_used_bytes": 792608096256
+    "project_disk_free_bytes": 140201136128,
+    "project_disk_used_bytes": 792611909632
   },
   "acceptance_audits": {
     "audio_text": {
@@ -960,8 +960,8 @@
   },
   "project_disk": {
     "path": "/home/emre/Projects/AudioLLM/LLM-Depression",
-    "free_bytes_at_report": 140204949504,
-    "used_bytes_at_report": 792608096256
+    "free_bytes_at_report": 140201136128,
+    "used_bytes_at_report": 792611909632
   },
   "limitations": [
     "Best-model checkpoints, hidden feature arrays, classifier joblibs, and Optuna SQLite databases remain on MN5 GPFS.",

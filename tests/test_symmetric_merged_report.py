@@ -140,6 +140,7 @@ def test_report_writes_pooled_csv_and_validates_workbook(tmp_path: Path) -> None
     assert set(result["workbook_validation"]["sheets"]) == {
         "Merged Symmetric CV",
         "Merged DAIC Official",
+        "Merged Symmetric Summary",
     }
 
 

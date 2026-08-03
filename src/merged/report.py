@@ -340,7 +340,175 @@ def _aggregate_summary(rows: list[dict[str, Any]], *, stage: str) -> list[dict[s
     return result
 
 
-def update_workbook(workbook_path: Path, cv_rows: list[dict[str, Any]], final_rows: list[dict[str, Any]]) -> None:
+def _write_symmetric_summary_sheet(
+    workbook: Any,
+    *,
+    cv_pooled_rows: list[dict[str, Any]] | None,
+    final_rows: list[dict[str, Any]],
+    run_id: str | None,
+) -> None:
+    """Add a compact, presentation-ready summary tab for the merged run."""
+
+    from openpyxl.chart import BarChart, Reference
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    title = "Merged Symmetric Summary"
+    if title in workbook.sheetnames:
+        del workbook[title]
+    index = workbook.sheetnames.index("Summary") + 1 if "Summary" in workbook.sheetnames else 0
+    sheet = workbook.create_sheet(title, index=index)
+    sheet.sheet_view.showGridLines = False
+    sheet.freeze_panes = "A6"
+
+    dark_fill = PatternFill("solid", fgColor="203864")
+    blue_fill = PatternFill("solid", fgColor="D9EAF7")
+    body_fill = PatternFill("solid", fgColor="EAF2F8")
+    note_fill = PatternFill("solid", fgColor="FFF4E5")
+    white_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    title_font = Font(name="Calibri", size=20, bold=True, color="FFFFFF")
+    body_font = Font(name="Calibri", size=10, color="1F1F1F")
+    thin = Side(style="thin", color="B4C6E7")
+    border = Border(bottom=thin)
+    center = Alignment(horizontal="center", vertical="center")
+    left = Alignment(horizontal="left", vertical="center")
+    wrap_left = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+    for column, width in {"A": 31, "B": 18, "C": 18, "D": 18, "E": 18, "F": 4}.items():
+        sheet.column_dimensions[column].width = width
+    sheet.column_dimensions["G"].width = 3
+
+    sheet.merge_cells("A1:E1")
+    sheet["A1"] = "Symmetric Merged — Macro-F1 Summary"
+    sheet["A1"].font = title_font
+    sheet["A1"].fill = dark_fill
+    sheet["A1"].alignment = center
+    sheet.row_dimensions[1].height = 32
+
+    sheet.merge_cells("A2:E3")
+    sheet["A2"] = (
+        f"Run: {run_id or 'not specified'}. Macro-F1 only; higher is better. "
+        "CV values are pooled subject-level predictions across the five datasets; "
+        "final values are from the protected DAIC official holdout."
+    )
+    sheet["A2"].font = body_font
+    sheet["A2"].fill = blue_fill
+    sheet["A2"].alignment = wrap_left
+    sheet.row_dimensions[2].height = 20
+    sheet.row_dimensions[3].height = 20
+
+    methods = (
+        ("qwen", "Fine-tuned Qwen"),
+        ("logreg", "LogReg head"),
+        ("xgb_fixed", "XGBoost fixed"),
+        ("xgb_optuna", "XGBoost Optuna"),
+    )
+    modalities = (
+        ("audio_text", "Audio + Text"),
+        ("audio_only", "Audio only"),
+        ("text_only", "Text only"),
+    )
+    headers = ["Evaluation / Modality", *(label for _, label in methods)]
+
+    final_lookup = {
+        (str(row.get("Modality")), str(row.get("Method"))): row.get("Macro-F1")
+        for row in final_rows
+    }
+    cv_values: dict[tuple[str, str], list[float]] = defaultdict(list)
+    for row in cv_pooled_rows or []:
+        if row.get("Dataset") not in DATASETS:
+            continue
+        value = row.get("Macro-F1")
+        if value not in (None, ""):
+            cv_values[(str(row.get("Modality")), str(row.get("Method")))].append(float(value))
+
+    def section(row: int, label: str) -> None:
+        sheet.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
+        cell = sheet.cell(row, 1, label)
+        cell.font = white_font
+        cell.fill = dark_fill
+        cell.alignment = left
+        sheet.row_dimensions[row].height = 22
+
+    def table(row: int, values: dict[tuple[str, str], Any]) -> None:
+        for column, value in enumerate(headers, start=1):
+            cell = sheet.cell(row, column, value)
+            cell.font = white_font
+            cell.fill = dark_fill
+            cell.alignment = center
+            cell.border = border
+        for offset, (modality, modality_label) in enumerate(modalities, start=1):
+            current = row + offset
+            label_cell = sheet.cell(current, 1, modality_label)
+            label_cell.font = body_font
+            label_cell.fill = body_fill
+            label_cell.alignment = left
+            label_cell.border = border
+            for column, (method, _) in enumerate(methods, start=2):
+                value = values.get((modality, method), "")
+                cell = sheet.cell(current, column, value if value is not None else "")
+                cell.font = body_font
+                cell.fill = body_fill
+                cell.alignment = center
+                cell.border = border
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    cell.number_format = "0.000"
+            sheet.row_dimensions[current].height = 21
+
+    section(5, "DAIC Official Holdout — Final Macro-F1")
+    table(6, final_lookup)
+
+    section(11, "Five-Dataset CV — Pooled Mean Macro-F1")
+    table(
+        12,
+        {
+            key: statistics.mean(values)
+            for key, values in cv_values.items()
+            if values
+        },
+    )
+
+    section(17, "Five-Dataset CV — Worst-Dataset Macro-F1")
+    table(18, {key: min(values) for key, values in cv_values.items() if values})
+
+    sheet.merge_cells("A23:E24")
+    sheet["A23"] = (
+        "Methods: fine-tuned Qwen, standardized Logistic Regression, fixed XGBoost, "
+        "and grouped 150-trial Optuna XGBoost. Blank cells indicate that the corresponding "
+        "compact artifact was unavailable."
+    )
+    sheet["A23"].font = body_font
+    sheet["A23"].fill = note_fill
+    sheet["A23"].alignment = wrap_left
+    sheet.row_dimensions[23].height = 21
+    sheet.row_dimensions[24].height = 21
+
+    if final_rows:
+        chart = BarChart()
+        chart.type = "bar"
+        chart.style = 10
+        chart.title = "Final DAIC Macro-F1"
+        chart.x_axis.title = "Macro-F1"
+        chart.y_axis.title = "Modality"
+        chart.x_axis.scaling.min = 0
+        chart.x_axis.scaling.max = 1
+        chart.height = 7
+        chart.width = 14
+        data = Reference(sheet, min_col=2, max_col=5, min_row=6, max_row=9)
+        categories = Reference(sheet, min_col=1, min_row=7, max_row=9)
+        chart.add_data(data, titles_from_data=True)
+        chart.set_categories(categories)
+        chart.legend.position = "b"
+        sheet.add_chart(chart, "G5")
+
+
+def update_workbook(
+    workbook_path: Path,
+    cv_rows: list[dict[str, Any]],
+    final_rows: list[dict[str, Any]],
+    *,
+    cv_pooled_rows: list[dict[str, Any]] | None = None,
+    run_id: str | None = None,
+) -> None:
     from openpyxl import load_workbook
     from openpyxl.worksheet.table import Table, TableStyleInfo
 
@@ -367,6 +535,12 @@ def update_workbook(workbook_path: Path, cv_rows: list[dict[str, Any]], final_ro
             sheet.add_table(table)
             sheet.auto_filter.ref = ref
         sheet.freeze_panes = "A2"
+    _write_symmetric_summary_sheet(
+        workbook,
+        cv_pooled_rows=cv_pooled_rows,
+        final_rows=final_rows,
+        run_id=run_id,
+    )
     workbook.save(workbook_path)
 
 
@@ -437,6 +611,32 @@ def validate_workbook(
             "table_refs": sorted(table_refs),
             "auto_filter": sheet.auto_filter.ref,
         }
+    summary_title = "Merged Symmetric Summary"
+    if summary_title not in workbook.sheetnames:
+        raise ValueError(f"Generated workbook is missing sheet {summary_title!r}: {path}")
+    summary = workbook[summary_title]
+    if summary["A1"].value != "Symmetric Merged — Macro-F1 Summary":
+        raise ValueError(f"Generated workbook has an invalid {summary_title!r} title.")
+    expected_summary_headers = [
+        "Evaluation / Modality",
+        "Fine-tuned Qwen",
+        "LogReg head",
+        "XGBoost fixed",
+        "XGBoost Optuna",
+    ]
+    for header_row in (6, 12, 18):
+        actual_headers = [summary.cell(header_row, column).value for column in range(1, 6)]
+        if actual_headers != expected_summary_headers:
+            raise ValueError(
+                f"Generated workbook has invalid summary headers on row {header_row}: {path}"
+            )
+    if not summary._charts:
+        raise ValueError(f"Generated workbook summary has no comparison chart: {path}")
+    sheet_results[summary_title] = {
+        "rows": 18,
+        "headers": expected_summary_headers,
+        "charts": len(summary._charts),
+    }
     return {"status": "passed", "workbook": str(path), "sheets": sheet_results}
 
 
@@ -546,6 +746,8 @@ def generate_reports(
             workbook,
             workbook_cv_rows,
             final_rows,
+            cv_pooled_rows=cv_pooled_rows,
+            run_id=run_id,
         )
         workbook_validation = validate_workbook(
             workbook,
