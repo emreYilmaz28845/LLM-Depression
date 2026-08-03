@@ -25,10 +25,13 @@ data:
   train_chunks_per_subject: 4
   eval_chunk_policy: all
   eval_chunks_per_subject: all
+  eval_bundles_per_subject: 1
   max_audio_seconds_per_chunk: 30.0
   transcript_max_chars: 0
   allow_empty_transcript: false
-split: {mode: fixed, train_partition: train, selection_partition: val, dev_pool_partitions: [train, val], final_eval_partition: test, inner_val_ratio: 0.2, seed: 1337}
+  loss_weight_rescale: none
+  equal_row_weight: false
+split: {mode: fixed, cv_protocol: train_val_test, outer_folds: 5, smoke_subject_limit: null, train_partition: train, selection_partition: val, dev_pool_partitions: [train, val], final_eval_partition: test, inner_val_ratio: 0.2, seed: 1337}
 lora: {rank: 16, alpha: 32, dropout: 0.05, bias: none, target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]}
 audio_adapter: {enabled: false, adapter_dim: 512, dropout: 0.1, train_projector: false}
 training:
@@ -50,5 +53,7 @@ training:
   max_grad_norm: 1.0
   selection_metric: inner_val_positive_f1
   selection_metric_mode: max
+  objective: token_ce
+  class_balance: none
   early_stopping: {enabled: true, metric: inner_val_positive_f1, mode: max, patience: 3, min_delta: 0.0}
-evaluation: {sample_prediction_mode: original_teacher_forced, aggregation_level: subject, subject_score_aggregation: mean_score, generation_max_new_tokens: 8, num_beams: 1, do_sample: false, headline_mode: original_teacher_forced}
+evaluation: {sample_prediction_mode: original_teacher_forced, aggregation_level: subject, subject_score_aggregation: mean_score, secondary_aggregations: [], generation_max_new_tokens: 8, num_beams: 1, do_sample: false, headline_mode: original_teacher_forced}
