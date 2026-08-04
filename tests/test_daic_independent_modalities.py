@@ -120,7 +120,7 @@ def test_matrix_submission_forwards_only_declared_heads(tmp_path: Path) -> None:
         text=True,
     )
     assert result.stdout.count("DRY RUN:") == 3
-    assert result.stdout.count("CLASSIFIER_VARIANTS=logreg_raw\\,xgb_raw") == 3
+    assert result.stdout.count("CLASSIFIER_VARIANTS=logreg_raw:xgb_raw") == 3
     assert "pca" not in result.stdout.lower()
 
 

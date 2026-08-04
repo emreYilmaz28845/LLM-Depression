@@ -60,7 +60,7 @@ else
     --cache-dir "$CACHE_DIR" \
     --output-dir "$CLASSIFIER_DIR")
   if [ -n "$CLASSIFIER_VARIANTS" ]; then
-    IFS=',' read -r -a classifier_variant_args <<< "$CLASSIFIER_VARIANTS"
+    IFS=':' read -r -a classifier_variant_args <<< "$CLASSIFIER_VARIANTS"
     CLASSIFIER_CMD+=(--variants "${classifier_variant_args[@]}")
   fi
   printf 'Classifier command: '; printf '%q ' "${CLASSIFIER_CMD[@]}"; printf '\n'

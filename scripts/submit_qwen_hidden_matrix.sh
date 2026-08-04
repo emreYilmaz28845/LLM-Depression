@@ -12,7 +12,7 @@ matrix = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
 variants = matrix.get("variants") or []
 if not isinstance(variants, list) or any(not isinstance(value, str) or not value for value in variants):
     raise SystemExit("matrix.variants must be a list of non-empty classifier names")
-variant_csv = ",".join(variants) if variants else "-"
+variant_csv = ":".join(variants) if variants else "-"
 for item in matrix["experiments"]:
     for fold in item["folds"]:
         print(
