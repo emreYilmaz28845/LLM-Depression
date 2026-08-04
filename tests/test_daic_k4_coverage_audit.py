@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 
 from scripts.evaluate_daic_comprehensive_views import view_construction_rows
-from scripts.run_daic_k4_coverage_audit import audit_and_report
+from scripts.run_daic_k4_coverage_audit import audit_and_report, materialize_runtime_config
 
 
 def _write_json(path: Path, payload) -> None:
@@ -44,6 +44,25 @@ def test_view_construction_rows_are_path_free_and_record_fixed_selection() -> No
     )
     assert rows[0]["selected_chunk_ids"] == ["0", "3", "6", "9"]
     assert "/private" not in json.dumps(rows)
+
+
+def test_runtime_config_adds_audit_controls_without_mutating_source(tmp_path: Path) -> None:
+    source = tmp_path / "main.yaml"
+    source.write_text(
+        yaml.safe_dump({"dataset": "daic", "evaluation": {"aggregation_level": "subject"}}),
+        encoding="utf-8",
+    )
+    before = source.read_text(encoding="utf-8")
+    destination = materialize_runtime_config(source, tmp_path / "runtime.yaml")
+    resolved = yaml.safe_load(destination.read_text(encoding="utf-8"))
+    assert source.read_text(encoding="utf-8") == before
+    assert resolved["evaluation"] == {
+        "aggregation_level": "subject",
+        "inference_dtype": "fp32",
+        "candidate_batching": "sequential",
+        "subject_score_aggregation": "mean_score",
+        "reuse_derived_views": True,
+    }
 
 
 def test_complete_coverage_audit_and_report_pass(tmp_path: Path) -> None:

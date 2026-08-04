@@ -14,11 +14,27 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.utils import read_json, read_jsonl, save_json
+from src.utils import load_yaml, read_json, read_jsonl, save_json, save_yaml
 
 
 VIEWS = ("fixed4", "mincover4", "fixed15")
 METRICS = ("accuracy", "positive_f1", "macro_f1", "precision", "recall")
+
+
+def materialize_runtime_config(source: Path, destination: Path) -> Path:
+    """Add audit-only evaluation controls without mutating the canonical YAML."""
+    config = load_yaml(source)
+    evaluation = config.setdefault("evaluation", {})
+    evaluation.update(
+        {
+            "inference_dtype": "fp32",
+            "candidate_batching": "sequential",
+            "subject_score_aggregation": "mean_score",
+            "reuse_derived_views": True,
+        }
+    )
+    save_yaml(config, destination)
+    return destination
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
@@ -290,23 +306,18 @@ def main() -> None:
     if not args.report_only:
         if output_root.exists() and any(output_root.iterdir()) and not args.resume:
             raise SystemExit(f"Collision: output exists: {output_root}")
+        runtime_config = materialize_runtime_config(
+            args.config, output_root / "audit_runtime_config.yaml"
+        )
         command = [
             sys.executable,
             str(PROJECT_ROOT / "scripts/evaluate_daic_comprehensive_views.py"),
-            "--config", str(args.config),
+            "--config", str(runtime_config),
             "--checkpoint-dir", str(args.checkpoint_dir),
             "--fold", str(args.fold),
             "--output-root", str(output_root),
             "--views", ",".join(VIEWS),
-            "--overrides-json", json.dumps(
-                {
-                    "evaluation.inference_dtype": "fp32",
-                    "evaluation.candidate_batching": "sequential",
-                    "evaluation.subject_score_aggregation": "mean_score",
-                    "evaluation.reuse_derived_views": True,
-                },
-                separators=(",", ":"),
-            ),
+            "--overrides-json", "{}",
         ]
         if args.resume:
             command.append("--resume")
