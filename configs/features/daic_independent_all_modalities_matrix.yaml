@@ -1,0 +1,23 @@
+# Fold-0 hidden-state heads for the DAIC independent-all modality comparison.
+experiments:
+  - dataset: daic
+    modality: audio_text
+    condition: independent_all_audio_text
+    folds: [0]
+    run_dir: output_model/experiments/daic_chunking/independent_all_equalrow_audio_text/daic_indall_eqrow_20260804_f26dd45
+  - dataset: daic
+    modality: audio_only
+    condition: independent_all_audio_only
+    folds: [0]
+    run_dir: output_model/experiments/daic_chunking/independent_all_equalrow_audio_only/daic_indall_audio_only_eqrow_f0_seed1337
+  - dataset: daic
+    modality: text_only
+    condition: independent_family_text_only
+    folds: [0]
+    run_dir: output_model/experiments/daic_chunking/independent_family_text_only/daic_indall_text_only_subject_f0_seed1337
+
+variants:
+  - logreg_raw
+  - xgb_raw
+
+expected_jobs: 3

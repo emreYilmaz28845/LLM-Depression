@@ -32,6 +32,7 @@ CONDITION="${CONDITION:-}"
 EMOTION_SOURCE="${EMOTION_SOURCE:-}"
 EMOTION_LANGUAGE="${EMOTION_LANGUAGE:-}"
 SKIP_CLASSIFIERS="${SKIP_CLASSIFIERS:-0}"
+CLASSIFIER_VARIANTS="${CLASSIFIER_VARIANTS:-}"
 QWEN_HIDDEN_DEPS="${QWEN_HIDDEN_DEPS:-$PROJECT_ROOT/.deps/qwen_hidden}"
 export PYTHONPATH="$QWEN_HIDDEN_DEPS:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
@@ -55,7 +56,13 @@ printf 'Extraction command: '; printf '%q ' "${CMD[@]}"; printf '\n'
 if [ "$SKIP_CLASSIFIERS" = "1" ]; then
   echo "Skipping classifiers for extraction-only smoke test."
 else
-  python "$PROJECT_ROOT/baselines/qwen_hidden_classifier.py" \
+  CLASSIFIER_CMD=(python "$PROJECT_ROOT/baselines/qwen_hidden_classifier.py" \
     --cache-dir "$CACHE_DIR" \
-    --output-dir "$CLASSIFIER_DIR"
+    --output-dir "$CLASSIFIER_DIR")
+  if [ -n "$CLASSIFIER_VARIANTS" ]; then
+    IFS=',' read -r -a classifier_variant_args <<< "$CLASSIFIER_VARIANTS"
+    CLASSIFIER_CMD+=(--variants "${classifier_variant_args[@]}")
+  fi
+  printf 'Classifier command: '; printf '%q ' "${CLASSIFIER_CMD[@]}"; printf '\n'
+  "${CLASSIFIER_CMD[@]}"
 fi
