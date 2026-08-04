@@ -25,6 +25,7 @@ OUTPUT_ROOT="${OUTPUT_ROOT:-$PROJECT_ROOT/outputs/daic_k4_coverage_audit}"
 FOLD="${FOLD:-0}"
 RESUME="${RESUME:-0}"
 EXPECTED_MODALITY="${EXPECTED_MODALITY:-audio_text}"
+ALLOW_HISTORICAL_REPLAY_MISMATCH="${ALLOW_HISTORICAL_REPLAY_MISMATCH:-0}"
 LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/daic_k4_coverage_audit/$RUN_ID}"
 export DAIC_DATASET_ROOT="${DAIC_DATASET_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/DAIC-WOZ/preprocessed}"
 
@@ -43,6 +44,7 @@ args=(
   --expected-modality "$EXPECTED_MODALITY"
 )
 if [ "$RESUME" = "1" ]; then args+=(--resume); fi
+if [ "$ALLOW_HISTORICAL_REPLAY_MISMATCH" = "1" ]; then args+=(--allow-historical-replay-mismatch); fi
 printf 'Launch command: '; printf '%q ' "${args[@]}"; printf '\n'
 nvidia-smi || true
 "${args[@]}"

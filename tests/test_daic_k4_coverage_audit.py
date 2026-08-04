@@ -202,3 +202,19 @@ def test_complete_coverage_audit_and_report_pass(tmp_path: Path) -> None:
     )
     assert audio_only["passed"], audio_only["failures"]
     assert audio_only["modality"] == "audio_only"
+
+    mismatched_subjects = [dict(row) for row in subjects]
+    mismatched_subjects[0]["prediction"] = 1
+    _write_csv(checkpoint / "standalone_eval" / "predictions_subject_level.csv", mismatched_subjects)
+    allowed_mismatch = audit_and_report(
+        tmp_path / "out",
+        checkpoint,
+        expected_subjects=2,
+        allow_omitted_checkpoint_adapter=True,
+        expected_modality="audio_only",
+        allow_historical_replay_mismatch=True,
+    )
+    assert allowed_mismatch["passed"], allowed_mismatch["failures"]
+    assert allowed_mismatch["warnings"] == [
+        "fixed4 historical replay did not reproduce the checkpoint's standalone evaluation"
+    ]

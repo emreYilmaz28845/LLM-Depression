@@ -70,10 +70,12 @@ def audit_and_report(
     expected_subjects: int = 47,
     allow_omitted_checkpoint_adapter: bool = False,
     expected_modality: str = "audio_text",
+    allow_historical_replay_mismatch: bool = False,
 ) -> dict[str, Any]:
     if expected_modality not in {"audio_text", "audio_only"}:
         raise ValueError(f"Unsupported expected_modality={expected_modality!r}")
     failures: list[str] = []
+    warnings: list[str] = []
     metrics_by_view: dict[str, dict[str, Any]] = {}
     subjects_by_view: dict[str, dict[str, dict[str, str]]] = {}
     construction_by_view: dict[str, list[dict[str, Any]]] = {}
@@ -251,7 +253,11 @@ def audit_and_report(
                 }
             )
             if mismatches or any(abs(value) > 1e-12 for value in metric_deltas.values()):
-                failures.append("fixed4 historical replay did not reproduce the checkpoint's standalone evaluation")
+                message = "fixed4 historical replay did not reproduce the checkpoint's standalone evaluation"
+                if allow_historical_replay_mismatch:
+                    warnings.append(message)
+                else:
+                    failures.append(message)
         except Exception as exc:
             failures.append(f"fixed4 historical comparison failed: {exc}")
 
@@ -293,10 +299,12 @@ def audit_and_report(
         "schema_version": "daic_k4_coverage_audit.v1",
         "passed": not failures,
         "failures": failures,
+        "warnings": warnings,
         "expected_subjects": expected_subjects,
         "checkpoint_dir": str(checkpoint_dir),
         "modality": expected_modality,
         "allow_omitted_checkpoint_adapter": allow_omitted_checkpoint_adapter,
+        "allow_historical_replay_mismatch": allow_historical_replay_mismatch,
         "checkpoint_provenance_passed": not any(value.startswith("checkpoint") for value in failures),
         "coverage_by_subject": coverage_summary,
         "historical_fixed4_comparison": historical_comparison,
@@ -331,6 +339,8 @@ def audit_and_report(
     )
     if failures:
         lines.extend(["", "## Audit failures", ""] + [f"- {failure}" for failure in failures])
+    if warnings:
+        lines.extend(["", "## Audit warnings", ""] + [f"- {warning}" for warning in warnings])
     (output_root / "results.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return audit
 
@@ -347,6 +357,7 @@ def main() -> None:
     parser.add_argument("--expected-subjects", type=int, default=47)
     parser.add_argument("--allow-omitted-checkpoint-adapter", action="store_true")
     parser.add_argument("--expected-modality", choices=("audio_text", "audio_only"), default="audio_text")
+    parser.add_argument("--allow-historical-replay-mismatch", action="store_true")
     args = parser.parse_args()
     output_root = args.output_root / args.run_id
     if not args.report_only:
@@ -374,6 +385,7 @@ def main() -> None:
         expected_subjects=args.expected_subjects,
         allow_omitted_checkpoint_adapter=args.allow_omitted_checkpoint_adapter,
         expected_modality=args.expected_modality,
+        allow_historical_replay_mismatch=args.allow_historical_replay_mismatch,
     )
     if not audit["passed"]:
         raise SystemExit("Coverage audit failed: " + "; ".join(audit["failures"]))
