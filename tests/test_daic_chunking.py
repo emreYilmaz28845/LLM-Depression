@@ -77,6 +77,58 @@ def test_legacy_joint_k_controls_are_backward_compatible() -> None:
     assert controls["eval_chunks_per_subject"] == 4
 
 
+def test_joint_fixed10_is_deterministic_and_count_neutral_in_text() -> None:
+    cfg = config("subject_audio")
+    cfg["data"].update(
+        {
+            "train_chunk_policy": "fixed_k",
+            "train_chunks_per_subject": 10,
+            "eval_chunk_policy": "fixed_k",
+            "eval_chunks_per_subject": 10,
+            "subject_audio_count_text": "neutral",
+        }
+    )
+    examples = build_examples(manifest("300", 15, label=1), cfg, "train")
+    assert len(examples) == 1
+    example = examples[0]
+    assert example["subject_chunk_ids"] == [str(index) for index in range(15)]
+    assert [path.rsplit("_", 1)[-1].removesuffix(".wav") for path in example["audio_paths"]] == [
+        "0", "2", "3", "5", "6", "8", "9", "11", "12", "14"
+    ]
+    assert example["prompt_text"].count(AUDIO_PLACEHOLDER) == 10
+    assert "10 segments" not in example["prompt_text"]
+    assert "15 segments" not in example["prompt_text"]
+
+
+def test_independent_fixed10_schedule_is_stable_and_subject_normalized() -> None:
+    rows = manifest("dep", 15, label=1) + manifest("non", 10, label=0)
+    schedule, audit = build_independent_epoch_schedule(
+        rows,
+        policy="fixed_k",
+        chunks_per_subject=10,
+        seed=1337,
+        epochs=2,
+        loss_weight_rescale="none",
+    )
+    expected_dep = {"dep_0", "dep_2", "dep_3", "dep_5", "dep_6", "dep_8", "dep_9", "dep_11", "dep_12", "dep_14"}
+    for epoch_rows in schedule:
+        assert len(epoch_rows) == 20
+        assert {row["sample_id"] for row in epoch_rows if row["subject_id"] == "dep"} == expected_dep
+        totals = defaultdict(float)
+        for row in epoch_rows:
+            totals[row["subject_id"]] += row["loss_weight"]
+        assert totals == pytest.approx({"dep": 1.0, "non": 1.0})
+    assert audit["equal_total_subject_weight"]
+
+
+def test_fixed10_rejects_subjects_with_too_few_chunks() -> None:
+    with pytest.raises(ValueError, match="requires at least 10 chunks"):
+        build_independent_epoch_schedule(
+            manifest("short", 9), policy="fixed_k", chunks_per_subject=10,
+            seed=1337, epochs=1,
+        )
+
+
 def test_independent_example_has_one_placeholder_one_audio_and_30s_cap() -> None:
     examples = build_examples(manifest("300", 1), config(), "train")
     assert len(examples) == 1

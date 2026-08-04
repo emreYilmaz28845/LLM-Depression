@@ -11,7 +11,15 @@ from typing import Any, Sequence
 SUBJECT_AUDIO = "subject_audio"
 SUBJECT_CHUNKS = "subject_chunks"
 SUBJECT_MIL = "subject_mil"
-TRAIN_POLICIES = {"random_k", "rotary_k", "all", "joint_random_k", "joint_rotary_k", "joint_balanced_cover"}
+TRAIN_POLICIES = {
+    "random_k",
+    "fixed_k",
+    "rotary_k",
+    "all",
+    "joint_random_k",
+    "joint_rotary_k",
+    "joint_balanced_cover",
+}
 EVAL_POLICIES = {"fixed_k", "balanced_joint_cover", "fixed_count_balanced_joint_cover", "all", "matched_k"}
 
 
@@ -60,7 +68,9 @@ def resolve_chunking_controls(config: dict[str, Any]) -> dict[str, Any]:
         train_k = "all"
     if eval_policy == "all":
         eval_k = "all"
-    if mode == SUBJECT_AUDIO and train_policy not in {"random_k", "all", "joint_random_k", "joint_rotary_k", "joint_balanced_cover"}:
+    if mode == SUBJECT_AUDIO and train_policy not in {
+        "random_k", "fixed_k", "all", "joint_random_k", "joint_rotary_k", "joint_balanced_cover"
+    }:
         raise ValueError("Unsupported subject_audio train chunk policy.")
     if mode == SUBJECT_AUDIO and eval_policy not in {
         "fixed_k", "balanced_joint_cover", "fixed_count_balanced_joint_cover", "all"
@@ -69,13 +79,13 @@ def resolve_chunking_controls(config: dict[str, Any]) -> dict[str, Any]:
             "subject_audio requires eval_chunk_policy=fixed_k, balanced_joint_cover, "
             "fixed_count_balanced_joint_cover, or all."
         )
-    if mode == SUBJECT_CHUNKS and train_policy not in {"rotary_k", "all"}:
-        raise ValueError("subject_chunks supports train_chunk_policy=rotary_k or all.")
+    if mode == SUBJECT_CHUNKS and train_policy not in {"fixed_k", "rotary_k", "all"}:
+        raise ValueError("subject_chunks supports train_chunk_policy=fixed_k, rotary_k, or all.")
     if mode == SUBJECT_CHUNKS and eval_policy not in {"all", "matched_k"}:
         raise ValueError("subject_chunks requires eval_chunk_policy=all or matched_k.")
     if mode == SUBJECT_MIL and (train_policy != "all" or eval_policy not in {"all", "matched_k"}):
         raise ValueError("subject_mil requires all-chunk training and all/matched_k evaluation.")
-    if train_policy in {"joint_random_k", "joint_rotary_k", "joint_balanced_cover"} and train_k == "all":
+    if train_policy in {"fixed_k", "joint_random_k", "joint_rotary_k", "joint_balanced_cover"} and train_k == "all":
         raise ValueError(f"{train_policy} requires an integer data.train_chunks_per_subject.")
     if eval_policy in {
         "fixed_k", "balanced_joint_cover", "fixed_count_balanced_joint_cover", "matched_k"
@@ -262,7 +272,7 @@ def build_independent_epoch_schedule(
 ) -> tuple[list[list[dict[str, Any]]], dict[str, Any]]:
     policy = str(policy).strip().lower()
     loss_weight_rescale = str(loss_weight_rescale).strip().lower()
-    if policy not in {"rotary_k", "all"}:
+    if policy not in {"fixed_k", "rotary_k", "all"}:
         raise ValueError(f"Unsupported independent policy {policy!r}.")
     if epochs < 1:
         raise ValueError("epochs must be positive.")
@@ -303,6 +313,15 @@ def build_independent_epoch_schedule(
             n = len(rows)
             if policy == "all":
                 selected = list(range(n))
+            elif policy == "fixed_k":
+                if chunks_per_subject == "all":
+                    raise ValueError("fixed_k requires an integer chunks_per_subject.")
+                if n < int(chunks_per_subject):
+                    raise ValueError(
+                        f"fixed_k requires at least {int(chunks_per_subject)} chunks for "
+                        f"subject_id={subject_id}; found {n}."
+                    )
+                selected = evenly_spaced_indices(n, int(chunks_per_subject))
             elif policy == "rotary_k":
                 if chunks_per_subject == "all":
                     raise ValueError("rotary_k requires an integer chunks_per_subject.")

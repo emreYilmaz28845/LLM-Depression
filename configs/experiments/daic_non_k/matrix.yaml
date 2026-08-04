@@ -1,0 +1,74 @@
+schema_version: daic_non_k.v1
+seed: 1337
+maximum_concurrent_train: 4
+maximum_concurrent_evaluation: 4
+resources:
+  train: {gpus: 4, cpus_per_task: 20, time: "72:00:00"}
+  evaluation: {gpus: 1, cpus_per_task: 20, time: "24:00:00"}
+common_overrides:
+  split.mode: fixed
+  training.num_train_epochs: 20
+  training.selection_metric: inner_val_positive_f1
+  training.selection_metric_mode: max
+  training.early_stopping.enabled: true
+  training.early_stopping.metric: inner_val_positive_f1
+  training.early_stopping.mode: max
+  evaluation.sample_prediction_mode: original_teacher_forced
+  evaluation.headline_mode: original_teacher_forced
+  evaluation.aggregation_level: subject
+  evaluation.subject_score_aggregation: mean_score
+  data.subject_audio_count_text: neutral
+protocols:
+  joint_all_audio:
+    group: joint
+    base_config: configs/experiments/daic_non_k/base_audio_only.yaml
+    overrides: {data.sample_mode: subject_audio, data.train_chunk_policy: all, data.train_chunks_per_subject: all, data.eval_chunk_policy: all, data.eval_chunks_per_subject: all}
+  joint_matched10_audio:
+    group: joint
+    base_config: configs/experiments/daic_non_k/base_audio_only.yaml
+    overrides: {data.sample_mode: subject_audio, data.train_chunk_policy: fixed_k, data.train_chunks_per_subject: 10, data.eval_chunk_policy: fixed_k, data.eval_chunks_per_subject: 10}
+  joint_all_audio_text:
+    group: joint
+    base_config: configs/experiments/daic_non_k/base_audio_text.yaml
+    overrides: {data.sample_mode: subject_audio, data.train_chunk_policy: all, data.train_chunks_per_subject: all, data.eval_chunk_policy: all, data.eval_chunks_per_subject: all}
+  joint_matched10_audio_text:
+    group: joint
+    base_config: configs/experiments/daic_non_k/base_audio_text.yaml
+    overrides: {data.sample_mode: subject_audio, data.train_chunk_policy: fixed_k, data.train_chunks_per_subject: 10, data.eval_chunk_policy: fixed_k, data.eval_chunks_per_subject: 10}
+  independent_all_audio_normalized:
+    group: independent
+    base_config: configs/experiments/daic_non_k/base_audio_only.yaml
+    overrides: {data.sample_mode: subject_chunks, data.train_chunk_policy: all, data.train_chunks_per_subject: all, data.eval_chunk_policy: all, data.eval_chunks_per_subject: all, data.equal_row_weight: false, data.loss_weight_rescale: mean_one}
+  independent_matched10_audio_normalized:
+    group: independent
+    base_config: configs/experiments/daic_non_k/base_audio_only.yaml
+    overrides: {data.sample_mode: subject_chunks, data.train_chunk_policy: fixed_k, data.train_chunks_per_subject: 10, data.eval_chunk_policy: matched_k, data.eval_chunks_per_subject: 10, data.equal_row_weight: false, data.loss_weight_rescale: mean_one}
+  independent_all_audio_equal_row:
+    group: independent
+    base_config: configs/experiments/daic_non_k/base_audio_only.yaml
+    overrides: {data.sample_mode: subject_chunks, data.train_chunk_policy: all, data.train_chunks_per_subject: all, data.eval_chunk_policy: all, data.eval_chunks_per_subject: all, data.equal_row_weight: true, data.loss_weight_rescale: mean_one}
+  independent_matched10_audio_equal_row:
+    group: independent
+    base_config: configs/experiments/daic_non_k/base_audio_only.yaml
+    overrides: {data.sample_mode: subject_chunks, data.train_chunk_policy: fixed_k, data.train_chunks_per_subject: 10, data.eval_chunk_policy: matched_k, data.eval_chunks_per_subject: 10, data.equal_row_weight: true, data.loss_weight_rescale: mean_one}
+  independent_all_audio_text_normalized:
+    group: independent
+    base_config: configs/experiments/daic_non_k/base_audio_text.yaml
+    overrides: {data.sample_mode: subject_chunks, data.train_chunk_policy: all, data.train_chunks_per_subject: all, data.eval_chunk_policy: all, data.eval_chunks_per_subject: all, data.equal_row_weight: false, data.loss_weight_rescale: mean_one}
+  independent_matched10_audio_text_normalized:
+    group: independent
+    base_config: configs/experiments/daic_non_k/base_audio_text.yaml
+    overrides: {data.sample_mode: subject_chunks, data.train_chunk_policy: fixed_k, data.train_chunks_per_subject: 10, data.eval_chunk_policy: matched_k, data.eval_chunks_per_subject: 10, data.equal_row_weight: false, data.loss_weight_rescale: mean_one}
+  independent_all_audio_text_equal_row:
+    group: independent
+    base_config: configs/experiments/daic_non_k/base_audio_text.yaml
+    overrides: {data.sample_mode: subject_chunks, data.train_chunk_policy: all, data.train_chunks_per_subject: all, data.eval_chunk_policy: all, data.eval_chunks_per_subject: all, data.equal_row_weight: true, data.loss_weight_rescale: mean_one}
+  independent_matched10_audio_text_equal_row:
+    group: independent
+    base_config: configs/experiments/daic_non_k/base_audio_text.yaml
+    overrides: {data.sample_mode: subject_chunks, data.train_chunk_policy: fixed_k, data.train_chunks_per_subject: 10, data.eval_chunk_policy: matched_k, data.eval_chunks_per_subject: 10, data.equal_row_weight: true, data.loss_weight_rescale: mean_one}
+smoke_protocols:
+  - joint_all_audio_text
+  - joint_matched10_audio
+  - independent_all_audio_text_equal_row
+  - independent_matched10_audio_normalized

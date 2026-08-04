@@ -564,6 +564,16 @@ def _build_subject_level_audio_examples(
         canonical_row = rows[0]
         chunk_paths = [row["audio_path"] for row in rows]
         chunk_ids = [str(row.get("chunk_id", row["sample_id"])) for row in rows]
+        if (
+            controls["train_chunk_policy"] == "fixed_k"
+            and "train" in partition_name.lower()
+            and configured_k != "all"
+            and len(chunk_paths) < int(configured_k)
+        ):
+            raise ValueError(
+                f"fixed_k requires at least {int(configured_k)} chunks for subject_id={subject_id}; "
+                f"found {len(chunk_paths)}."
+            )
         emotion_on = emotion_cache is not None
         chunk_caption_by_path: dict[str, str | None] = {}
         if emotion_on:
@@ -587,10 +597,21 @@ def _build_subject_level_audio_examples(
         deterministic_paths = [chunk_paths[index] for index in deterministic_indices]
         clip_seconds = [max_seconds_per_chunk] * effective_k
 
-        audio_context = (
-            f"The subject's speech audio is provided in {effective_k} "
-            f"segment{'s' if effective_k != 1 else ''} sampled from the interview."
-        )
+        count_text_mode = str(data_cfg.get("subject_audio_count_text", "explicit")).strip().lower()
+        if count_text_mode == "explicit":
+            audio_context = (
+                f"The subject's speech audio is provided in {effective_k} "
+                f"segment{'s' if effective_k != 1 else ''} sampled from the interview."
+            )
+        elif count_text_mode == "neutral":
+            audio_context = (
+                "The subject's speech audio is provided in multiple segments sampled "
+                "from the interview."
+            )
+        else:
+            raise ValueError(
+                "data.subject_audio_count_text must be 'explicit' or 'neutral'."
+            )
         user_text = render_user_prompt_text(
             config,
             transcript,
