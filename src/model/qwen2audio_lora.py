@@ -335,7 +335,35 @@ def load_model_for_inference(
     adapter_path: str | Path | None = None,
     config: dict[str, Any] | None = None,
 ):
-    model = Qwen2AudioForConditionalGeneration.from_pretrained(model_name_or_path)
+    inference_dtype = str(
+        (config or {}).get("evaluation", {}).get("inference_dtype", "fp32")
+    ).strip().lower()
+    if inference_dtype not in {"fp32", "bf16", "auto"}:
+        raise ValueError(
+            "evaluation.inference_dtype must be one of fp32, bf16, or auto."
+        )
+    torch_dtype: torch.dtype | str | None
+    if inference_dtype == "bf16":
+        if not torch.cuda.is_available():
+            raise RuntimeError("BF16 inference requires CUDA for the Qwen2-Audio backend.")
+        torch_dtype = torch.bfloat16
+    elif inference_dtype == "auto":
+        torch_dtype = "auto"
+    else:
+        # Preserve the historical standalone-evaluation behavior unless the
+        # resolved experiment config opts into a narrower inference dtype.
+        torch_dtype = None
+    load_kwargs = {}
+    if torch_dtype is not None:
+        load_kwargs["torch_dtype"] = torch_dtype
+    model = Qwen2AudioForConditionalGeneration.from_pretrained(
+        model_name_or_path, **load_kwargs
+    )
+    LOGGER.info(
+        "Inference model dtype | requested=%s resolved=%s",
+        inference_dtype,
+        next(model.parameters()).dtype,
+    )
     checkpoint_audio_cfg = None
     if adapter_path:
         checkpoint_audio_cfg = load_additional_audio_modules(model, adapter_path)

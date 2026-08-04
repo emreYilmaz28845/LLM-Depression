@@ -5,14 +5,22 @@ RUN_ID="${RUN_ID:?Set a unique RUN_ID}"
 STAGE="${STAGE:-smoke}"
 DRY_RUN="${DRY_RUN:-1}"
 MAX_CONCURRENT_TRAIN="${MAX_CONCURRENT_TRAIN:-4}"
+MAX_CONCURRENT_EVAL="${MAX_CONCURRENT_EVAL:-16}"
+MAX_CONCURRENT_HIDDEN="${MAX_CONCURRENT_HIDDEN:-16}"
+MAX_CONCURRENT_CLASSICAL="${MAX_CONCURRENT_CLASSICAL:-8}"
 RESUME="${RESUME:-0}"
 MATRIX_PATH="${MATRIX_PATH:-$PROJECT_ROOT/outputs/daic_chunking_comprehensive/$RUN_ID/matrix_${STAGE}.json}"
-export MAX_CONCURRENT_TRAIN
+export MAX_CONCURRENT_TRAIN MAX_CONCURRENT_EVAL MAX_CONCURRENT_HIDDEN MAX_CONCURRENT_CLASSICAL
 case "$STAGE" in smoke|core|focused|final) ;; *) echo "Invalid STAGE=$STAGE" >&2; exit 2;; esac
 case "$DRY_RUN" in 0|1) ;; *) echo "DRY_RUN must be 0 or 1" >&2; exit 2;; esac
 case "$RESUME" in 0|1) ;; *) echo "RESUME must be 0 or 1" >&2; exit 2;; esac
 case "$MAX_CONCURRENT_TRAIN" in ''|*[!0-9]*) echo "MAX_CONCURRENT_TRAIN must be a positive integer" >&2; exit 2;; esac
 [ "$MAX_CONCURRENT_TRAIN" -ge 1 ] || { echo "MAX_CONCURRENT_TRAIN must be a positive integer" >&2; exit 2; }
+for pair in MAX_CONCURRENT_EVAL:$MAX_CONCURRENT_EVAL MAX_CONCURRENT_HIDDEN:$MAX_CONCURRENT_HIDDEN MAX_CONCURRENT_CLASSICAL:$MAX_CONCURRENT_CLASSICAL; do
+  name="${pair%%:*}"; value="${pair#*:}"
+  case "$value" in ''|*[!0-9]*) echo "$name must be a positive integer" >&2; exit 2;; esac
+  [ "$value" -ge 1 ] || { echo "$name must be a positive integer" >&2; exit 2; }
+done
 [ -f "$MATRIX_PATH" ] || { echo "Missing matrix: $MATRIX_PATH" >&2; exit 3; }
 
 python - "$MATRIX_PATH" <<'PY'
@@ -83,15 +91,15 @@ mil_raw="$(submit sbatch --parsable --array="${COUNTS[5]}%1" --gres=gpu:1 --ntas
 train_jobs+=("$(job_id "$mil_raw")")
 fi
 dependency="afterok:$(IFS=:; echo "${train_jobs[*]}")"
-eval_raw="$(submit sbatch --parsable --dependency="$dependency" --array="0-$((${COUNTS[1]}-1))%1" --gres=gpu:1 --time=24:00:00 \
+eval_raw="$(submit sbatch --parsable --dependency="$dependency" --array="0-$((${COUNTS[1]}-1))%$MAX_CONCURRENT_EVAL" --gres=gpu:1 --time=24:00:00 \
   --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,MATRIX_PATH=$MATRIX_PATH,TASK_KIND=evaluation,ARRAY_LOG_ROOT=$LOG_ROOT,RESUME=$RESUME" \
   "$PROJECT_ROOT/scripts/run_daic_comprehensive_array_slurm.sh")"
 evaluation_job="$(job_id "$eval_raw")"
-hidden_raw="$(submit sbatch --parsable --dependency="afterok:$evaluation_job" --array="0-$((${COUNTS[2]}-1))%1" --gres=gpu:1 --time=24:00:00 \
+hidden_raw="$(submit sbatch --parsable --dependency="afterok:$evaluation_job" --array="0-$((${COUNTS[2]}-1))%$MAX_CONCURRENT_HIDDEN" --gres=gpu:1 --time=24:00:00 \
   --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,MATRIX_PATH=$MATRIX_PATH,TASK_KIND=hidden,ARRAY_LOG_ROOT=$LOG_ROOT,RESUME=$RESUME" \
   "$PROJECT_ROOT/scripts/run_daic_comprehensive_array_slurm.sh")"
 hidden_job="$(job_id "$hidden_raw")"
-classical_raw="$(submit sbatch --parsable --dependency="afterok:$hidden_job" --array="0-$((${COUNTS[3]}-1))%8" --time=02:00:00 \
+classical_raw="$(submit sbatch --parsable --dependency="afterok:$hidden_job" --array="0-$((${COUNTS[3]}-1))%$MAX_CONCURRENT_CLASSICAL" --time=02:00:00 \
   --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,MATRIX_PATH=$MATRIX_PATH,TASK_KIND=classical,ARRAY_LOG_ROOT=$LOG_ROOT,RESUME=$RESUME" \
   "$PROJECT_ROOT/scripts/run_daic_comprehensive_array_slurm.sh")"
 classical_job="$(job_id "$classical_raw")"
@@ -110,6 +118,9 @@ payload = {
   "task_count": int(matrix.get("task_count", 0)),
   "kind_counts": matrix.get("kind_counts", {}),
   "maximum_concurrent_train": int(os.environ["MAX_CONCURRENT_TRAIN"]),
+  "maximum_concurrent_evaluation": int(os.environ["MAX_CONCURRENT_EVAL"]),
+  "maximum_concurrent_hidden": int(os.environ["MAX_CONCURRENT_HIDDEN"]),
+  "maximum_concurrent_classical": int(os.environ["MAX_CONCURRENT_CLASSICAL"]),
   "arrays": {
     "train": {"job_ids": os.environ["TRAIN_JOB_IDS"].split(), "regular_indices": os.environ["REGULAR_INDICES"], "mil_indices": os.environ["MIL_INDICES"]},
     "evaluation": {"job_ids": [os.environ["EVALUATION_JOB_ID"]]},

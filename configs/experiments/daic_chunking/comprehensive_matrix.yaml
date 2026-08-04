@@ -3,6 +3,9 @@ split_seed: 1337
 folds: [0, 1, 2, 3, 4]
 seeds: [1337, 2027, 3407]
 maximum_concurrent_train: 4
+maximum_concurrent_evaluation: 16
+maximum_concurrent_hidden: 16
+maximum_concurrent_classical: 8
 resources:
   train: {gpus: 4, cpus_per_task: 20, time: "72:00:00"}
   evaluation: {gpus: 1, cpus_per_task: 20, time: "24:00:00"}
@@ -47,4 +50,7 @@ common_overrides:
   training.early_stopping.mode: max
   training.early_stopping.patience: 3
   evaluation.subject_score_aggregation: mean_score
+  evaluation.inference_dtype: bf16
+  evaluation.candidate_batching: paired
+  evaluation.reuse_derived_views: true
   evaluation.secondary_aggregations: [median_score, trimmed_mean_10, majority_margin_tiebreak, max_score]

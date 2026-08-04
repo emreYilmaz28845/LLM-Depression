@@ -140,6 +140,32 @@ def main() -> None:
                     )
                     if not required.exists():
                         missing.append(str(required))
+                    view_root = root / "evaluation" / view
+                    if view in {"fixed15", "matched10_even", "matched10_resampled"}:
+                        derivation = view_root / "derivation_metadata.json"
+                        if not derivation.exists():
+                            missing.append(str(derivation))
+                        else:
+                            payload = read_json(derivation)
+                            if not payload.get("derived_without_model_inference"):
+                                schedule_failures.append(f"{task['cell_id']}:{view}:not_marked_derived")
+                            if int(payload.get("actual_model_forwards", -1)) != 0:
+                                schedule_failures.append(f"{task['cell_id']}:{view}:derived_model_forwards")
+                            source = Path(str(payload.get("source_path", "")))
+                            if not source.exists():
+                                schedule_failures.append(f"{task['cell_id']}:{view}:missing_derivation_source")
+                    elif view in {"fixed4", "mincover4", "all"}:
+                        inference = view_root / "inference_metadata.json"
+                        if not inference.exists():
+                            missing.append(str(inference))
+                        else:
+                            payload = read_json(inference)
+                            if payload.get("derived_without_model_inference"):
+                                schedule_failures.append(f"{task['cell_id']}:{view}:unexpected_derived")
+                            if str(payload.get("inference_dtype")) != "torch.bfloat16":
+                                schedule_failures.append(f"{task['cell_id']}:{view}:wrong_inference_dtype")
+                            if str(payload.get("candidate_batching")) != "paired":
+                                schedule_failures.append(f"{task['cell_id']}:{view}:wrong_candidate_batching")
                 secondary_methods = task.get("overrides", {}).get("evaluation.secondary_aggregations") or []
                 for view in task.get("views", []):
                     if view == "matched10_resampled":

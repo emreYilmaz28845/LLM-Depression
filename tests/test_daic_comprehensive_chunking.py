@@ -16,9 +16,12 @@ from src.daic_chunking import (
     fixed_count_balanced_joint_bundles,
     matched_k_resamples,
 )
+from src.daic_derived_views import derive_fixed15_rows, derive_matched10_rows
 from src.daic_mil import streaming_subject_mil_backward
 from src.daic_comprehensive_audit import audit_matrix, audit_oof_predictions, audit_slurm
 from src.data.runtime import AUDIO_PLACEHOLDER, build_examples
+from src.evaluate import score_candidate_pair
+from src.model import qwen2audio_lora
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +39,119 @@ def test_fixed15_has_exact_six_and_four_occurrences() -> None:
         bundles, audit = fixed_count_balanced_joint_bundles([str(i) for i in range(n)], 4, 15)
         assert len(bundles) == 15
         assert set(audit["coverage_by_chunk_id"].values()) == {expected}
+
+
+def test_fixed15_is_materialized_from_mincover_without_new_scores() -> None:
+    source = []
+    for subject, count in (("negative", 5), ("positive", 15)):
+        source.extend({
+            "subject_id": subject, "sample_id": f"{subject}_{bundle}",
+            "bundle_id": bundle, "label": int(subject == "positive"),
+            "dep_score": float(bundle), "non_score": -float(bundle),
+        } for bundle in range(count))
+    derived = derive_fixed15_rows(source)
+    assert Counter(row["subject_id"] for row in derived) == {"negative": 15, "positive": 15}
+    negative = [row for row in derived if row["subject_id"] == "negative"]
+    assert [row["dep_score"] for row in negative] == [float(i % 5) for i in range(15)]
+    assert all(row["derived_without_model_inference"] for row in derived)
+
+
+def test_matched10_even_is_derived_from_all_rows() -> None:
+    source = [
+        {"subject_id": "a", "sample_id": f"a_{index}", "label": 0,
+         "dep_score": float(index), "non_score": 0.0}
+        for index in range(15)
+    ]
+    derived = derive_matched10_rows(source)
+    assert [row["sample_id"] for row in derived] == [
+        source[index]["sample_id"] for index in [0, 2, 3, 5, 6, 8, 9, 11, 12, 14]
+    ]
+
+
+def test_paired_candidate_scoring_uses_one_audio_load_and_one_forward(monkeypatch) -> None:
+    class Processor:
+        def __init__(self):
+            self.calls = 0
+            self.feature_extractor = type("Feature", (), {"sampling_rate": 16000})()
+
+        def __call__(self, *, text, audio=None, sampling_rate=None, return_tensors=None, padding=False):
+            self.calls += 1
+            if isinstance(text, str):
+                return {"input_ids": torch.tensor([[1, 2]]), "attention_mask": torch.tensor([[1, 1]])}
+            return {
+                "input_ids": torch.tensor([[1, 2, 3], [1, 2, 4]]),
+                "attention_mask": torch.ones((2, 3), dtype=torch.long),
+            }
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.anchor = torch.nn.Parameter(torch.zeros(()))
+            self.calls = 0
+
+        def forward(self, **inputs):
+            self.calls += 1
+            logits = torch.zeros((2, 3, 8))
+            logits[0, 1, 3] = 6.0
+            logits[1, 1, 4] = 5.0
+            return type("Output", (), {"logits": logits})()
+
+    load_calls = []
+    monkeypatch.setattr(
+        "src.evaluate._load_example_audio",
+        lambda *args, **kwargs: (load_calls.append(1) or [torch.zeros(10).numpy()]),
+    )
+    processor, model = Processor(), Model()
+    result = score_candidate_pair(
+        model, processor,
+        {"audio_paths": ["x.wav"], "audio_clip_seconds": [1.0],
+         "prompt_text": "prompt", "label": 1,
+         "config": {"labels": {"label_vocab_version": "legacy_english_labels"}}},
+        torch.device("cpu"), False,
+    )
+    assert len(load_calls) == 1
+    assert processor.calls == 2
+    assert model.calls == 1
+    assert result["model_forwards"] == 1
+    assert result["audio_file_loads"] == 1
+
+
+def test_comprehensive_bf16_is_passed_at_model_load(monkeypatch) -> None:
+    calls = []
+
+    class FakeModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.anchor = torch.nn.Parameter(torch.zeros((), dtype=torch.bfloat16))
+            self.config = type("Config", (), {"use_cache": False})()
+
+    def load(_path, **kwargs):
+        calls.append(kwargs)
+        return FakeModel()
+
+    monkeypatch.setattr(qwen2audio_lora.Qwen2AudioForConditionalGeneration, "from_pretrained", load)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    qwen2audio_lora.load_model_for_inference(
+        "base", config={"evaluation": {"inference_dtype": "bf16"}}
+    )
+    assert calls == [{"torch_dtype": torch.bfloat16}]
+
+
+def test_unspecified_inference_dtype_preserves_legacy_loader(monkeypatch) -> None:
+    calls = []
+
+    class FakeModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.anchor = torch.nn.Parameter(torch.zeros(()))
+            self.config = type("Config", (), {"use_cache": False})()
+
+    monkeypatch.setattr(
+        qwen2audio_lora.Qwen2AudioForConditionalGeneration, "from_pretrained",
+        lambda _path, **kwargs: (calls.append(kwargs) or FakeModel()),
+    )
+    qwen2audio_lora.load_model_for_inference("base", config={"evaluation": {}})
+    assert calls == [{}]
 
 
 @pytest.mark.parametrize("k", [2, 4, 8])
@@ -174,6 +290,10 @@ def test_core_matrix_expands_to_360_tasks_with_stable_folds() -> None:
     matrix = module.expand(spec, "unit_test", "core")
     assert matrix["task_count"] == 360
     assert matrix["kind_counts"] == {"train": 90, "evaluation": 90, "hidden": 90, "classical": 90}
+    assert matrix["maximum_concurrent_train"] == 4
+    assert matrix["maximum_concurrent_evaluation"] == 16
+    assert matrix["maximum_concurrent_hidden"] == 16
+    assert matrix["maximum_concurrent_classical"] == 8
     train = [row for row in matrix["tasks"] if row["kind"] == "train"]
     assert {row["fold"] for row in train} == set(range(5))
     assert {row["seed"] for row in train} == {1337, 2027, 3407}

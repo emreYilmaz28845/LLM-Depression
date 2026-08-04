@@ -21,6 +21,7 @@ from src.daic_comprehensive_audit import validate_final_test_authorization
 IMPLEMENTATION_PATHS = (
     "src/aggregate.py",
     "src/daic_chunking.py",
+    "src/daic_derived_views.py",
     "src/daic_mil.py",
     "src/daic_comprehensive_audit.py",
     "src/daic_statistics.py",
@@ -30,11 +31,14 @@ IMPLEMENTATION_PATHS = (
     "src/data/runtime.py",
     "src/evaluate.py",
     "src/features/extract_qwen_hidden.py",
+    "src/model/qwen2audio_lora.py",
     "src/train.py",
     "scripts/build_daic_comprehensive_matrix.py",
     "scripts/submit_daic_comprehensive_matrix.sh",
     "scripts/run_daic_comprehensive_array_slurm.sh",
     "scripts/run_daic_comprehensive_task.py",
+    "scripts/evaluate_daic_comprehensive_views.py",
+    "scripts/materialize_daic_hidden_views.py",
     "scripts/run_train_slurm.sh",
     "scripts/run_eval_slurm.sh",
     "scripts/run_daic_chunking_hidden_slurm.sh",
@@ -191,6 +195,9 @@ def expand(spec: dict[str, Any], run_id: str, stage: str, selection: dict[str, A
         "task_count": len(tasks), "kind_counts": {kind: sum(task["kind"] == kind for task in tasks) for kind in ("train", "evaluation", "hidden", "classical")},
         "expected_training_cells": len(protocols) * len(folds) * len(seeds),
         "maximum_concurrent_train": int(spec["maximum_concurrent_train"]),
+        "maximum_concurrent_evaluation": int(spec.get("maximum_concurrent_evaluation", 16)),
+        "maximum_concurrent_hidden": int(spec.get("maximum_concurrent_hidden", 16)),
+        "maximum_concurrent_classical": int(spec.get("maximum_concurrent_classical", 8)),
         "resources": spec["resources"], "tasks": tasks,
     }
 

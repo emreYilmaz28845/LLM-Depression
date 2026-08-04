@@ -97,31 +97,16 @@ def main() -> None:
     if args.kind == "evaluation":
         if not checkpoint.exists():
             raise SystemExit(f"Missing authoritative best_model checkpoint: {checkpoint}")
-        for view in task["views"]:
-            view_overrides = evaluation_override(view)
-            if view_overrides is None:
-                continue
-            view_root = output_root / "evaluation" / view
-            if (view_root / "metrics_original_teacher_forced.json").exists() and resume:
-                print(f"RESUME skip completed evaluation {task['cell_id']} {view}")
-                continue
-            if view_root.exists() and any(view_root.iterdir()) and not resume:
-                raise SystemExit(f"Collision: evaluation output exists: {view_root}")
-            run({
-                "PROJECT_ROOT": str(PROJECT_ROOT), "CONFIG": str(config), "FOLD": str(task["fold"]),
-                "CHECKPOINT_DIR": str(checkpoint), "OUTPUT_DIR": str(output_root / "evaluation" / view),
-                "EXTRA_EVAL_ARGS": override_args({**common_overrides, **view_overrides}),
-                "SKIP_MANIFEST_BUILD": "1",
-                "LOG_ROOT": str(logs / view),
-            }, "scripts/run_eval_slurm.sh")
-        if "matched10_resampled" in task["views"]:
-            from src.daic_chunking import matched_k_resamples
-            source = output_root / "evaluation" / "all" / "predictions_sample_level.jsonl"
-            samples = [json.loads(line) for line in source.read_text(encoding="utf-8").splitlines() if line.strip()]
-            rows = matched_k_resamples(samples, k=10, iterations=1000, seed=1337)
-            target = output_root / "evaluation" / "matched10_resampled" / "predictions_subject_resamples.jsonl"
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
+        command = [
+            sys.executable, str(PROJECT_ROOT / "scripts/evaluate_daic_comprehensive_views.py"),
+            "--config", str(config), "--checkpoint-dir", str(checkpoint),
+            "--fold", str(task["fold"]), "--output-root", str(output_root / "evaluation"),
+            "--views", ",".join(task["views"]),
+            "--overrides-json", json.dumps(common_overrides, separators=(",", ":")),
+        ]
+        if resume:
+            command.append("--resume")
+        subprocess.run(command, cwd=PROJECT_ROOT, env=os.environ.copy(), check=True)
         return
     strategy = "joint" if task["protocol_id"].startswith("j") else "all"
     if args.kind == "hidden":

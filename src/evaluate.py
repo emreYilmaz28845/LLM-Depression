@@ -248,18 +248,30 @@ def _load_example_audio(example: dict[str, Any], sampling_rate: int, silence_aud
     ]
 
 
-def _processor_inputs(processor, example: dict[str, Any], text: str, device: torch.device, silence_audio: bool):
+def _processor_inputs(
+    processor,
+    example: dict[str, Any],
+    text: str | list[str],
+    device: torch.device,
+    silence_audio: bool,
+    *,
+    audio_arrays: list | None = None,
+    repeat_audio: int = 1,
+    padding: bool = False,
+):
     sampling_rate = resolve_processor_sampling_rate(processor)
-    audio_arrays = []
-    if example["audio_paths"]:
+    if audio_arrays is None and example["audio_paths"]:
         if sampling_rate is None:
             raise ValueError("Audio examples require a processor sampling rate.")
         audio_arrays = _load_example_audio(example, sampling_rate, silence_audio)
+    audio_arrays = list(audio_arrays or [])
+    if repeat_audio > 1:
+        audio_arrays = [array for _ in range(int(repeat_audio)) for array in audio_arrays]
     audio = audio_arrays if audio_arrays else None
     processor_kwargs = {
         "text": text,
         "return_tensors": "pt",
-        "padding": False,
+        "padding": padding,
     }
     if audio is not None:
         processor_kwargs["audio"] = audio
@@ -322,10 +334,24 @@ def score_candidate_label(
     candidate_label: str,
     device: torch.device,
     silence_audio: bool,
+    audio_arrays: list | None = None,
 ) -> float:
-    prompt_inputs = _processor_inputs(processor, example, example["prompt_text"], device, silence_audio)
+    if audio_arrays is None:
+        sampling_rate = resolve_processor_sampling_rate(processor)
+        audio_arrays = (
+            _load_example_audio(example, int(sampling_rate), silence_audio)
+            if example["audio_paths"] and sampling_rate is not None
+            else []
+        )
+    prompt_inputs = _processor_inputs(
+        processor, example, example["prompt_text"], device, silence_audio,
+        audio_arrays=audio_arrays,
+    )
     full_text = example["prompt_text"] + candidate_label
-    full_inputs = _processor_inputs(processor, example, full_text, device, silence_audio)
+    full_inputs = _processor_inputs(
+        processor, example, full_text, device, silence_audio,
+        audio_arrays=audio_arrays,
+    )
     prompt_len = int(prompt_inputs["input_ids"].shape[1])
     target_ids = full_inputs["input_ids"][0, prompt_len:]
     with torch.no_grad():
@@ -335,6 +361,116 @@ def score_candidate_label(
         log_probs = torch.log_softmax(selected_logits, dim=-1)
         token_log_probs = log_probs.gather(-1, target_ids.unsqueeze(-1)).squeeze(-1)
     return float(token_log_probs.mean().item())
+
+
+def score_candidate_pair(
+    model,
+    processor,
+    example: dict[str, Any],
+    device: torch.device,
+    silence_audio: bool,
+) -> dict[str, Any]:
+    """Score both labels in one forward and retain the gold-span argmax.
+
+    Raw audio is decoded once. The processor expands the prompt once to obtain
+    the label boundary and expands the paired full texts together. Qwen maps the
+    flattened audio list to audio placeholders in text order.
+    """
+    sampling_rate = resolve_processor_sampling_rate(processor)
+    if example["audio_paths"] and sampling_rate is None:
+        raise ValueError("Audio examples require a processor sampling rate.")
+    audio_arrays = (
+        _load_example_audio(example, int(sampling_rate), silence_audio)
+        if example["audio_paths"]
+        else []
+    )
+    prompt_inputs = _processor_inputs(
+        processor, example, example["prompt_text"], device, silence_audio,
+        audio_arrays=audio_arrays,
+    )
+    prompt_len = int(prompt_inputs["attention_mask"].sum().item())
+    labels = [
+        internal_label_text_from_int(example["config"], 1),
+        internal_label_text_from_int(example["config"], 0),
+    ]
+    full_inputs = _processor_inputs(
+        processor,
+        example,
+        [example["prompt_text"] + label for label in labels],
+        device,
+        silence_audio,
+        audio_arrays=audio_arrays,
+        repeat_audio=2,
+        padding=True,
+    )
+    with torch.inference_mode():
+        logits = model(**full_inputs).logits
+    scores: list[float] = []
+    predicted_ids: list[torch.Tensor] = []
+    target_ids: list[torch.Tensor] = []
+    attention_mask = full_inputs["attention_mask"]
+    for row_index in range(2):
+        nonzero = torch.nonzero(attention_mask[row_index], as_tuple=False).flatten()
+        if nonzero.numel() < prompt_len:
+            raise ValueError("Candidate input is shorter than its expanded prompt.")
+        first = int(nonzero[0].item())
+        full_len = int(nonzero.numel())
+        target_start = first + prompt_len
+        target_end = first + full_len
+        row_target = full_inputs["input_ids"][row_index, target_start:target_end]
+        selected = logits[row_index, target_start - 1:target_end - 1]
+        log_probs = torch.log_softmax(selected, dim=-1)
+        token_log_probs = log_probs.gather(-1, row_target.unsqueeze(-1)).squeeze(-1)
+        scores.append(float(token_log_probs.mean().item()))
+        predicted_ids.append(torch.argmax(selected, dim=-1))
+        target_ids.append(row_target)
+    gold_index = 0 if int(example["label"]) == 1 else 1
+    return {
+        "dep_score": scores[0],
+        "non_score": scores[1],
+        "gold_target_ids": target_ids[gold_index],
+        "gold_predicted_ids": predicted_ids[gold_index],
+        "audio_file_loads": len(audio_arrays),
+        "model_forwards": 1,
+    }
+
+
+def _candidate_batching(config: dict[str, Any]) -> str:
+    value = str(config.get("evaluation", {}).get("candidate_batching", "sequential")).strip().lower()
+    if value not in {"sequential", "paired"}:
+        raise ValueError("evaluation.candidate_batching must be sequential or paired.")
+    return value
+
+
+def _score_sequential_original(
+    model, processor, example: dict[str, Any], device: torch.device, silence_audio: bool,
+) -> dict[str, Any]:
+    dep_score = score_candidate_label(
+        model, processor, example, internal_label_text_from_int(example["config"], 1),
+        device, silence_audio,
+    )
+    non_score = score_candidate_label(
+        model, processor, example, internal_label_text_from_int(example["config"], 0),
+        device, silence_audio,
+    )
+    prompt_inputs = _processor_inputs(processor, example, example["prompt_text"], device, silence_audio)
+    full_inputs = _processor_inputs(
+        processor, example, example["prompt_text"] + example["internal_label_text"],
+        device, silence_audio,
+    )
+    prompt_len = int(prompt_inputs["input_ids"].shape[1])
+    target_ids = full_inputs["input_ids"][0, prompt_len:]
+    with torch.no_grad():
+        logits = model(**full_inputs).logits[0]
+    predicted = torch.argmax(
+        logits[prompt_len - 1:full_inputs["input_ids"].shape[1] - 1], dim=-1
+    )
+    return {
+        "dep_score": dep_score, "non_score": non_score,
+        "gold_target_ids": target_ids, "gold_predicted_ids": predicted,
+        "audio_file_loads": len(example.get("audio_paths") or []) * 6,
+        "model_forwards": 3,
+    }
 
 
 def generate_label_text(
@@ -366,22 +502,20 @@ def generate_label_text(
 
 
 def _predict_sample_likelihood(model, processor, example: dict[str, Any], device: torch.device, silence_audio: bool, checkpoint_name: str) -> dict[str, Any]:
-    dep_score = score_candidate_label(
-        model,
-        processor,
-        example,
-        internal_label_text_from_int(example["config"], 1),
-        device,
-        silence_audio,
-    )
-    non_score = score_candidate_label(
-        model,
-        processor,
-        example,
-        internal_label_text_from_int(example["config"], 0),
-        device,
-        silence_audio,
-    )
+    if _candidate_batching(example["config"]) == "paired":
+        paired = score_candidate_pair(model, processor, example, device, silence_audio)
+    else:
+        dep_score = score_candidate_label(
+            model, processor, example, internal_label_text_from_int(example["config"], 1), device, silence_audio
+        )
+        non_score = score_candidate_label(
+            model, processor, example, internal_label_text_from_int(example["config"], 0), device, silence_audio
+        )
+        paired = {
+            "dep_score": dep_score, "non_score": non_score, "model_forwards": 2,
+            "audio_file_loads": len(example.get("audio_paths") or []) * 4,
+        }
+    dep_score, non_score = paired["dep_score"], paired["non_score"]
     likelihood_pred = 1 if dep_score > non_score else 0
     return {
         **_base_sample_row(example, checkpoint_name, PREDICTION_MODE_LIKELIHOOD),
@@ -389,6 +523,8 @@ def _predict_sample_likelihood(model, processor, example: dict[str, Any], device
         "likelihood_prediction_text": label_text_from_int(likelihood_pred),
         "dep_score": dep_score,
         "non_score": non_score,
+        "inference_model_forwards": paired["model_forwards"],
+        "inference_audio_file_loads": paired["audio_file_loads"],
     }
 
 
@@ -419,32 +555,14 @@ def _predict_sample_original_teacher_forced(
     silence_audio: bool,
     checkpoint_name: str,
 ) -> dict[str, Any]:
-    dep_score = score_candidate_label(
-        model,
-        processor,
-        example,
-        internal_label_text_from_int(example["config"], 1),
-        device,
-        silence_audio,
+    paired = (
+        score_candidate_pair(model, processor, example, device, silence_audio)
+        if _candidate_batching(example["config"]) == "paired"
+        else _score_sequential_original(model, processor, example, device, silence_audio)
     )
-    non_score = score_candidate_label(
-        model,
-        processor,
-        example,
-        internal_label_text_from_int(example["config"], 0),
-        device,
-        silence_audio,
-    )
-    prompt_inputs = _processor_inputs(processor, example, example["prompt_text"], device, silence_audio)
-    full_text = example["prompt_text"] + example["internal_label_text"]
-    full_inputs = _processor_inputs(processor, example, full_text, device, silence_audio)
-    prompt_len = int(prompt_inputs["input_ids"].shape[1])
-    target_ids = full_inputs["input_ids"][0, prompt_len:]
-    with torch.no_grad():
-        outputs = model(**full_inputs)
-        logits = outputs.logits[0]
-        selected_logits = logits[prompt_len - 1 : full_inputs["input_ids"].shape[1] - 1]
-        predicted_token_ids = torch.argmax(selected_logits, dim=-1)
+    dep_score, non_score = paired["dep_score"], paired["non_score"]
+    target_ids = paired["gold_target_ids"]
+    predicted_token_ids = paired["gold_predicted_ids"]
     used_len = int(min(target_ids.shape[0], predicted_token_ids.shape[0]))
     gold_label_ids = target_ids[:used_len]
     predicted_label_ids = predicted_token_ids[:used_len]
@@ -467,6 +585,8 @@ def _predict_sample_original_teacher_forced(
         "dep_score": dep_score,
         "non_score": non_score,
         "teacher_forced_margin": dep_score - non_score,
+        "inference_model_forwards": paired["model_forwards"],
+        "inference_audio_file_loads": paired["audio_file_loads"],
     }
 
 

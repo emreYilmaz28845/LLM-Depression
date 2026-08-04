@@ -45,13 +45,15 @@ if [ -n "$PROTOCOL_ID" ]; then
     case "$view" in
       fixed4) extract fixed4 --eval-chunk-policy fixed_k --eval-chunks-per-subject 4 ;;
       mincover4) extract mincover4 --eval-chunk-policy balanced_joint_cover --eval-chunks-per-subject 4 ;;
-      fixed15) extract fixed15 --eval-chunk-policy fixed_count_balanced_joint_cover --eval-chunks-per-subject 4 --eval-bundles-per-subject 15 ;;
+      fixed15) ;;
       all) extract all --eval-chunk-policy all --eval-chunks-per-subject all ;;
-      matched10_even) extract matched10_even --eval-chunk-policy matched_k --eval-chunks-per-subject 10 ;;
+      matched10_even) ;;
       matched10_resampled) ;;
       *) echo "Unsupported comprehensive hidden view: $view" >&2; exit 2 ;;
     esac
   done
+  python "$PROJECT_ROOT/scripts/materialize_daic_hidden_views.py" \
+    --cache-root "$CACHE_ROOT" --views "$EVALUATION_VIEWS"
 elif [ "$STRATEGY" = "joint" ]; then
   extract c1_fixed --eval-chunk-policy fixed_k --eval-chunks-per-subject 4
   extract c2_balanced --eval-chunk-policy balanced_joint_cover --eval-chunks-per-subject 4
