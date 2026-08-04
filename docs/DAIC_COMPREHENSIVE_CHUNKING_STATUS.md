@@ -1,19 +1,66 @@
 # DAIC Comprehensive Chunking: Implementation Status and MN5 Operator Handoff
 
-Last updated: 2026-08-04 (Europe/Istanbul)
+Last updated: 2026-08-04 10:48 (Europe/Istanbul)
 
-## Stop point and current state
+## Current MN5 execution status — paused on user request
 
-The comprehensive DAIC chunking implementation is present in the local workspace. No MN5 host was contacted, no files were transferred, and no Slurm job was submitted. This is the intentional stop point requested by the user.
+The implementation was transferred to an isolated MN5 run tree and exercised through smoke and core training. At 10:48 CEST on 2026-08-04, the user explicitly requested that the active jobs be stopped so the observed runtime could be documented. The running core evaluation and all dependency-gated downstream jobs were cancelled; completed artifacts and logs were left in place.
 
-The next agent owns only remote preflight, smoke submission, and continuous monitoring. It must not redesign the protocol or silently weaken an audit.
+Implementation provenance at the pause:
 
-Important repository state:
+- Local branch: `main`; implementation commit: `eddd97a` (`Handle MN5 array IDs in Slurm accounting`), pushed to `origin/main`.
+- Isolated remote root: `/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression-daic-comprehensive-20260804-17bc6d4`.
+- Run ID: `daic_comprehensive_20260804_66e7e86`.
+- The unrelated `docs/SYMMETRIC_MERGED_CURRENT_STATUS.md` change was preserved and was not included in this status update.
+- The official test partition was not evaluated. No `FINAL_TEST_AUTHORIZED.json` was created.
 
-- The implementation is not committed or pushed.
-- `docs/SYMMETRIC_MERGED_CURRENT_STATUS.md` was already modified by the user and is unrelated. Preserve it exactly; do not include it in an implementation commit unless the user separately asks.
-- Use a new run ID. Never reuse `daic_k_prod_20260730_204c550` or any earlier output directory.
-- The official test partition is forbidden before a hash-recorded final winner authorization.
+### Slurm stop-point table
+
+| Stage | Slurm job | State at cancellation | Authoritative result at pause |
+|---|---:|---|---|
+| Smoke matrix | `44161793` / `44161794`, `44161799`, `44161800`, `44162470` | terminal | 28/28 tasks completed; repaired smoke audit passed with zero failures |
+| Core training | `44162536` | terminal | 90/90 array elements `COMPLETED`, `ExitCode=0:0` |
+| Core evaluation | `44162537` | cancelled | Task 0 completed in `00:53:26`; task 1 was cancelled after `fixed4`, `mincover4`, and `100/435` `fixed15` samples; tasks 2–89 had not started |
+| Hidden extraction | `44162538` | cancelled while dependency-pending | No core hidden task started |
+| Bundled classical heads | `44162539` | cancelled while dependency-pending | No core classical task started |
+| Core accounting/audit | `44165581` | cancelled while dependency-pending | `slurm_accounting_core.jsonl` and `audit_core.json` were not produced |
+| OOF/selection handoff | `44175421` | cancelled while dependency-pending | OOF collection and `selection_core.json` were not produced |
+
+The cancellation command targeted only `44162537`, `44162538`, `44162539`, `44165581`, and `44175421`. The already-completed training array was not cancelled. Slurm recorded the active evaluation element as `CANCELLED` with batch-step exit code `0:15`; this is an intentional user stop, not a model or infrastructure failure.
+
+### What was completed before the pause
+
+- Smoke: 2170-row shared manifest, 189 subjects, fixed train/validation/test partition audit, all 28 smoke tasks, repaired dependency handling, and zero-failure smoke audit.
+- Core matrix: exactly 360 tasks (90 train, 90 evaluation, 90 hidden, 90 bundled classical); all 90 training tasks completed successfully.
+- Core evaluation artifacts for task 0 remain available remotely. Task 1 retains completed `fixed4` and `mincover4` outputs plus a partial `fixed15` directory; its partial view must be rerun if the experiment resumes.
+- Focused selection, focused jobs, final jobs, result retrieval, local result audits, and the final report were not reached.
+
+## Measured slowness and cause
+
+The training phase was long but healthy: the 90 standard training cells ran under the configured four-job concurrency limit and completed over roughly eight hours, with no core OOM, traceback, nonzero exit, or storage failure observed. The dominant bottleneck was evaluation, not training.
+
+Measured evaluation timings for `jr4 / seed_1337 / fold_1`:
+
+| View | Samples | Observed timing |
+|---|---:|---:|
+| `fixed4` | 29 | 2:10, completed at 10:21:42 |
+| `mincover4` | 235 | 17:08, completed at 10:39:16 |
+| `fixed15` | 435 | 100 samples reached at 10:46:58; task cancelled at 10:47:51 |
+
+The completed evaluation task 0 took `00:53:26` for all of its configured views. A simple extrapolation of 90 cells at that measured rate is approximately 80 GPU-hours of wall-clock time with the current `%1` array throttle, before hidden extraction, classical heads, focused work, or final confirmation. This is an estimate, not a completion forecast; per-fold and per-view costs vary, and the partial `fixed15` measurement indicates that some cells can be slower.
+
+The slowness is expected from the implementation and resource policy:
+
+1. `scripts/submit_daic_comprehensive_matrix.sh` intentionally submits evaluation with `--array=...%1`, so only one of the 90 evaluation cells runs at a time.
+2. `src/evaluate.py` evaluates examples in a one-at-a-time loop; the evaluation path has no batched DataLoader.
+3. `original_teacher_forced` performs three model forward passes per example: candidate scoring for `Depressed`, candidate scoring for `Non-depressed`, and the teacher-forced label-span pass. Each pass reconstructs processor inputs and audio features.
+4. Each cell runs multiple views sequentially. `fixed15` feeds larger 15-chunk subject bundles, so it is materially more expensive than `fixed4`.
+
+This explains why the run was progressing without errors while still being too slow for a convenient uninterrupted wall-clock run. Increasing evaluation concurrency or changing batching would be a protocol/resource change and was not applied during this run.
+
+### Resume notes
+
+The canceled run is recoverable. If resumed, use the existing matrix and `RESUME=1` only after preserving the canceled submission/accounting records. Completed views with `metrics_original_teacher_forced.json` can be skipped; the partial `fixed15` view should be rerun. Because the hidden, classical, audit, and OOF jobs were canceled, they must be submitted again with fresh dependencies and new submission records. A future code/config change requires a new unique run ID rather than overwriting this run.
 
 ## What was implemented
 
