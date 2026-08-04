@@ -177,7 +177,12 @@ def _derive_hidden_partition(
     output_rows: list[dict[str, Any]] = []
     for subject_id in sorted(grouped):
         indices = grouped[subject_id]
-        if view == "fixed15":
+        # Evaluation-view overrides are intentionally inactive for outer-train
+        # examples in build_examples(). Preserve that source partition exactly;
+        # only the held-out partition is transformed into the derived view.
+        if partition == "outer_train":
+            selected = indices
+        elif view == "fixed15":
             indices = sorted(indices, key=lambda index: int(source_rows[index].get("bundle_id", 0)))
             if len(indices) not in {5, 15}:
                 raise ValueError(f"fixed15 hidden derivation expected 5 or 15 rows for {subject_id}")

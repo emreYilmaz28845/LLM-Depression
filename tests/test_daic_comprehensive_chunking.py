@@ -16,7 +16,7 @@ from src.daic_chunking import (
     fixed_count_balanced_joint_bundles,
     matched_k_resamples,
 )
-from src.daic_derived_views import derive_fixed15_rows, derive_matched10_rows
+from src.daic_derived_views import _derive_hidden_partition, derive_fixed15_rows, derive_matched10_rows
 from src.daic_mil import streaming_subject_mil_backward
 from src.daic_comprehensive_audit import audit_matrix, audit_oof_predictions, audit_slurm
 from src.data.runtime import AUDIO_PLACEHOLDER, build_examples
@@ -67,6 +67,28 @@ def test_matched10_even_is_derived_from_all_rows() -> None:
     assert [row["sample_id"] for row in derived] == [
         source[index]["sample_id"] for index in [0, 2, 3, 5, 6, 8, 9, 11, 12, 14]
     ]
+
+
+@pytest.mark.parametrize("view", ["fixed15", "matched10_even"])
+def test_derived_hidden_view_preserves_outer_train_partition(tmp_path: Path, view: str) -> None:
+    import json
+    import numpy as np
+
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.mkdir(); target.mkdir()
+    rows = [
+        {"subject_id": subject, "sample_id": f"{subject}_{index}", "bundle_id": index}
+        for subject in ("a", "b") for index in range(3)
+    ]
+    (source / "outer_train_rows.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+    vectors = np.arange(len(rows) * 2, dtype=np.float32).reshape(len(rows), 2)
+    np.savez_compressed(source / "outer_train.npz", vectors=vectors)
+    count = _derive_hidden_partition(source, target, "outer_train", view)
+    assert count == len(rows)
+    with np.load(target / "outer_train.npz") as payload:
+        assert np.array_equal(payload["vectors"], vectors)
 
 
 def test_paired_candidate_scoring_uses_one_audio_load_and_one_forward(monkeypatch) -> None:
