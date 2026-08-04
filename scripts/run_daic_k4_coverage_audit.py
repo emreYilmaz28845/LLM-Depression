@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import json
 import math
@@ -15,6 +16,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.utils import load_yaml, read_json, read_jsonl, save_json, save_yaml
+from src.aggregate import aggregate_predictions
+from src.utils import AGGREGATION_LEVEL_SUBJECT, PREDICTION_MODE_ORIGINAL_TEACHER_FORCED
 
 
 VIEWS = ("fixed4", "mincover4", "fixed15")
@@ -195,24 +198,52 @@ def audit_and_report(
     historical_comparison: dict[str, Any] = {"available": historical_dir.is_dir()}
     if historical_dir.is_dir() and "fixed4" in subjects_by_view:
         try:
+            fixed4_samples = read_jsonl(output_root / "fixed4" / "predictions_sample_level.jsonl")
+            replay_samples = []
+            for source in fixed4_samples:
+                row = copy.deepcopy(source)
+                row.pop("subject_score_aggregation", None)
+                replay_samples.append(row)
+            replay_subjects, replay_metrics, _, _ = aggregate_predictions(
+                replay_samples,
+                mode=PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
+                aggregation_level=AGGREGATION_LEVEL_SUBJECT,
+            )
+            replay_dir = output_root / "fixed4_historical_replay"
+            _write_csv(replay_dir / "predictions_subject_level.csv", replay_subjects)
+            save_json(replay_metrics, replay_dir / "metrics_original_teacher_forced.json")
             historical_metrics = read_json(historical_dir / "metrics_original_teacher_forced.json")
             historical_subjects = {
                 str(row["subject_id"]): row
                 for row in _read_csv(historical_dir / "predictions_subject_level.csv")
             }
+            replay_by_subject = {str(row["subject_id"]): row for row in replay_subjects}
             mismatches = sorted(
                 subject_id
-                for subject_id, row in subjects_by_view["fixed4"].items()
+                for subject_id, row in replay_by_subject.items()
                 if subject_id not in historical_subjects
                 or _prediction(row) != _prediction(historical_subjects[subject_id])
             )
             metric_deltas = {
-                metric: _metric(metrics_by_view["fixed4"], metric) - _metric(historical_metrics, metric)
+                metric: _metric(replay_metrics, metric) - _metric(historical_metrics, metric)
                 for metric in METRICS
             }
-            historical_comparison.update({"prediction_mismatches": mismatches, "metric_deltas": metric_deltas})
+            mean_score_changed_subjects = sorted(
+                subject_id
+                for subject_id, row in subjects_by_view["fixed4"].items()
+                if _prediction(row) != _prediction(replay_by_subject[subject_id])
+            )
+            historical_comparison.update(
+                {
+                    "replay_method": "teacher_forced_hard_label_from_cached_fixed4_samples",
+                    "prediction_mismatches": mismatches,
+                    "metric_deltas": metric_deltas,
+                    "mean_score_changed_subjects": mean_score_changed_subjects,
+                    "replay_metrics": {metric: _metric(replay_metrics, metric) for metric in METRICS},
+                }
+            )
             if mismatches or any(abs(value) > 1e-12 for value in metric_deltas.values()):
-                failures.append("fixed4: did not reproduce the checkpoint's standalone evaluation")
+                failures.append("fixed4 historical replay did not reproduce the checkpoint's standalone evaluation")
         except Exception as exc:
             failures.append(f"fixed4 historical comparison failed: {exc}")
 
@@ -281,6 +312,9 @@ def audit_and_report(
         [
             "",
             f"Subjects whose prediction changed from fixed4 to mincover4: **{audit['changed_subjects']}**.",
+            "",
+            "The coverage table uses mean teacher-forced score margins for both fixed4 and mincover4. "
+            "Historical fixed4 reproduction is audited separately from the same cached sample outputs using the original hard-label aggregation.",
             "",
             "This is a retrospective coverage sensitivity analysis. It must not be used to select a checkpoint or the best-looking test protocol.",
         ]

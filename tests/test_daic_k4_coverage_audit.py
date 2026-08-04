@@ -106,9 +106,36 @@ def test_complete_coverage_audit_and_report_pass(tmp_path: Path) -> None:
         "recall": 1.0,
         "binary_strict_confusion_matrix": [[1, 0], [0, 1]],
     }
+    _write_json(checkpoint / "standalone_eval" / "metrics_original_teacher_forced.json", metrics)
+    _write_csv(checkpoint / "standalone_eval" / "predictions_subject_level.csv", subjects)
     for view in ("fixed4", "mincover4", "fixed15"):
         _write_json(tmp_path / "out" / view / "metrics_original_teacher_forced.json", metrics)
         _write_csv(tmp_path / "out" / view / "predictions_subject_level.csv", subjects)
+    _write_jsonl(
+        tmp_path / "out" / "fixed4" / "predictions_sample_level.jsonl",
+        [
+            {
+                "subject_id": "n",
+                "sample_id": "n",
+                "label": 0,
+                "teacher_forced_prediction": 0,
+                "teacher_forced_prediction_text": "Non-depressed",
+                "dep_score": -1.0,
+                "non_score": 0.0,
+                "subject_score_aggregation": "mean_score",
+            },
+            {
+                "subject_id": "p",
+                "sample_id": "p",
+                "label": 1,
+                "teacher_forced_prediction": 1,
+                "teacher_forced_prediction_text": "Depressed",
+                "dep_score": 1.0,
+                "non_score": 0.0,
+                "subject_score_aggregation": "mean_score",
+            },
+        ],
+    )
     fixed = [
         {
             "subject_id": sid,
@@ -148,5 +175,7 @@ def test_complete_coverage_audit_and_report_pass(tmp_path: Path) -> None:
     audit = audit_and_report(tmp_path / "out", checkpoint, expected_subjects=2)
     assert audit["passed"], audit["failures"]
     assert audit["changed_subjects"] == 0
+    assert audit["historical_fixed4_comparison"]["prediction_mismatches"] == []
+    assert (tmp_path / "out" / "fixed4_historical_replay" / "metrics_original_teacher_forced.json").is_file()
     assert (tmp_path / "out" / "comparison.csv").is_file()
     assert (tmp_path / "out" / "results.md").is_file()
