@@ -69,7 +69,10 @@ def audit_and_report(
     *,
     expected_subjects: int = 47,
     allow_omitted_checkpoint_adapter: bool = False,
+    expected_modality: str = "audio_text",
 ) -> dict[str, Any]:
+    if expected_modality not in {"audio_text", "audio_only"}:
+        raise ValueError(f"Unsupported expected_modality={expected_modality!r}")
     failures: list[str] = []
     metrics_by_view: dict[str, dict[str, Any]] = {}
     subjects_by_view: dict[str, dict[str, dict[str, str]]] = {}
@@ -96,8 +99,9 @@ def audit_and_report(
             failures.append("checkpoint: resolved dataset is not DAIC")
         if data.get("sample_mode") != "subject_audio" or int(data.get("chunks_per_subject", 0)) != 4:
             failures.append("checkpoint: training construction was not subject_audio K=4")
-        if not bool(data.get("use_audio")) or not bool(data.get("use_text")):
-            failures.append("checkpoint: expected the audio+text control")
+        expected_use_text = expected_modality == "audio_text"
+        if not bool(data.get("use_audio")) or bool(data.get("use_text")) != expected_use_text:
+            failures.append(f"checkpoint: expected the {expected_modality} control")
         if int(run_config.get("fold", -1)) != 0:
             failures.append("checkpoint: expected fold 0")
         split_used = read_json(checkpoint_dir.parent / "logs" / "split_used.json")
@@ -291,6 +295,7 @@ def audit_and_report(
         "failures": failures,
         "expected_subjects": expected_subjects,
         "checkpoint_dir": str(checkpoint_dir),
+        "modality": expected_modality,
         "allow_omitted_checkpoint_adapter": allow_omitted_checkpoint_adapter,
         "checkpoint_provenance_passed": not any(value.startswith("checkpoint") for value in failures),
         "coverage_by_subject": coverage_summary,
@@ -300,7 +305,7 @@ def audit_and_report(
     }
     save_json(audit, output_root / "coverage_audit.json")
     lines = [
-        "# DAIC K=4 Coverage Audit Results",
+        f"# DAIC K=4 Coverage Audit Results — {expected_modality}",
         "",
         f"Audit: **{'PASS' if audit['passed'] else 'FAIL'}**",
         "",
@@ -341,6 +346,7 @@ def main() -> None:
     parser.add_argument("--report-only", action="store_true")
     parser.add_argument("--expected-subjects", type=int, default=47)
     parser.add_argument("--allow-omitted-checkpoint-adapter", action="store_true")
+    parser.add_argument("--expected-modality", choices=("audio_text", "audio_only"), default="audio_text")
     args = parser.parse_args()
     output_root = args.output_root / args.run_id
     if not args.report_only:
@@ -367,6 +373,7 @@ def main() -> None:
         args.checkpoint_dir,
         expected_subjects=args.expected_subjects,
         allow_omitted_checkpoint_adapter=args.allow_omitted_checkpoint_adapter,
+        expected_modality=args.expected_modality,
     )
     if not audit["passed"]:
         raise SystemExit("Coverage audit failed: " + "; ".join(audit["failures"]))

@@ -9,9 +9,11 @@ OUTPUT_ROOT="${OUTPUT_ROOT:-$PROJECT_ROOT/outputs/daic_k4_coverage_audit}"
 LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/daic_k4_coverage_audit/$RUN_ID}"
 DRY_RUN="${DRY_RUN:-1}"
 RESUME="${RESUME:-0}"
+EXPECTED_MODALITY="${EXPECTED_MODALITY:-audio_text}"
 
 case "$DRY_RUN" in 0|1) ;; *) echo "DRY_RUN must be 0 or 1" >&2; exit 2 ;; esac
 case "$RESUME" in 0|1) ;; *) echo "RESUME must be 0 or 1" >&2; exit 2 ;; esac
+case "$EXPECTED_MODALITY" in audio_text|audio_only) ;; *) echo "EXPECTED_MODALITY must be audio_text or audio_only" >&2; exit 2 ;; esac
 if [ "$RESUME" = "0" ] && { [ -e "$OUTPUT_ROOT/$RUN_ID" ] || [ -e "$LOG_ROOT" ]; }; then
   echo "Collision: RUN_ID already exists: $RUN_ID" >&2
   exit 3
@@ -24,7 +26,7 @@ fi
 command=(
   sbatch --parsable
   --job-name="dk4cov-$RUN_ID"
-  --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$CONFIG,CHECKPOINT_DIR=$CHECKPOINT_DIR,RUN_ID=$RUN_ID,OUTPUT_ROOT=$OUTPUT_ROOT,LOG_ROOT=$LOG_ROOT,RESUME=$RESUME"
+  --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$CONFIG,CHECKPOINT_DIR=$CHECKPOINT_DIR,RUN_ID=$RUN_ID,OUTPUT_ROOT=$OUTPUT_ROOT,LOG_ROOT=$LOG_ROOT,RESUME=$RESUME,EXPECTED_MODALITY=$EXPECTED_MODALITY"
   "$PROJECT_ROOT/scripts/run_daic_k4_coverage_audit_slurm.sh"
 )
 if [ "$DRY_RUN" = "1" ]; then

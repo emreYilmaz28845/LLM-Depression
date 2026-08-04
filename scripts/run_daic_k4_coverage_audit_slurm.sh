@@ -24,6 +24,7 @@ RUN_ID="${RUN_ID:?Set a unique RUN_ID}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-$PROJECT_ROOT/outputs/daic_k4_coverage_audit}"
 FOLD="${FOLD:-0}"
 RESUME="${RESUME:-0}"
+EXPECTED_MODALITY="${EXPECTED_MODALITY:-audio_text}"
 LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/daic_k4_coverage_audit/$RUN_ID}"
 export DAIC_DATASET_ROOT="${DAIC_DATASET_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/DAIC-WOZ/preprocessed}"
 
@@ -39,6 +40,7 @@ args=(
   --fold "$FOLD"
   --run-id "$RUN_ID"
   --output-root "$OUTPUT_ROOT"
+  --expected-modality "$EXPECTED_MODALITY"
 )
 if [ "$RESUME" = "1" ]; then args+=(--resume); fi
 printf 'Launch command: '; printf '%q ' "${args[@]}"; printf '\n'

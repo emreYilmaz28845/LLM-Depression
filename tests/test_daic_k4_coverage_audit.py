@@ -189,3 +189,16 @@ def test_complete_coverage_audit_and_report_pass(tmp_path: Path) -> None:
     )
     assert omitted["passed"], omitted["failures"]
     assert omitted["allow_omitted_checkpoint_adapter"] is True
+
+    record = yaml.safe_load((checkpoint.parent / "run_config.yaml").read_text(encoding="utf-8"))
+    record["config"]["data"]["use_text"] = False
+    (checkpoint.parent / "run_config.yaml").write_text(yaml.safe_dump(record), encoding="utf-8")
+    audio_only = audit_and_report(
+        tmp_path / "out",
+        checkpoint,
+        expected_subjects=2,
+        allow_omitted_checkpoint_adapter=True,
+        expected_modality="audio_only",
+    )
+    assert audio_only["passed"], audio_only["failures"]
+    assert audio_only["modality"] == "audio_only"
