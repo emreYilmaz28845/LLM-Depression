@@ -22,6 +22,7 @@ from src.daic_comprehensive_audit import audit_matrix, audit_oof_predictions, au
 from src.data.runtime import AUDIO_PLACEHOLDER, build_examples
 from src.evaluate import score_candidate_pair
 from src.model import qwen2audio_lora
+from src.utils import load_yaml_with_overrides
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -301,6 +302,23 @@ def test_core_matrix_expands_to_360_tasks_with_stable_folds() -> None:
     assert audit_matrix(matrix) == []
     broken = {**matrix, "tasks": matrix["tasks"][:-1]}
     assert any("incomplete_cell" in item or "kind_counts_mismatch" in item for item in audit_matrix(broken))
+
+
+@pytest.mark.parametrize("config_name", [
+    "joint_random_k4.yaml", "independent_rotary_k4.yaml", "independent_all.yaml",
+])
+def test_comprehensive_evaluation_overrides_are_declared_in_base_configs(config_name: str) -> None:
+    config = load_yaml_with_overrides(
+        ROOT / "configs/experiments/daic_chunking" / config_name,
+        [
+            "--set", "evaluation.inference_dtype=bf16",
+            "--set", "evaluation.candidate_batching=paired",
+            "--set", "evaluation.reuse_derived_views=true",
+        ],
+    )
+    assert config["evaluation"]["inference_dtype"] == "bf16"
+    assert config["evaluation"]["candidate_batching"] == "paired"
+    assert config["evaluation"]["reuse_derived_views"] is True
 
 
 def test_audit_rejects_duplicate_oof_and_failed_slurm_rows() -> None:

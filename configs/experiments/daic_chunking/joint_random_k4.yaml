@@ -71,6 +71,9 @@ training:
   early_stopping: {enabled: true, metric: inner_val_positive_f1, mode: max, patience: 3, min_delta: 0.0}
 evaluation:
   sample_prediction_mode: original_teacher_forced
+  inference_dtype: fp32
+  candidate_batching: sequential
+  reuse_derived_views: false
   aggregation_level: subject
   subject_score_aggregation: mean_score
   secondary_aggregations: []

@@ -39,4 +39,4 @@ training:
   objective: token_ce
   class_balance: none
   early_stopping: {enabled: true, metric: inner_val_positive_f1, mode: max, patience: 3, min_delta: 0.0}
-evaluation: {sample_prediction_mode: original_teacher_forced, aggregation_level: subject, subject_score_aggregation: mean_score, secondary_aggregations: [], generation_max_new_tokens: 8, num_beams: 1, do_sample: false, headline_mode: original_teacher_forced}
+evaluation: {sample_prediction_mode: original_teacher_forced, inference_dtype: fp32, candidate_batching: sequential, reuse_derived_views: false, aggregation_level: subject, subject_score_aggregation: mean_score, secondary_aggregations: [], generation_max_new_tokens: 8, num_beams: 1, do_sample: false, headline_mode: original_teacher_forced}
