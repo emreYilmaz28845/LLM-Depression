@@ -306,7 +306,30 @@ def _validate_saved_split(
                 "Smoke checkpoint split_used.json is not a subset of its hashed "
                 "official split metadata."
             )
-        if len(train_ids) > smoke_limit or len(heldout_ids) > smoke_limit:
+        # Fixed train/val/test extraction deliberately fits classifiers on the
+        # union of the saved train and selection partitions. A smoke limit is
+        # applied independently to both source partitions by split creation,
+        # so their union may contain up to 2 * smoke_limit subjects.
+        train_source_count = 1
+        if str(saved.get("split_mode", "")) != "cv":
+            cv_protocol = str(
+                saved.get("cv_protocol")
+                or config.get("split", {}).get("cv_protocol")
+                or ""
+            )
+            is_daic_chunking = (
+                str(config.get("dataset", "")).lower() == "daic"
+                and str(config.get("evaluation", {}).get("subject_score_aggregation", "")).lower()
+                == "mean_score"
+            )
+            if cv_protocol != "train_val" and not is_daic_chunking:
+                train_source_count = len(
+                    set(config.get("split", {}).get("dev_pool_partitions") or [
+                        config["split"]["train_partition"],
+                        config["split"]["selection_partition"],
+                    ])
+                )
+        if len(train_ids) > smoke_limit * train_source_count or len(heldout_ids) > smoke_limit:
             raise ValueError(
                 "Smoke checkpoint split exceeds split.smoke_subject_limit."
             )

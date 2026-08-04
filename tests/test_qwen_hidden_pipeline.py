@@ -16,6 +16,7 @@ from src.features.extract_qwen_hidden import (
     _decoder_hidden_size,
     _emotion_provenance,
     _resolve_subject_partitions,
+    _validate_saved_split,
     resolve_condition,
 )
 
@@ -158,6 +159,35 @@ class PoolingTests(unittest.TestCase):
                     "final_eval_subject_ids": ["a"],
                 },
             )
+
+    def test_fixed_smoke_validation_allows_train_and_selection_union(self):
+        from src.utils import save_json
+
+        with tempfile.TemporaryDirectory() as directory:
+            metadata = Path(directory) / "splits.jsonl"
+            rows = [
+                *({"subject_id": f"train-{index}", "partition": "train"} for index in range(6)),
+                *({"subject_id": f"val-{index}", "partition": "val"} for index in range(6)),
+                *({"subject_id": f"test-{index}", "partition": "test"} for index in range(6)),
+            ]
+            save_json(rows, metadata)
+            saved = {"split_metadata_path": str(metadata), "split_mode": "fixed"}
+            config = {
+                "dataset": "daic",
+                "split": {
+                    "smoke_subject_limit": 6,
+                    "train_partition": "train",
+                    "selection_partition": "val",
+                    "final_eval_partition": "test",
+                    "dev_pool_partitions": ["train", "val"],
+                },
+                "evaluation": {},
+            }
+            partitions = {
+                "outer_train": [row["subject_id"] for row in rows if row["partition"] != "test"],
+                "final_eval": [row["subject_id"] for row in rows if row["partition"] == "test"],
+            }
+            self.assertEqual(_validate_saved_split(saved, config, partitions, 0), metadata)
 
     def test_audio_expansion_uses_aligned_all_valid_mask(self):
         hidden = torch.zeros((1, 5, 2))
