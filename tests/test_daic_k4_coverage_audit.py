@@ -179,3 +179,13 @@ def test_complete_coverage_audit_and_report_pass(tmp_path: Path) -> None:
     assert (tmp_path / "out" / "fixed4_historical_replay" / "metrics_original_teacher_forced.json").is_file()
     assert (tmp_path / "out" / "comparison.csv").is_file()
     assert (tmp_path / "out" / "results.md").is_file()
+
+    (checkpoint / "adapter_model.safetensors").unlink()
+    omitted = audit_and_report(
+        tmp_path / "out",
+        checkpoint,
+        expected_subjects=2,
+        allow_omitted_checkpoint_adapter=True,
+    )
+    assert omitted["passed"], omitted["failures"]
+    assert omitted["allow_omitted_checkpoint_adapter"] is True

@@ -68,6 +68,7 @@ def audit_and_report(
     checkpoint_dir: Path,
     *,
     expected_subjects: int = 47,
+    allow_omitted_checkpoint_adapter: bool = False,
 ) -> dict[str, Any]:
     failures: list[str] = []
     metrics_by_view: dict[str, dict[str, Any]] = {}
@@ -77,7 +78,10 @@ def audit_and_report(
     try:
         if checkpoint_dir.name != "best_model":
             failures.append("checkpoint: expected the authoritative best_model directory")
-        if not (checkpoint_dir / "adapter_model.safetensors").is_file():
+        if (
+            not allow_omitted_checkpoint_adapter
+            and not (checkpoint_dir / "adapter_model.safetensors").is_file()
+        ):
             failures.append("checkpoint: missing adapter_model.safetensors")
         run_config = read_json(checkpoint_dir.parent / "run_config.json") if (
             checkpoint_dir.parent / "run_config.json"
@@ -287,6 +291,7 @@ def audit_and_report(
         "failures": failures,
         "expected_subjects": expected_subjects,
         "checkpoint_dir": str(checkpoint_dir),
+        "allow_omitted_checkpoint_adapter": allow_omitted_checkpoint_adapter,
         "checkpoint_provenance_passed": not any(value.startswith("checkpoint") for value in failures),
         "coverage_by_subject": coverage_summary,
         "historical_fixed4_comparison": historical_comparison,
@@ -335,6 +340,7 @@ def main() -> None:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--report-only", action="store_true")
     parser.add_argument("--expected-subjects", type=int, default=47)
+    parser.add_argument("--allow-omitted-checkpoint-adapter", action="store_true")
     args = parser.parse_args()
     output_root = args.output_root / args.run_id
     if not args.report_only:
@@ -356,7 +362,12 @@ def main() -> None:
         if args.resume:
             command.append("--resume")
         subprocess.run(command, cwd=PROJECT_ROOT, check=True)
-    audit = audit_and_report(output_root, args.checkpoint_dir, expected_subjects=args.expected_subjects)
+    audit = audit_and_report(
+        output_root,
+        args.checkpoint_dir,
+        expected_subjects=args.expected_subjects,
+        allow_omitted_checkpoint_adapter=args.allow_omitted_checkpoint_adapter,
+    )
     if not audit["passed"]:
         raise SystemExit("Coverage audit failed: " + "; ".join(audit["failures"]))
     print(output_root / "results.md")
