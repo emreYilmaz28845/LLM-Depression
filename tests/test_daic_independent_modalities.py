@@ -130,3 +130,14 @@ def test_incomplete_matrix_artifacts_fail_acceptance_audit(tmp_path: Path) -> No
     assert result["expected_cells"] == 9
     assert result["audited_cells"] == 0
     assert len(result["failures"]) == 3
+
+
+def test_acceptance_audit_rejects_failed_slurm_accounting(tmp_path: Path) -> None:
+    accounting = tmp_path / "sacct.txt"
+    accounting.write_text("123|FAILED|1:0|00:01:00\n", encoding="utf-8")
+    result = audit(MATRIX, tmp_path, accounting)
+    assert result["passed"] is False
+    assert result["slurm_jobs"] == [
+        {"job_id": "123", "state": "FAILED", "exit_code": "1:0", "elapsed": "00:01:00"}
+    ]
+    assert any("Slurm job did not complete" in failure for failure in result["failures"])

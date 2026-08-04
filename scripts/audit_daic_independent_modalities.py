@@ -54,7 +54,11 @@ def _check_metrics(metrics: dict[str, Any], cell: str, failures: list[str]) -> N
         failures.append(f"{cell}: invalid 47-subject confusion matrix")
 
 
-def audit(matrix_path: Path, project_root: Path) -> dict[str, Any]:
+def audit(
+    matrix_path: Path,
+    project_root: Path,
+    sacct_path: Path | None = None,
+) -> dict[str, Any]:
     matrix = yaml.safe_load(matrix_path.read_text(encoding="utf-8"))
     experiments = matrix.get("experiments") or []
     variants = set(matrix.get("variants") or [])
@@ -195,6 +199,24 @@ def audit(matrix_path: Path, project_root: Path) -> dict[str, Any]:
             except Exception as exc:
                 failures.append(f"{cell}: {exc}")
 
+    slurm_jobs: list[dict[str, str]] = []
+    if sacct_path is not None:
+        for line in sacct_path.read_text(encoding="utf-8").splitlines():
+            fields = line.split("|")
+            if len(fields) < 4 or "." in fields[0]:
+                continue
+            job = {
+                "job_id": fields[0],
+                "state": fields[1],
+                "exit_code": fields[2],
+                "elapsed": fields[3],
+            }
+            slurm_jobs.append(job)
+            if job["state"] != "COMPLETED" or job["exit_code"] != "0:0":
+                failures.append(f"Slurm job did not complete successfully: {job}")
+        if not slurm_jobs:
+            failures.append("Slurm accounting file contains no top-level jobs")
+
     return {
         "schema_version": "daic_independent_modalities_audit.v1",
         "matrix": str(matrix_path),
@@ -204,6 +226,8 @@ def audit(matrix_path: Path, project_root: Path) -> dict[str, Any]:
         "manifest_hash": reference_manifest_hash,
         "failures": failures,
         "cells": cells,
+        "slurm_jobs": slurm_jobs,
+        "slurm_accounting_path": str(sacct_path) if sacct_path else None,
     }
 
 
@@ -211,9 +235,14 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--matrix", type=Path, required=True)
     parser.add_argument("--project-root", type=Path, default=Path.cwd())
+    parser.add_argument("--sacct", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    payload = audit(args.matrix.resolve(), args.project_root.resolve())
+    payload = audit(
+        args.matrix.resolve(),
+        args.project_root.resolve(),
+        args.sacct.resolve() if args.sacct else None,
+    )
     rendered = json.dumps(payload, indent=2) + "\n"
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
