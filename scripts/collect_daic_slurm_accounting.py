@@ -35,17 +35,20 @@ def main() -> None:
         job_map[job_id] = (kind, list(range(task_count)))
     job_ids = ",".join(job_map)
     result = subprocess.run(
-        ["sacct", "-j", job_ids, "--noheader", "--parsable2", "--format=JobIDRaw,State,ExitCode,Elapsed,NodeList,AllocCPUS,AllocTRES"],
+        ["sacct", "-j", job_ids, "--noheader", "--parsable2", "--format=JobID,JobIDRaw,State,ExitCode,Elapsed,NodeList,AllocCPUS,AllocTRES"],
         text=True, stdout=subprocess.PIPE, check=True,
     )
     task_lists = {kind: [task for task in matrix["tasks"] if task["kind"] == kind] for kind in ("train", "evaluation", "hidden", "classical")}
     rows = []
     for line in result.stdout.splitlines():
         fields = line.split("|")
-        if len(fields) < 7:
+        if len(fields) < 8:
             continue
-        raw_id = fields[0]
-        matched = next(((job, re.fullmatch(re.escape(job) + r"_(\d+)", raw_id)) for job in job_map if re.fullmatch(re.escape(job) + r"_(\d+)", raw_id)), None)
+        # On MN5, JobID preserves the array identity (e.g. 44162470_0),
+        # while JobIDRaw is an internal numeric accounting record (e.g.
+        # 44162471).  Match the former and retain both identifiers.
+        array_id, raw_id = fields[0], fields[1]
+        matched = next(((job, re.fullmatch(re.escape(job) + r"_(\d+)", array_id)) for job in job_map if re.fullmatch(re.escape(job) + r"_(\d+)", array_id)), None)
         if not matched:
             continue
         job, match = matched
@@ -56,8 +59,8 @@ def main() -> None:
         task = task_lists[kind][array_index]
         rows.append({
             "task_id": task["task_id"], "cell_id": task["cell_id"], "kind": kind,
-            "job_id_raw": raw_id, "state": fields[1].split()[0], "exit_code": fields[2],
-            "elapsed": fields[3], "node_list": fields[4], "allocated_cpus": fields[5], "allocated_tres": fields[6],
+            "job_id": array_id, "job_id_raw": raw_id, "state": fields[2].split()[0], "exit_code": fields[3],
+            "elapsed": fields[4], "node_list": fields[5], "allocated_cpus": fields[6], "allocated_tres": fields[7],
         })
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
