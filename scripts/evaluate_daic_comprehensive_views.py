@@ -25,6 +25,7 @@ from src.utils import (
     resolve_model_name_or_path,
     save_json,
     save_yaml,
+    write_jsonl,
 )
 
 
@@ -34,6 +35,35 @@ VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
     "all": {"data.eval_chunk_policy": "all", "data.eval_chunks_per_subject": "all"},
 }
 DERIVED_VIEWS = {"fixed15", "matched10_even", "matched10_resampled"}
+
+
+def view_construction_rows(examples: list[dict[str, Any]], view: str) -> list[dict[str, Any]]:
+    """Return a path-free audit record of the chunks used by each model input."""
+    rows: list[dict[str, Any]] = []
+    for example in examples:
+        available_paths = list(example.get("subject_chunk_paths") or example.get("audio_paths") or [])
+        available_ids = list(example.get("subject_chunk_ids") or [])
+        path_to_id = {
+            str(path): str(chunk_id)
+            for path, chunk_id in zip(available_paths, available_ids)
+        }
+        selected_ids = list(example.get("bundle_chunk_ids") or [])
+        if not selected_ids:
+            selected_ids = [path_to_id.get(str(path), Path(str(path)).stem) for path in example.get("audio_paths", [])]
+        rows.append(
+            {
+                "view": view,
+                "subject_id": str(example["subject_id"]),
+                "sample_id": str(example["sample_id"]),
+                "label": int(example["label"]),
+                "bundle_id": example.get("bundle_id"),
+                "num_chunks_available": len(available_paths),
+                "chunks_per_model_input": len(example.get("audio_paths", [])),
+                "selected_chunk_ids": [str(value) for value in selected_ids],
+                "bundle_coverage_count": example.get("bundle_coverage_count"),
+            }
+        )
+    return rows
 
 
 def _set(config: dict[str, Any], dotted: str, value: Any) -> None:
@@ -111,6 +141,10 @@ def main() -> None:
         rows = filter_rows_by_subjects(manifest_rows, final_ids)
         role = "fold_validation" if cv_protocol == CV_PROTOCOL_TRAIN_VAL else "final_eval"
         examples = build_examples(rows, config, partition_name=role, truncation_log_path=None)
+        write_jsonl(
+            view_construction_rows(examples, view),
+            output_dir / "view_construction.jsonl",
+        )
         save_yaml(
             {
                 "base_config_path": str(args.config), "config_overrides": overrides,
