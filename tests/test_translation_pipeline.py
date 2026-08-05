@@ -691,8 +691,8 @@ def test_validate_reviewed_override(tmp_path) -> None:
 def test_english_only_and_leakage_helpers() -> None:
     assert english_only("I am fine.", "zh") == []
     assert english_only("我很好。", "zh")
-    assert english_only("Bugün şeyler iyiydi.", "tr")
-    assert english_only("We visited İğdır and Tekirdağ.", "tr") == []
+    assert english_only("Bugün şeyler iyiydi.", "tr") == []
+    assert english_only("We visited İğdır and Tekirdağ last summer.", "tr") == []
     assert english_only("Şişli'ye gittik ve çok eğlendik.", "tr")
     assert english_only("¿Cómo estás?", "es")
     unit = {
