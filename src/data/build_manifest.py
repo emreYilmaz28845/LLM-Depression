@@ -25,15 +25,17 @@ from src.data.validation import (
     print_class_counts,
     print_random_rows,
 )
+from src.translation.overlay import apply_overlay
 from src.utils import (
     configure_logging,
     ensure_dir,
     get_logger,
     load_yaml_with_overrides,
     log_resolved_config,
+    read_jsonl,
     save_json,
-    sha256_jsonl_rows,
     sha256_file,
+    sha256_jsonl_rows,
     resolve_project_path,
     write_jsonl,
 )
@@ -57,6 +59,8 @@ def manifest_build_signature(config: dict[str, Any]) -> dict[str, Any]:
         "quarantine_path",
         "training",
     }
+    if str((config.get("transcripts") or {}).get("variant", "original")).strip().lower() == "original":
+        excluded_top_level.add("transcripts")
     builder_options = {
         key: value
         for key, value in config.items()
@@ -103,6 +107,44 @@ def _save_common_outputs(config: dict[str, Any], manifest_rows: list[dict[str, A
     }
 
 
+def _apply_transcript_overlay(
+    config: dict[str, Any], dataset_name: str, manifest_rows: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    transcripts_cfg = config.get("transcripts") or {}
+    variant = str(transcripts_cfg.get("variant", "original")).strip().lower()
+    if variant == "original":
+        return manifest_rows, None
+    if variant != "english":
+        raise ValueError(
+            f"Unsupported transcripts.variant={variant!r}. "
+            f"Expected 'original' or 'english'."
+        )
+    cache_path = resolve_project_path(transcripts_cfg["cache_path"])
+    if not cache_path.is_file():
+        raise FileNotFoundError(f"Translation accepted cache not found: {cache_path}")
+    accepted_rows = read_jsonl(cache_path)
+    minimum_status = str(transcripts_cfg.get("minimum_status", "automatic_high"))
+    require_complete = bool(transcripts_cfg.get("require_complete", True))
+    LOGGER.info(
+        "Applying English transcript overlay: dataset=%s cache=%s minimum_status=%s require_complete=%s",
+        dataset_name,
+        cache_path,
+        minimum_status,
+        require_complete,
+    )
+    overlaid_rows, audit = apply_overlay(
+        manifest_rows,
+        dataset_name,
+        accepted_rows,
+        minimum_status=minimum_status,
+        require_complete=require_complete,
+    )
+    audit["accepted_cache_path"] = serialize_project_path(cache_path)
+    audit["accepted_cache_sha256"] = sha256_file(cache_path)
+    audit["accepted_cache_record_count"] = len(accepted_rows)
+    return overlaid_rows, audit
+
+
 def build_for_config(config_path: str | Path, config_overrides: list[str] | None = None) -> None:
     config = load_yaml_with_overrides(config_path, config_overrides)
     log_resolved_config(
@@ -131,7 +173,7 @@ def build_for_config(config_path: str | Path, config_overrides: list[str] | None
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
 
-    manifest_rows = result["manifest_rows"]
+    manifest_rows, overlay_audit = _apply_transcript_overlay(config, dataset_name, result["manifest_rows"])
     assert_clean_labels(manifest_rows)
     assert_audio_exists(manifest_rows)
     assert_transcripts(manifest_rows)
@@ -218,6 +260,8 @@ def build_for_config(config_path: str | Path, config_overrides: list[str] | None
         metadata["transcript_paths"] = result["transcript_paths"]
     if "source_hashes" in result:
         metadata["source_hashes"] = result["source_hashes"]
+    if overlay_audit is not None:
+        metadata["transcript_overlay"] = overlay_audit
 
     metadata["artifact_hashes"] = {
         f"{key}_sha256": sha256_file(resolve_project_path(value))
