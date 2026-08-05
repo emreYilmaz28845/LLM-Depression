@@ -82,5 +82,5 @@ evaluation:
 transcripts:
   variant: english
   cache_path: ${TRANSLATION_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/translations}/qwen36_27b_bf16_clinical_v1/turkish/accepted.jsonl
-  minimum_status: automatic_high
-  require_complete: true
+  minimum_status: automatic_low
+  require_complete: false
