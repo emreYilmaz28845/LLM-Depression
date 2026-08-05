@@ -135,7 +135,7 @@ async def _translate_pending(
         return []
     from openai import AsyncOpenAI
 
-    client = AsyncOpenAI(base_url=base_url, api_key="EMPTY")
+    client = AsyncOpenAI(base_url=base_url, api_key="EMPTY", max_retries=0)
     semaphore = asyncio.Semaphore(batch_size)
     model_identity = "Qwen/Qwen3.6-27B"
 
