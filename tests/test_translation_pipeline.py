@@ -567,6 +567,79 @@ def test_validate_low_status_for_number_loss(tmp_path) -> None:
     assert "numbers not preserved" in accepted[0]["reasons"]
 
 
+def test_validate_verifier_pass_runs_and_flags(tmp_path) -> None:
+    unit = {
+        "dataset": "cmdc",
+        "unit_id": "long1",
+        "field": "transcript",
+        "scope": "response",
+        "source_language": "zh",
+        "target_language": "en",
+        "source_text": "我最近睡得很不好。" * 400,
+        "source_sha256": sha256_text("我最近睡得很不好。" * 400),
+        "context_id": "",
+        "context_text": "",
+        "context_sha256": "",
+        "part_index": 0,
+        "part_count": 1,
+    }
+    units_path = tmp_path / "units.jsonl"
+    write_jsonl([unit], units_path)
+    candidate = _candidate(unit, "I have been sleeping very poorly lately.")
+    candidates_path = tmp_path / "candidates.jsonl"
+    write_jsonl([candidate], candidates_path)
+
+    async def fake_create(*, model, messages, temperature, top_p, max_tokens, seed, extra_body):
+        class FakeMessage:
+            content = '{"missing": ["the number 35"], "added": []}'
+
+        class FakeChoice:
+            message = FakeMessage()
+
+        class FakeResponse:
+            choices = [FakeChoice()]
+
+        return FakeResponse()
+
+    import src.translation.validate as validate_module
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            return await fake_create(**kwargs)
+
+    class FakeChat:
+        completions = FakeCompletions()
+
+    class FakeAsyncOpenAI:
+        def __init__(self, base_url=None, api_key=None):
+            self.chat = FakeChat()
+
+        async def close(self):
+            pass
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(validate_module, "AsyncOpenAI", FakeAsyncOpenAI)
+    try:
+        audit = run_validation(
+            units_path,
+            candidates_path,
+            tmp_path / "accepted.jsonl",
+            tmp_path / "rejected.jsonl",
+            tmp_path / "audit.json",
+            nllb_model=None,
+            verifier_base_url="http://x/v1",
+            verifier_model="qwen3.6-27b",
+            reviewed_path=None,
+            seed=42,
+        )
+    finally:
+        monkeypatch.undo()
+    assert audit["verifier_pass"] is True
+    assert audit["status_counts"]["automatic_low"] == 1
+    accepted = [json.loads(line) for line in (tmp_path / "accepted.jsonl").read_text().splitlines()]
+    assert any("missing invariants" in reason for reason in accepted[0]["reasons"])
+
+
 def test_validate_reviewed_override(tmp_path) -> None:
     units = unit_rows_for_dataset(_cmdc_rows(), "cmdc")
     units_path = tmp_path / "units.jsonl"

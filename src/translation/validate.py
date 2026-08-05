@@ -11,6 +11,7 @@ output but never silently rewrites an accepted translation.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import re
@@ -479,8 +480,6 @@ def run_validation(
 
     verifier_flags: dict[tuple[str, str, int], list[str]] = {}
     if verifier_base_url and verifier_model:
-        import asyncio
-
         long_items = [
             (
                 (
