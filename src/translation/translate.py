@@ -70,6 +70,9 @@ def _openai_client(base_url: str) -> Any:
     from openai import OpenAI
 
     return OpenAI(base_url=base_url, api_key="EMPTY")
+
+
+def _estimate_max_tokens(unit: dict[str, Any]) -> int:
     return max(512, min(4096, int(len(unit["source_text"]) * 1.6)))
 
 
