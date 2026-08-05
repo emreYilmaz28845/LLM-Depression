@@ -130,7 +130,7 @@ async def _translate_pending(
     batch_size: int,
     seed: int,
     max_retries: int,
-) -> list[tuple[dict[str, Any], str | None]]:
+) -> list[tuple[dict[str, Any], dict[str, Any] | None, str | None]]:
     if not pending:
         return []
     from openai import AsyncOpenAI
@@ -139,9 +139,9 @@ async def _translate_pending(
     semaphore = asyncio.Semaphore(batch_size)
     model_identity = "Qwen/Qwen3.6-27B"
 
-    async def guarded(unit: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    async def guarded(unit: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None, str | None]:
         async with semaphore:
-            return await _translate_unit(
+            candidate, reason = await _translate_unit(
                 client,
                 model,
                 unit,
@@ -149,6 +149,7 @@ async def _translate_pending(
                 max_retries=max_retries,
                 model_identity=model_identity,
             )
+            return unit, candidate, reason
 
     results = await asyncio.gather(*(guarded(unit) for unit in pending))
     await client.close()
@@ -248,11 +249,10 @@ def run_translation(
                     max_retries=max_retries,
                 )
             )
-            for unit, reason in results:
+            for unit, candidate, reason in results:
                 key = (unit["unit_id"], unit["field"], unit["part_index"])
-                if reason is None:
-                    candidate = dict(unit)
-                    candidate.pop("_model_revision", None)
+                if reason is None and candidate is not None:
+                    candidate = dict(candidate)
                     candidate["model_revision"] = model_revision
                     candidates[key] = candidate
                 else:
@@ -264,9 +264,9 @@ def run_translation(
                         "part_count": unit["part_count"],
                         "source_sha256": unit["source_sha256"],
                         "status": "failed",
-                        "reason": reason,
+                        "reason": reason or "translation_failed",
                     }
-                    LOGGER.warning("Failed unit %s: %s", key, reason)
+                    LOGGER.warning("Failed unit %s: %s", key, failed["reason"])
                     _append_failed(failed_path, failed)
             _write_candidates(candidates, candidates_path)
             LOGGER.info("Progress: %s/%s units done", len(candidates), len(units))

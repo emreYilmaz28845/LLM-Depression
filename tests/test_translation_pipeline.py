@@ -371,7 +371,7 @@ def test_translate_resume_skips_matching_and_rejects_conflicts(tmp_path) -> None
     async def stub_translate_pending(base_url, model, model_revision, pending, *, batch_size, seed, max_retries):
         candidates = [_candidate(unit, f"EN-{unit['unit_id']}") for unit in pending]
         translated.extend(candidates)
-        return [(candidate, None) for candidate in candidates]
+        return [(unit, candidate, None) for unit, candidate in zip(pending, candidates)]
 
     import src.translation.translate as translate_module
 
@@ -482,6 +482,49 @@ def test_validate_coverage_failure(tmp_path) -> None:
             reviewed_path=None,
             seed=42,
         )
+
+
+def test_translate_failure_path_records_failed_unit(tmp_path) -> None:
+    units = unit_rows_for_dataset(_cmdc_rows(), "cmdc")
+    units_path = tmp_path / "units.jsonl"
+    write_jsonl(units, units_path)
+    candidates_path = tmp_path / "candidates.jsonl"
+    failed_path = tmp_path / "failed.jsonl"
+
+    async def stub_with_failure(base_url, model, model_revision, pending, *, batch_size, seed, max_retries):
+        results = []
+        for index, unit in enumerate(pending):
+            if index == 0:
+                results.append((unit, None, "translation_failed"))
+            else:
+                results.append((unit, _candidate(unit, f"EN-{unit['unit_id']}"), None))
+        return results
+
+    import src.translation.translate as translate_module
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(translate_module, "_translate_pending", stub_with_failure)
+    try:
+        summary = run_translation(
+            units_path,
+            candidates_path,
+            failed_path,
+            base_url="http://x/v1",
+            model="qwen3.6-27b",
+            model_revision="rev1",
+            batch_size=8,
+            seed=42,
+            max_retries=1,
+            force_resync=False,
+        )
+    finally:
+        monkeypatch.undo()
+    assert summary["completed"] == 2
+    assert summary["failed"] == 1
+    failed = [json.loads(line) for line in failed_path.read_text().splitlines()]
+    assert failed[0]["unit_id"] == units[0]["unit_id"]
+    assert failed[0]["status"] == "failed"
+    assert failed[0]["reason"] == "translation_failed"
 
 
 def test_validate_low_status_for_number_loss(tmp_path) -> None:
