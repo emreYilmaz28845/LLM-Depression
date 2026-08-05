@@ -119,6 +119,9 @@ def english_only(translation: str, source_language: str) -> list[str]:
     failures: list[str] = []
     if CJK_RE.search(translation):
         failures.append("CJK characters present in translation")
+    # Proper nouns (names, places, foods) legitimately retain source-script
+    # letters (e.g. "İğdır", "börek"); only flag when source-only characters
+    # reach a material fraction of the output (actual source-language copying).
     source_checks = {
         "tr": (TURKISH_ONLY_RE, "Turkish-only characters present in translation"),
         "es": (SPANISH_ONLY_RE, "Spanish-only characters present in translation"),
@@ -126,7 +129,8 @@ def english_only(translation: str, source_language: str) -> list[str]:
     }
     if source_language in source_checks:
         pattern, message = source_checks[source_language]
-        if pattern.search(translation):
+        matches = list(pattern.finditer(translation))
+        if matches and len(matches) / max(len(translation), 1) > 0.05:
             failures.append(message)
     return failures
 
