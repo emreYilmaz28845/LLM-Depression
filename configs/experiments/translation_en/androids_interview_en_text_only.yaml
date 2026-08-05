@@ -88,3 +88,5 @@ transcripts:
   cache_path: ${TRANSLATION_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/translations}/qwen36_27b_bf16_clinical_v1/androids_interview/accepted.jsonl
   minimum_status: automatic_low
   require_complete: false
+  include_failed: true
+  rejected_path: ${TRANSLATION_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/translations}/qwen36_27b_bf16_clinical_v1/androids_interview/rejected.jsonl

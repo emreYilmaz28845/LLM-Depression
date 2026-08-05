@@ -333,6 +333,44 @@ def test_overlay_d3tec_multi_field() -> None:
     assert row["transcript_original"]["segment_transcript"] == "No he dormido bien esta semana."
 
 
+def test_overlay_include_failed_falls_back_to_rejected() -> None:
+    rows = _cmdc_rows()
+    units = unit_rows_for_dataset(rows, "cmdc")
+    accepted = [
+        _accepted(units[0], "I am fine, thank you."),
+        _accepted(units[1], "I have been sleeping very poorly lately."),
+    ]
+    rejected = [
+        {
+            **_accepted(units[2], "我很好，谢谢。", status="failed"),
+            "reasons": ["CJK characters present in translation"],
+        }
+    ]
+    overlaid, audit = apply_overlay(
+        rows,
+        "cmdc",
+        accepted,
+        minimum_status="automatic_low",
+        require_complete=False,
+        include_failed=True,
+        rejected_rows=rejected,
+    )
+    assert audit["replaced_rows"] == 3
+    assert audit["failed_included_rows"] == 1
+    row = next(row for row in overlaid if row["sample_id"] == "MDD001_Q2")
+    assert row["transcript"] == "我很好，谢谢。"
+    assert row["translation_status"] == "failed_included"
+    without = apply_overlay(
+        rows,
+        "cmdc",
+        accepted,
+        minimum_status="automatic_low",
+        require_complete=False,
+        include_failed=False,
+    )[1]
+    assert without["native_rows_kept"] == ["MDD001_Q2"]
+
+
 def test_manifest_signature_ignores_original_variant_and_includes_english() -> None:
     base = {
         "dataset": "cmdc",

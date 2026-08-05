@@ -125,12 +125,24 @@ def _apply_transcript_overlay(
     accepted_rows = read_jsonl(cache_path)
     minimum_status = str(transcripts_cfg.get("minimum_status", "automatic_high"))
     require_complete = bool(transcripts_cfg.get("require_complete", True))
+    include_failed = bool(transcripts_cfg.get("include_failed", False))
+    rejected_rows: list[dict[str, Any]] = []
+    if include_failed:
+        rejected_path = resolve_project_path(transcripts_cfg["rejected_path"])
+        if not rejected_path.is_file():
+            raise FileNotFoundError(
+                f"transcripts.include_failed requires transcripts.rejected_path; "
+                f"not found: {rejected_path}"
+            )
+        rejected_rows = read_jsonl(rejected_path)
     LOGGER.info(
-        "Applying English transcript overlay: dataset=%s cache=%s minimum_status=%s require_complete=%s",
+        "Applying English transcript overlay: dataset=%s cache=%s minimum_status=%s "
+        "require_complete=%s include_failed=%s",
         dataset_name,
         cache_path,
         minimum_status,
         require_complete,
+        include_failed,
     )
     overlaid_rows, audit = apply_overlay(
         manifest_rows,
@@ -138,10 +150,17 @@ def _apply_transcript_overlay(
         accepted_rows,
         minimum_status=minimum_status,
         require_complete=require_complete,
+        include_failed=include_failed,
+        rejected_rows=rejected_rows,
     )
     audit["accepted_cache_path"] = serialize_project_path(cache_path)
     audit["accepted_cache_sha256"] = sha256_file(cache_path)
     audit["accepted_cache_record_count"] = len(accepted_rows)
+    if include_failed:
+        audit["rejected_cache_path"] = serialize_project_path(
+            resolve_project_path(transcripts_cfg["rejected_path"])
+        )
+        audit["rejected_cache_record_count"] = len(rejected_rows)
     return overlaid_rows, audit
 
 

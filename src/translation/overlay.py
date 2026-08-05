@@ -79,21 +79,28 @@ def apply_overlay(
     *,
     minimum_status: str,
     require_complete: bool,
+    include_failed: bool = False,
+    rejected_rows: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if dataset not in FIELD_MAP:
         raise ValueError(f"Unsupported overlay dataset: {dataset!r}")
     rank = minimum_status_rank(minimum_status)
     accepted_index = index_accepted(accepted_rows)
+    rejected_index: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    if include_failed and rejected_rows:
+        rejected_index = index_accepted(rejected_rows)
 
     output_rows: list[dict[str, Any]] = []
     audit = {
         "variant": "english",
         "minimum_status": minimum_status,
         "require_complete": require_complete,
+        "include_failed": include_failed,
         "rows": len(manifest_rows),
         "replaced_rows": 0,
         "missing_units": [],
         "below_status_units": [],
+        "failed_included_rows": 0,
         "native_rows_kept": [],
     }
     for row in manifest_rows:
@@ -107,6 +114,10 @@ def apply_overlay(
             id_key, unit_field = FIELD_UNIT_LOOKUP[dataset][field]
             unit_id = str(row.get(id_key, ""))
             records = accepted_index.get((unit_id, unit_field), [])
+            source_status = ""
+            if not records and include_failed:
+                records = rejected_index.get((unit_id, unit_field), [])
+                source_status = "failed"
             if not records:
                 if require_complete:
                     raise ValueError(
@@ -117,7 +128,9 @@ def apply_overlay(
                 row_ok = False
                 continue
             statuses = [str(record.get("status", "failed")) for record in records]
-            if any(STATUS_RANK.get(status, STATUS_RANK["failed"]) < rank for status in statuses):
+            if not source_status and any(
+                STATUS_RANK.get(status, STATUS_RANK["failed"]) < rank for status in statuses
+            ):
                 if require_complete:
                     raise ValueError(
                         f"Overlay incomplete for {dataset} row {unit_id} field={field}: "
@@ -135,11 +148,15 @@ def apply_overlay(
             else:
                 new_row["transcript_original"] = str(row.get(field, ""))
             new_row["translation_model"] = str(records[0].get("model", ""))
-            new_row["translation_status"] = min(
-                (record.get("status", "failed") for record in records),
-                key=lambda status: STATUS_RANK.get(status, STATUS_RANK["failed"]),
+            new_row["translation_status"] = (
+                "failed_included" if source_status == "failed" else min(
+                    (record.get("status", "failed") for record in records),
+                    key=lambda status: STATUS_RANK.get(status, STATUS_RANK["failed"]),
+                )
             )
             new_row["translation_sha256"] = sha256_text(joined)
+            if source_status == "failed":
+                audit["failed_included_rows"] += 1
         if row_ok:
             audit["replaced_rows"] += 1
             if dataset == "cmdc":
