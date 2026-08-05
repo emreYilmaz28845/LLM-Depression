@@ -693,7 +693,7 @@ def test_english_only_and_leakage_helpers() -> None:
     assert english_only("我很好。", "zh")
     assert english_only("Bugün şeyler iyiydi.", "tr") == []
     assert english_only("We visited İğdır with my whole family last summer.", "tr") == []
-    assert english_only("Şişli'ye gittik ve çok eğlendik.", "tr")
+    assert english_only("Şişli'ye gittik ve İğdır'dan geldik.", "tr")
     assert english_only("¿Cómo estás?", "es")
     unit = {
         "source_text": "这是一个测试。",

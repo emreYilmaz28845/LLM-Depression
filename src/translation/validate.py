@@ -44,7 +44,7 @@ STATUS_ORDER = ("human_verified", "automatic_high", "automatic_medium", "automat
 STATUS_RANK = {status: index for index, status in enumerate(STATUS_ORDER)}
 
 CJK_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]")
-TURKISH_ONLY_RE = re.compile(r"[\u011f\u015f\u0131\u0130]")
+TURKISH_ONLY_RE = re.compile(r"[\u011e\u011f\u015e\u015f\u0130\u0131]")
 SPANISH_ONLY_RE = re.compile(r"[\u00d1\u00f1\u00bf\u00a1]")
 ITALIAN_ONLY_RE = re.compile(r"[\u00f9]")
 EXPLANATION_RE = re.compile(
@@ -115,13 +115,23 @@ def _capitalized_tokens(text: str) -> set[str]:
     return tokens
 
 
+def _source_script_leak(translation: str, pattern: re.Pattern[str]) -> bool:
+    matches = len(pattern.findall(translation))
+    if matches / max(len(translation), 1) > 0.20:
+        return True
+    words = [word for word in re.split(r"\W+", translation) if word]
+    words_with_many = [word for word in words if len(pattern.findall(word)) >= 2]
+    return len(words_with_many) >= 2
+
+
 def english_only(translation: str, source_language: str) -> list[str]:
     failures: list[str] = []
     if CJK_RE.search(translation):
         failures.append("CJK characters present in translation")
     # Proper nouns (names, places, foods) legitimately retain source-script
-    # letters (e.g. "İğdır", "börek"); only flag when source-only characters
-    # reach a material fraction of the output (actual source-language copying).
+    # letters (e.g. "İğdır", "börek"); only flag actual source-language
+    # copying: several words carrying multiple source-only letters, or a
+    # material share of the output text.
     source_checks = {
         "tr": (TURKISH_ONLY_RE, "Turkish-only characters present in translation"),
         "es": (SPANISH_ONLY_RE, "Spanish-only characters present in translation"),
@@ -129,8 +139,7 @@ def english_only(translation: str, source_language: str) -> list[str]:
     }
     if source_language in source_checks:
         pattern, message = source_checks[source_language]
-        matches = list(pattern.finditer(translation))
-        if matches and len(matches) / max(len(translation), 1) > 0.05:
+        if _source_script_leak(translation, pattern):
             failures.append(message)
     return failures
 
