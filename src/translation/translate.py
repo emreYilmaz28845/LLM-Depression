@@ -2,14 +2,15 @@
 
 Connects to a vLLM OpenAI-compatible endpoint (BF16, tensor-parallel=2,
 text-only, deterministic non-thinking generation) and translates the exported
-units. Candidate records are flushed incrementally; resume is allowed only when
-unit IDs and source hashes match, changed sources are regenerated, duplicate
-keys are rejected, and an incompatible completed run is never overwritten
-without ``--force-resync``.
+units with bounded concurrent requests. Candidate records are flushed
+incrementally; resume is allowed only when unit IDs and source hashes match,
+changed sources are regenerated, duplicate keys are rejected, and an
+incompatible completed run is never overwritten without ``--force-resync``.
 """
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -66,58 +67,38 @@ def _request_messages(unit: dict[str, Any], corrective: bool = False) -> list[di
     ]
 
 
-def _openai_client(base_url: str) -> Any:
-    from openai import OpenAI
-
-    return OpenAI(base_url=base_url, api_key="EMPTY")
-
-
 def _estimate_max_tokens(unit: dict[str, Any]) -> int:
     return max(512, min(4096, int(len(unit["source_text"]) * 1.6)))
 
 
-def translate_batch(
-    client: OpenAI,
+async def _translate_unit(
+    client: Any,
     model: str,
-    units: list[dict[str, Any]],
+    unit: dict[str, Any],
     *,
     seed: int,
     max_retries: int,
-    model_identity: str = "Qwen/Qwen3.6-27B",
-) -> list[tuple[dict[str, Any], str | None]]:
-    results: list[tuple[dict[str, Any], str | None]] = []
-    for unit in units:
-        translation: str | None = None
-        reason: str | None = None
-        for attempt in range(max_retries + 1):
-            try:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=_request_messages(unit, corrective=attempt > 0),
-                    temperature=0.0,
-                    top_p=1.0,
-                    max_tokens=_estimate_max_tokens(unit),
-                    seed=seed,
-                    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-                )
-                content = (response.choices[0].message.content or "").strip()
-                if not content:
-                    reason = "empty_response"
-                    continue
-                parsed = _parse_json_object(content)
-                translation = str(parsed.get("translation", "")).strip()
-                if not translation:
-                    reason = "missing_translation_key"
-                    continue
-                break
-            except Exception as exc:
-                reason = f"{type(exc).__name__}: {exc}"
+    model_identity: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    for attempt in range(max_retries + 1):
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=_request_messages(unit, corrective=attempt > 0),
+                temperature=0.0,
+                top_p=1.0,
+                max_tokens=_estimate_max_tokens(unit),
+                seed=seed,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            )
+            content = (response.choices[0].message.content or "").strip()
+            if not content:
                 continue
-        if translation is None:
-            results.append((unit, reason))
-            continue
-        results.append(
-            (
+            parsed = _parse_json_object(content)
+            translation = str(parsed.get("translation", "")).strip()
+            if not translation:
+                continue
+            return (
                 {
                     "dataset": unit["dataset"],
                     "unit_id": unit["unit_id"],
@@ -135,7 +116,42 @@ def translate_batch(
                 },
                 None,
             )
-        )
+        except Exception as exc:
+            continue
+    return None, "translation_failed"
+
+
+async def _translate_pending(
+    base_url: str,
+    model: str,
+    model_revision: str,
+    pending: list[dict[str, Any]],
+    *,
+    batch_size: int,
+    seed: int,
+    max_retries: int,
+) -> list[tuple[dict[str, Any], str | None]]:
+    if not pending:
+        return []
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(base_url=base_url, api_key="EMPTY")
+    semaphore = asyncio.Semaphore(batch_size)
+    model_identity = "Qwen/Qwen3.6-27B"
+
+    async def guarded(unit: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+        async with semaphore:
+            return await _translate_unit(
+                client,
+                model,
+                unit,
+                seed=seed,
+                max_retries=max_retries,
+                model_identity=model_identity,
+            )
+
+    results = await asyncio.gather(*(guarded(unit) for unit in pending))
+    await client.close()
     return results
 
 
@@ -160,6 +176,13 @@ def _load_candidates(path: Path | None) -> dict[tuple[str, str, int], dict[str, 
             raise ValueError(f"Duplicate candidate key in {path}: {key}")
         index[key] = row
     return index
+
+
+def _write_candidates(candidates: dict[tuple[str, str, int], dict[str, Any]], path: str | Path) -> None:
+    write_jsonl(
+        sorted(candidates.values(), key=lambda row: (row["unit_id"], row["part_index"])),
+        path,
+    )
 
 
 def run_translation(
@@ -212,15 +235,18 @@ def run_translation(
     )
 
     if pending:
-        client = _openai_client(base_url)
-        for start in range(0, len(pending), batch_size):
-            batch = pending[start : start + batch_size]
-            results = translate_batch(
-                client,
-                model,
-                batch,
-                seed=seed,
-                max_retries=max_retries,
+        for start in range(0, len(pending), batch_size * 16):
+            chunk = pending[start : start + batch_size * 16]
+            results = asyncio.run(
+                _translate_pending(
+                    base_url,
+                    model,
+                    model_revision,
+                    chunk,
+                    batch_size=batch_size,
+                    seed=seed,
+                    max_retries=max_retries,
+                )
             )
             for unit, reason in results:
                 key = (unit["unit_id"], unit["field"], unit["part_index"])
@@ -242,10 +268,8 @@ def run_translation(
                     }
                     LOGGER.warning("Failed unit %s: %s", key, reason)
                     _append_failed(failed_path, failed)
-            write_jsonl(
-                sorted(candidates.values(), key=lambda row: (row["unit_id"], row["part_index"])),
-                candidates_path,
-            )
+            _write_candidates(candidates, candidates_path)
+            LOGGER.info("Progress: %s/%s units done", len(candidates), len(units))
 
     candidates = _load_candidates(resolve_project_path(candidates_path))
     return {

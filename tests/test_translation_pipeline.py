@@ -368,20 +368,15 @@ def test_translate_resume_skips_matching_and_rejects_conflicts(tmp_path) -> None
 
     translated: list[dict] = []
 
-    def stub_translate_batch(client, model, batch, *, seed, max_retries, model_identity="Qwen/Qwen3.6-27B"):
-        candidates = [_candidate(unit, f"EN-{unit['unit_id']}") for unit in batch]
+    async def stub_translate_pending(base_url, model, model_revision, pending, *, batch_size, seed, max_retries):
+        candidates = [_candidate(unit, f"EN-{unit['unit_id']}") for unit in pending]
         translated.extend(candidates)
         return [(candidate, None) for candidate in candidates]
 
     import src.translation.translate as translate_module
 
-    class FakeOpenAI:
-        def __init__(self, base_url=None, api_key=None):
-            self.chat = None
-
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(translate_module, "_openai_client", lambda base_url: FakeOpenAI())
-    monkeypatch.setattr(translate_module, "translate_batch", stub_translate_batch)
+    monkeypatch.setattr(translate_module, "_translate_pending", stub_translate_pending)
     try:
         summary = run_translation(
             units_path,
