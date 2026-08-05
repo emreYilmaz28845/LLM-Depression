@@ -139,7 +139,10 @@ def english_only(translation: str, source_language: str) -> list[str]:
     }
     if source_language in source_checks:
         pattern, message = source_checks[source_language]
-        if _source_script_leak(translation, pattern):
+        flagged = _source_script_leak(translation, pattern)
+        if source_language == "es" and ("¿" in translation or "¡" in translation):
+            flagged = True
+        if flagged:
             failures.append(message)
     return failures
 
