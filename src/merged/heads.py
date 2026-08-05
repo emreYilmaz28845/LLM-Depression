@@ -410,7 +410,9 @@ def run_merged_heads(
         if trials is not None
         else ((merged_config.get("heads") or {}).get("optuna") or {}).get("target_trials", 150)
     )
-    if stage != "smoke" and expected_trial_count != 150:
+    if expected_trial_count == 0:
+        print("Optuna disabled (trials=0); fitting logreg and fixed XGBoost only.", flush=True)
+    elif stage != "smoke" and expected_trial_count != 150:
         raise ValueError("Production merged Optuna is fixed to 150 trials.")
     output_root = feature_dir.parent / "heads"
     identity = {
@@ -460,6 +462,9 @@ def run_merged_heads(
     seed = int(merged_config.get("seed", 1337))
     method_summaries: dict[str, Any] = {}
     for method in HEADS:
+        if expected_trial_count == 0 and method == "xgb_optuna":
+            print("Skipping xgb_optuna (trials=0).", flush=True)
+            continue
         method_dir = ensure_dir(output_root / method)
         if method == "logreg":
             estimator = _new_logreg(seed)

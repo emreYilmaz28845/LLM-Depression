@@ -327,11 +327,18 @@ def train_merged_fold(
     model_name = str(resolve_model_name_or_path(None, model_config))
     processor = load_processor(model_name, model_config)
     sampling_rate = resolve_processor_sampling_rate(processor)
+    # Per-epoch stochastic K-chunk resampling for subject_audio components
+    # (currently DAIC only). The sampling guard in AudioTextDataset requires
+    # subject_chunk_paths + chunks_per_subject, which only subject_audio
+    # examples carry; response/segment components fall through to their baked
+    # audio paths, so the merged "every example once per epoch" invariant and
+    # the other datasets' exposure are unchanged. This restores the standalone
+    # DAIC recipe's combinatorial K-view augmentation.
     train_dataset = AudioTextDataset(
         weighted_examples,
         processor_sampling_rate=sampling_rate,
         silence_audio=bool(model_config.get("data", {}).get("silence_audio", False)),
-        chunk_sampling="deterministic",
+        chunk_sampling="random",
     )
     collator = Qwen2AudioSFTCollator(processor=processor, debug=False)
     model = load_model_for_training(model_name, model_config)

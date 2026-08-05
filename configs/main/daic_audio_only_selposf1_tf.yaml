@@ -24,9 +24,15 @@ data:
   # Subject-level audio: one example per subject from a FIXED K chunks. Fixed K is
   # required for leakage safety on DAIC: chunk count perfectly encodes the label
   # (non-dep=10, dep=15), so a constant count per subject carries zero label info.
-  # Training samples K per epoch; val/test use a deterministic evenly-spaced view.
+  # Training samples K per epoch (random_k, unchanged); val/test use COMPLETE
+  # COVERAGE via balanced K=4 joint bundles (min-cover: 5 bundles for 10 chunks,
+  # 15 bundles for 15 chunks), score margins averaged per subject. Full coverage
+  # was validated on 2026-08-05; for audio-only it lowers recall vs fixed4 (the
+  # canonical checkpoint gains are on audio+text).
   sample_mode: subject_audio
   chunks_per_subject: 4
+  eval_chunk_policy: balanced_joint_cover
+  eval_chunks_per_subject: 4
   max_audio_seconds_per_chunk: 30.0
   transcript_max_chars: 4000
   allow_empty_transcript: false
