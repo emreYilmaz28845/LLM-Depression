@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -618,7 +620,9 @@ def test_validate_verifier_pass_runs_and_flags(tmp_path) -> None:
             pass
 
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(validate_module, "AsyncOpenAI", FakeAsyncOpenAI)
+    fake_openai_module = types.ModuleType("openai")
+    fake_openai_module.AsyncOpenAI = FakeAsyncOpenAI
+    monkeypatch.setitem(sys.modules, "openai", fake_openai_module)
     try:
         audit = run_validation(
             units_path,
