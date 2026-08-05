@@ -69,6 +69,7 @@ MAX_NUMBER_LOSS_FRACTION = 0.2
 MIN_ENTITY_OVERLAP = 0.3
 NLLB_SHORT_UNIT_MAX_CHARS = 800
 VERIFIER_LONG_UNIT_MIN_CHARS = 1500
+NLLB_DISAGREEMENT_F1 = float(os.environ.get("NLLB_DISAGREEMENT_F1", "0.35"))
 
 NLLB_LANGUAGE_CODES = {
     "cmdc": ("zho_Hans", "eng_Latn"),
@@ -381,7 +382,7 @@ def validate_candidate(
         reference = nllb_translate(model, tokenizer, unit["source_text"], source_code, target_code, device)
         if reference:
             f1 = _chrf_precision(translation, reference)
-            if f1 < 0.5:
+            if f1 < NLLB_DISAGREEMENT_F1:
                 disagreement = True
     if disagreement:
         return "automatic_medium", ["large Qwen-versus-NLLB disagreement"]
