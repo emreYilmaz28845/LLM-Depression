@@ -1,0 +1,95 @@
+dataset: d3tec
+seed: 1337
+dataset_root: ${D3TEC_DATASET_ROOT:-/media/emre/Backup/AudioLLM/Datasets/D3TEC DATASET/D3TEC
+  DATASET}
+full_transcript_path: ${D3TEC_FULL_TRANSCRIPTS:-/media/emre/Backup/AudioLLM/Datasets/D3TEC
+  DATASET/D3TEC DATASET/transcripts_qwen3_asr_spanish.jsonl}
+segment_transcript_path: ${D3TEC_SEGMENT_TRANSCRIPTS:-/media/emre/Backup/AudioLLM/Datasets/D3TEC
+  DATASET/D3TEC DATASET/transcripts_qwen3_asr_spanish_segments.jsonl}
+model_name_or_path: ${AUDIO_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instruct}
+quarantine_path: ${PROJECT_ROOT}/configs/quarantines.yaml
+output_dirs:
+  manifest_dir: ${PROJECT_ROOT}/outputs/manifests_en/d3tec
+  split_dir: ${PROJECT_ROOT}/outputs/splits_en/d3tec
+  run_root: ${PROJECT_ROOT}/output_model_en/experiments/d3tec/audio_text_normalized
+prompt:
+  system: You are a psychologist analyzing speech and transcript information for depression
+    screening.
+  user_template: '{audio_context_block}
+
+    {transcript_block}Based on the {decision_basis}, determine whether the subject
+    is {label_descriptor}.
+
+    {label_instruction}'
+  prompt_language: english
+labels:
+  label_vocab_version: legacy_english_labels
+data:
+  use_audio: true
+  use_text: true
+  sample_mode: response_segments
+  segment_seconds: 30.0
+  segment_partition: equal_duration
+  train_chunk_policy: all_segments_response_normalized
+  eval_chunk_policy: all_segments
+  transcript_max_chars: 0
+  allow_empty_transcript: false
+split:
+  mode: cv
+  cv_protocol: train_val_test
+  outer_folds: 5
+  inner_val_ratio: 0.2
+  seed: 1337
+lora:
+  rank: 16
+  alpha: 32
+  dropout: 0.05
+  bias: none
+  target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+audio_adapter:
+  enabled: false
+  adapter_dim: 512
+  dropout: 0.1
+  train_projector: false
+training:
+  compute_budget_mode: rotary_reference
+  reference_virtual_epochs: 8
+  reference_examples_per_response: 1
+  num_train_epochs: 8
+  learning_rate: 0.0002
+  weight_decay: 0.0
+  warmup_ratio: 0.03
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 32
+  logging_steps: 27
+  bf16: true
+  gradient_checkpointing: true
+  run_final_eval_in_train: true
+  dataloader_num_workers: 0
+  audio_budget_audit: true
+  max_grad_norm: 1.0
+  class_balance: none
+  selection_metric: inner_val_macro_f1
+  selection_metric_mode: max
+  early_stopping:
+    enabled: false
+evaluation:
+  sample_prediction_mode: original_teacher_forced
+  aggregation_level: response_subject
+  generation_max_new_tokens: 8
+  num_beams: 1
+  do_sample: false
+  evaluate_last_checkpoint: false
+transcripts:
+  variant: english
+  cache_path: ${TRANSLATION_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/translations}/qwen36_27b_bf16_clinical_v1/d3tec/accepted.jsonl
+  minimum_status: automatic_high
+  require_complete: true

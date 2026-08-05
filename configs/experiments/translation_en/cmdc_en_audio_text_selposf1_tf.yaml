@@ -3,21 +3,19 @@ seed: 1337
 dataset_root: ${CMDC_DATASET_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/CMDC}
 quarantine_path: ${PROJECT_ROOT}/configs/quarantines.yaml
 model_name_or_path: /gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instruct
-transcripts:
-  variant: english
-  cache_path: ${TRANSLATION_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/translations}/qwen36_27b_bf16_clinical_v1/cmdc/accepted.jsonl
-  minimum_status: automatic_high
-  require_complete: true
 output_dirs:
   manifest_dir: ${PROJECT_ROOT}/outputs/manifests_en/cmdc
   split_dir: ${PROJECT_ROOT}/outputs/splits_en/cmdc
   run_root: ${PROJECT_ROOT}/output_model_en/audio_text/cmdc
 prompt:
-  system: You are a psychologist analyzing speech and transcript information for depression screening.
-  user_template: |-
-    {audio_context_block}
-    {transcript_block}Based on the {decision_basis}, determine whether the subject is {label_descriptor}.
-    {label_instruction}
+  system: You are a psychologist analyzing speech and transcript information for depression
+    screening.
+  user_template: '{audio_context_block}
+
+    {transcript_block}Based on the {decision_basis}, determine whether the subject
+    is {label_descriptor}.
+
+    {label_instruction}'
   prompt_language: english
 labels:
   label_vocab_version: legacy_english_labels
@@ -38,16 +36,16 @@ lora:
   dropout: 0.05
   bias: none
   target_modules:
-    - q_proj
-    - k_proj
-    - v_proj
-    - o_proj
-    - gate_proj
-    - up_proj
-    - down_proj
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
 training:
   num_train_epochs: 3
-  learning_rate: 2.0e-4
+  learning_rate: 0.0002
   weight_decay: 0.0
   warmup_ratio: 0.03
   per_device_train_batch_size: 1
@@ -74,3 +72,8 @@ evaluation:
   num_beams: 1
   do_sample: false
   headline_mode: original_teacher_forced
+transcripts:
+  variant: english
+  cache_path: ${TRANSLATION_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/translations}/qwen36_27b_bf16_clinical_v1/cmdc/accepted.jsonl
+  minimum_status: automatic_high
+  require_complete: true
