@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import unicodedata
@@ -261,23 +262,15 @@ def _load_nllb(model_path: str | None) -> tuple[Any, Any, str] | None:
         return None
 
 
-def _load_verifier_client(base_url: str | None, model: str | None) -> Any | None:
-    if not base_url or not model:
-        return None
+async def _verify_one(
+    client: Any,
+    model: str,
+    unit: dict[str, Any],
+    translation: str,
+    seed: int,
+) -> list[str]:
     try:
-        from openai import OpenAI
-
-        return OpenAI(base_url=base_url, api_key="EMPTY")
-    except Exception as exc:  # pragma: no cover - environment dependent
-        LOGGER.warning("Verifier pass unavailable: %s", exc)
-        return None
-
-
-def verify_with_qwen(client: Any, model: str, unit: dict[str, Any], translation: str, seed: int) -> list[str]:
-    if client is None:
-        return []
-    try:
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -307,13 +300,40 @@ def verify_with_qwen(client: Any, model: str, unit: dict[str, Any], translation:
         return ["verifier request failed"]
 
 
+async def _verify_long_units(
+    base_url: str,
+    model: str,
+    items: list[tuple[tuple[str, str, int], dict[str, Any], str]],
+    *,
+    seed: int,
+    concurrency: int,
+) -> dict[tuple[str, str, int], list[str]]:
+    if not items:
+        return {}
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(base_url=base_url, api_key="EMPTY")
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def guarded(
+        key: tuple[str, str, int], unit: dict[str, Any], translation: str
+    ) -> tuple[tuple[str, str, int], list[str]]:
+        async with semaphore:
+            return key, await _verify_one(client, model, unit, translation, seed)
+
+    results = await asyncio.gather(
+        *(guarded(key, unit, translation) for key, unit, translation in items)
+    )
+    await client.close()
+    return dict(results)
+
+
 def validate_candidate(
     unit: dict[str, Any],
     candidate: dict[str, Any],
     *,
     nllb: tuple[Any, Any, str] | None,
-    verifier_client: Any,
-    verifier_model: str | None,
+    verifier_flags: list[str] | None,
     seed: int,
 ) -> tuple[str, list[str]]:
     failures: list[str] = []
@@ -343,14 +363,8 @@ def validate_candidate(
     if not entity_overlap_ok(unit, translation):
         warnings.append("named entities not preserved")
 
-    verifier_flags: list[str] = []
-    if (
-        verifier_client is not None
-        and verifier_model
-        and len(str(unit.get("source_text", ""))) >= VERIFIER_LONG_UNIT_MIN_CHARS
-    ):
-        verifier_flags = verify_with_qwen(verifier_client, verifier_model, unit, translation, seed)
-    warnings.extend(verifier_flags)
+    if verifier_flags:
+        warnings.extend(verifier_flags)
 
     if warnings:
         return "automatic_low", warnings
@@ -462,7 +476,43 @@ def run_validation(
 
     units_by_key = {(u["unit_id"], u["field"], u.get("part_index", 0)): u for u in units}
     nllb = _load_nllb(nllb_model)
-    verifier_client = _load_verifier_client(verifier_base_url, verifier_model)
+
+    verifier_flags: dict[tuple[str, str, int], list[str]] = {}
+    if verifier_base_url and verifier_model:
+        import asyncio
+
+        long_items = [
+            (
+                (
+                    str(candidate["unit_id"]),
+                    str(candidate["field"]),
+                    int(candidate.get("part_index", 0)),
+                ),
+                units_by_key[
+                    (
+                        str(candidate["unit_id"]),
+                        str(candidate["field"]),
+                        int(candidate.get("part_index", 0)),
+                    )
+                ],
+                str(candidate["translation"]).strip(),
+            )
+            for candidate in candidates
+            if len(str(units_by_key[
+                (str(candidate["unit_id"]), str(candidate["field"]), int(candidate.get("part_index", 0)))
+            ].get("source_text", ""))) >= VERIFIER_LONG_UNIT_MIN_CHARS
+        ]
+        if long_items:
+            LOGGER.info("Verifier pass over %s long units", len(long_items))
+            verifier_flags = asyncio.run(
+                _verify_long_units(
+                    verifier_base_url,
+                    verifier_model,
+                    long_items,
+                    seed=seed,
+                    concurrency=int(os.environ.get("VERIFIER_CONCURRENCY", "8")),
+                )
+            )
 
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
@@ -480,8 +530,7 @@ def run_validation(
             unit,
             candidate,
             nllb=nllb,
-            verifier_client=verifier_client,
-            verifier_model=verifier_model,
+            verifier_flags=verifier_flags.get(key),
             seed=seed,
         )
         if str(unit["unit_id"]) in reviewed:
@@ -546,7 +595,7 @@ def run_validation(
         "failure_reasons": dict(failure_reasons),
         "consistency_failures": consistency_failures,
         "nllb_comparison": bool(nllb),
-        "verifier_pass": verifier_client is not None,
+        "verifier_pass": bool(verifier_flags) or (verifier_base_url and verifier_model),
         "reviewed_units": len(reviewed),
         "accepted_cache_sha256": accepted_cache_hash,
         "accepted_cache_record_count": len(accepted_sorted),
