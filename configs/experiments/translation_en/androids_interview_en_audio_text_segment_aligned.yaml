@@ -38,6 +38,7 @@ split:
   outer_folds: 5
   inner_val_ratio: 0.2
   seed: 1337
+  final_eval_partition: test
 lora:
   rank: 16
   alpha: 32
