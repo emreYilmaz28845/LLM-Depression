@@ -644,6 +644,16 @@ def test_validate_verifier_pass_runs_and_flags(tmp_path) -> None:
     assert any("missing invariants" in reason for reason in accepted[0]["reasons"])
 
 
+def test_nllb_disagreement_invariants() -> None:
+    from src.translation.validate import nllb_disagreement
+
+    assert nllb_disagreement("I did not go to the doctor.", "I went to the doctor.") is True
+    assert nllb_disagreement("I took 35 pills for 2 weeks.", "I took 35 pills for 2 weeks.") is False
+    assert nllb_disagreement("I took 35 pills for 2 weeks.", "I took 36 pills for 3 weeks.") is True
+    assert nllb_disagreement("I slept poorly.", "I did not sleep well.") is True
+    assert nllb_disagreement("Everything is fine.", "All is well.") is False
+
+
 def test_validate_reviewed_override(tmp_path) -> None:
     units = unit_rows_for_dataset(_cmdc_rows(), "cmdc")
     units_path = tmp_path / "units.jsonl"

@@ -69,7 +69,10 @@ MAX_NUMBER_LOSS_FRACTION = 0.2
 MIN_ENTITY_OVERLAP = 0.3
 NLLB_SHORT_UNIT_MAX_CHARS = 800
 VERIFIER_LONG_UNIT_MIN_CHARS = 1500
-NLLB_DISAGREEMENT_F1 = float(os.environ.get("NLLB_DISAGREEMENT_F1", "0.35"))
+_NEGATION_RE = re.compile(
+    r"\b(?:not|no|never|none|nor|without|won'?t|don'?t|doesn'?t|didn'?t|can'?t|cannot|isn'?t|aren'?t)\b",
+    re.IGNORECASE,
+)
 
 NLLB_LANGUAGE_CODES = {
     "cmdc": ("zho_Hans", "eng_Latn"),
@@ -207,18 +210,25 @@ def entity_overlap_ok(unit: dict[str, Any], translation: str) -> bool:
     return overlap >= MIN_ENTITY_OVERLAP
 
 
-def _chrf_precision(pred: str, ref: str) -> float:
-    pred_tokens = pred.lower().split()
-    ref_tokens = ref.lower().split()
-    if not pred_tokens or not ref_tokens:
-        return 0.0
-    counter = Counter(ref_tokens)
-    matched = 0
-    for token in pred_tokens:
-        if counter.get(token, 0) > 0:
-            counter[token] -= 1
-            matched += 1
-    return matched / len(pred_tokens)
+def nllb_disagreement(qwen_translation: str, nllb_translation: str) -> bool:
+    """Invariant-based cross-check: negation polarity or number sets diverge.
+
+    Token-level overlap against the weak distilled NLLB model is too noisy for
+    zh/tr/es/it sources; comparing meaning-level invariants (negation polarity
+    and digit sets) between the two English outputs is a far more reliable
+    disagreement signal.
+    """
+    qwen_neg = bool(_NEGATION_RE.search(qwen_translation))
+    nllb_neg = bool(_NEGATION_RE.search(nllb_translation))
+    if qwen_neg != nllb_neg:
+        return True
+    qwen_numbers = _normalized_numbers(qwen_translation)
+    nllb_numbers = _normalized_numbers(nllb_translation)
+    union = qwen_numbers | nllb_numbers
+    if not union:
+        return False
+    symmetric_difference = len(qwen_numbers ^ nllb_numbers) / len(union)
+    return symmetric_difference > 0.2
 
 
 def nllb_translate(
@@ -380,10 +390,8 @@ def validate_candidate(
             str(unit.get("dataset", "")), ("eng_Latn", "eng_Latn")
         )
         reference = nllb_translate(model, tokenizer, unit["source_text"], source_code, target_code, device)
-        if reference:
-            f1 = _chrf_precision(translation, reference)
-            if f1 < NLLB_DISAGREEMENT_F1:
-                disagreement = True
+        if reference and nllb_disagreement(translation, reference):
+            disagreement = True
     if disagreement:
         return "automatic_medium", ["large Qwen-versus-NLLB disagreement"]
     return "automatic_high", []
