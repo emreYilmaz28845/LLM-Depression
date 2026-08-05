@@ -149,6 +149,7 @@ else
 fi
 
 echo "[stage:translate] Translating units (resumable)" | tee -a "$ART_DIR/job_summary.txt"
+rm -f "$RUN_ROOT/failed.jsonl"
 TRANSLATE_ARGS=(
   --units "$RUN_ROOT/units.jsonl"
   --out "$RUN_ROOT/candidates.jsonl"
