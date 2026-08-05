@@ -35,6 +35,11 @@ RUN_NAMES="${RUN_NAMES:?Set RUN_NAMES (| separated)}"
 FOLDS="${FOLDS:?Set FOLDS}"
 INDEX="${INDEX:?Set INDEX}"
 
+if [ -f "$ENV_ACTIVATE" ]; then
+    # shellcheck disable=SC1090
+    source "$ENV_ACTIVATE"
+fi
+
 IFS='|' read -r -a CONFIGS <<< "$CONFIG_LIST"
 IFS='|' read -r -a RUNS <<< "$RUN_NAMES"
 read -r -a FOLD_ARRAY <<< "$FOLDS"
