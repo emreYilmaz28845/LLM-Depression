@@ -48,13 +48,12 @@ TURKISH_ONLY_RE = re.compile(r"[\u011f\u015f\u0131\u0130]")
 SPANISH_ONLY_RE = re.compile(r"[\u00d1\u00f1\u00bf\u00a1]")
 ITALIAN_ONLY_RE = re.compile(r"[\u00f9]")
 EXPLANATION_RE = re.compile(
-    r"\b(?:translation|explanation|reason|analysis|interpretation|summary)\s*:\s*|"
-    r"\b(?:here is|here's|sure|of course)\b|```|"
-    r"\b(?:missing|added)\s*(?:invariant|fact|number|name)s?\b",
+    r"\b(?:translation|explanation|reason|analysis|interpretation|summary)\s*:\s*|```",
     re.IGNORECASE,
 )
 DIGIT_RE = re.compile(r"\d+(?:[.,]\d+)?")
 CAPITALIZED_RE = re.compile(r"(?<![A-Za-z])[A-Z][A-Za-z]+")
+_SENTENCE_BOUNDARY = frozenset(".!?;:…。！？；：")
 
 SENSITIVE_TERMS: dict[str, tuple[str, ...]] = {
     "en": ("suicide", "suicidal", "self-harm", "kill myself", "end my life", "die", "death"),
@@ -101,8 +100,11 @@ def _normalized_numbers(text: str) -> set[str]:
 
 
 def _capitalized_tokens(text: str) -> set[str]:
-    tokens = set()
+    tokens: set[str] = set()
     for match in CAPITALIZED_RE.finditer(text):
+        previous = text[: match.start()].rstrip()
+        if not previous or previous[-1] in _SENTENCE_BOUNDARY:
+            continue
         token = _strip_accents(match.group(0)).lower()
         if len(token) >= 2:
             tokens.add(token)
@@ -594,7 +596,7 @@ def run_validation(
         "failure_reasons": dict(failure_reasons),
         "consistency_failures": consistency_failures,
         "nllb_comparison": bool(nllb),
-        "verifier_pass": bool(verifier_flags) or (verifier_base_url and verifier_model),
+        "verifier_pass": bool(verifier_flags) or bool(verifier_base_url and verifier_model),
         "reviewed_units": len(reviewed),
         "accepted_cache_sha256": accepted_cache_hash,
         "accepted_cache_record_count": len(accepted_sorted),
