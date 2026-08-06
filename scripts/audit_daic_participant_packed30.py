@@ -260,10 +260,10 @@ class Auditor:
         run_root = Path(run_root)
         fold_dirs = sorted(
             path
-            for path in run_root.glob("*/fold_0")
-            if not str(path.parent.name).startswith("smoke_")
+            for path in run_root.glob("*/*/fold_0")
+            if not str(path.parent.parent.name).startswith("smoke_")
         )
-        modalities = {str(path.parent.name) for path in fold_dirs}
+        modalities = {str(path.parent.parent.name) for path in fold_dirs}
         if len(fold_dirs) != 3 or modalities != {"audio_only", "audio_text", "text_only"}:
             self.require(False, f"Expected exactly three non-smoke modality run dirs, found {sorted(modalities)}")
             return
