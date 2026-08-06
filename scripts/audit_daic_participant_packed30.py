@@ -258,10 +258,14 @@ class Auditor:
 
     def check_result_acceptance(self, run_root: Path) -> None:
         run_root = Path(run_root)
-        fold_dirs = sorted(run_root.glob("*/fold_0"))
+        fold_dirs = sorted(
+            path
+            for path in run_root.glob("*/fold_0")
+            if not str(path.parent.name).startswith("smoke_")
+        )
         modalities = {str(path.parent.name) for path in fold_dirs}
         if len(fold_dirs) != 3 or modalities != {"audio_only", "audio_text", "text_only"}:
-            self.require(False, f"Expected exactly three modality run dirs, found {sorted(modalities)}")
+            self.require(False, f"Expected exactly three non-smoke modality run dirs, found {sorted(modalities)}")
             return
         for fold_dir in fold_dirs:
             modality = str(fold_dir.parent.name)
