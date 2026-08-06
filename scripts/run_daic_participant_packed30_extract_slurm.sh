@@ -40,13 +40,15 @@ exec 2> >(tee -a "$LOG_ROOT/extract-${SLURM_JOB_ID}.err" >&2)
 
 # Locked dependency versions; a mismatch is a STOP condition.
 python - <<'PY'
-import platform, importlib.metadata as md
-required = {"python": "3.10.14", "scikit-learn": "1.7.0", "xgboost": "2.1.4"}
+import platform
+import xgboost
+import sklearn
 actual = {
     "python": platform.python_version(),
-    "scikit-learn": md.version("scikit-learn"),
-    "xgboost": md.version("xgboost"),
+    "scikit-learn": sklearn.__version__,
+    "xgboost": xgboost.__version__,
 }
+required = {"python": "3.10.14", "scikit-learn": "1.7.0", "xgboost": "2.1.4"}
 print("versions", actual)
 if actual != required:
     raise SystemExit(f"STOP: locked hidden/head dependency versions required {required}, got {actual}")

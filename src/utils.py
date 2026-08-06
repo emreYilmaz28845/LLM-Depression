@@ -61,6 +61,7 @@ OPTIONAL_OVERRIDE_PATHS = {
     ("split", "dev_pool_partitions"),
     ("split", "outer_folds"),
     ("split", "smoke_subject_limit"),
+    ("evaluation", "inference_dtype"),
 }
 GENERATION_PARSE_PREFIXES = (
     "answer:",
