@@ -48,11 +48,12 @@ def _load_yaml(path: Path) -> dict:
 
 
 class JointK4Auditor:
-    def __init__(self, manifest_dir: Path, split_dir: Path, run_root: Path, smoke: bool):
+    def __init__(self, manifest_dir: Path, split_dir: Path, run_root: Path, smoke: bool, allow_missing_checkpoints: bool = False):
         self.manifest_dir = Path(manifest_dir)
         self.split_dir = Path(split_dir)
         self.run_root = Path(run_root)
         self.smoke = bool(smoke)
+        self.allow_missing_checkpoints = bool(allow_missing_checkpoints)
         self.failures: list[str] = []
 
     def require(self, condition: bool, message: str) -> None:
@@ -76,9 +77,8 @@ class JointK4Auditor:
         )
 
     def _is_complete_production_run(self, fold_dir: Path) -> bool:
-        return (
+        evidence = (
             (fold_dir / "run_config.yaml").is_file()
-            and (fold_dir / "best_model" / "adapter_model.safetensors").is_file()
             and (
                 fold_dir
                 / "best_model"
@@ -86,6 +86,11 @@ class JointK4Auditor:
                 / "metrics_original_teacher_forced.json"
             ).is_file()
         )
+        if not evidence:
+            return False
+        if self.allow_missing_checkpoints:
+            return True
+        return (fold_dir / "best_model" / "adapter_model.safetensors").is_file()
 
     def _runs_by_modality(self) -> dict[str, list[Path]]:
         runs_by_modality: dict[str, list[Path]] = defaultdict(list)
@@ -247,11 +252,12 @@ class JointK4Auditor:
 
     def check_qwen_rows(self, fold_dir: Path, modality: str, run_name: str) -> None:
         best_dir = fold_dir / "best_model"
-        self.require(
-            (best_dir / "adapter_model.safetensors").is_file()
-            and (best_dir / "adapter_config.json").is_file(),
-            f"{modality}/{run_name}: best_model is missing",
-        )
+        if not self.allow_missing_checkpoints:
+            self.require(
+                (best_dir / "adapter_model.safetensors").is_file()
+                and (best_dir / "adapter_config.json").is_file(),
+                f"{modality}/{run_name}: best_model is missing",
+            )
         eval_dir = best_dir / ("standalone_eval_pass1" if self.smoke else "standalone_eval")
         metrics_path = eval_dir / "metrics_original_teacher_forced.json"
         self.require(metrics_path.is_file(), f"{modality}/{run_name}: missing official-test Qwen metrics")
@@ -405,10 +411,11 @@ class JointK4Auditor:
             metadata.get("saved_run_config_sha256") == sha256_file(run_config_path),
             f"{modality}/{run_name}: cache run_config hash does not match the run dir",
         )
-        self.require(
-            metadata.get("adapter_sha256") == sha256_file(best_dir / "adapter_model.safetensors"),
-            f"{modality}/{run_name}: cache adapter hash does not match best_model",
-        )
+        if not self.allow_missing_checkpoints:
+            self.require(
+                metadata.get("adapter_sha256") == sha256_file(best_dir / "adapter_model.safetensors"),
+                f"{modality}/{run_name}: cache adapter hash does not match best_model",
+            )
         self.require(
             bool(metadata.get("manifest_sha256")) and bool(metadata.get("protocol_id")),
             f"{modality}/{run_name}: cache lacks manifest/protocol provenance",
@@ -447,12 +454,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split-dir", required=True, type=Path)
     parser.add_argument("--run-root", required=True, type=Path, help="output_model/experiments/daic_participant_packed30_jointk4")
     parser.add_argument("--smoke", action="store_true", help="Audit smoke artifacts with smoke cardinalities.")
+    parser.add_argument(
+        "--allow-missing-checkpoints",
+        action="store_true",
+        help="Evidence-only audit for sync-backs that exclude best_model/ "
+        "(adapter and adapter-hash checks are skipped; metrics, predictions, "
+        "run_config, schedule, caches, and heads are still required).",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    auditor = JointK4Auditor(args.manifest_dir, args.split_dir, args.run_root, args.smoke)
+    auditor = JointK4Auditor(
+        args.manifest_dir,
+        args.split_dir,
+        args.run_root,
+        args.smoke,
+        allow_missing_checkpoints=args.allow_missing_checkpoints,
+    )
     exit_code = auditor.audit()
     if auditor.failures:
         print(f"jointk4 audit FAILED with {len(auditor.failures)} assertion(s).", file=sys.stderr)
