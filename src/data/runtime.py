@@ -463,6 +463,7 @@ def _build_subject_level_text_only_examples(
                 "prompt_text": prompt_text,
                 "training_text": build_training_text(prompt_text, internal_label_text),
                 "question_id": canonical_row.get("question_id", ""),
+                "protocol_id": canonical_row.get("protocol_id", ""),
             }
         )
         if transcript_log:
