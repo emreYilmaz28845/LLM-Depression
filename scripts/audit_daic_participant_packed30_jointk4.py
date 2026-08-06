@@ -238,10 +238,6 @@ class JointK4Auditor:
                 f"{modality}/{run_name}: smoke eval subjects differ from the saved split",
             )
             return
-        split_used = read_json(fold_dir / "logs" / "split_used.json")
-        subject_partitions = read_jsonl(self.split_dir / "daic_subject_partitions.json")
-        if not subject_partitions:
-            subject_partitions = read_jsonl(self.split_dir / "daic_participant_speech_packed30_subjects.jsonl")
         val_ids = set(split_used.get("selection_subject_ids", []))
         test_ids = set(split_used.get("final_eval_subject_ids", []))
         self.require(

@@ -65,7 +65,17 @@ if [ "$DRY_RUN" = "0" ]; then
 fi
 
 export PROJECT_ROOT ENV_ACTIVATE DAIC_UNPROCESSED_ROOT DAIC_LABEL_ROOT SEED
-TRAIN_JOBS=0
+export MODEL_PATH
+EXPERIMENT_RUN_ROOT="$PROJECT_ROOT/output_model/experiments/daic_participant_packed30_jointk4"
+
+declare -A CONFIG_BY_MODALITY
+declare -A RUN_NAME_BY_MODALITY
+declare -A FOLD_DIR_BY_MODALITY
+declare -A MODALITY_JOBS
+
+# Two-pass submission: stage jobs for BOTH modalities are submitted before the
+# next stage, so each audit waits on BOTH chains' heads and never audits a
+# half-finished run-root.
 for modality in audio_only audio_text; do
     config="${CONFIG_BY_MODALITY[$modality]}"
     run_name="daic_participant_p30_jointk4_${modality}_s${SEED}_${SHORTCOMMIT}"
@@ -83,68 +93,69 @@ PY
         echo "Refusing overwrite of existing run directory: $fold_dir" >&2
         exit 1
     fi
-
-    export CONFIG="$config" RUN_NAME="$run_name" FOLD=0
-    export MODEL_PATH
-    eval_export_spec="PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV_ACTIVATE,CONFIG=$config,FOLD=0,RUN_NAME=$run_name,SEED=$SEED,DAIC_UNPROCESSED_ROOT=$DAIC_UNPROCESSED_ROOT,DAIC_LABEL_ROOT=$DAIC_LABEL_ROOT,MODEL_PATH=$MODEL_PATH"
-
-    if [ "$DRY_RUN" = "1" ]; then
-        TRAIN_JOBS=$((TRAIN_JOBS + 1))
-        echo "DRY RUN modality=$modality run_name=$run_name"
-        echo "  train   : sbatch --gres=gpu:4 --time=72:00:00 (4 GPUs, 20 CPUs) $TRAIN_WORKER"
-        echo "  eval    : --dependency=afterok:<train> --gres=gpu:1 --time=24:00:00 (fp32) $EVAL_WORKER -> $fold_dir/best_model/standalone_eval"
-        echo "  extract : --dependency=afterok:<eval>  --gres=gpu:1 --time=24:00:00 (fp32) $EXTRACT_WORKER -> hidden_features/$modality"
-        echo "  heads   : --dependency=afterok:<extract> (0 GPUs, 4 CPUs) $HEADS_WORKER -> logreg_raw + xgb_raw"
-        echo "  audit   : --dependency=afterok:<heads>  (0 GPUs, 4 CPUs) $AUDIT_WORKER"
-        continue
-    fi
-
-    train_raw="$(sbatch --parsable --job-name="jk4-${modality:0:6}-train" \
-        --export="$eval_export_spec" "$TRAIN_WORKER")"
-    train_id="${train_raw%%;*}"
-    TRAIN_JOBS=$((TRAIN_JOBS + 1))
-    printf '%s\ttrain\t%s\t%s\t%s\t-\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$train_id" "$modality" "$run_name" "$config" "$SOURCE_COMMIT" >> "$SUBMISSION_LOG"
-    echo "Submitted train modality=$modality job_id=$train_id run_name=$run_name"
-
-    eval_raw="$(sbatch --parsable --job-name="jk4-${modality:0:6}-eval" \
-        --dependency="afterok:$train_id" --export="$eval_export_spec" "$EVAL_WORKER")"
-    eval_id="${eval_raw%%;*}"
-    printf '%s\teval\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$eval_id" "$modality" "$run_name" "$train_id" "$config" "$SOURCE_COMMIT" >> "$SUBMISSION_LOG"
-    echo "Submitted eval modality=$modality job_id=$eval_id (afterok:$train_id)"
-
-    cache_dir="$run_root/hidden_features/$modality"
-    extract_export_spec="$eval_export_spec,CHECKPOINT_DIR=$fold_dir/best_model,CACHE_DIR=$cache_dir,CONDITION=$modality"
-    extract_raw="$(sbatch --parsable --job-name="jk4-${modality:0:6}-extract" \
-        --dependency="afterok:$eval_id" --export="$extract_export_spec" "$EXTRACT_WORKER")"
-    extract_id="${extract_raw%%;*}"
-    printf '%s\textract\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$extract_id" "$modality" "$run_name" "$eval_id" "$config" "$SOURCE_COMMIT" >> "$SUBMISSION_LOG"
-    echo "Submitted extract modality=$modality job_id=$extract_id (afterok:$eval_id)"
-
-    heads_dir="$run_root/hidden_classifiers/$modality"
-    heads_export_spec="$eval_export_spec,CACHE_DIR=$cache_dir,OUTPUT_DIR=$heads_dir"
-    heads_raw="$(sbatch --parsable --job-name="jk4-${modality:0:6}-heads" \
-        --dependency="afterok:$extract_id" --export="$heads_export_spec" "$HEADS_WORKER")"
-    heads_id="${heads_raw%%;*}"
-    printf '%s\theads\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$heads_id" "$modality" "$run_name" "$extract_id" "$config" "$SOURCE_COMMIT" >> "$SUBMISSION_LOG"
-    echo "Submitted heads modality=$modality job_id=$heads_id (afterok:$extract_id)"
-
-    audit_export_spec="$eval_export_spec,RUN_ROOT=$run_root,MANIFEST_DIR=$PROJECT_ROOT/outputs/manifests_daic_participant_packed30,SPLIT_DIR=$PROJECT_ROOT/outputs/splits_daic_participant_packed30,SMOKE=0"
-    audit_raw="$(sbatch --parsable --job-name="jk4-${modality:0:6}-audit" \
-        --dependency="afterok:$heads_id" --export="$audit_export_spec" "$AUDIT_WORKER")"
-    audit_id="${audit_raw%%;*}"
-    printf '%s\taudit\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$audit_id" "$modality" "$run_name" "$heads_id" "$config" "$SOURCE_COMMIT" >> "$SUBMISSION_LOG"
-    echo "Submitted audit modality=$modality job_id=$audit_id (afterok:$heads_id)"
+    CONFIG_BY_MODALITY[$modality]="$config"
+    RUN_NAME_BY_MODALITY[$modality]="$run_name"
+    FOLD_DIR_BY_MODALITY[$modality]="$fold_dir"
 done
 
-echo "jointk4 production plan: train jobs=$TRAIN_JOBS per-stage chains=2 run_id=$RUN_ID source_commit=$SOURCE_COMMIT"
+submit_stage() {
+    local stage="$1" modality="$2" dependency="$3" extra_export="$4"
+    local config="${CONFIG_BY_MODALITY[$modality]}"
+    local run_name="${RUN_NAME_BY_MODALITY[$modality]}"
+    local worker=""
+    case "$stage" in
+        train) worker="$TRAIN_WORKER" ;;
+        eval) worker="$EVAL_WORKER" ;;
+        extract) worker="$EXTRACT_WORKER" ;;
+        heads) worker="$HEADS_WORKER" ;;
+        audit) worker="$AUDIT_WORKER" ;;
+    esac
+    local export_spec="PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV_ACTIVATE,CONFIG=$config,FOLD=0,RUN_NAME=$run_name,SEED=$SEED,DAIC_UNPROCESSED_ROOT=$DAIC_UNPROCESSED_ROOT,DAIC_LABEL_ROOT=$DAIC_LABEL_ROOT,MODEL_PATH=$MODEL_PATH"
+    if [ -n "$extra_export" ]; then export_spec="$export_spec,$extra_export"; fi
+    local raw=""
+    if [ "$DRY_RUN" = "1" ]; then
+        echo "DRY RUN modality=$modality run_name=$run_name"
+        echo "  $stage : sbatch ${dependency:+--dependency=$dependency }$worker"
+        MODALITY_JOBS[$modality,${stage}_jobs]=$(( ${MODALITY_JOBS[$modality,${stage}_jobs]:-0} + 1 ))
+        return
+    fi
+    local sbatch_cmd=(sbatch --parsable --job-name="jk4-${modality:0:6}-${stage:0:4}")
+    if [ -n "$dependency" ]; then sbatch_cmd+=(--dependency="$dependency"); fi
+    sbatch_cmd+=(--export="$export_spec" "$worker")
+    raw="$("${sbatch_cmd[@]}")"
+    local job_id="${raw%%;*}"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$stage" "$job_id" "$modality" "$run_name" "$dependency" "$config" "$SOURCE_COMMIT" >> "$SUBMISSION_LOG"
+    echo "Submitted $stage modality=$modality job_id=$job_id (${dependency:-no dependency})"
+    MODALITY_JOBS[$modality,$stage]="$job_id"
+}
+
+# Stage 1: both trains (independent, parallel).
+submit_stage train audio_only "" ""
+submit_stage train audio_text "" ""
 if [ "$DRY_RUN" = "1" ]; then
-    if [ "$TRAIN_JOBS" -ne 2 ]; then
-        echo "DRY RUN expected exactly 2 backbone trainings; found $TRAIN_JOBS." >&2
+    if [ "${MODALITY_JOBS[audio_only,train_jobs]}" != "1" ] || [ "${MODALITY_JOBS[audio_text,train_jobs]}" != "1" ]; then
+        echo "DRY RUN expected exactly 2 backbone trainings; found a mismatch." >&2
         exit 1
     fi
     echo "DRY RUN complete: no jobs submitted. Review the plan, then submit with DRY_RUN=0 and explicit approval."
-else
-    echo "Submitted real jobs. Registry: $SUBMISSION_LOG"
-    echo "Submission is not completion: monitor squeue/sacct, sync results back (output_model minus best_model/last_model, logs/, outputs/), never rsync --delete, and run:"
-    echo "  python $AUDIT_SCRIPT --run-root <synced run root> --manifest-dir outputs/manifests_daic_participant_packed30 --split-dir outputs/splits_daic_participant_packed30"
+    exit 0
 fi
+# Stage 2: both evals after their own train.
+submit_stage eval audio_only "afterok:${MODALITY_JOBS[audio_only,train]}" ""
+submit_stage eval audio_text "afterok:${MODALITY_JOBS[audio_text,train]}" ""
+# Stage 3: both extracts after their own eval (fp32).
+submit_stage extract audio_only "afterok:${MODALITY_JOBS[audio_only,eval]}" "CHECKPOINT_DIR=${FOLD_DIR_BY_MODALITY[audio_only]}/best_model,CACHE_DIR=$EXPERIMENT_RUN_ROOT/audio_only/${RUN_NAME_BY_MODALITY[audio_only]}/hidden_features/audio_only,CONDITION=audio_only"
+submit_stage extract audio_text "afterok:${MODALITY_JOBS[audio_text,eval]}" "CHECKPOINT_DIR=${FOLD_DIR_BY_MODALITY[audio_text]}/best_model,CACHE_DIR=$EXPERIMENT_RUN_ROOT/audio_text/${RUN_NAME_BY_MODALITY[audio_text]}/hidden_features/audio_text,CONDITION=audio_text"
+# Stage 4: both heads after their own extract.
+submit_stage heads audio_only "afterok:${MODALITY_JOBS[audio_only,extract]}" "CACHE_DIR=$EXPERIMENT_RUN_ROOT/audio_only/${RUN_NAME_BY_MODALITY[audio_only]}/hidden_features/audio_only,OUTPUT_DIR=$EXPERIMENT_RUN_ROOT/audio_only/${RUN_NAME_BY_MODALITY[audio_only]}/hidden_classifiers/audio_only"
+submit_stage heads audio_text "afterok:${MODALITY_JOBS[audio_text,extract]}" "CACHE_DIR=$EXPERIMENT_RUN_ROOT/audio_text/${RUN_NAME_BY_MODALITY[audio_text]}/hidden_features/audio_text,OUTPUT_DIR=$EXPERIMENT_RUN_ROOT/audio_text/${RUN_NAME_BY_MODALITY[audio_text]}/hidden_classifiers/audio_text"
+# Stage 5: both audits, each waiting on BOTH chains' heads so the shared
+# run-root is complete.
+audit_extra="RUN_ROOT=$EXPERIMENT_RUN_ROOT,MANIFEST_DIR=$PROJECT_ROOT/outputs/manifests_daic_participant_packed30,SPLIT_DIR=$PROJECT_ROOT/outputs/splits_daic_participant_packed30,SMOKE=0"
+submit_stage audit audio_only "afterok:${MODALITY_JOBS[audio_only,heads]},afterok:${MODALITY_JOBS[audio_text,heads]}" "$audit_extra"
+submit_stage audit audio_text "afterok:${MODALITY_JOBS[audio_only,heads]},afterok:${MODALITY_JOBS[audio_text,heads]}" "$audit_extra"
+
+echo "jointk4 production plan: train jobs=2 per-stage chains=2 run_id=$RUN_ID source_commit=$SOURCE_COMMIT"
+echo "Submitted real jobs. Registry: $SUBMISSION_LOG"
+echo "Submission is not completion: monitor squeue/sacct, sync results back (output_model minus best_model/last_model, logs/, outputs/), never rsync --delete, and run:"
+echo "  python $AUDIT_SCRIPT --run-root $EXPERIMENT_RUN_ROOT --manifest-dir outputs/manifests_daic_participant_packed30 --split-dir outputs/splits_daic_participant_packed30"

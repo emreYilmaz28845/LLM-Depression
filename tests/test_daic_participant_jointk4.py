@@ -492,14 +492,16 @@ def _run_dry_run(script: str, run_id: str) -> subprocess.CompletedProcess:
 def test_submit_production_dry_run_two_chains() -> None:
     result = _run_dry_run("submit_daic_participant_packed30_jointk4.sh", "dry_prod_jointk4")
     assert result.returncode == 0, result.stderr
-    assert result.stdout.count("  train   : sbatch --gres=gpu:4") == 2
+    assert result.stdout.count("DRY RUN modality=") == 2
+    assert result.stdout.count("  train : sbatch") == 2
     assert "DRY RUN complete: no jobs submitted" in result.stdout
 
 
 def test_submit_smoke_dry_run_two_chains() -> None:
     result = _run_dry_run("submit_daic_participant_packed30_jointk4_smoke.sh", "dry_smoke_jointk4")
     assert result.returncode == 0, result.stderr
-    assert result.stdout.count("  smoke-train : sbatch --gres=gpu:1") == 2
+    assert result.stdout.count("DRY RUN modality=") == 2
+    assert result.stdout.count("  train : sbatch") == 2
     assert "DRY RUN complete: no jobs submitted" in result.stdout
 
 

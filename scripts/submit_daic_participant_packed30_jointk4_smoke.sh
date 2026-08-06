@@ -67,7 +67,17 @@ if [ "$DRY_RUN" = "0" ]; then
 fi
 
 export PROJECT_ROOT ENV_ACTIVATE DAIC_UNPROCESSED_ROOT DAIC_LABEL_ROOT SEED SMOKE_SUBJECT_LIMIT
-TRAIN_JOBS=0
+export MODEL_PATH
+EXPERIMENT_RUN_ROOT="$PROJECT_ROOT/output_model/experiments/daic_participant_packed30_jointk4"
+
+declare -A CONFIG_BY_MODALITY
+declare -A RUN_NAME_BY_MODALITY
+declare -A FOLD_DIR_BY_MODALITY
+declare -A MODALITY_JOBS
+
+# Two-pass submission: stage jobs for BOTH modalities are submitted before the
+# next stage, so each audit waits on BOTH chains' heads and never audits a
+# half-finished run-root.
 for modality in audio_only audio_text; do
     config="${CONFIG_BY_MODALITY[$modality]}"
     run_name="smoke_p30_jointk4_${modality}_s${SEED}_${SHORTCOMMIT}"
@@ -85,68 +95,68 @@ PY
         echo "Refusing overwrite of existing run directory: $fold_dir" >&2
         exit 1
     fi
-
-    export CONFIG="$config" RUN_NAME="$run_name" FOLD=0
-    export MODEL_PATH
-    eval_export_spec="PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV_ACTIVATE,CONFIG=$config,FOLD=0,RUN_NAME=$run_name,SEED=$SEED,SMOKE_SUBJECT_LIMIT=$SMOKE_SUBJECT_LIMIT,DAIC_UNPROCESSED_ROOT=$DAIC_UNPROCESSED_ROOT,DAIC_LABEL_ROOT=$DAIC_LABEL_ROOT,MODEL_PATH=$MODEL_PATH"
-
-    if [ "$DRY_RUN" = "1" ]; then
-        TRAIN_JOBS=$((TRAIN_JOBS + 1))
-        echo "DRY RUN modality=$modality run_name=$run_name"
-        echo "  smoke-train : sbatch --gres=gpu:1 --time=24:00:00 (1 GPU, 1 epoch, $SMOKE_SUBJECT_LIMIT subjects) $TRAIN_WORKER"
-        echo "  eval det    : --dependency=afterok:<train> --gres=gpu:1 --time=24:00:00 (bf16, pass1+pass2+compare) $EVAL_DETERMINISM_WORKER"
-        echo "  extract     : --dependency=afterok:<eval-det> --gres=gpu:1 --time=24:00:00 (bf16) $EXTRACT_WORKER -> hidden_features/$modality"
-        echo "  heads       : --dependency=afterok:<extract> (0 GPUs, 4 CPUs) $HEADS_WORKER -> logreg_raw + xgb_raw"
-        echo "  audit       : --dependency=afterok:<heads> (0 GPUs, 4 CPUs, --smoke) $AUDIT_WORKER"
-        continue
-    fi
-
-    train_raw="$(sbatch --parsable --job-name="jk4-smoke-${modality:0:6}" \
-        --export="$eval_export_spec" "$TRAIN_WORKER")"
-    train_id="${train_raw%%;*}"
-    TRAIN_JOBS=$((TRAIN_JOBS + 1))
-    printf '%s\tsmoke_train\t%s\t%s\t%s\t-\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$train_id" "$modality" "$run_name" "$config" "$SOURCE_COMMIT" >> "$SUBMISSION_LOG"
-    echo "Submitted smoke train modality=$modality job_id=$train_id run_name=$run_name"
-
-    eval_raw="$(sbatch --parsable --job-name="jk4-smoke-${modality:0:6}-eval" \
-        --dependency="afterok:$train_id" --export="$eval_export_spec" "$EVAL_DETERMINISM_WORKER")"
-    eval_id="${eval_raw%%;*}"
-    printf '%s\teval_determinism\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$eval_id" "$modality" "$run_name" "$train_id" "$config" "$SOURCE_COMMIT" >> "$SUBMISSION_LOG"
-    echo "Submitted eval determinism modality=$modality job_id=$eval_id (afterok:$train_id)"
-
-    cache_dir="$run_root/hidden_features/$modality"
-    extract_export_spec="$eval_export_spec,CHECKPOINT_DIR=$fold_dir/best_model,CACHE_DIR=$cache_dir,CONDITION=$modality,EXTRACTION_INFERENCE_DTYPE=bf16"
-    extract_raw="$(sbatch --parsable --job-name="jk4-smoke-${modality:0:6}-extract" \
-        --dependency="afterok:$eval_id" --export="$extract_export_spec" "$EXTRACT_WORKER")"
-    extract_id="${extract_raw%%;*}"
-    printf '%s\textract\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$extract_id" "$modality" "$run_name" "$eval_id" "$config" "$SOURCE_COMMIT" >> "$SUBMISSION_LOG"
-    echo "Submitted extract modality=$modality job_id=$extract_id (afterok:$eval_id)"
-
-    heads_dir="$run_root/hidden_classifiers/$modality"
-    heads_export_spec="$eval_export_spec,CACHE_DIR=$cache_dir,OUTPUT_DIR=$heads_dir"
-    heads_raw="$(sbatch --parsable --job-name="jk4-smoke-${modality:0:6}-heads" \
-        --dependency="afterok:$extract_id" --export="$heads_export_spec" "$HEADS_WORKER")"
-    heads_id="${heads_raw%%;*}"
-    printf '%s\theads\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$heads_id" "$modality" "$run_name" "$extract_id" "$config" "$SOURCE_COMMIT" >> "$SUBMISSION_LOG"
-    echo "Submitted heads modality=$modality job_id=$heads_id (afterok:$extract_id)"
-
-    audit_export_spec="$eval_export_spec,RUN_ROOT=$run_root,MANIFEST_DIR=$PROJECT_ROOT/outputs/manifests_daic_participant_packed30,SPLIT_DIR=$PROJECT_ROOT/outputs/splits_daic_participant_packed30,SMOKE=1"
-    audit_raw="$(sbatch --parsable --job-name="jk4-smoke-${modality:0:6}-audit" \
-        --dependency="afterok:$heads_id" --export="$audit_export_spec" "$AUDIT_WORKER")"
-    audit_id="${audit_raw%%;*}"
-    printf '%s\taudit\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$audit_id" "$modality" "$run_name" "$heads_id" "$config" "$SOURCE_COMMIT" >> "$SUBMISSION_LOG"
-    echo "Submitted audit modality=$modality job_id=$audit_id (afterok:$heads_id)"
+    CONFIG_BY_MODALITY[$modality]="$config"
+    RUN_NAME_BY_MODALITY[$modality]="$run_name"
+    FOLD_DIR_BY_MODALITY[$modality]="$fold_dir"
 done
 
-echo "jointk4 smoke plan: train jobs=$TRAIN_JOBS per-stage chains=2 run_id=$RUN_ID source_commit=$SOURCE_COMMIT"
+submit_stage() {
+    local stage="$1" modality="$2" dependency="$3" extra_export="$4"
+    local config="${CONFIG_BY_MODALITY[$modality]}"
+    local run_name="${RUN_NAME_BY_MODALITY[$modality]}"
+    local worker=""
+    case "$stage" in
+        train) worker="$TRAIN_WORKER" ;;
+        eval_det) worker="$EVAL_DETERMINISM_WORKER" ;;
+        extract) worker="$EXTRACT_WORKER" ;;
+        heads) worker="$HEADS_WORKER" ;;
+        audit) worker="$AUDIT_WORKER" ;;
+    esac
+    local export_spec="PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV_ACTIVATE,CONFIG=$config,FOLD=0,RUN_NAME=$run_name,SEED=$SEED,SMOKE_SUBJECT_LIMIT=$SMOKE_SUBJECT_LIMIT,DAIC_UNPROCESSED_ROOT=$DAIC_UNPROCESSED_ROOT,DAIC_LABEL_ROOT=$DAIC_LABEL_ROOT,MODEL_PATH=$MODEL_PATH"
+    if [ -n "$extra_export" ]; then export_spec="$export_spec,$extra_export"; fi
+    local raw=""
+    if [ "$DRY_RUN" = "1" ]; then
+        echo "DRY RUN modality=$modality run_name=$run_name"
+        echo "  $stage : sbatch ${dependency:+--dependency=$dependency }$worker"
+        MODALITY_JOBS[$modality,${stage}_jobs]=$(( ${MODALITY_JOBS[$modality,${stage}_jobs]:-0} + 1 ))
+        return
+    fi
+    local sbatch_cmd=(sbatch --parsable --job-name="jk4-smoke-${modality:0:6}-${stage:0:4}")
+    if [ -n "$dependency" ]; then sbatch_cmd+=(--dependency="$dependency"); fi
+    sbatch_cmd+=(--export="$export_spec" "$worker")
+    raw="$("${sbatch_cmd[@]}")"
+    local job_id="${raw%%;*}"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$stage" "$job_id" "$modality" "$run_name" "$dependency" "$config" "$SOURCE_COMMIT" >> "$SUBMISSION_LOG"
+    echo "Submitted $stage modality=$modality job_id=$job_id (${dependency:-no dependency})"
+    MODALITY_JOBS[$modality,$stage]="$job_id"
+}
+
+# Stage 1: both smoke trains (independent, parallel; 1 GPU each).
+submit_stage train audio_only "" ""
+submit_stage train audio_text "" ""
 if [ "$DRY_RUN" = "1" ]; then
-    if [ "$TRAIN_JOBS" -ne 2 ]; then
-        echo "DRY RUN expected exactly 2 backbone trainings; found $TRAIN_JOBS." >&2
+    if [ "${MODALITY_JOBS[audio_only,train_jobs]}" != "1" ] || [ "${MODALITY_JOBS[audio_text,train_jobs]}" != "1" ]; then
+        echo "DRY RUN expected exactly 2 backbone trainings; found a mismatch." >&2
         exit 1
     fi
     echo "DRY RUN complete: no jobs submitted. Review the plan, then submit with DRY_RUN=0 and explicit approval."
-else
-    echo "Submitted real smoke jobs. Registry: $SUBMISSION_LOG"
-    echo "Submission is not completion: monitor squeue/sacct, verify all jobs COMPLETED exit 0:0, then STOP."
-    echo "Production requires a separate explicit user confirmation."
+    exit 0
 fi
+# Stage 2: both determinism evals after their own train (bf16, pass1+pass2+compare).
+submit_stage eval_det audio_only "afterok:${MODALITY_JOBS[audio_only,train]}" ""
+submit_stage eval_det audio_text "afterok:${MODALITY_JOBS[audio_text,train]}" ""
+# Stage 3: both selected-epoch extracts after their own eval (bf16).
+submit_stage extract audio_only "afterok:${MODALITY_JOBS[audio_only,eval_det]}" "CHECKPOINT_DIR=${FOLD_DIR_BY_MODALITY[audio_only]}/best_model,CACHE_DIR=$EXPERIMENT_RUN_ROOT/audio_only/${RUN_NAME_BY_MODALITY[audio_only]}/hidden_features/audio_only,CONDITION=audio_only,EXTRACTION_INFERENCE_DTYPE=bf16"
+submit_stage extract audio_text "afterok:${MODALITY_JOBS[audio_text,eval_det]}" "CHECKPOINT_DIR=${FOLD_DIR_BY_MODALITY[audio_text]}/best_model,CACHE_DIR=$EXPERIMENT_RUN_ROOT/audio_text/${RUN_NAME_BY_MODALITY[audio_text]}/hidden_features/audio_text,CONDITION=audio_text,EXTRACTION_INFERENCE_DTYPE=bf16"
+# Stage 4: both heads after their own extract.
+submit_stage heads audio_only "afterok:${MODALITY_JOBS[audio_only,extract]}" "CACHE_DIR=$EXPERIMENT_RUN_ROOT/audio_only/${RUN_NAME_BY_MODALITY[audio_only]}/hidden_features/audio_only,OUTPUT_DIR=$EXPERIMENT_RUN_ROOT/audio_only/${RUN_NAME_BY_MODALITY[audio_only]}/hidden_classifiers/audio_only"
+submit_stage heads audio_text "afterok:${MODALITY_JOBS[audio_text,extract]}" "CACHE_DIR=$EXPERIMENT_RUN_ROOT/audio_text/${RUN_NAME_BY_MODALITY[audio_text]}/hidden_features/audio_text,OUTPUT_DIR=$EXPERIMENT_RUN_ROOT/audio_text/${RUN_NAME_BY_MODALITY[audio_text]}/hidden_classifiers/audio_text"
+# Stage 5: both smoke audits, each waiting on BOTH chains' heads.
+audit_extra="RUN_ROOT=$EXPERIMENT_RUN_ROOT,MANIFEST_DIR=$PROJECT_ROOT/outputs/manifests_daic_participant_packed30,SPLIT_DIR=$PROJECT_ROOT/outputs/splits_daic_participant_packed30,SMOKE=1"
+submit_stage audit audio_only "afterok:${MODALITY_JOBS[audio_only,heads]},afterok:${MODALITY_JOBS[audio_text,heads]}" "$audit_extra"
+submit_stage audit audio_text "afterok:${MODALITY_JOBS[audio_only,heads]},afterok:${MODALITY_JOBS[audio_text,heads]}" "$audit_extra"
+
+echo "jointk4 smoke plan: train jobs=2 per-stage chains=2 run_id=$RUN_ID source_commit=$SOURCE_COMMIT"
+echo "Submitted real smoke jobs. Registry: $SUBMISSION_LOG"
+echo "Submission is not completion: monitor squeue/sacct, verify all jobs COMPLETED exit 0:0, then STOP."
+echo "Production requires a separate explicit user confirmation."
