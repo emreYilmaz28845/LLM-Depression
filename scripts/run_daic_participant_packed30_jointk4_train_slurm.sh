@@ -42,9 +42,14 @@ exec 2> >(tee -a "$LOG_ROOT/train-${SLURM_JOB_ID}.err" >&2)
 
 export CUBLAS_WORKSPACE_CONFIG="${CUBLAS_WORKSPACE_CONFIG:-:4096:8}"
 export PYTHONHASHSEED="${PYTHONHASHSEED:-0}"
+# Per-job rendezvous port: the default torchrun port (29500) collides between
+# concurrent jobs on a node; derive a unique port from the job ID instead.
+MASTER_PORT="${MASTER_PORT:-$((29000 + SLURM_JOB_ID % 500))}"
+export MASTER_PORT
 
 CMD=(
   torchrun --nproc_per_node="$NPROC_PER_NODE"
+  --master_port="$MASTER_PORT"
   "$PROJECT_ROOT/src/train.py"
   --config "$CONFIG"
   --fold "$FOLD"
