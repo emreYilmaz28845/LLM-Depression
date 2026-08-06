@@ -105,7 +105,17 @@ def load_model_for_inference(
     adapter_path: str | Path | None = None,
     config: dict[str, Any] | None = None,
 ):
-    model = AutoModelForCausalLM.from_pretrained(model_name_or_path)
+    inference_dtype = str(
+        (config or {}).get("evaluation", {}).get("inference_dtype", "fp32")
+    ).strip().lower()
+    if inference_dtype not in {"fp32", "bf16"}:
+        raise ValueError(
+            "evaluation.inference_dtype must be one of fp32 or bf16 for the text backend."
+        )
+    torch_dtype = torch.bfloat16 if inference_dtype == "bf16" else None
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name_or_path, torch_dtype=torch_dtype
+    )
     if adapter_path:
         model = PeftModel.from_pretrained(model, adapter_path)
     if hasattr(model, "gradient_checkpointing_disable"):

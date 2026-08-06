@@ -18,9 +18,11 @@ from src.aggregate import (
     aggregate_binary_classifier_response_rows,
 )
 from src.features.hidden_classifier_policy import (
+    PACKED30_AGGREGATION_POLICY,
     cache_identity,
     canonical_sha256,
     classifier_aggregation_policy,
+    is_packed30_rows,
     response_normalized_sample_weights,
 )
 from src.sampling import (
@@ -315,31 +317,34 @@ def run_variant(
 
         joblib.dump(fitted, variant_dir / "pipeline.joblib")
     condition = str(metadata.get("condition") or metadata["input_modality"])
+    packed30 = is_packed30_rows(metadata)
     sample_rows = []
     for row, probability, prediction in zip(test_rows, probabilities.tolist(), predictions.tolist()):
-        sample_rows.append(
-            {
-                "dataset": metadata["dataset"],
-                "modality": metadata["input_modality"],
-                "condition": condition,
-                "fold": int(metadata["fold"]),
-                "sample_id": str(row["sample_id"]),
-                "subject_id": str(row["subject_id"]),
-                **{
-                    key: row[key]
-                    for key in ("response_id", "prompt_id", "segment_index", "num_segments")
-                    if key in row
-                },
-                "label": int(row["label"]),
-                "probability": float(probability),
-                "predicted_class": int(prediction),
-                "checkpoint": metadata["checkpoint_dir"],
-                "classifier_variant": variant,
-                "sampling_mode": sampling_mode,
-                "oversampling_ratio": oversampling_ratio,
-                "oversampling_seed": int(oversampling_seed),
-            }
-        )
+        classifier_row = {
+            "dataset": metadata["dataset"],
+            "modality": metadata["input_modality"],
+            "condition": condition,
+            "fold": int(metadata["fold"]),
+            "sample_id": str(row["sample_id"]),
+            "subject_id": str(row["subject_id"]),
+            **{
+                key: row[key]
+                for key in ("response_id", "prompt_id", "segment_index", "num_segments")
+                if key in row
+            },
+            "label": int(row["label"]),
+            "probability": float(probability),
+            "predicted_class": int(prediction),
+            "checkpoint": metadata["checkpoint_dir"],
+            "classifier_variant": variant,
+            "sampling_mode": sampling_mode,
+            "oversampling_ratio": oversampling_ratio,
+            "oversampling_seed": int(oversampling_seed),
+        }
+        if packed30:
+            classifier_row["protocol_id"] = str(metadata.get("protocol_id", ""))
+            classifier_row["classifier_aggregation"] = PACKED30_AGGREGATION_POLICY
+        sample_rows.append(classifier_row)
     subject_rows, metrics = aggregate_binary_classifier_predictions(sample_rows)
     for row in subject_rows:
         row.update(
@@ -354,6 +359,8 @@ def run_variant(
                 "oversampling_seed": int(oversampling_seed),
             }
         )
+        if packed30:
+            row["protocol_id"] = str(metadata.get("protocol_id", ""))
     metrics = _metrics_with_negative_f1(metrics)
     response_rows = []
     if str(metadata["dataset"]).lower() == "d3tec" and metadata["input_modality"] != "text_only":

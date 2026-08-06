@@ -265,6 +265,24 @@ def build_for_config(config_path: str | Path, config_overrides: list[str] | None
         extra_path = split_dir / f"{dataset_name}_extra_file_audit.json"
         save_json(result["extra_file_audit"], extra_path)
         metadata["extra_file_audit_path"] = serialize_project_path(extra_path)
+    packed30 = result.get("packed30")
+    if packed30 is not None:
+        packed30_metadata = dict(packed30["metadata"])
+        packed30_metadata["build_signature"] = manifest_build_signature(config)
+        packed30_metadata["manifest_sha256"] = metadata["manifest_hash"]
+        packed30_metadata_path = Path(packed30_metadata["artifact_paths"]["metadata"])
+        save_json(packed30_metadata, packed30_metadata_path)
+        metadata["packed30"] = {
+            "protocol_id": packed30_metadata["protocol_id"],
+            "metadata_path": serialize_project_path(packed30_metadata_path),
+            "artifact_paths": {
+                name: serialize_project_path(path)
+                for name, path in packed30_metadata["artifact_paths"].items()
+            },
+            "corpus_audit_path": serialize_project_path(
+                packed30["artifact_paths"]["corpus_audit"]
+            ),
+        }
     for result_key, filename in (
         ("chunk_window_audit", f"{dataset_name}_chunk_window_audit.json"),
         ("label_source_audit", f"{dataset_name}_label_source_audit.json"),

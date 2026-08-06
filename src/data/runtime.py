@@ -721,6 +721,89 @@ def _build_subject_level_audio_examples(
     return examples
 
 
+def _build_participant_speech_packed30_examples(
+    manifest_rows: list[dict[str, Any]],
+    config: dict[str, Any],
+    partition_name: str,
+    truncation_log_path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """One example per packed30 chunk (audio-only and audio+text).
+
+    Each example carries ordered ``audio_spans`` over the source WAV plus the
+    locked full participant transcript; the runtime multi-span loader
+    reconstructs exactly one waveform of at most 480000 samples.
+    """
+    input_modality = resolve_input_modality(config)
+    use_audio, use_text = _modality_flags(input_modality)
+    if not use_audio:
+        raise ValueError(
+            "sample_mode=participant_speech_packed30 requires data.use_audio=true."
+        )
+    audio_placeholder = resolve_audio_placeholder(config)
+    examples: list[dict[str, Any]] = []
+    truncation_logs: list[dict[str, Any]] = []
+    ordered_rows = sorted(
+        manifest_rows,
+        key=lambda row: (int(row["subject_id"]), int(row["chunk_index"]), str(row["sample_id"])),
+    )
+    for row in ordered_rows:
+        label = int(row["label"])
+        internal_label_text = internal_label_text_from_int(config, label)
+        transcript = str(row["full_participant_transcript"]) if use_text else ""
+        user_text = render_user_prompt_text(config, transcript, is_subject_bundle=False)
+        prompt_text = build_prompt_text(
+            system_prompt=config["prompt"]["system"],
+            user_text=user_text,
+            num_audios=1,
+            use_audio=True,
+            audio_placeholder=audio_placeholder,
+        )
+        examples.append(
+            {
+                "dataset": "daic",
+                "subject_id": row["subject_id"],
+                "sample_id": row["sample_id"],
+                "label": label,
+                "label_text": row["label_text"],
+                "internal_label_text": internal_label_text,
+                "transcript": transcript,
+                "audio_path": row["audio_path"],
+                "audio_spans": list(row["audio_spans"]),
+                "participant_sample_count": int(row["participant_sample_count"]),
+                "audio_paths": [],
+                "audio_clip_seconds": [],
+                "audio_start_times": [],
+                "audio_end_times": [],
+                "protocol_id": row["protocol_id"],
+                "chunk_id": f"{int(row['chunk_index']):03d}",
+                "chunk_index": int(row["chunk_index"]),
+                "num_chunks": int(row["num_chunks"]),
+                "chunk_transcript": str(row["chunk_transcript"]),
+                "full_participant_transcript_sha256": str(
+                    row["full_participant_transcript_sha256"]
+                ),
+                "input_modality": input_modality,
+                "prompt_text": prompt_text,
+                "training_text": build_training_text(prompt_text, internal_label_text),
+                "question_id": "",
+            }
+        )
+        if len(transcript) > int(config["data"].get("transcript_max_chars", 4000) or 4000):
+            truncation_logs.append(
+                {
+                    "partition": partition_name,
+                    "subject_id": row["subject_id"],
+                    "sample_id": row["sample_id"],
+                    "transcript_original_chars": len(str(row["full_participant_transcript"])),
+                    "transcript_kept_chars": len(transcript),
+                    "transcript_truncated": True,
+                }
+            )
+    if truncation_log_path:
+        write_jsonl(truncation_logs, truncation_log_path)
+    return examples
+
+
 def build_examples(
     manifest_rows: list[dict[str, Any]],
     config: dict[str, Any],
@@ -733,6 +816,26 @@ def build_examples(
     transcript_max_chars = int(config["data"].get("transcript_max_chars", 0) or 0)
     truncation_logs: list[dict[str, Any]] = []
     examples: list[dict[str, Any]] = []
+
+    if sample_mode == "participant_speech_packed30":
+        if dataset_name != "daic":
+            raise ValueError(
+                "sample_mode=participant_speech_packed30 requires dataset=daic."
+            )
+        if input_modality == INPUT_MODALITY_TEXT_ONLY:
+            return _build_subject_level_text_only_examples(
+                manifest_rows,
+                config,
+                partition_name,
+                transcript_max_chars,
+                truncation_log_path=truncation_log_path,
+            )
+        return _build_participant_speech_packed30_examples(
+            manifest_rows,
+            config,
+            partition_name,
+            truncation_log_path=truncation_log_path,
+        )
 
     emotion_cache: dict[str, str | None] | None = None
     emotion_policy: str | None = None
@@ -951,6 +1054,74 @@ def load_audio_array(
     return np.asarray(audio, dtype=np.float32)
 
 
+def uses_audio_spans(example: dict[str, Any]) -> bool:
+    """True when an example carries ordered ``audio_spans`` (packed30 protocol).
+
+    Span examples load ONE concatenated waveform from the source WAV instead of
+    per-path arrays; all existing loaders route through this predicate so the
+    legacy per-path path stays untouched.
+    """
+    return bool(example.get("audio_spans"))
+
+
+def load_audio_spans_array(
+    audio_path: str,
+    spans: list[dict[str, Any]],
+    target_sr: int,
+    silence_audio: bool,
+    expected_samples: int | None = None,
+) -> np.ndarray:
+    """Load and concatenate end-exclusive native frame intervals (packed30).
+
+    Reads each ``[start_frame, end_frame)`` interval at the WAV's native sample
+    rate, concatenates the arrays in manifest order without inserted silence,
+    and validates the resulting sample count against ``expected_samples``.
+    """
+    if not spans:
+        raise ValueError("load_audio_spans_array requires at least one span.")
+    info = sf.info(audio_path)
+    source_sr = int(info.samplerate)
+    arrays: list[np.ndarray] = []
+    for span in spans:
+        start_frame = int(span["start_frame"])
+        end_frame = int(span["end_frame"])
+        if not (0 <= start_frame < end_frame <= int(info.frames)):
+            raise ValueError(
+                f"Span [{start_frame}, {end_frame}) is outside {audio_path} "
+                f"({info.frames} frames)."
+            )
+        if silence_audio:
+            arrays.append(np.zeros(end_frame - start_frame, dtype=np.float32))
+        else:
+            audio, read_sr = sf.read(
+                audio_path,
+                start=start_frame,
+                frames=end_frame - start_frame,
+                dtype="float32",
+                always_2d=False,
+            )
+            if read_sr != source_sr:
+                raise ValueError(
+                    f"Span read sample rate changed for {audio_path}: {read_sr} != {source_sr}."
+                )
+            if audio.ndim > 1:
+                audio = audio.mean(axis=1)
+            arrays.append(np.asarray(audio, dtype=np.float32))
+    concatenated = np.concatenate(arrays, axis=0)
+    if expected_samples is not None and int(concatenated.shape[0]) != int(expected_samples):
+        raise ValueError(
+            f"Concatenated span waveform has {concatenated.shape[0]} samples; "
+            f"expected {int(expected_samples)} for {audio_path}."
+        )
+    if int(source_sr) != int(target_sr):
+        import librosa
+
+        concatenated = librosa.resample(
+            concatenated, orig_sr=source_sr, target_sr=target_sr
+        )
+    return np.asarray(concatenated, dtype=np.float32)
+
+
 _LIBROSA_EFFECTS = "unset"
 
 
@@ -1128,7 +1299,30 @@ class AudioTextDataset(Dataset):
         rerendered: dict[str, Any] = {}
         if self.chunk_sampling == "random" and example.get("chunk_caption_by_path"):
             rerendered = self._rerender_emotion_prompt(example, audio_paths)
-        if audio_paths:
+        if uses_audio_spans(example):
+            if self.processor_sampling_rate is None:
+                raise ValueError("Audio examples require a processor sampling rate.")
+            audio_arrays = [
+                load_audio_spans_array(
+                    example["audio_path"],
+                    example["audio_spans"],
+                    self.processor_sampling_rate,
+                    self.silence_audio,
+                    example.get("participant_sample_count"),
+                )
+            ]
+            if self.audio_augment and not self.silence_audio:
+                audio_arrays = [
+                    apply_audio_augment(
+                        array,
+                        self.processor_sampling_rate,
+                        self.audio_augment,
+                        self._rng,
+                        self._np_rng,
+                    )
+                    for array in audio_arrays
+                ]
+        elif audio_paths:
             if self.processor_sampling_rate is None:
                 raise ValueError("Audio examples require a processor sampling rate.")
             start_times = list(example.get("audio_start_times") or [None] * len(audio_paths))

@@ -99,6 +99,82 @@ from src.utils import (
 
 LOGGER = get_logger(__name__)
 
+ALL_CHUNKS_SUBJECT_NORMALIZED_POLICY = "all_chunks_subject_normalized"
+PACKED30_LOSS_WEIGHT_SCHEMA_VERSION = "packed30_subject_normalized_loss_weight.v1"
+
+
+def apply_subject_normalized_chunk_weights(
+    examples: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Static subject-normalized chunk weighting behind the locked policy name.
+
+    Every subject contributes equal total loss weight: each chunk receives raw
+    weight ``1 / number_of_training_chunks_for_subject``, then all weights are
+    rescaled so the arithmetic mean example weight is exactly one. The audit
+    proves raw totals sum to one per subject and emitted weights average one.
+    """
+    if not examples:
+        raise ValueError("Cannot weight an empty training partition.")
+    chunk_counts: dict[str, int] = defaultdict(int)
+    labels_by_subject: dict[str, set[int]] = defaultdict(set)
+    sample_ids_by_subject: dict[str, set[str]] = defaultdict(set)
+    for example in examples:
+        subject_id = str(example["subject_id"])
+        chunk_counts[subject_id] += 1
+        labels_by_subject[subject_id].add(int(example["label"]))
+        sample_ids_by_subject[subject_id].add(str(example.get("sample_id", "")))
+    for subject_id, labels in sorted(labels_by_subject.items()):
+        if len(labels) != 1:
+            raise ValueError(
+                f"{ALL_CHUNKS_SUBJECT_NORMALIZED_POLICY} requires one label per subject; "
+                f"subject_id={subject_id} has {sorted(labels)}."
+            )
+        sample_ids = sample_ids_by_subject[subject_id]
+        if not all(sample_ids) or len(sample_ids) != chunk_counts[subject_id]:
+            raise ValueError(
+                f"{ALL_CHUNKS_SUBJECT_NORMALIZED_POLICY} requires unique sample IDs per "
+                f"subject; subject_id={subject_id} has {chunk_counts[subject_id]} chunks "
+                f"but {len(sample_ids)} distinct sample IDs."
+            )
+    raw_weights = [1.0 / chunk_counts[str(example["subject_id"])] for example in examples]
+    scale = len(raw_weights) / sum(raw_weights)
+    weighted: list[dict[str, Any]] = []
+    for example, raw_weight in zip(examples, raw_weights):
+        weighted.append(
+            {
+                **example,
+                "raw_loss_weight": float(raw_weight),
+                "loss_weight": float(raw_weight) * scale,
+            }
+        )
+    raw_subject_totals: dict[str, float] = defaultdict(float)
+    for example in weighted:
+        raw_subject_totals[str(example["subject_id"])] += float(example["raw_loss_weight"])
+    for subject_id, total in raw_subject_totals.items():
+        if not math.isclose(total, 1.0, rel_tol=0.0, abs_tol=1e-9):
+            raise ValueError(
+                f"{ALL_CHUNKS_SUBJECT_NORMALIZED_POLICY} raw weight total is not one "
+                f"for subject_id={subject_id}: {total}"
+            )
+    mean_weight = sum(float(row["loss_weight"]) for row in weighted) / len(weighted)
+    if not math.isclose(mean_weight, 1.0, rel_tol=0.0, abs_tol=1e-9):
+        raise ValueError(
+            f"{ALL_CHUNKS_SUBJECT_NORMALIZED_POLICY} emitted weights do not average one: {mean_weight}"
+        )
+    audit = {
+        "schema_version": PACKED30_LOSS_WEIGHT_SCHEMA_VERSION,
+        "policy": ALL_CHUNKS_SUBJECT_NORMALIZED_POLICY,
+        "formula": "raw = 1 / training_chunks_for_subject; rescaled so mean example weight is 1",
+        "sample_count": len(weighted),
+        "subject_count": len(chunk_counts),
+        "chunks_per_subject": dict(sorted(chunk_counts.items())),
+        "raw_subject_weight_totals": dict(sorted(raw_subject_totals.items())),
+        "mean_loss_weight": float(mean_weight),
+        "rescale_factor": float(scale),
+        "equal_total_subject_weight": True,
+    }
+    return weighted, audit
+
 
 def _metadata_artifacts_are_usable(metadata: dict[str, Any]) -> tuple[bool, str]:
     manifest_path = Path(metadata["manifest_path"])
@@ -1236,6 +1312,30 @@ def main() -> None:
             androids_weight_audit,
             logs_dir / "androids_training_weight_audit.json",
         )
+    packed30_weight_audit: dict[str, Any] | None = None
+    if (
+        str(config["data"].get("train_chunk_policy", "")).strip().lower()
+        == ALL_CHUNKS_SUBJECT_NORMALIZED_POLICY
+        and input_modality != "text_only"
+    ):
+        if int(config["training"]["per_device_train_batch_size"]) != 1:
+            raise ValueError(
+                f"train_chunk_policy={ALL_CHUNKS_SUBJECT_NORMALIZED_POLICY} requires "
+                "per_device_train_batch_size=1."
+            )
+        if str(config.get("training", {}).get("class_balance", "none")).strip().lower() != "none":
+            raise ValueError(
+                f"train_chunk_policy={ALL_CHUNKS_SUBJECT_NORMALIZED_POLICY} requires "
+                "training.class_balance=none (subject-normalized loss weights are the "
+                "only v1 weighting)."
+            )
+        train_examples, packed30_weight_audit = apply_subject_normalized_chunk_weights(
+            train_examples
+        )
+        save_json(
+            packed30_weight_audit,
+            logs_dir / "packed30_training_weight_audit.json",
+        )
     d3tec_epoch_schedule: list[list[dict[str, Any]]] | None = None
     d3tec_schedule_audit: dict[str, Any] | None = None
     daic_epoch_schedule: list[list[dict[str, Any]]] | None = None
@@ -1539,6 +1639,11 @@ def main() -> None:
             "androids_weight_audit_path": (
                 str(logs_dir / "androids_training_weight_audit.json")
                 if androids_weight_audit is not None
+                else None
+            ),
+            "packed30_weight_audit_path": (
+                str(logs_dir / "packed30_training_weight_audit.json")
+                if packed30_weight_audit is not None
                 else None
             ),
         },

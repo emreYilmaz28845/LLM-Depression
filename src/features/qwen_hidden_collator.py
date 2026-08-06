@@ -64,6 +64,9 @@ class PromptOnlyExtractionCollator:
             "bundle_id",
             "bundle_chunk_ids",
             "bundle_coverage_count",
+            "protocol_id",
+            "chunk_index",
+            "num_chunks",
         ):
             if key in example:
                 metadata[0][key] = example[key]
@@ -72,9 +75,22 @@ class PromptOnlyExtractionCollator:
 
 def load_prompt_audio(example: dict[str, Any], sampling_rate: int | None, silence_audio: bool) -> dict[str, Any]:
     """Attach the deterministic evaluation audio arrays expected by the collator."""
-    from src.data.runtime import load_audio_array
+    from src.data.runtime import load_audio_array, load_audio_spans_array, uses_audio_spans
 
     output = dict(example)
+    if uses_audio_spans(example):
+        if sampling_rate is None:
+            raise ValueError("Audio examples require a processor sampling rate.")
+        output["audio_arrays"] = [
+            load_audio_spans_array(
+                output["audio_path"],
+                output["audio_spans"],
+                sampling_rate,
+                silence_audio,
+                output.get("participant_sample_count"),
+            )
+        ]
+        return output
     paths = output.get("audio_paths") or []
     if paths:
         if sampling_rate is None:

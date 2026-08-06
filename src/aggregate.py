@@ -543,11 +543,95 @@ def aggregate_generation_predictions(sample_rows: list[dict[str, Any]]) -> tuple
     )
 
 
+PACKED30_PROTOCOL_ID = "daic_participant_speech_packed30_v1"
+
+
+def aggregate_mean_score_margin_subject_predictions(
+    sample_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Locked v1 mean teacher-forced score-margin subject aggregation.
+
+    The arithmetic mean of per-chunk ``dep_score - non_score`` is computed for
+    every subject. Depressed when the mean margin is positive, Non-depressed
+    when negative, and INVALID on an exact finite zero. Any non-finite
+    candidate score or margin MUST fail evaluation. AUROC is intentionally not
+    reported for the hard teacher-forced verdict.
+    """
+    if not sample_rows:
+        raise ValueError("Mean score-margin aggregation requires at least one sample row.")
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in sample_rows:
+        grouped[str(row["subject_id"])].append(row)
+    subject_rows: list[dict[str, Any]] = []
+    for subject_id, rows in sorted(grouped.items()):
+        labels = {int(row["label"]) for row in rows}
+        if len(labels) != 1:
+            raise ValueError(f"Subject {subject_id} has inconsistent labels.")
+        gold = next(iter(labels))
+        margins: list[float] = []
+        for row in rows:
+            dep_score = float(row["dep_score"])
+            non_score = float(row["non_score"])
+            if not (math.isfinite(dep_score) and math.isfinite(non_score)):
+                raise ValueError(
+                    f"Non-finite teacher-forced candidate score for subject_id={subject_id} "
+                    f"sample_id={row.get('sample_id', '')}: dep_score={dep_score} non_score={non_score}"
+                )
+            margin = dep_score - non_score
+            if not math.isfinite(margin):
+                raise ValueError(
+                    f"Non-finite teacher-forced margin for subject_id={subject_id} "
+                    f"sample_id={row.get('sample_id', '')}: {margin}"
+                )
+            margins.append(margin)
+        mean_margin = sum(margins) / len(margins)
+        if mean_margin > 0.0:
+            pred = 1
+        elif mean_margin < 0.0:
+            pred = 0
+        else:
+            pred = INVALID_PREDICTION
+        mean_dep = sum(float(row["dep_score"]) for row in rows) / len(rows)
+        mean_non = sum(float(row["non_score"]) for row in rows) / len(rows)
+        subject_rows.append(
+            {
+                "subject_id": subject_id,
+                "label": gold,
+                "label_text": label_text_from_int(gold),
+                "prediction_backend": PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
+                "evaluation_protocol_name": evaluation_protocol_name(
+                    PREDICTION_MODE_ORIGINAL_TEACHER_FORCED
+                ),
+                "prediction": pred,
+                "prediction_text": (
+                    label_text_from_int(pred) if pred in (0, 1) else "INVALID"
+                ),
+                "dep_score": mean_dep,
+                "non_score": mean_non,
+                "score_margin": mean_margin,
+                "num_samples": len(rows),
+                "aggregation_method": "mean_teacher_forced_score_margin",
+            }
+        )
+    metrics = _metrics_from_prediction_rows(
+        subject_rows,
+        backend_name=PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
+        aggregation_level=AGGREGATION_LEVEL_SUBJECT,
+    )
+    metrics["aggregation_method"] = "mean_teacher_forced_score_margin"
+    return subject_rows, metrics
+
+
 def aggregate_original_teacher_forced_predictions(sample_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     # The DAIC chunking protocol predeclares mean score-margin aggregation.
     # This path also produces a valid prediction when argmax-decoded label
     # tokens are malformed, because the two teacher-forced candidate scores are
     # the scientifically authoritative signal for this experiment.
+    if sample_rows and all(
+        str(row.get("protocol_id", "")) == PACKED30_PROTOCOL_ID for row in sample_rows
+    ):
+        subject_rows, metrics = aggregate_mean_score_margin_subject_predictions(sample_rows)
+        return subject_rows, metrics
     if sample_rows and all(
         str(row.get("subject_score_aggregation", "")).lower() == "mean_score"
         for row in sample_rows
@@ -647,6 +731,35 @@ def aggregate_binary_classifier_predictions(
     sample_rows: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Apply the baseline majority vote and score-margin tie rule to classifiers."""
+    if sample_rows and all(
+        str(row.get("classifier_aggregation", "")).lower()
+        == "mean_depressed_probability_threshold_0_5"
+        for row in sample_rows
+    ):
+        subject_rows, metrics = aggregate_mean_probability_predictions(sample_rows)
+        for row in subject_rows:
+            row.update(
+                {
+                    "prediction_backend": "qwen_hidden_classifier",
+                    "evaluation_protocol_name": "daic_participant_packed30_hidden_mean_probability",
+                    "aggregated_prediction": int(row["prediction"]),
+                    "aggregation_method": "mean_depressed_probability_threshold_0_5",
+                }
+            )
+        metrics.update(
+            {
+                "prediction_backend": "qwen_hidden_classifier",
+                "evaluation_protocol_name": "daic_participant_packed30_hidden_mean_probability",
+                "aggregation_method": "mean_depressed_probability_threshold_0_5",
+                "predicted_positive_rate": (
+                    sum(int(row["prediction"]) == 1 for row in subject_rows)
+                    / len(subject_rows)
+                    if subject_rows
+                    else 0.0
+                ),
+            }
+        )
+        return subject_rows, metrics
     normalized = []
     for row in sample_rows:
         probability = float(row["probability"])

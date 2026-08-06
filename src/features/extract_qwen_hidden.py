@@ -194,6 +194,20 @@ def _partition_examples(
     return result
 
 
+def _is_daic_chunking(config: dict[str, Any]) -> bool:
+    return (
+        str(config.get("dataset", "")).lower() == "daic"
+        and (
+            str(config.get("protocol_id", "")).strip().lower()
+            == "daic_participant_speech_packed30_v1"
+            or str(
+                config.get("evaluation", {}).get("subject_score_aggregation", "")
+            ).lower()
+            == "mean_score"
+        )
+    )
+
+
 def _resolve_subject_partitions(
     saved: dict[str, Any],
     config: dict[str, Any],
@@ -204,11 +218,7 @@ def _resolve_subject_partitions(
         or config.get("split", {}).get("cv_protocol")
         or ""
     )
-    is_daic_chunking = (
-        str(config.get("dataset", "")).lower() == "daic"
-        and str(config.get("evaluation", {}).get("subject_score_aggregation", "")).lower()
-        == "mean_score"
-    )
+    is_daic_chunking = _is_daic_chunking(config)
     if is_daic_chunking:
         train_sources = ("train_subject_ids",)
         heldout_source = "final_eval_subject_ids"
@@ -317,11 +327,7 @@ def _validate_saved_split(
                 or config.get("split", {}).get("cv_protocol")
                 or ""
             )
-            is_daic_chunking = (
-                str(config.get("dataset", "")).lower() == "daic"
-                and str(config.get("evaluation", {}).get("subject_score_aggregation", "")).lower()
-                == "mean_score"
-            )
+            is_daic_chunking = _is_daic_chunking(config)
             if cv_protocol != "train_val" and not is_daic_chunking:
                 train_source_count = len(
                     set(config.get("split", {}).get("dev_pool_partitions") or [
@@ -470,6 +476,14 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _require_best_model(checkpoint_dir: Path) -> None:
+    if Path(checkpoint_dir).name != "best_model":
+        raise ValueError(
+            "Primary experiment requires the fold-specific best_model checkpoint; "
+            f"got {Path(checkpoint_dir).name!r}. last_model must never be substituted."
+        )
+
+
 def main() -> None:
     args = parse_args()
     checkpoint_dir = args.checkpoint_dir.resolve()
@@ -485,9 +499,11 @@ def main() -> None:
         )
     if args.eval_bundles_per_subject is not None:
         config.setdefault("data", {})["eval_bundles_per_subject"] = args.eval_bundles_per_subject
+    extraction_dtype = os.environ.get("EXTRACTION_INFERENCE_DTYPE", "").strip().lower()
+    if extraction_dtype:
+        config.setdefault("evaluation", {})["inference_dtype"] = extraction_dtype
     fold = int(saved["fold"])
-    if checkpoint_dir.name != "best_model":
-        raise ValueError("Primary experiment requires the fold-specific best_model checkpoint.")
+    _require_best_model(checkpoint_dir)
     split_payload = read_json(split_path)
     partition_subject_ids, evaluation_provenance = _resolve_subject_partitions(
         saved, config, split_payload
@@ -508,6 +524,7 @@ def main() -> None:
         "dataset": config["dataset"],
         "condition": condition,
         "input_modality": saved.get("input_modality"),
+        "protocol_id": config.get("protocol_id", ""),
         "fold": fold,
         "checkpoint_dir": str(checkpoint_dir),
         "adapter_config_sha256": sha256_file(checkpoint_dir / "adapter_config.json"),
@@ -593,6 +610,7 @@ def main() -> None:
         "dataset": config["dataset"],
         "condition": condition,
         "input_modality": saved.get("input_modality"),
+        "protocol_id": config.get("protocol_id", ""),
         "fold": fold,
         "checkpoint_type": "best_model",
         "checkpoint_dir": str(checkpoint_dir),

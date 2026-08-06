@@ -19,6 +19,8 @@ D3TEC_WEIGHT_POLICY = "inverse_segments_per_response_rescaled_to_mean_one"
 TEXT_WEIGHT_POLICY = "one_vector_per_subject_unweighted"
 LEGACY_WEIGHT_POLICY = "uniform_rows"
 DAIC_SUBJECT_WEIGHT_POLICY = "inverse_chunks_per_subject_rescaled_to_mean_one"
+PACKED30_PROTOCOL_ID = "daic_participant_speech_packed30_v1"
+PACKED30_AGGREGATION_POLICY = "mean_depressed_probability_threshold_0_5"
 
 
 def is_d3tec_audio_rows(rows: list[dict[str, Any]], metadata: dict[str, Any]) -> bool:
@@ -29,7 +31,13 @@ def is_d3tec_audio_rows(rows: list[dict[str, Any]], metadata: dict[str, Any]) ->
     )
 
 
+def is_packed30_rows(metadata: dict[str, Any]) -> bool:
+    return str(metadata.get("protocol_id", "")).strip() == PACKED30_PROTOCOL_ID
+
+
 def classifier_aggregation_policy(metadata: dict[str, Any]) -> str:
+    if is_packed30_rows(metadata):
+        return PACKED30_AGGREGATION_POLICY
     if str(metadata.get("dataset", "")).lower() == D3TEC_DATASET:
         if str(metadata.get("input_modality", "")) == "text_only":
             return "one_prediction_per_subject"

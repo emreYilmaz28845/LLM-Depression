@@ -26,7 +26,9 @@ from src.data.runtime import (
     build_examples,
     filter_rows_by_subjects,
     load_audio_array,
+    load_audio_spans_array,
     load_manifest_rows,
+    uses_audio_spans,
 )
 from src.data.split_utils import (
     CV_PROTOCOL_TRAIN_VAL,
@@ -238,6 +240,16 @@ def _write_csv(rows: list[dict[str, Any]], path: str | Path) -> None:
 
 
 def _load_example_audio(example: dict[str, Any], sampling_rate: int, silence_audio: bool) -> list:
+    if uses_audio_spans(example):
+        return [
+            load_audio_spans_array(
+                example["audio_path"],
+                example["audio_spans"],
+                sampling_rate,
+                silence_audio,
+                example.get("participant_sample_count"),
+            )
+        ]
     start_times = list(example.get("audio_start_times") or [None] * len(example["audio_paths"]))
     end_times = list(example.get("audio_end_times") or [None] * len(example["audio_paths"]))
     return [
@@ -246,6 +258,10 @@ def _load_example_audio(example: dict[str, Any], sampling_rate: int, silence_aud
             example["audio_paths"], example["audio_clip_seconds"], start_times, end_times
         )
     ]
+
+
+def _example_has_audio(example: dict[str, Any]) -> bool:
+    return uses_audio_spans(example) or bool(example.get("audio_paths"))
 
 
 def _processor_inputs(
@@ -260,7 +276,7 @@ def _processor_inputs(
     padding: bool = False,
 ):
     sampling_rate = resolve_processor_sampling_rate(processor)
-    if audio_arrays is None and example["audio_paths"]:
+    if audio_arrays is None and _example_has_audio(example):
         if sampling_rate is None:
             raise ValueError("Audio examples require a processor sampling rate.")
         audio_arrays = _load_example_audio(example, sampling_rate, silence_audio)
@@ -321,6 +337,8 @@ def _base_sample_row(example: dict[str, Any], checkpoint_name: str, backend_name
     evaluation = config.get("evaluation", {})
     if evaluation.get("subject_score_aggregation"):
         row["subject_score_aggregation"] = evaluation["subject_score_aggregation"]
+    if example.get("protocol_id"):
+        row["protocol_id"] = str(example["protocol_id"])
     for key in ("chunk_id", "bundle_id", "bundle_chunk_ids", "bundle_coverage_count"):
         if key in example:
             row[key] = example[key]
@@ -340,7 +358,7 @@ def score_candidate_label(
         sampling_rate = resolve_processor_sampling_rate(processor)
         audio_arrays = (
             _load_example_audio(example, int(sampling_rate), silence_audio)
-            if example["audio_paths"] and sampling_rate is not None
+            if _example_has_audio(example) and sampling_rate is not None
             else []
         )
     prompt_inputs = _processor_inputs(
@@ -377,11 +395,11 @@ def score_candidate_pair(
     flattened audio list to audio placeholders in text order.
     """
     sampling_rate = resolve_processor_sampling_rate(processor)
-    if example["audio_paths"] and sampling_rate is None:
+    if _example_has_audio(example) and sampling_rate is None:
         raise ValueError("Audio examples require a processor sampling rate.")
     audio_arrays = (
         _load_example_audio(example, int(sampling_rate), silence_audio)
-        if example["audio_paths"]
+        if _example_has_audio(example)
         else []
     )
     prompt_inputs = _processor_inputs(
