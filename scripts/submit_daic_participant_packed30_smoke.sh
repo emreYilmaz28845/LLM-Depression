@@ -13,6 +13,7 @@ DRY_RUN="${DRY_RUN:-1}"
 RUN_ID="${RUN_ID:-}"
 SEED="${SEED:-1337}"
 SMOKE_SUBJECT_LIMIT="${SMOKE_SUBJECT_LIMIT:-6}"
+MODALITIES="${MODALITIES:-audio_only audio_text text_only}"
 CONFIG_DIR="$PROJECT_ROOT/configs/experiments/daic_participant_packed30"
 AUDIT_SCRIPT="$PROJECT_ROOT/scripts/audit_daic_participant_packed30.py"
 TRAIN_WORKER="$PROJECT_ROOT/scripts/run_daic_participant_packed30_smoke_train_slurm.sh"
@@ -66,8 +67,12 @@ fi
 
 export PROJECT_ROOT ENV_ACTIVATE DAIC_UNPROCESSED_ROOT DAIC_LABEL_ROOT SEED SMOKE_SUBJECT_LIMIT INFERENCE_DTYPE
 TRAIN_JOBS=0
-for modality in audio_only audio_text text_only; do
-    config="${CONFIG_BY_MODALITY[$modality]}"
+for modality in $MODALITIES; do
+    config="${CONFIG_BY_MODALITY[$modality]:-}"
+    if [ -z "$config" ]; then
+        echo "Unknown modality $modality; expected one of ${!CONFIG_BY_MODALITY[*]}." >&2
+        exit 1
+    fi
     run_name="smoke_p30_${modality}_s${SEED}_${SHORTCOMMIT}"
     run_root="$(python - "$config" "$run_name" <<PY
 import sys
