@@ -62,7 +62,7 @@ if [ "$DRY_RUN" = "0" ]; then
     printf 'timestamp_utc\tstage\tjob_id\tmodality\trun_name\tdependency\tconfig\tsource_commit\n' > "$SUBMISSION_LOG"
 fi
 
-export PROJECT_ROOT ENV_ACTIVATE DAIC_UNPROCESSED_ROOT DAIC_LABEL_ROOT SEED MODEL_PATH TEXT_MODEL_PATH
+export PROJECT_ROOT ENV_ACTIVATE DAIC_UNPROCESSED_ROOT DAIC_LABEL_ROOT SEED
 TRAIN_JOBS=0
 for modality in audio_only audio_text text_only; do
     config="${CONFIG_BY_MODALITY[$modality]}"
@@ -91,7 +91,7 @@ PY
     else
         modality_model_spec="MODEL_PATH=$MODEL_PATH"
     fi
-    eval_export_spec="ALL,PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV_ACTIVATE,CONFIG=$config,FOLD=0,RUN_NAME=$run_name,SEED=$SEED,DAIC_UNPROCESSED_ROOT=$DAIC_UNPROCESSED_ROOT,DAIC_LABEL_ROOT=$DAIC_LABEL_ROOT,$modality_model_spec"
+    eval_export_spec="PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV_ACTIVATE,CONFIG=$config,FOLD=0,RUN_NAME=$run_name,SEED=$SEED,DAIC_UNPROCESSED_ROOT=$DAIC_UNPROCESSED_ROOT,DAIC_LABEL_ROOT=$DAIC_LABEL_ROOT,$modality_model_spec"
 
     if [ "$DRY_RUN" = "1" ]; then
         TRAIN_JOBS=$((TRAIN_JOBS + 1))
