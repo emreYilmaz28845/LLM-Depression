@@ -208,7 +208,7 @@ def main() -> None:
     parser.add_argument(
         "--workbook",
         type=Path,
-        default=Path("depression_results_combined_with_posf1_graphs.xlsx"),
+        default=Path("docs/archive/results_20260806/depression_results_combined_with_posf1_graphs.xlsx"),
     )
     parser.add_argument("--audit", type=Path, required=True)
     args = parser.parse_args()

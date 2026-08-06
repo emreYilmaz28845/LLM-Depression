@@ -42,7 +42,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--workbook",
         type=Path,
-        default=Path("depression_results_combined_with_posf1_graphs.xlsx"),
+        default=Path("docs/archive/results_20260806/depression_results_combined_with_posf1_graphs.xlsx"),
     )
     parser.add_argument("--output", type=Path)
     return parser.parse_args()

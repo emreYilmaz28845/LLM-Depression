@@ -42,7 +42,8 @@ def _acceptance() -> dict[str, object]:
 
 
 def test_androids_workbook_rows_tables_and_chart_are_updated(tmp_path: Path) -> None:
-    source = Path("depression_results_combined_with_posf1_graphs.xlsx")
+    repo_root = Path(__file__).resolve().parents[1]
+    source = repo_root / "docs" / "archive" / "results_20260806" / "depression_results_combined_with_posf1_graphs.xlsx"
     workbook_path = tmp_path / source.name
     shutil.copy2(source, workbook_path)
     wb = load_workbook(workbook_path)
