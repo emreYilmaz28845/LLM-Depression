@@ -240,7 +240,7 @@ class JointK4Auditor:
             and (best_dir / "adapter_config.json").is_file(),
             f"{modality}/{run_name}: best_model is missing",
         )
-        eval_dir = best_dir / "standalone_eval"
+        eval_dir = best_dir / ("standalone_eval_pass1" if self.smoke else "standalone_eval")
         metrics_path = eval_dir / "metrics_original_teacher_forced.json"
         self.require(metrics_path.is_file(), f"{modality}/{run_name}: missing official-test Qwen metrics")
         sample_path = eval_dir / "predictions_sample_level.jsonl"
@@ -256,7 +256,9 @@ class JointK4Auditor:
         )
         with subject_path.open(encoding="utf-8", newline="") as handle:
             subject_rows = list(csv.DictReader(handle))
-        expected_subjects = 47 if not self.smoke else len(subject_rows)
+        expected_subjects = 47 if not self.smoke else len(
+            read_json(fold_dir / "logs" / "split_used.json")["final_eval_subject_ids"]
+        )
         self.require(
             len(subject_rows) == expected_subjects,
             f"{modality}/{run_name}: expected {expected_subjects} subject rows, found {len(subject_rows)}",

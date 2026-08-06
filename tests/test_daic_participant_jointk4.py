@@ -604,3 +604,38 @@ def test_auditor_smoke_mode_ignores_partial_runs(tmp_path: Path) -> None:
         assert short in str(fold_dirs[0])
     production = JointK4Auditor(tmp_path, tmp_path, tmp_path, smoke=False)
     assert set(production._runs_by_modality()) == set()
+
+
+def test_auditor_smoke_qwen_rows_read_pass1(tmp_path: Path) -> None:
+    from scripts.audit_daic_participant_packed30_jointk4 import JointK4Auditor
+
+    short = _repo_short_commit()
+    run_dir = _complete_smoke_run(tmp_path, "audio_only", short)
+    (run_dir / "logs").mkdir()
+    save_json(
+        {
+            "train_subject_ids": ["300"],
+            "selection_subject_ids": ["301"],
+            "final_eval_subject_ids": ["400", "401", "402", "403", "404", "405"],
+        },
+        run_dir / "logs" / "split_used.json",
+    )
+    pass1 = run_dir / "best_model" / "standalone_eval_pass1"
+    sample_rows = [
+        {"subject_id": f"40{index}", "sample_id": f"40{index}__bundle_000", "bundle_id": 0, "dep_score": 0.1, "non_score": -0.1, "teacher_forced_margin": 0.2}
+        for index in range(6)
+    ]
+    (pass1 / "predictions_sample_level.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in sample_rows), encoding="utf-8"
+    )
+    (pass1 / "predictions_subject_level.csv").write_text(
+        "subject_id,label,prediction\n400,1,1\n401,0,0\n402,0,0\n403,0,0\n404,0,0\n405,0,0\n",
+        encoding="utf-8",
+    )
+    (pass1 / "metrics_original_teacher_forced.json").write_text(
+        json.dumps({"positive_f1": 0.4}), encoding="utf-8"
+    )
+    (run_dir / "best_model" / "adapter_config.json").write_bytes(b"{}")
+    auditor = JointK4Auditor(tmp_path, tmp_path, tmp_path, smoke=True)
+    auditor.check_qwen_rows(run_dir, "audio_only", f"smoke_p30_jointk4_audio_only_s1337_{short}")
+    assert auditor.failures == []
