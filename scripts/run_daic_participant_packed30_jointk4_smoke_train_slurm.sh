@@ -8,6 +8,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=20
 #SBATCH --gres=gpu:1
+#SBATCH --exclude=as01r2b12
 #SBATCH -o /dev/null
 #SBATCH -e /dev/null
 #SBATCH --chdir=/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression
