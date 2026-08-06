@@ -558,13 +558,39 @@ def test_eval_determinism_comparison_rejects_score_differences(tmp_path: Path) -
     assert any("predictions_sample_level.jsonl" in message for message in mismatches)
 
 
+def _repo_short_commit() -> str:
+    provenance = PROJECT_ROOT / ".provenance" / "git_commit.txt"
+    if provenance.is_file():
+        return provenance.read_text(encoding="utf-8").strip()[:8]
+    return "deadbeef"
+
+
 def test_auditor_smoke_mode_includes_smoke_runs(tmp_path: Path) -> None:
     from scripts.audit_daic_participant_packed30_jointk4 import JointK4Auditor
 
+    short = _repo_short_commit()
     for modality in ("audio_only", "audio_text"):
-        run_dir = tmp_path / modality / f"smoke_p30_jointk4_{modality}_s1337_deadbeef" / "fold_0"
+        run_dir = tmp_path / modality / f"smoke_p30_jointk4_{modality}_s1337_{short}" / "fold_0"
         run_dir.mkdir(parents=True)
     production = JointK4Auditor(tmp_path, tmp_path, tmp_path, smoke=False)
     assert set(production._runs_by_modality()) == set()
     smoke = JointK4Auditor(tmp_path, tmp_path, tmp_path, smoke=True)
     assert set(smoke._runs_by_modality()) == {"audio_only", "audio_text"}
+
+
+def test_auditor_smoke_mode_ignores_stale_commit_runs(tmp_path: Path) -> None:
+    from scripts.audit_daic_participant_packed30_jointk4 import JointK4Auditor
+
+    short = _repo_short_commit()
+    for modality in ("audio_only", "audio_text"):
+        fresh = tmp_path / modality / f"smoke_p30_jointk4_{modality}_s1337_{short}" / "fold_0"
+        fresh.mkdir(parents=True)
+        stale = tmp_path / modality / f"smoke_p30_jointk4_{modality}_s1337_00000000" / "fold_0"
+        stale.mkdir(parents=True)
+    smoke = JointK4Auditor(tmp_path, tmp_path, tmp_path, smoke=True)
+    selected = smoke._runs_by_modality()
+    assert set(selected) == {"audio_only", "audio_text"}
+    for modality, fold_dirs in selected.items():
+        assert all(short in str(fold_dir) for fold_dir in fold_dirs)
+    production = JointK4Auditor(tmp_path, tmp_path, tmp_path, smoke=False)
+    assert set(production._runs_by_modality()) == set()

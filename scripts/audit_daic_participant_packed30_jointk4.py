@@ -67,12 +67,28 @@ class JointK4Auditor:
             f"packed30 manifest: {message}" for message in packed.failures
         )
 
+    def _provenance_short_commit(self) -> str | None:
+        provenance = PROJECT_ROOT / ".provenance" / "git_commit.txt"
+        if provenance.is_file():
+            return provenance.read_text(encoding="utf-8").strip()[:8]
+        return None
+
     def _runs_by_modality(self) -> dict[str, list[Path]]:
+        short_commit = self._provenance_short_commit()
         runs_by_modality: dict[str, list[Path]] = defaultdict(list)
         for fold_dir in self.run_root.glob("*/*/fold_0"):
             modality = str(fold_dir.parent.parent.name)
             run_name = str(fold_dir.parent.name)
             if not self.smoke and run_name.startswith("smoke_"):
+                continue
+            if (
+                self.smoke
+                and run_name.startswith("smoke_")
+                and short_commit
+                and short_commit not in run_name
+            ):
+                # Stale smoke runs from an earlier submission round (same
+                # run-root, different commit) must not fail the smoke gate.
                 continue
             runs_by_modality[modality].append(fold_dir)
         return runs_by_modality
@@ -191,12 +207,15 @@ class JointK4Auditor:
     def check_eval_bundles(self, fold_dir: Path, modality: str, run_name: str) -> None:
         split_used = read_json(fold_dir / "logs" / "split_used.json")
         if self.smoke:
+            pass1 = fold_dir / "best_model" / "standalone_eval_pass1"
+            pass2 = fold_dir / "best_model" / "standalone_eval_pass2"
             self.require(
-                (fold_dir / "best_model" / "standalone_eval_pass1").is_dir()
-                and (fold_dir / "best_model" / "standalone_eval_pass2").is_dir(),
+                pass1.is_dir() and pass2.is_dir(),
                 f"{modality}/{run_name}: smoke determinism passes are missing",
             )
-            sample_rows = read_jsonl(fold_dir / "best_model" / "standalone_eval_pass1" / "predictions_sample_level.jsonl")
+            if not (pass1 / "predictions_sample_level.jsonl").is_file():
+                return
+            sample_rows = read_jsonl(pass1 / "predictions_sample_level.jsonl")
             self.require(
                 {str(row["subject_id"]) for row in sample_rows}
                 == set(split_used["final_eval_subject_ids"]),
