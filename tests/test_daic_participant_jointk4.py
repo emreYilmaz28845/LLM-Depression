@@ -565,32 +565,42 @@ def _repo_short_commit() -> str:
     return "deadbeef"
 
 
+def _complete_smoke_run(tmp_path: Path, modality: str, commit: str) -> Path:
+    run_dir = tmp_path / modality / f"smoke_p30_jointk4_{modality}_s1337_{commit}" / "fold_0"
+    best = run_dir / "best_model"
+    best.mkdir(parents=True)
+    (run_dir / "run_config.yaml").write_text("config: {}\n", encoding="utf-8")
+    (best / "adapter_model.safetensors").write_bytes(b"x")
+    (best / "standalone_eval_pass1").mkdir()
+    (best / "standalone_eval_pass2").mkdir()
+    return run_dir
+
+
 def test_auditor_smoke_mode_includes_smoke_runs(tmp_path: Path) -> None:
     from scripts.audit_daic_participant_packed30_jointk4 import JointK4Auditor
 
     short = _repo_short_commit()
     for modality in ("audio_only", "audio_text"):
-        run_dir = tmp_path / modality / f"smoke_p30_jointk4_{modality}_s1337_{short}" / "fold_0"
-        run_dir.mkdir(parents=True)
+        _complete_smoke_run(tmp_path, modality, short)
     production = JointK4Auditor(tmp_path, tmp_path, tmp_path, smoke=False)
     assert set(production._runs_by_modality()) == set()
     smoke = JointK4Auditor(tmp_path, tmp_path, tmp_path, smoke=True)
     assert set(smoke._runs_by_modality()) == {"audio_only", "audio_text"}
 
 
-def test_auditor_smoke_mode_ignores_stale_commit_runs(tmp_path: Path) -> None:
+def test_auditor_smoke_mode_ignores_partial_runs(tmp_path: Path) -> None:
     from scripts.audit_daic_participant_packed30_jointk4 import JointK4Auditor
 
     short = _repo_short_commit()
     for modality in ("audio_only", "audio_text"):
-        fresh = tmp_path / modality / f"smoke_p30_jointk4_{modality}_s1337_{short}" / "fold_0"
-        fresh.mkdir(parents=True)
-        stale = tmp_path / modality / f"smoke_p30_jointk4_{modality}_s1337_00000000" / "fold_0"
-        stale.mkdir(parents=True)
+        _complete_smoke_run(tmp_path, modality, short)
+        partial = tmp_path / modality / f"smoke_p30_jointk4_{modality}_s1337_00000000" / "fold_0"
+        partial.mkdir(parents=True)  # no run_config / best_model / passes
     smoke = JointK4Auditor(tmp_path, tmp_path, tmp_path, smoke=True)
     selected = smoke._runs_by_modality()
     assert set(selected) == {"audio_only", "audio_text"}
     for modality, fold_dirs in selected.items():
-        assert all(short in str(fold_dir) for fold_dir in fold_dirs)
+        assert len(fold_dirs) == 1
+        assert short in str(fold_dirs[0])
     production = JointK4Auditor(tmp_path, tmp_path, tmp_path, smoke=False)
     assert set(production._runs_by_modality()) == set()

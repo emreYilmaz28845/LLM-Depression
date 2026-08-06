@@ -67,30 +67,30 @@ class JointK4Auditor:
             f"packed30 manifest: {message}" for message in packed.failures
         )
 
-    def _provenance_short_commit(self) -> str | None:
-        provenance = PROJECT_ROOT / ".provenance" / "git_commit.txt"
-        if provenance.is_file():
-            return provenance.read_text(encoding="utf-8").strip()[:8]
-        return None
+    def _is_complete_smoke_run(self, fold_dir: Path) -> bool:
+        return (
+            (fold_dir / "run_config.yaml").is_file()
+            and (fold_dir / "best_model" / "adapter_model.safetensors").is_file()
+            and (fold_dir / "best_model" / "standalone_eval_pass1").is_dir()
+            and (fold_dir / "best_model" / "standalone_eval_pass2").is_dir()
+        )
 
     def _runs_by_modality(self) -> dict[str, list[Path]]:
-        short_commit = self._provenance_short_commit()
         runs_by_modality: dict[str, list[Path]] = defaultdict(list)
         for fold_dir in self.run_root.glob("*/*/fold_0"):
             modality = str(fold_dir.parent.parent.name)
             run_name = str(fold_dir.parent.name)
             if not self.smoke and run_name.startswith("smoke_"):
                 continue
-            if (
-                self.smoke
-                and run_name.startswith("smoke_")
-                and short_commit
-                and short_commit not in run_name
-            ):
-                # Stale smoke runs from an earlier submission round (same
-                # run-root, different commit) must not fail the smoke gate.
+            if self.smoke and run_name.startswith("smoke_") and not self._is_complete_smoke_run(fold_dir):
+                # Partial smoke runs from failed/cancelled submission rounds
+                # (same run-root) must not fail the smoke gate.
                 continue
             runs_by_modality[modality].append(fold_dir)
+        for modality, fold_dirs in runs_by_modality.items():
+            runs_by_modality[modality] = [
+                max(fold_dirs, key=lambda fold_dir: fold_dir.stat().st_mtime)
+            ]
         return runs_by_modality
 
     def check_recipe(self, fold_dir: Path, modality: str, run_name: str) -> dict:
