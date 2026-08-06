@@ -1596,6 +1596,24 @@ def main() -> None:
     warmup_steps = int(total_steps * float(config["training"]["warmup_ratio"]))
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps)
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    dist_timeout_minutes = int(config.get("training", {}).get("dist_timeout_minutes", 0) or 0)
+    if dist_timeout_minutes > 0 and not torch.distributed.is_initialized():
+        # Rank-0-only per-epoch selection evaluation (e.g. 445 balanced-cover
+        # bundles) can hold the other ranks at the next collective for longer
+        # than torch's default 600s NCCL watchdog timeout. Pre-initialize the
+        # process group with a longer timeout; Accelerate reuses an already
+        # initialized group. Opt-in via training.dist_timeout_minutes so other
+        # recipes keep the default behavior.
+        import datetime
+
+        torch.distributed.init_process_group(
+            backend="nccl", timeout=datetime.timedelta(minutes=dist_timeout_minutes)
+        )
+        LOGGER.info(
+            "Pre-initialized NCCL process group with timeout=%s minutes "
+            "(training.dist_timeout_minutes).",
+            dist_timeout_minutes,
+        )
     accelerator = Accelerator(
         gradient_accumulation_steps=int(config["training"]["gradient_accumulation_steps"]),
         mixed_precision="bf16" if bool(config["training"].get("bf16", False)) else "no",

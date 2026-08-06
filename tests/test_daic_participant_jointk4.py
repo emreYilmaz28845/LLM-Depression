@@ -606,6 +606,31 @@ def test_auditor_smoke_mode_ignores_partial_runs(tmp_path: Path) -> None:
     assert set(production._runs_by_modality()) == set()
 
 
+def test_auditor_production_mode_skips_incomplete_runs(tmp_path: Path) -> None:
+    from scripts.audit_daic_participant_packed30_jointk4 import JointK4Auditor
+
+    short = _repo_short_commit()
+    for modality in ("audio_only", "audio_text"):
+        run_dir = tmp_path / modality / f"daic_participant_p30_jointk4_{modality}_s1337_{short}" / "fold_0"
+        best = run_dir / "best_model"
+        best.mkdir(parents=True)
+        (run_dir / "run_config.yaml").write_text("config: {}\n", encoding="utf-8")
+        (best / "adapter_model.safetensors").write_bytes(b"x")
+        eval_dir = best / "standalone_eval"
+        eval_dir.mkdir()
+        (eval_dir / "metrics_original_teacher_forced.json").write_text(
+            json.dumps({"positive_f1": 0.5}), encoding="utf-8"
+        )
+        partial = tmp_path / modality / f"daic_participant_p30_jointk4_{modality}_s1337_00000000" / "fold_0"
+        partial.mkdir(parents=True)  # aborted train: no best_model / standalone_eval
+    production = JointK4Auditor(tmp_path, tmp_path, tmp_path, smoke=False)
+    selected = production._runs_by_modality()
+    assert set(selected) == {"audio_only", "audio_text"}
+    for modality, fold_dirs in selected.items():
+        assert len(fold_dirs) == 1
+        assert short in str(fold_dirs[0])
+
+
 def test_auditor_smoke_qwen_rows_read_pass1(tmp_path: Path) -> None:
     from scripts.audit_daic_participant_packed30_jointk4 import JointK4Auditor
 

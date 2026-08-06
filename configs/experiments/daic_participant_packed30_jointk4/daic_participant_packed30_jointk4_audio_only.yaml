@@ -75,6 +75,10 @@ training:
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 1
   gradient_accumulation_steps: 8
+  # Rank-0-only per-epoch selection evaluation (445 balanced-cover val
+  # bundles, ~12 min) exceeds torch's default 600s NCCL watchdog timeout on
+  # 4-GPU training; pre-initialize the process group with this timeout.
+  dist_timeout_minutes: 60
   logging_steps: 5
   bf16: true
   gradient_checkpointing: true

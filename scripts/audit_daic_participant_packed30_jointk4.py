@@ -75,6 +75,18 @@ class JointK4Auditor:
             and (fold_dir / "best_model" / "standalone_eval_pass2").is_dir()
         )
 
+    def _is_complete_production_run(self, fold_dir: Path) -> bool:
+        return (
+            (fold_dir / "run_config.yaml").is_file()
+            and (fold_dir / "best_model" / "adapter_model.safetensors").is_file()
+            and (
+                fold_dir
+                / "best_model"
+                / "standalone_eval"
+                / "metrics_original_teacher_forced.json"
+            ).is_file()
+        )
+
     def _runs_by_modality(self) -> dict[str, list[Path]]:
         runs_by_modality: dict[str, list[Path]] = defaultdict(list)
         for fold_dir in self.run_root.glob("*/*/fold_0"):
@@ -85,6 +97,10 @@ class JointK4Auditor:
             if self.smoke and run_name.startswith("smoke_") and not self._is_complete_smoke_run(fold_dir):
                 # Partial smoke runs from failed/cancelled submission rounds
                 # (same run-root) must not fail the smoke gate.
+                continue
+            if not self.smoke and not self._is_complete_production_run(fold_dir):
+                # Partial production runs from failed submission rounds must
+                # not fail the acceptance audit.
                 continue
             runs_by_modality[modality].append(fold_dir)
         for modality, fold_dirs in runs_by_modality.items():
