@@ -8,6 +8,7 @@ import os
 import shutil
 import sys
 from collections import Counter
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import torch
 from accelerate import Accelerator, DistributedDataParallelKwargs
+from accelerate.utils import InitProcessGroupKwargs
 from torch.optim import AdamW
 from transformers import get_linear_schedule_with_warmup
 
@@ -217,7 +219,13 @@ def train_merged_fold(
 
     accelerator = Accelerator(
         mixed_precision="bf16" if bool(model_config["training"].get("bf16", False)) else "no",
-        kwargs_handlers=[DistributedDataParallelKwargs(find_unused_parameters=True)],
+        kwargs_handlers=[
+            DistributedDataParallelKwargs(find_unused_parameters=True),
+            # Only rank 0 runs the five-dataset selection evaluation. Other
+            # ranks wait at the following broadcast, so the NCCL process
+            # group must allow longer than its 10-minute default here.
+            InitProcessGroupKwargs(timeout=timedelta(minutes=30)),
+        ],
     )
     accelerator.wait_for_everyone()
 

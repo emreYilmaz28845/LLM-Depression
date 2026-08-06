@@ -442,6 +442,15 @@ def test_merged_train_preflight_does_not_self_create_an_incomplete_run() -> None
     assert source.index("with context:") < source.index("outputs = model(**batch)")
 
 
+def test_merged_train_extends_process_group_timeout_for_rank_zero_selection() -> None:
+    source = Path("src/merged/train.py").read_text(encoding="utf-8")
+
+    assert "InitProcessGroupKwargs(timeout=timedelta(minutes=30))" in source
+    assert "TORCH_DISTRIBUTED_DEFAULT_TIMEOUT" not in Path(
+        "scripts/run_symmetric_merged_train_slurm.sh"
+    ).read_text(encoding="utf-8")
+
+
 def test_merged_postprocess_preflight_does_not_self_create_an_incomplete_run() -> None:
     source = Path("src/merged/postprocess.py").read_text(encoding="utf-8")
     assert "from src.evaluate import evaluate_examples" in source
