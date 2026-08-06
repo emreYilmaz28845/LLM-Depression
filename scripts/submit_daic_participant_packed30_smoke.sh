@@ -24,6 +24,7 @@ DAIC_UNPROCESSED_ROOT="${DAIC_UNPROCESSED_ROOT:-$DATASET_BASE_ROOT/DAIC-WOZ/unpr
 DAIC_LABEL_ROOT="${DAIC_LABEL_ROOT:-$DATASET_BASE_ROOT/DAIC-WOZ/minimal_zips}"
 MODEL_PATH="${MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instruct}"
 TEXT_MODEL_PATH="${TEXT_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen2-7B-Instruct}"
+INFERENCE_DTYPE="${INFERENCE_DTYPE:-bf16}"
 SUBMISSION_LOG="${SUBMISSION_LOG:-$PROJECT_ROOT/outputs/daic_participant_packed30_jobs/$RUN_ID.tsv}"
 
 if [ "$DRY_RUN" != "0" ] && [ "$DRY_RUN" != "1" ]; then
@@ -63,7 +64,7 @@ if [ "$DRY_RUN" = "0" ]; then
     printf 'timestamp_utc\tstage\tjob_id\tmodality\trun_name\tdependency\tconfig\tsource_commit\n' > "$SUBMISSION_LOG"
 fi
 
-export PROJECT_ROOT ENV_ACTIVATE DAIC_UNPROCESSED_ROOT DAIC_LABEL_ROOT SEED SMOKE_SUBJECT_LIMIT MODEL_PATH TEXT_MODEL_PATH
+export PROJECT_ROOT ENV_ACTIVATE DAIC_UNPROCESSED_ROOT DAIC_LABEL_ROOT SEED SMOKE_SUBJECT_LIMIT INFERENCE_DTYPE
 TRAIN_JOBS=0
 for modality in audio_only audio_text text_only; do
     config="${CONFIG_BY_MODALITY[$modality]}"
@@ -84,7 +85,15 @@ PY
     fi
 
     export CONFIG="$config" RUN_NAME="$run_name" FOLD=0
-    stage_export_spec="ALL,PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV_ACTIVATE,CONFIG=$config,FOLD=0,RUN_NAME=$run_name,SEED=$SEED,SMOKE_SUBJECT_LIMIT=$SMOKE_SUBJECT_LIMIT,DAIC_UNPROCESSED_ROOT=$DAIC_UNPROCESSED_ROOT,DAIC_LABEL_ROOT=$DAIC_LABEL_ROOT,MODEL_PATH=$MODEL_PATH,TEXT_MODEL_PATH=$TEXT_MODEL_PATH"
+    # MODEL_PATH is read with precedence by resolve_model_name_or_path, so it
+    # must only be exported for audio modalities; text-only must fall back to
+    # the config default (TEXT_MODEL_PATH-resolved Qwen2-7B-Instruct).
+    if [ "$modality" = "text_only" ]; then
+        modality_model_spec="TEXT_MODEL_PATH=$TEXT_MODEL_PATH"
+    else
+        modality_model_spec="MODEL_PATH=$MODEL_PATH"
+    fi
+    stage_export_spec="ALL,PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV_ACTIVATE,CONFIG=$config,FOLD=0,RUN_NAME=$run_name,SEED=$SEED,SMOKE_SUBJECT_LIMIT=$SMOKE_SUBJECT_LIMIT,INFERENCE_DTYPE=$INFERENCE_DTYPE,DAIC_UNPROCESSED_ROOT=$DAIC_UNPROCESSED_ROOT,DAIC_LABEL_ROOT=$DAIC_LABEL_ROOT,$modality_model_spec"
 
     if [ "$DRY_RUN" = "1" ]; then
         TRAIN_JOBS=$((TRAIN_JOBS + 1))
@@ -110,7 +119,7 @@ PY
     echo "Submitted smoke eval modality=$modality job_id=$eval_id (afterok:$train_id)"
 
     cache_dir="$run_root/hidden_features/$modality"
-    extract_export_spec="$stage_export_spec,CHECKPOINT_DIR=$fold_dir/best_model,CACHE_DIR=$cache_dir,CONDITION=$modality"
+    extract_export_spec="$stage_export_spec,CHECKPOINT_DIR=$fold_dir/best_model,CACHE_DIR=$cache_dir,CONDITION=$modality,EXTRACTION_INFERENCE_DTYPE=$INFERENCE_DTYPE"
     extract_raw="$(sbatch --parsable --job-name="p30sm-${modality:0:9}-ex" \
         --dependency="afterok:$eval_id" --export="$extract_export_spec" "$EXTRACT_WORKER")"
     extract_id="${extract_raw%%;*}"

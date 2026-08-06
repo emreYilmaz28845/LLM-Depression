@@ -29,7 +29,7 @@ RUN_NAME="${RUN_NAME:?Set RUN_NAME}"
 CHECKPOINT_DIR="${CHECKPOINT_DIR:?Set CHECKPOINT_DIR}"
 CACHE_DIR="${CACHE_DIR:?Set CACHE_DIR}"
 CONDITION="${CONDITION:?Set CONDITION}"
-MODEL_PATH="${MODEL_PATH:-}"
+EXTRACTION_INFERENCE_DTYPE="${EXTRACTION_INFERENCE_DTYPE:-}"
 QWEN_HIDDEN_DEPS="${QWEN_HIDDEN_DEPS:-$PROJECT_ROOT/.deps/qwen_hidden}"
 export PYTHONPATH="$QWEN_HIDDEN_DEPS:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
@@ -63,6 +63,9 @@ CMD=(
   --output-dir "$CACHE_DIR"
   --condition "$CONDITION"
 )
+if [ -n "$EXTRACTION_INFERENCE_DTYPE" ]; then
+    export EXTRACTION_INFERENCE_DTYPE
+fi
 # The base model is resolved from the saved checkpoint's run_config; do not
 # pass model flags that could override the text-only YAML default.
 

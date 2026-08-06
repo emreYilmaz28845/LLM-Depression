@@ -83,7 +83,15 @@ PY
     fi
 
     export CONFIG="$config" RUN_NAME="$run_name" FOLD=0
-    eval_export_spec="ALL,PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV_ACTIVATE,CONFIG=$config,FOLD=0,RUN_NAME=$run_name,SEED=$SEED,DAIC_UNPROCESSED_ROOT=$DAIC_UNPROCESSED_ROOT,DAIC_LABEL_ROOT=$DAIC_LABEL_ROOT,MODEL_PATH=$MODEL_PATH,TEXT_MODEL_PATH=$TEXT_MODEL_PATH"
+    # MODEL_PATH is read with precedence by resolve_model_name_or_path, so it
+    # must only be exported for audio modalities; text-only must fall back to
+    # the config default (TEXT_MODEL_PATH-resolved Qwen2-7B-Instruct).
+    if [ "$modality" = "text_only" ]; then
+        modality_model_spec="TEXT_MODEL_PATH=$TEXT_MODEL_PATH"
+    else
+        modality_model_spec="MODEL_PATH=$MODEL_PATH"
+    fi
+    eval_export_spec="ALL,PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV_ACTIVATE,CONFIG=$config,FOLD=0,RUN_NAME=$run_name,SEED=$SEED,DAIC_UNPROCESSED_ROOT=$DAIC_UNPROCESSED_ROOT,DAIC_LABEL_ROOT=$DAIC_LABEL_ROOT,$modality_model_spec"
 
     if [ "$DRY_RUN" = "1" ]; then
         TRAIN_JOBS=$((TRAIN_JOBS + 1))
