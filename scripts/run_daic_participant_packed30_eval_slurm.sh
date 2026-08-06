@@ -65,7 +65,8 @@ CMD=(
   --set "split.seed=1337"
 )
 if [ -n "$SMOKE_SUBJECT_LIMIT" ]; then CMD+=(--set "split.smoke_subject_limit=$SMOKE_SUBJECT_LIMIT"); fi
-if [ -n "$MODEL_PATH" ]; then CMD+=(--model_name_or_path "$MODEL_PATH"); fi
+# The base model is resolved from the saved checkpoint's run_config; do not
+# pass model flags that could override the text-only YAML default.
 
 echo "== packed30 official-test evaluation =="
 echo "checkpoint=$BEST_DIR config=$CONFIG"

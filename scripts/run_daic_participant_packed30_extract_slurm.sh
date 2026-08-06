@@ -63,7 +63,8 @@ CMD=(
   --output-dir "$CACHE_DIR"
   --condition "$CONDITION"
 )
-if [ -n "$MODEL_PATH" ]; then CMD+=(--model-name-or-path "$MODEL_PATH"); fi
+# The base model is resolved from the saved checkpoint's run_config; do not
+# pass model flags that could override the text-only YAML default.
 
 echo "== packed30 hidden extraction =="
 echo "checkpoint=$CHECKPOINT_DIR cache=$CACHE_DIR condition=$CONDITION"

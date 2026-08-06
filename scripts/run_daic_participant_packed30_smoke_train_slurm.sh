@@ -53,8 +53,9 @@ CMD=(
   --set "training.num_train_epochs=1"
   --set "split.smoke_subject_limit=$SMOKE_SUBJECT_LIMIT"
 )
-if [ -n "$MODEL_PATH" ]; then CMD+=(--model_name_or_path "$MODEL_PATH"); fi
-if [ -n "$TEXT_MODEL_PATH" ]; then CMD+=(--set "model_name_or_path=$TEXT_MODEL_PATH"); fi
+# The config YAML already resolves the correct base model via the exported
+# MODEL_PATH / TEXT_MODEL_PATH env vars; never pass model flags here, because
+# --model_name_or_path would override the text-only YAML default.
 
 echo "== packed30 smoke training (1 GPU, 1 epoch, $SMOKE_SUBJECT_LIMIT subjects) =="
 echo "config=$CONFIG fold=$FOLD run_name=$RUN_NAME seed=$SEED"
