@@ -29,6 +29,7 @@ RUN_NAME="${RUN_NAME:?Set RUN_NAME}"
 SEED="${SEED:-1337}"
 SMOKE_SUBJECT_LIMIT="${SMOKE_SUBJECT_LIMIT:-}"
 INFERENCE_DTYPE="${INFERENCE_DTYPE:-}"
+OUTPUT_DIR="${OUTPUT_DIR:-}"
 MODEL_PATH="${MODEL_PATH:-}"
 TEXT_MODEL_PATH="${TEXT_MODEL_PATH:-}"
 DAIC_UNPROCESSED_ROOT="${DAIC_UNPROCESSED_ROOT:?Set DAIC_UNPROCESSED_ROOT}"
@@ -67,6 +68,7 @@ CMD=(
 )
 if [ -n "$SMOKE_SUBJECT_LIMIT" ]; then CMD+=(--set "split.smoke_subject_limit=$SMOKE_SUBJECT_LIMIT"); fi
 if [ -n "$INFERENCE_DTYPE" ]; then CMD+=(--set "evaluation.inference_dtype=$INFERENCE_DTYPE"); fi
+if [ -n "$OUTPUT_DIR" ]; then CMD+=(--output_dir "$OUTPUT_DIR"); fi
 # The base model is resolved from the saved checkpoint's run_config; do not
 # pass model flags that could override the text-only YAML default.
 
