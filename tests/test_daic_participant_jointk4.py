@@ -501,3 +501,70 @@ def test_submit_smoke_dry_run_two_chains() -> None:
     assert result.returncode == 0, result.stderr
     assert result.stdout.count("  smoke-train : sbatch --gres=gpu:1") == 2
     assert "DRY RUN complete: no jobs submitted" in result.stdout
+
+
+def test_eval_determinism_comparison_accepts_identical_passes(tmp_path: Path) -> None:
+    from scripts.compare_eval_determinism import compare_determinism
+
+    pass1 = tmp_path / "pass1"
+    pass2 = tmp_path / "pass2"
+    pass1.mkdir()
+    pass2.mkdir()
+    sample_rows = [
+        {"subject_id": "300", "sample_id": "300__bundle_000", "dep_score": -0.5, "non_score": -0.2},
+        {"subject_id": "301", "sample_id": "301__bundle_000", "dep_score": 0.1, "non_score": -0.3},
+    ]
+    (pass1 / "predictions_sample_level.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in sample_rows), encoding="utf-8"
+    )
+    (pass2 / "predictions_sample_level.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in sample_rows), encoding="utf-8"
+    )
+    (pass1 / "predictions_subject_level.csv").write_text(
+        "subject_id,label,prediction\n300,0,0\n301,1,1\n", encoding="utf-8"
+    )
+    (pass2 / "predictions_subject_level.csv").write_text(
+        "label,prediction,subject_id\n0,0,300\n1,1,301\n", encoding="utf-8"
+    )
+    metrics = {"positive_f1": 0.5, "confusion_matrix": [[2, 1], [0, 1]]}
+    (pass1 / "metrics_original_teacher_forced.json").write_text(
+        json.dumps(metrics, indent=2), encoding="utf-8"
+    )
+    (pass2 / "metrics_original_teacher_forced.json").write_text(
+        json.dumps(metrics, sort_keys=True), encoding="utf-8"
+    )
+    (pass1 / "final_and_best_validation_metrics.json").write_text("{}", encoding="utf-8")
+    (pass2 / "final_and_best_validation_metrics.json").write_text("{}", encoding="utf-8")
+    assert compare_determinism(pass1, pass2) == []
+
+
+def test_eval_determinism_comparison_rejects_score_differences(tmp_path: Path) -> None:
+    from scripts.compare_eval_determinism import compare_determinism
+
+    pass1 = tmp_path / "pass1"
+    pass2 = tmp_path / "pass2"
+    pass1.mkdir()
+    pass2.mkdir()
+    (pass1 / "predictions_sample_level.jsonl").write_text(
+        '{"subject_id": "300", "dep_score": -0.5, "non_score": -0.2}\n', encoding="utf-8"
+    )
+    (pass2 / "predictions_sample_level.jsonl").write_text(
+        '{"subject_id": "300", "dep_score": -0.4, "non_score": -0.2}\n', encoding="utf-8"
+    )
+    for name in ("predictions_subject_level.csv", "metrics_original_teacher_forced.json", "final_and_best_validation_metrics.json"):
+        (pass1 / name).write_text("{}" if name.endswith(".json") else "subject_id,label\n300,0\n", encoding="utf-8")
+        (pass2 / name).write_text("{}" if name.endswith(".json") else "subject_id,label\n300,0\n", encoding="utf-8")
+    mismatches = compare_determinism(pass1, pass2)
+    assert any("predictions_sample_level.jsonl" in message for message in mismatches)
+
+
+def test_auditor_smoke_mode_includes_smoke_runs(tmp_path: Path) -> None:
+    from scripts.audit_daic_participant_packed30_jointk4 import JointK4Auditor
+
+    for modality in ("audio_only", "audio_text"):
+        run_dir = tmp_path / modality / f"smoke_p30_jointk4_{modality}_s1337_deadbeef" / "fold_0"
+        run_dir.mkdir(parents=True)
+    production = JointK4Auditor(tmp_path, tmp_path, tmp_path, smoke=False)
+    assert set(production._runs_by_modality()) == set()
+    smoke = JointK4Auditor(tmp_path, tmp_path, tmp_path, smoke=True)
+    assert set(smoke._runs_by_modality()) == {"audio_only", "audio_text"}

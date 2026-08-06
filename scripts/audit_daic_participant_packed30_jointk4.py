@@ -72,7 +72,7 @@ class JointK4Auditor:
         for fold_dir in self.run_root.glob("*/*/fold_0"):
             modality = str(fold_dir.parent.parent.name)
             run_name = str(fold_dir.parent.name)
-            if run_name.startswith("smoke_"):
+            if not self.smoke and run_name.startswith("smoke_"):
                 continue
             runs_by_modality[modality].append(fold_dir)
         return runs_by_modality
@@ -392,7 +392,7 @@ class JointK4Auditor:
             complete_run: str | None = None
             for fold_dir in fold_dirs:
                 run_name = str(fold_dir.parent.name)
-                if run_name.startswith("smoke_"):
+                if not self.smoke and run_name.startswith("smoke_"):
                     continue
                 self.check_recipe(fold_dir, modality, run_name)
                 schedule_audit = self.check_schedule(fold_dir, modality, run_name)

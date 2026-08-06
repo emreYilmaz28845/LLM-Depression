@@ -75,33 +75,7 @@ run_pass 1
 run_pass 2
 
 echo "== comparing deterministic evaluation passes =="
-python - "$BEST_DIR" <<PY
-import json
-import sys
-from pathlib import Path
-
-best_dir = Path(sys.argv[1])
-
-def normalized_lines(path: Path):
-    rows = [json.loads(line) for line in path.open(encoding="utf-8") if line.strip()]
-    return sorted(json.dumps(row, sort_keys=True, separators=(",", ":")) for row in rows)
-
-def compare(name):
-    first = best_dir / f"standalone_eval_pass1/{name}"
-    second = best_dir / f"standalone_eval_pass2/{name}"
-    if not first.is_file() or not second.is_file():
-        raise SystemExit(f"Determinism gate: missing {name} in a pass.")
-    a = normalized_lines(first)
-    b = normalized_lines(second)
-    if a != b:
-        raise SystemExit(f"Determinism gate FAILED: {name} differs between passes.")
-    print(f"pass1 == pass2 ({name}): {len(a)} rows")
-
-compare("predictions_sample_level.jsonl")
-compare("predictions_subject_level.csv")
-compare("metrics_original_teacher_forced.json")
-compare("final_and_best_validation_metrics.json")
-print("Determinism gate PASSED: both evaluation passes are byte-identical.")
-PY
-
+python "$PROJECT_ROOT/scripts/compare_eval_determinism.py" \
+  "$BEST_DIR/standalone_eval_pass1" \
+  "$BEST_DIR/standalone_eval_pass2"
 echo "== packed30 jointk4 deterministic evaluation finished =="
