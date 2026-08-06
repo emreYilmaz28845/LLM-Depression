@@ -258,82 +258,93 @@ class Auditor:
 
     def check_result_acceptance(self, run_root: Path) -> None:
         run_root = Path(run_root)
-        fold_dirs = sorted(
-            path
-            for path in run_root.glob("*/*/fold_0")
-            if not str(path.parent.parent.name).startswith("smoke_")
+        runs_by_modality: dict[str, list[Path]] = defaultdict(list)
+        for fold_dir in run_root.glob("*/*/fold_0"):
+            modality = str(fold_dir.parent.parent.name)
+            run_name = str(fold_dir.parent.name)
+            if run_name.startswith("smoke_"):
+                continue
+            runs_by_modality[modality].append(fold_dir)
+        complete_by_modality: dict[str, bool] = {}
+        for modality, fold_dirs in sorted(runs_by_modality.items()):
+            modality_complete = False
+            for fold_dir in fold_dirs:
+                run_name = str(fold_dir.parent.name)
+                run_ok = self._check_one_run(modality, run_name, fold_dir)
+                modality_complete = modality_complete or run_ok
+            complete_by_modality[modality] = modality_complete
+            self.require(
+                modality_complete,
+                f"modality {modality}: no complete production run (checked {[str(d.parent.name) for d in fold_dirs]})",
+            )
+        self.require(
+            set(complete_by_modality) == {"audio_only", "audio_text", "text_only"},
+            f"Expected result runs for all three modalities, found {sorted(complete_by_modality)}",
         )
-        modalities = {str(path.parent.parent.name) for path in fold_dirs}
-        if len(fold_dirs) != 3 or modalities != {"audio_only", "audio_text", "text_only"}:
-            self.require(False, f"Expected exactly three non-smoke modality run dirs, found {sorted(modalities)}")
-            return
-        for fold_dir in fold_dirs:
-            modality = str(fold_dir.parent.name)
-            run_config_path = fold_dir / "run_config.yaml"
-            best_dir = fold_dir / "best_model"
-            self.require(run_config_path.is_file(), f"{modality}: missing run_config.yaml")
-            if run_config_path.is_file():
-                import yaml
 
-                saved = yaml.safe_load(run_config_path.read_text(encoding="utf-8"))
-                resolved_config = (saved or {}).get("config") or {}
-                self.require(
-                    str(resolved_config.get("protocol_id")) == PACKED30_PROTOCOL_ID,
-                    f"{modality}: run_config.yaml protocol_id mismatch",
-                )
-                self.require(
-                    (fold_dir / "logs" / "split_used.json").is_file(),
-                    f"{modality}: missing logs/split_used.json",
-                )
+    def _check_one_run(self, modality: str, run_name: str, fold_dir: Path) -> bool:
+        failures_before = len(self.failures)
+        run_config_path = fold_dir / "run_config.yaml"
+        best_dir = fold_dir / "best_model"
+        self.require(run_config_path.is_file(), f"{modality}/{run_name}: missing run_config.yaml")
+        if run_config_path.is_file():
+            import yaml
+
+            saved = yaml.safe_load(run_config_path.read_text(encoding="utf-8"))
+            resolved_config = (saved or {}).get("config") or {}
             self.require(
-                (best_dir / "adapter_model.safetensors").is_file()
-                and (best_dir / "adapter_config.json").is_file(),
-                f"{modality}: best_model is missing",
+                str(resolved_config.get("protocol_id")) == PACKED30_PROTOCOL_ID,
+                f"{modality}/{run_name}: run_config.yaml protocol_id mismatch",
             )
             self.require(
-                not (fold_dir / "last_model" / "adapter_model.safetensors").is_file()
-                or True,
-                f"{modality}: last_model must never be substituted",
+                (fold_dir / "logs" / "split_used.json").is_file(),
+                f"{modality}/{run_name}: missing logs/split_used.json",
             )
-            eval_metrics = best_dir / "standalone_eval" / "metrics_original_teacher_forced.json"
-            self.require(eval_metrics.is_file(), f"{modality}: missing official-test Qwen metrics")
-            subject_rows_path = best_dir / "standalone_eval" / "predictions_subject_level.csv"
-            if subject_rows_path.is_file():
-                import csv
+        self.require(
+            (best_dir / "adapter_model.safetensors").is_file()
+            and (best_dir / "adapter_config.json").is_file(),
+            f"{modality}/{run_name}: best_model is missing",
+        )
+        eval_metrics = best_dir / "standalone_eval" / "metrics_original_teacher_forced.json"
+        self.require(eval_metrics.is_file(), f"{modality}/{run_name}: missing official-test Qwen metrics")
+        subject_rows_path = best_dir / "standalone_eval" / "predictions_subject_level.csv"
+        if subject_rows_path.is_file():
+            import csv
 
-                with subject_rows_path.open(encoding="utf-8") as handle:
-                    subject_rows = list(csv.DictReader(handle))
+            with subject_rows_path.open(encoding="utf-8") as handle:
+                subject_rows = list(csv.DictReader(handle))
+            self.require(
+                len(subject_rows) == 47,
+                f"{modality}/{run_name}: expected 47 official-test subject rows, found {len(subject_rows)}",
+            )
+        cache_dir = fold_dir.parent / "hidden_features" / modality
+        for name in (
+            "outer_train.npz",
+            "outer_train_rows.jsonl",
+            "final_eval.npz",
+            "final_eval_rows.jsonl",
+            "extraction_metadata.json",
+        ):
+            self.require((cache_dir / name).is_file(), f"{modality}/{run_name}: missing hidden cache artifact {name}")
+        if (cache_dir / "final_eval_rows.jsonl").is_file():
+            heldout_rows = read_jsonl(cache_dir / "final_eval_rows.jsonl")
+            heldout_subjects = {str(row["subject_id"]) for row in heldout_rows}
+            self.require(len(heldout_subjects) == 47, f"{modality}/{run_name}: hidden cache heldout subjects != 47")
+            self.require(
+                all(str(row.get("protocol_id", "")) == PACKED30_PROTOCOL_ID for row in heldout_rows),
+                f"{modality}/{run_name}: hidden cache rows lack the v1 protocol id",
+            )
+        for variant in ("logreg_raw", "xgb_raw"):
+            variant_dir = fold_dir.parent / "hidden_classifiers" / modality / variant
+            for name in ("metrics.json", "classifier_metadata.json", "pipeline.joblib"):
+                self.require((variant_dir / name).is_file(), f"{modality}/{run_name}/{variant}: missing {name}")
+            if (variant_dir / "predictions_subject_level.jsonl").is_file():
+                variant_rows = read_jsonl(variant_dir / "predictions_subject_level.jsonl")
                 self.require(
-                    len(subject_rows) == 47,
-                    f"{modality}: expected 47 official-test subject rows, found {len(subject_rows)}",
+                    len(variant_rows) == 47,
+                    f"{modality}/{run_name}/{variant}: expected 47 subject rows, found {len(variant_rows)}",
                 )
-            cache_dir = fold_dir.parent / "hidden_features" / modality
-            for name in (
-                "outer_train.npz",
-                "outer_train_rows.jsonl",
-                "final_eval.npz",
-                "final_eval_rows.jsonl",
-                "extraction_metadata.json",
-            ):
-                self.require((cache_dir / name).is_file(), f"{modality}: missing hidden cache artifact {name}")
-            if (cache_dir / "final_eval_rows.jsonl").is_file():
-                heldout_rows = read_jsonl(cache_dir / "final_eval_rows.jsonl")
-                heldout_subjects = {str(row["subject_id"]) for row in heldout_rows}
-                self.require(len(heldout_subjects) == 47, f"{modality}: hidden cache heldout subjects != 47")
-                self.require(
-                    all(str(row.get("protocol_id", "")) == PACKED30_PROTOCOL_ID for row in heldout_rows),
-                    f"{modality}: hidden cache rows lack the v1 protocol id",
-                )
-            for variant in ("logreg_raw", "xgb_raw"):
-                variant_dir = fold_dir.parent / "hidden_classifiers" / modality / variant
-                for name in ("metrics.json", "classifier_metadata.json", "pipeline.joblib"):
-                    self.require((variant_dir / name).is_file(), f"{modality}/{variant}: missing {name}")
-                if (variant_dir / "predictions_subject_level.jsonl").is_file():
-                    variant_rows = read_jsonl(variant_dir / "predictions_subject_level.jsonl")
-                    self.require(
-                        len(variant_rows) == 47,
-                        f"{modality}/{variant}: expected 47 subject rows, found {len(variant_rows)}",
-                    )
+        return len(self.failures) == failures_before
 
     def rebuild_determinism(self, config_path: Path, unprocessed_root: Path, label_root: Path) -> None:
         import os
