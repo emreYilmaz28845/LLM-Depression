@@ -62,6 +62,7 @@ OPTIONAL_OVERRIDE_PATHS = {
     ("split", "outer_folds"),
     ("split", "smoke_subject_limit"),
     ("evaluation", "inference_dtype"),
+    ("lora", "last_n_layers"),
 }
 GENERATION_PARSE_PREFIXES = (
     "answer:",

@@ -55,6 +55,13 @@ QWEN2AUDIO_AUDIO_PLACEHOLDER = "<|audio_bos|><|AUDIO|><|audio_eos|>"
 QWEN3OMNI_AUDIO_PLACEHOLDER = "<|audio_start|><|audio_pad|><|audio_end|>"
 AUDIO_PLACEHOLDER = QWEN2AUDIO_AUDIO_PLACEHOLDER
 
+JOINT_PACKED30_MODE = "participant_speech_packed30_joint"
+JOINT_PACKED30_RECIPE_ID = "runtime_packed30_joint_random_k4_fullcover_v1"
+JOINT_PACKED30_MAX_CHUNK_SAMPLES = 480000
+JOINT_PACKED30_SAMPLE_RATE = 16000
+JOINT_PACKED30_REQUIRED_K = 4
+JOINT_PACKED30_CONTEXT_SENTINEL = "__JOINT_BUNDLE_AUDIO_CONTEXT__"
+
 
 def resolve_audio_placeholder(config: dict[str, Any]) -> str:
     if resolve_model_backend(config) == MODEL_BACKEND_QWEN3OMNI:
@@ -805,6 +812,246 @@ def _build_participant_speech_packed30_examples(
     return examples
 
 
+def _bundle_audio_context(num_segments: int) -> str:
+    return (
+        f"The subject's speech audio is provided in {int(num_segments)} "
+        f"segment{'s' if int(num_segments) != 1 else ''} sampled from the interview."
+    )
+
+
+def render_joint_packed30_bundle(
+    example: dict[str, Any], bundle_size: int
+) -> tuple[str, str]:
+    """Render the joint packed30 prompt/training text for a bundle of ``bundle_size``
+    span groups.
+
+    The prompt must contain exactly ``bundle_size`` audio placeholders and may
+    describe the current bundle size (never the subject's total chunk count).
+    Training (epoch schedules), evaluation (balanced-cover bundles), and hidden
+    extraction all route through this single renderer.
+    """
+    bundle_size = int(bundle_size)
+    if bundle_size < 1:
+        raise ValueError("A joint packed30 bundle must contain at least one span group.")
+    template = str(example["prompt_user_template"])
+    values = dict(example["prompt_template_values"])
+    values["audio_context_block"] = _bundle_audio_context(bundle_size)
+    user_text = template.format_map(values).strip()
+    prompt_text = build_prompt_text(
+        system_prompt=example["prompt_system"],
+        user_text=user_text,
+        num_audios=bundle_size,
+        use_audio=True,
+        audio_placeholder=example["prompt_audio_placeholder"],
+    )
+    return prompt_text, build_training_text(prompt_text, example["prompt_internal_label_text"])
+
+
+def load_span_group_audio_arrays(
+    example: dict[str, Any],
+    sampling_rate: int,
+    silence_audio: bool,
+) -> list[np.ndarray]:
+    """Shared loader converting every ``audio_span_groups`` member into exactly one
+    waveform through the multi-span packed30 loader.
+
+    Enforces the locked invariant: number of audio placeholders in the prompt
+    == len(audio_span_groups) == number of waveforms passed to the processor.
+    """
+    groups = list(example.get("audio_span_groups") or [])
+    if not groups:
+        raise ValueError("load_span_group_audio_arrays requires at least one span group.")
+    if sampling_rate is None:
+        raise ValueError("Audio examples require a processor sampling rate.")
+    placeholder = str(example.get("prompt_audio_placeholder", AUDIO_PLACEHOLDER))
+    prompt_placeholders = str(example.get("prompt_text", "")).count(placeholder)
+    if prompt_placeholders != len(groups):
+        raise ValueError(
+            f"Joint packed30 placeholder/group mismatch for sample_id="
+            f"{example.get('sample_id', '')}: prompt has {prompt_placeholders} "
+            f"audio placeholders but {len(groups)} span groups."
+        )
+    arrays = []
+    for group in groups:
+        array = load_audio_spans_array(
+            str(group["audio_path"]),
+            list(group["audio_spans"]),
+            sampling_rate,
+            silence_audio,
+            int(group.get("participant_sample_count")) if group.get("participant_sample_count") is not None else None,
+        )
+        arrays.append(array)
+    return arrays
+
+
+def _build_participant_speech_packed30_joint_examples(
+    manifest_rows: list[dict[str, Any]],
+    config: dict[str, Any],
+    partition_name: str,
+    truncation_log_path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """One source example per subject plus deterministic balanced-cover bundles
+    for validation/test.
+
+    Training carries the complete ordered ``subject_chunk_span_groups`` pool;
+    the joint epoch scheduler materializes one random K=4 bundle per subject per
+    epoch and re-renders the prompt for the current bundle size. Validation and
+    test use the existing cyclic ``balanced_joint_bundles`` algorithm with
+    K=min(4, N); every chunk appears and every chunk within a subject has
+    exactly equal occurrence count.
+    """
+    input_modality = resolve_input_modality(config)
+    use_audio, use_text = _modality_flags(input_modality)
+    if not use_audio:
+        raise ValueError(
+            f"sample_mode={JOINT_PACKED30_MODE} requires data.use_audio=true."
+        )
+    data_cfg = config["data"]
+    requested_k = int(data_cfg.get("train_chunks_per_subject", JOINT_PACKED30_REQUIRED_K))
+    eval_k = int(data_cfg.get("eval_chunks_per_subject", JOINT_PACKED30_REQUIRED_K))
+    transcript_max_chars = int(data_cfg.get("transcript_max_chars", 0) or 0)
+    audio_placeholder = resolve_audio_placeholder(config)
+    prompt_system = str(config["prompt"]["system"])
+    user_template = _user_prompt_template(config, is_subject_bundle=True)
+
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in manifest_rows:
+        grouped[str(row["subject_id"])].append(row)
+
+    examples: list[dict[str, Any]] = []
+    truncation_logs: list[dict[str, Any]] = []
+    for subject_id in sorted(grouped):
+        rows = sorted(
+            grouped[subject_id],
+            key=lambda row: (int(row["subject_id"]), int(row["chunk_index"]), str(row["sample_id"])),
+        )
+        labels = {int(row["label"]) for row in rows}
+        if len(labels) != 1:
+            raise ValueError(
+                f"{JOINT_PACKED30_MODE} expects exactly one label per subject; "
+                f"found {len(labels)} for subject_id={subject_id}."
+            )
+        official_splits = {str(row.get("split_original", "")) for row in rows}
+        if len(official_splits) != 1:
+            raise ValueError(
+                f"{JOINT_PACKED30_MODE} expects exactly one official split per "
+                f"subject; found {sorted(official_splits)} for subject_id={subject_id}."
+            )
+        transcripts = {str(row["full_participant_transcript"]).strip() for row in rows}
+        hashes = {str(row["full_participant_transcript_sha256"]) for row in rows}
+        if len(transcripts) != 1 or len(hashes) != 1:
+            raise ValueError(
+                f"{JOINT_PACKED30_MODE} expects one consistent full participant "
+                f"transcript and hash per subject; subject_id={subject_id}."
+            )
+        chunk_indices = [int(row["chunk_index"]) for row in rows]
+        if chunk_indices != list(range(len(chunk_indices))):
+            raise ValueError(
+                f"{JOINT_PACKED30_MODE} requires unique consecutive integer chunk "
+                f"indices for subject_id={subject_id}; found {chunk_indices}."
+            )
+        for row in rows:
+            sample_count = int(row.get("participant_sample_count", 0))
+            if not (1 <= sample_count <= JOINT_PACKED30_MAX_CHUNK_SAMPLES):
+                raise ValueError(
+                    f"{JOINT_PACKED30_MODE} requires 1 <= participant_sample_count "
+                    f"<= {JOINT_PACKED30_MAX_CHUNK_SAMPLES}; subject_id={subject_id} "
+                    f"sample_id={row['sample_id']} got {sample_count}."
+                )
+        groups = [
+            {
+                "audio_path": str(row["audio_path"]),
+                "audio_spans": list(row["audio_spans"]),
+                "participant_sample_count": int(row["participant_sample_count"]),
+                "chunk_id": f"{int(row['chunk_index']):03d}",
+                "chunk_index": int(row["chunk_index"]),
+            }
+            for row in rows
+        ]
+        canonical_row = rows[0]
+        label = int(canonical_row["label"])
+        internal_label_text = internal_label_text_from_int(config, label)
+        transcript = str(canonical_row["full_participant_transcript"]) if use_text else ""
+        transcript, transcript_log = _truncate_text(transcript, transcript_max_chars)
+        values = {
+            "transcript": transcript,
+            "audio_context_block": JOINT_PACKED30_CONTEXT_SENTINEL,
+            "transcript_block": _transcript_block(use_text, transcript),
+            "decision_basis": _decision_basis(input_modality),
+            "label_descriptor": prompt_label_descriptor(config),
+            "label_instruction": prompt_label_instruction(config),
+            "emotion_block": "",
+        }
+        deterministic_k = min(requested_k, len(groups))
+        deterministic_indices = _evenly_spaced_indices(len(groups), deterministic_k)
+        deterministic_groups = [groups[index] for index in deterministic_indices]
+        source = {
+            "dataset": "daic",
+            "subject_id": subject_id,
+            "sample_id": subject_id,
+            "label": label,
+            "label_text": canonical_row["label_text"],
+            "internal_label_text": internal_label_text,
+            "transcript": transcript,
+            "full_participant_transcript_sha256": str(
+                canonical_row["full_participant_transcript_sha256"]
+            ),
+            "audio_span_groups": deterministic_groups,
+            "subject_chunk_span_groups": groups,
+            "audio_paths": [],
+            "audio_clip_seconds": [],
+            "audio_start_times": [],
+            "audio_end_times": [],
+            "protocol_id": canonical_row["protocol_id"],
+            "num_chunks": len(groups),
+            "chunk_index": 0,
+            "input_modality": input_modality,
+            "prompt_user_template": user_template,
+            "prompt_template_values": values,
+            "prompt_system": prompt_system,
+            "prompt_audio_placeholder": audio_placeholder,
+            "prompt_internal_label_text": internal_label_text,
+            "question_id": "",
+        }
+        source["prompt_text"], source["training_text"] = render_joint_packed30_bundle(
+            source, len(deterministic_groups)
+        )
+        if transcript_log:
+            truncation_logs.append(
+                {
+                    "partition": partition_name,
+                    "subject_id": subject_id,
+                    "sample_id": subject_id,
+                    **transcript_log,
+                }
+            )
+
+        if "train" in partition_name.lower():
+            examples.append(source)
+            continue
+
+        chunk_ids = [group["chunk_id"] for group in groups]
+        effective_eval_k = min(eval_k, len(groups))
+        bundles, coverage = balanced_joint_bundles(chunk_ids, effective_eval_k)
+        for bundle_id, indices in enumerate(bundles):
+            bundle = dict(source)
+            bundle_groups = [groups[index] for index in indices]
+            bundle["sample_id"] = f"{subject_id}__bundle_{bundle_id:03d}"
+            bundle["audio_span_groups"] = bundle_groups
+            bundle["bundle_id"] = bundle_id
+            bundle["bundle_chunk_ids"] = [chunk_ids[index] for index in indices]
+            bundle["bundle_coverage_count"] = coverage["occurrences_per_chunk"]
+            bundle["effective_k"] = len(bundle_groups)
+            bundle["prompt_text"], bundle["training_text"] = render_joint_packed30_bundle(
+                bundle, len(bundle_groups)
+            )
+            examples.append(bundle)
+
+    if truncation_log_path:
+        write_jsonl(truncation_logs, truncation_log_path)
+    return examples
+
+
 def build_examples(
     manifest_rows: list[dict[str, Any]],
     config: dict[str, Any],
@@ -832,6 +1079,26 @@ def build_examples(
                 truncation_log_path=truncation_log_path,
             )
         return _build_participant_speech_packed30_examples(
+            manifest_rows,
+            config,
+            partition_name,
+            truncation_log_path=truncation_log_path,
+        )
+
+    if sample_mode == JOINT_PACKED30_MODE:
+        if dataset_name != "daic":
+            raise ValueError(
+                f"sample_mode={JOINT_PACKED30_MODE} requires dataset=daic."
+            )
+        if input_modality == INPUT_MODALITY_TEXT_ONLY:
+            return _build_subject_level_text_only_examples(
+                manifest_rows,
+                config,
+                partition_name,
+                transcript_max_chars,
+                truncation_log_path=truncation_log_path,
+            )
+        return _build_participant_speech_packed30_joint_examples(
             manifest_rows,
             config,
             partition_name,
@@ -1300,7 +1567,24 @@ class AudioTextDataset(Dataset):
         rerendered: dict[str, Any] = {}
         if self.chunk_sampling == "random" and example.get("chunk_caption_by_path"):
             rerendered = self._rerender_emotion_prompt(example, audio_paths)
-        if uses_audio_spans(example):
+        if example.get("audio_span_groups"):
+            audio_arrays = load_span_group_audio_arrays(
+                example,
+                self.processor_sampling_rate,
+                self.silence_audio,
+            )
+            if self.audio_augment and not self.silence_audio:
+                audio_arrays = [
+                    apply_audio_augment(
+                        array,
+                        self.processor_sampling_rate,
+                        self.audio_augment,
+                        self._rng,
+                        self._np_rng,
+                    )
+                    for array in audio_arrays
+                ]
+        elif uses_audio_spans(example):
             if self.processor_sampling_rate is None:
                 raise ValueError("Audio examples require a processor sampling rate.")
             audio_arrays = [

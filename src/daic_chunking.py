@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import random
 import re
@@ -9,6 +10,19 @@ from typing import Any, Sequence
 
 
 SUBJECT_AUDIO = "subject_audio"
+JOINT_PACKED30_MODE = "participant_speech_packed30_joint"
+PACKED30_SAMPLE_RATE = 16000
+
+
+def canonical_sha256(value: Any) -> str:
+    """Deterministic hash of a JSON-serializable schedule view."""
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 SUBJECT_CHUNKS = "subject_chunks"
 SUBJECT_MIL = "subject_mil"
 TRAIN_POLICIES = {
@@ -47,7 +61,7 @@ def resolve_chunking_controls(config: dict[str, Any]) -> dict[str, Any]:
     """Resolve the new controls while preserving legacy subject_audio K behavior."""
     data = config.get("data", {})
     mode = str(data.get("sample_mode", "response")).strip().lower()
-    if mode not in {SUBJECT_AUDIO, SUBJECT_CHUNKS, SUBJECT_MIL}:
+    if mode not in {SUBJECT_AUDIO, SUBJECT_CHUNKS, SUBJECT_MIL, JOINT_PACKED30_MODE}:
         return {"enabled": False, "sample_mode": mode}
     legacy_k = data.get("chunks_per_subject", 4)
     train_policy = str(data.get("train_chunk_policy", "random_k")).strip().lower()
@@ -85,6 +99,17 @@ def resolve_chunking_controls(config: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("subject_chunks requires eval_chunk_policy=all or matched_k.")
     if mode == SUBJECT_MIL and (train_policy != "all" or eval_policy not in {"all", "matched_k"}):
         raise ValueError("subject_mil requires all-chunk training and all/matched_k evaluation.")
+    if mode == JOINT_PACKED30_MODE:
+        if train_policy != "joint_random_k":
+            raise ValueError(
+                f"sample_mode={JOINT_PACKED30_MODE} requires "
+                "train_chunk_policy=joint_random_k."
+            )
+        if eval_policy != "balanced_joint_cover":
+            raise ValueError(
+                f"sample_mode={JOINT_PACKED30_MODE} requires "
+                "eval_chunk_policy=balanced_joint_cover."
+            )
     if train_policy in {"fixed_k", "joint_random_k", "joint_rotary_k", "joint_balanced_cover"} and train_k == "all":
         raise ValueError(f"{train_policy} requires an integer data.train_chunks_per_subject.")
     if eval_policy in {
@@ -410,7 +435,16 @@ def build_joint_epoch_schedule(
     subjects: Sequence[dict[str, Any]], *, policy: str, k: int, seed: int,
     epochs: int, loss_weight_rescale: str = "mean_one", class_balance: bool = False,
 ) -> tuple[list[list[dict[str, Any]]], dict[str, Any]]:
-    """Materialize rotary or minimum-cover joint bundles for every epoch."""
+    """Materialize rotary, random-K, or minimum-cover joint bundles per epoch.
+
+    Sources may be either path-based DAIC subjects (``subject_chunk_paths``,
+    unchanged byte-for-byte) or runtime packed30 joint subjects carrying the
+    complete ordered ``subject_chunk_span_groups`` pool. For span-group
+    subjects each emitted bundle row carries the selected ``audio_span_groups``
+    and per-group participant-audio seconds; prompt text must be re-rendered by
+    the caller because the placeholder count follows the bundle size
+    (``K=min(requested_k, N)``).
+    """
     loss_weight_rescale = str(loss_weight_rescale).strip().lower()
     if int(epochs) < 1:
         raise ValueError("epochs must be positive.")
@@ -423,13 +457,30 @@ def build_joint_epoch_schedule(
     if len(by_id) != len(subjects):
         raise ValueError("Joint schedules require one source example per subject.")
     for subject_id, row in by_id.items():
+        groups = list(row.get("subject_chunk_span_groups") or [])
         paths = list(row.get("subject_chunk_paths") or [])
-        if not paths:
+        if bool(groups) == bool(paths):
+            raise ValueError(
+                f"Subject {subject_id} must carry exactly one of "
+                "subject_chunk_span_groups or subject_chunk_paths."
+            )
+        if groups:
+            if not all("chunk_id" in group and "audio_spans" in group for group in groups):
+                raise ValueError(
+                    f"Subject {subject_id} span groups require chunk_id and audio_spans."
+                )
+            chunk_ids = [str(group["chunk_id"]) for group in groups]
+            n_chunks = len(chunk_ids)
+        else:
+            chunk_ids = list(map(str, row.get("subject_chunk_ids", range(len(paths)))))
+            n_chunks = len(chunk_ids)
+            if len(chunk_ids) != len(paths):
+                raise ValueError(
+                    f"Subject {subject_id} chunk IDs and paths have different lengths."
+                )
+        if n_chunks < 1:
             raise ValueError(f"Subject {subject_id} has no source chunks.")
-        chunk_ids = list(map(str, row.get("subject_chunk_ids", range(len(paths)))))
-        if len(chunk_ids) != len(paths):
-            raise ValueError(f"Subject {subject_id} chunk IDs and paths have different lengths.")
-        if len(set(chunk_ids)) != len(chunk_ids):
+        if len(chunk_ids) != len(set(chunk_ids)):
             raise ValueError(f"Subject {subject_id} has duplicate chunk IDs.")
     class_counts = Counter(int(row["label"]) for row in by_id.values())
     schedules: list[list[dict[str, Any]]] = []
@@ -440,37 +491,56 @@ def build_joint_epoch_schedule(
     epoch_audio_exposure: list[float] = []
     epoch_raw_weight_totals: list[float] = []
     epoch_effective_weight_totals: list[float] = []
+    subject_order_by_epoch: list[list[str]] = []
+    effective_k_by_epoch: list[dict[str, int]] = []
+    membership_audit: list[dict[str, Any]] = []
     for epoch in range(int(epochs)):
         rows: list[dict[str, Any]] = []
-        for subject_id in deterministic_subject_order(by_id, seed=seed, epoch=epoch):
+        ordered_subjects = deterministic_subject_order(by_id, seed=seed, epoch=epoch)
+        subject_order_by_epoch.append(ordered_subjects)
+        epoch_effective_k: dict[str, int] = {}
+        epoch_memberships: dict[str, list[str]] = {}
+        for subject_id in ordered_subjects:
             source = by_id[subject_id]
-            chunk_paths = list(source["subject_chunk_paths"])
-            chunk_ids = list(map(str, source.get("subject_chunk_ids", range(len(chunk_paths)))))
+            groups = list(source.get("subject_chunk_span_groups") or [])
+            chunk_paths = list(source.get("subject_chunk_paths") or [])
+            if groups:
+                chunk_ids = [str(group["chunk_id"]) for group in groups]
+                chunk_pool = groups
+            else:
+                chunk_ids = list(map(str, source.get("subject_chunk_ids", range(len(chunk_paths)))))
+                chunk_pool = chunk_paths
             if policy == "joint_random_k":
-                memberships = [random_k_indices(len(chunk_paths), k, subject_id=subject_id, seed=seed, epoch=epoch)]
+                memberships = [random_k_indices(len(chunk_pool), k, subject_id=subject_id, seed=seed, epoch=epoch)]
             elif policy == "joint_rotary_k":
-                memberships = [rotary_indices(len(chunk_paths), k, subject_id=subject_id, seed=seed, epoch=epoch)]
+                memberships = [rotary_indices(len(chunk_pool), k, subject_id=subject_id, seed=seed, epoch=epoch)]
             elif policy == "joint_balanced_cover":
                 memberships, _ = balanced_joint_bundles(chunk_ids, k)
             else:
                 raise ValueError(f"Unsupported joint policy {policy!r}.")
             class_factor = 1.0 / class_counts[int(source["label"])] if class_balance else 1.0
-            source_clip_seconds = list(
-                source.get("subject_chunk_clip_seconds")
-                or source.get("audio_clip_seconds")
-                or []
-            )
+            if groups:
+                source_clip_seconds = [
+                    float(group.get("participant_sample_count", 0)) / PACKED30_SAMPLE_RATE
+                    for group in chunk_pool
+                ]
+            else:
+                source_clip_seconds = list(
+                    source.get("subject_chunk_clip_seconds")
+                    or source.get("audio_clip_seconds")
+                    or []
+                )
             if not source_clip_seconds:
-                source_clip_seconds = [None] * len(chunk_paths)
+                source_clip_seconds = [None] * len(chunk_pool)
             elif len(source_clip_seconds) == 1:
-                source_clip_seconds = source_clip_seconds * len(chunk_paths)
-            elif len(source_clip_seconds) != len(chunk_paths):
+                source_clip_seconds = source_clip_seconds * len(chunk_pool)
+            elif len(source_clip_seconds) != len(chunk_pool):
                 # Subject-level examples historically carried one duration per
                 # prompt slot (K), while the schedule also carries the full
                 # source-chunk list.  A uniform cap is safe to broadcast; a
                 # heterogeneous, mis-sized duration vector is ambiguous.
                 if len(set(source_clip_seconds)) == 1:
-                    source_clip_seconds = [source_clip_seconds[0]] * len(chunk_paths)
+                    source_clip_seconds = [source_clip_seconds[0]] * len(chunk_pool)
                 else:
                     raise ValueError(
                         f"Subject {subject_id} audio duration metadata does not match source chunks."
@@ -478,15 +548,30 @@ def build_joint_epoch_schedule(
             for bundle_id, indices in enumerate(memberships):
                 row = dict(source)
                 row["sample_id"] = f"{subject_id}__epoch_{epoch:03d}__bundle_{bundle_id:03d}"
-                row["audio_paths"] = [chunk_paths[index] for index in indices]
+                if groups:
+                    row["audio_span_groups"] = [groups[index] for index in indices]
+                    row["audio_paths"] = []
+                else:
+                    row["audio_paths"] = [chunk_paths[index] for index in indices]
                 row["audio_clip_seconds"] = [source_clip_seconds[index] for index in indices]
                 row["bundle_id"] = bundle_id
                 row["bundle_chunk_ids"] = [chunk_ids[index] for index in indices]
+                row["effective_k"] = len(indices)
                 row["raw_loss_weight"] = class_factor / len(memberships)
                 row["chunk_schedule_epoch"] = epoch
                 rows.append(row)
                 for index in indices:
                     exposure_by_subject[subject_id][chunk_ids[index]] += 1
+            epoch_effective_k[subject_id] = len(memberships[0])
+            epoch_memberships[subject_id] = [chunk_ids[index] for index in memberships[0]]
+        effective_k_by_epoch.append(epoch_effective_k)
+        membership_audit.append(
+            {
+                "epoch": epoch,
+                "subject_order": ordered_subjects,
+                "memberships": epoch_memberships,
+            }
+        )
         scale = _rescale_weights(rows, loss_weight_rescale)
         for position, row in enumerate(rows):
             row["chunk_schedule_position"] = position
@@ -508,9 +593,29 @@ def build_joint_epoch_schedule(
         epoch_raw_weight_totals.append(sum(float(row["raw_loss_weight"]) for row in rows))
         epoch_effective_weight_totals.append(sum(float(row["loss_weight"]) for row in rows))
         schedules.append(rows)
+    bundle_membership_sha256 = canonical_sha256(
+        {
+            "policy": policy,
+            "seed": int(seed),
+            "requested_k": k,
+            "epochs": int(epochs),
+            "epochs_memberships": membership_audit,
+        }
+    )
+    schedule_sha256 = canonical_sha256(
+        {
+            "policy": policy,
+            "seed": int(seed),
+            "requested_k": k,
+            "epochs": int(epochs),
+            "loss_weight_rescale": loss_weight_rescale,
+            "class_balance": bool(class_balance),
+            "membership_audit": membership_audit,
+        }
+    )
     return schedules, {
-        "schema_version": "daic_joint_schedule.v2", "policy": policy,
-        "seed": int(seed), "epochs": int(epochs), "k": int(k),
+        "schema_version": "daic_joint_schedule.v3", "policy": policy,
+        "seed": int(seed), "epochs": int(epochs), "requested_k": k, "k": int(k),
         "loss_weight_rescale": loss_weight_rescale,
         "epoch_example_counts": [len(rows) for rows in schedules],
         "epoch_mean_effective_weights": [
@@ -521,6 +626,8 @@ def build_joint_epoch_schedule(
         "epoch_audio_exposure_seconds": epoch_audio_exposure,
         "total_audio_exposure_seconds": sum(epoch_audio_exposure),
         "optimizer_update_units_per_epoch": [len(rows) for rows in schedules],
+        "subject_order_by_epoch": subject_order_by_epoch,
+        "effective_k_by_epoch": effective_k_by_epoch,
         "rows": audit_rows,
         "exposure_counts_by_subject": {
             subject_id: dict(sorted(counts.items()))
@@ -538,6 +645,12 @@ def build_joint_epoch_schedule(
             for subject_id in by_id
             for other_id in by_id
         ) if not class_balance else False,
+        "bundle_membership_sha256": bundle_membership_sha256,
+        "schedule_sha256": schedule_sha256,
+        "schedule_canonical_representation": (
+            "policy|seed|requested_k|epochs|loss_weight_rescale|class_balance"
+            "|per-epoch deterministic subject order and bundle_chunk_ids memberships"
+        ),
     }
 
 

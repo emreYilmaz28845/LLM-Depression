@@ -577,7 +577,12 @@ assert last2_layer_selection["decoder_hidden_layer_count"] == 32
 assert last2_layer_selection["layers_to_transform"] == [30, 31]
 assert list(last2_peft_cfg.layers_to_transform) == [30, 31]
 
-for override in ["lora.last_n_layers=0", "lora.last_n_layers=-1", "lora.last_n_layers=40", "lora.last_n_layers=two"]:
+zero_lora_cfg = load_yaml_with_overrides(root / "configs/archive/edaic/edaic_audio_text.yaml", ["lora.last_n_layers=0"])
+zero_layer_selection = resolve_lora_layer_selection(zero_lora_cfg, dummy_model)
+if zero_layer_selection["requested_last_n_layers"] is not None:
+    raise SystemExit("lora.last_n_layers=0 must resolve to None (unset) like False.")
+
+for override in ["lora.last_n_layers=-1", "lora.last_n_layers=40", "lora.last_n_layers=two"]:
     bad_lora_cfg = load_yaml_with_overrides(root / "configs/archive/edaic/edaic_audio_text.yaml", [override])
     try:
         resolve_lora_layer_selection(bad_lora_cfg, dummy_model)

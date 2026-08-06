@@ -27,6 +27,7 @@ from src.data.build_manifest import build_for_config, manifest_build_signature
 from src.data.d3tec import build_d3tec_training_schedule
 from src.data.androids import apply_androids_training_weights
 from src.daic_chunking import (
+    JOINT_PACKED30_MODE,
     build_independent_epoch_schedule,
     build_joint_epoch_schedule,
     gradient_accumulation_for_reference_updates,
@@ -40,6 +41,7 @@ from src.data.runtime import (
     filter_rows_by_subjects,
     load_manifest_rows,
     qwen2audio_audio_token_length,
+    render_joint_packed30_bundle,
     save_partition_subjects,
 )
 from src.data.split_utils import (
@@ -1413,7 +1415,8 @@ def main() -> None:
         save_json(daic_schedule_audit, logs_dir / "daic_chunk_schedule_audit.json")
     if (
         str(config["dataset"]).lower() == "daic"
-        and str(config["data"].get("sample_mode", "")).lower() == "subject_audio"
+        and str(config["data"].get("sample_mode", "")).lower()
+        in {"subject_audio", JOINT_PACKED30_MODE}
         and str(config["data"].get("train_chunk_policy", "random_k")) in {"joint_random_k", "joint_rotary_k", "joint_balanced_cover"}
     ):
         if int(config["training"]["per_device_train_batch_size"]) != 1:
@@ -1430,6 +1433,24 @@ def main() -> None:
             loss_weight_rescale=controls["loss_weight_rescale"],
             class_balance=str(config["training"].get("class_balance", "none")) == "subject_inverse_frequency",
         )
+        if (
+            str(config["data"].get("sample_mode", "")).lower() == JOINT_PACKED30_MODE
+            and str(config["data"].get("train_chunk_policy", "")) == "joint_random_k"
+        ):
+            if str(config["data"].get("loss_weight_rescale", "none")) != "mean_one":
+                raise ValueError(
+                    f"sample_mode={JOINT_PACKED30_MODE} requires "
+                    "data.loss_weight_rescale=mean_one."
+                )
+            # Span-group bundles re-render the prompt per epoch because the
+            # placeholder count follows the current bundle size (K, or 3 for
+            # subject 385). Training, evaluation, and hidden extraction share
+            # the same renderer.
+            for epoch_rows in daic_epoch_schedule:
+                for row in epoch_rows:
+                    row["prompt_text"], row["training_text"] = render_joint_packed30_bundle(
+                        row, len(row["audio_span_groups"])
+                    )
         train_examples = daic_epoch_schedule[0]
         if bool(config["training"].get("match_joint_optimizer_updates", True)):
             reference_accumulation = int(config["training"].get("joint_reference_gradient_accumulation_steps", 8))

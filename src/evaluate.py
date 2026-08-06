@@ -28,6 +28,7 @@ from src.data.runtime import (
     load_audio_array,
     load_audio_spans_array,
     load_manifest_rows,
+    load_span_group_audio_arrays,
     uses_audio_spans,
 )
 from src.data.split_utils import (
@@ -240,6 +241,8 @@ def _write_csv(rows: list[dict[str, Any]], path: str | Path) -> None:
 
 
 def _load_example_audio(example: dict[str, Any], sampling_rate: int, silence_audio: bool) -> list:
+    if example.get("audio_span_groups"):
+        return load_span_group_audio_arrays(example, sampling_rate, silence_audio)
     if uses_audio_spans(example):
         return [
             load_audio_spans_array(
@@ -261,7 +264,11 @@ def _load_example_audio(example: dict[str, Any], sampling_rate: int, silence_aud
 
 
 def _example_has_audio(example: dict[str, Any]) -> bool:
-    return uses_audio_spans(example) or bool(example.get("audio_paths"))
+    return (
+        uses_audio_spans(example)
+        or bool(example.get("audio_span_groups"))
+        or bool(example.get("audio_paths"))
+    )
 
 
 def _processor_inputs(

@@ -44,6 +44,11 @@ def test_audio_only_diff_is_limited_to_independent_construction() -> None:
     experiment = _without_output_root(load_yaml(AUDIO_CONFIG))
     assert main["data"].pop("sample_mode") == "subject_audio"
     assert main["data"].pop("chunks_per_subject") == 4
+    # The canonical main recipe now declares the balanced-cover evaluation
+    # view; the independent experiment replaces it, so it is part of the
+    # construction diff.
+    main["data"].pop("eval_chunk_policy")
+    main["data"].pop("eval_chunks_per_subject")
     for key in (
         "sample_mode",
         "train_chunk_policy",

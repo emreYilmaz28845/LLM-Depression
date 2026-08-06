@@ -18,7 +18,14 @@ import numpy as np
 import torch
 
 from src.data.emotion import load_emotion_cache, report_cache_coverage, resolve_missing_policy, use_emotion
-from src.data.runtime import build_examples, filter_rows_by_subjects, load_manifest_rows
+from src.data.runtime import (
+    JOINT_PACKED30_MODE,
+    build_examples,
+    filter_rows_by_subjects,
+    load_manifest_rows,
+    render_joint_packed30_bundle,
+)
+from src.daic_chunking import build_joint_epoch_schedule
 from src.features.pooling import aligned_attention_mask, last_valid_token
 from src.features.qwen_hidden_collator import PromptOnlyExtractionCollator, load_prompt_audio
 from src.model.runtime import load_model_for_inference, load_processor, resolve_processor_sampling_rate
@@ -171,17 +178,154 @@ def _decoder_hidden_size(model) -> int:
     raise ValueError("Could not resolve the decoder hidden size from the loaded model configuration.")
 
 
+def _is_joint_packed30_recipe(config: dict[str, Any]) -> bool:
+    return (
+        str(config.get("dataset", "")).lower() == "daic"
+        and str(config.get("data", {}).get("sample_mode", "")).strip().lower()
+        == JOINT_PACKED30_MODE
+        and str(config.get("data", {}).get("train_chunk_policy", "")).strip().lower()
+        == "joint_random_k"
+    )
+
+
+def _selected_epoch_fit_examples(
+    checkpoint_dir: Path,
+    config: dict[str, Any],
+    train_rows: list[dict[str, Any]],
+    fold: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Rebuild the exact random joint schedule of the epoch that produced
+    ``best_model`` and return one prompt-only example per training subject.
+
+    Locked head-fit view: read ``selected_epoch`` (one-based) from
+    ``logs/selected_checkpoint_selection_metrics.json``, rebuild all random
+    joint schedules from the saved config and seed, select zero-based schedule
+    index ``selected_epoch - 1``, and prove that its canonical hash and every
+    subject's ``bundle_chunk_ids`` match ``logs/daic_chunk_schedule_audit.json``.
+    Any missing or inconsistent provenance is a failure.
+    """
+    fold_dir = checkpoint_dir.parent
+    selection_metrics_path = fold_dir / "logs" / "selected_checkpoint_selection_metrics.json"
+    saved_audit_path = fold_dir / "logs" / "daic_chunk_schedule_audit.json"
+    if not selection_metrics_path.is_file():
+        raise FileNotFoundError(
+            f"Selected-epoch head fit requires {selection_metrics_path}."
+        )
+    if not saved_audit_path.is_file():
+        raise FileNotFoundError(
+            f"Selected-epoch head fit requires {saved_audit_path}."
+        )
+    selection_metrics = read_json(selection_metrics_path)
+    selected_epoch = int(selection_metrics.get("selected_epoch"))
+    if selected_epoch < 1:
+        raise ValueError(
+            f"Invalid selected_epoch={selected_epoch}; expected a one-based epoch."
+        )
+    schedule_index = selected_epoch - 1
+    saved_audit = read_json(saved_audit_path)
+    train_examples = build_examples(
+        train_rows, config, partition_name="outer_train", truncation_log_path=None
+    )
+    schedules, rebuilt_audit = build_joint_epoch_schedule(
+        train_examples,
+        policy=str(config["data"]["train_chunk_policy"]),
+        k=int(config["data"]["train_chunks_per_subject"]),
+        seed=int(config["seed"]),
+        epochs=int(config["training"]["num_train_epochs"]),
+        loss_weight_rescale=str(config["data"].get("loss_weight_rescale", "mean_one")),
+        class_balance=str(config.get("training", {}).get("class_balance", "none"))
+        == "subject_inverse_frequency",
+    )
+    if schedule_index >= len(schedules):
+        raise ValueError(
+            f"selected_epoch={selected_epoch} exceeds the rebuilt schedule "
+            f"({len(schedules)} epochs)."
+        )
+    if saved_audit.get("schedule_sha256") != rebuilt_audit["schedule_sha256"]:
+        raise ValueError(
+            "Rebuilt joint schedule hash does not match the saved "
+            "daic_chunk_schedule_audit.json."
+        )
+    if saved_audit.get("bundle_membership_sha256") != rebuilt_audit["bundle_membership_sha256"]:
+        raise ValueError(
+            "Rebuilt bundle memberships do not match the saved "
+            "daic_chunk_schedule_audit.json."
+        )
+    saved_memberships: dict[str, list[str]] = {}
+    for row in saved_audit.get("rows", []):
+        if int(row["epoch"]) != schedule_index:
+            continue
+        saved_memberships[str(row["subject_id"])] = list(row["bundle_chunk_ids"])
+    rebuilt_rows = schedules[schedule_index]
+    for row in rebuilt_rows:
+        subject_id = str(row["subject_id"])
+        saved_ids = saved_memberships.get(subject_id)
+        if saved_ids is None:
+            raise ValueError(
+                f"Saved schedule epoch {schedule_index} has no membership for "
+                f"subject {subject_id}."
+            )
+        if saved_ids != list(row["bundle_chunk_ids"]):
+            raise ValueError(
+                f"Rebuilt bundle membership for subject {subject_id} in epoch "
+                f"{schedule_index} does not match the saved schedule."
+            )
+    fit_examples: list[dict[str, Any]] = []
+    for row in rebuilt_rows:
+        prompt_text, training_text = render_joint_packed30_bundle(
+            row, len(row["audio_span_groups"])
+        )
+        fit_example = dict(row)
+        fit_example["prompt_text"] = prompt_text
+        fit_example["training_text"] = training_text
+        fit_example["partition"] = "outer_train"
+        fit_example["fold"] = fold
+        fit_examples.append(fit_example)
+    fit_subjects = {str(example["subject_id"]) for example in fit_examples}
+    if len(fit_examples) != len(fit_subjects):
+        raise ValueError(
+            "Selected-epoch head fit must emit exactly one bundle per training "
+            "subject."
+        )
+    expected_subjects = {str(row["subject_id"]) for row in train_rows}
+    if fit_subjects != expected_subjects:
+        raise ValueError(
+            "Selected-epoch head fit subjects differ from the training partition."
+        )
+    provenance = {
+        "head_fit_view": "selected_checkpoint_training_epoch",
+        "selected_epoch": selected_epoch,
+        "schedule_epoch_index": schedule_index,
+        "schedule_sha256": rebuilt_audit["schedule_sha256"],
+        "bundle_membership_sha256": rebuilt_audit["bundle_membership_sha256"],
+        "saved_schedule_audit": str(saved_audit_path),
+        "selection_metrics": str(selection_metrics_path),
+    }
+    return fit_examples, provenance
+
+
 def _partition_examples(
     manifest_rows: list[dict[str, Any]],
     config: dict[str, Any],
     partition_subject_ids: dict[str, list[str]],
     fold: int,
-) -> dict[str, list[dict[str, Any]]]:
+    checkpoint_dir: Path | None = None,
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
     result: dict[str, list[dict[str, Any]]] = {}
+    joint_provenance: dict[str, Any] | None = None
     for partition in ("outer_train", "final_eval"):
         ids = partition_subject_ids[partition]
         rows = filter_rows_by_subjects(manifest_rows, ids)
-        examples = build_examples(rows, config, partition_name=partition, truncation_log_path=None)
+        if partition == "outer_train" and _is_joint_packed30_recipe(config):
+            if checkpoint_dir is None:
+                raise ValueError(
+                    "Joint packed30 head-fit extraction requires a checkpoint dir."
+                )
+            examples, joint_provenance = _selected_epoch_fit_examples(
+                checkpoint_dir, config, rows, fold
+            )
+        else:
+            examples = build_examples(rows, config, partition_name=partition, truncation_log_path=None)
         for example in examples:
             example["partition"] = partition
             example["fold"] = fold
@@ -192,7 +336,7 @@ def _partition_examples(
                 f"missing={sorted(set(ids)-example_subjects)[:10]} extra={sorted(example_subjects-set(ids))[:10]}"
             )
         result[partition] = examples
-    return result
+    return result, joint_provenance or {}
 
 
 def _is_daic_chunking(config: dict[str, Any]) -> bool:
@@ -585,7 +729,9 @@ def main() -> None:
         source=args.emotion_source,
         language=args.emotion_language,
     )
-    examples = _partition_examples(manifest_rows, config, partition_subject_ids, fold)
+    examples, joint_head_fit_provenance = _partition_examples(
+        manifest_rows, config, partition_subject_ids, fold, checkpoint_dir=checkpoint_dir
+    )
     model_name = args.model_name_or_path or saved.get("resolved_model_name_or_path") or config["model_name_or_path"]
     processor = load_processor(checkpoint_dir, config)
     model = load_model_for_inference(str(model_name), checkpoint_dir, config)
@@ -623,6 +769,7 @@ def main() -> None:
         "saved_split": str(split_path),
         "saved_split_sha256": sha256_file(split_path),
         "evaluation_provenance": evaluation_provenance,
+        "head_fit_provenance": joint_head_fit_provenance or None,
         "evaluation_view": cache_config["evaluation_view"],
         "split_metadata": str(split_metadata_path),
         "split_metadata_sha256": sha256_file(split_metadata_path),

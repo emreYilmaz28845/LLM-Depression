@@ -31,6 +31,11 @@ def _configs_without_declared_construction_changes() -> tuple[dict, dict]:
     experiment_data = experiment["data"]
     assert main_data.pop("sample_mode") == "subject_audio"
     assert main_data.pop("chunks_per_subject") == 4
+    # The canonical main recipe now declares the balanced-cover evaluation
+    # view; both the independent and joint experiments replace it, so it is
+    # part of the construction diff.
+    main_data.pop("eval_chunk_policy")
+    main_data.pop("eval_chunks_per_subject")
     for key in (
         "sample_mode",
         "train_chunk_policy",
