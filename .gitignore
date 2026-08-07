@@ -12,5 +12,8 @@ opencode.json
 AGENTS.md
 reports/
 .agents/
+.pytest_cache/
+.claude/
+figures/
 
 wandb/
