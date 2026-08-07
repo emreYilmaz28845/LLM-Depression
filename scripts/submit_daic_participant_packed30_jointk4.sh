@@ -115,7 +115,9 @@ submit_stage() {
         audit) worker="$AUDIT_WORKER" ;;
     esac
     local export_spec="PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV_ACTIVATE,CONFIG=$config,FOLD=0,RUN_NAME=$run_name,SEED=$SEED,DAIC_UNPROCESSED_ROOT=$DAIC_UNPROCESSED_ROOT,DAIC_LABEL_ROOT=$DAIC_LABEL_ROOT,MODEL_PATH=$MODEL_PATH"
-    if [ -n "$EXPERIMENT_CONTEXT" ]; then export_spec="$export_spec,EXPERIMENT_CONTEXT=$EXPERIMENT_CONTEXT"; fi
+    local ctx_var="EXPERIMENT_CONTEXT_${modality^^}"
+    local modality_ctx="${!ctx_var:-$EXPERIMENT_CONTEXT}"
+    if [ -n "$modality_ctx" ]; then export_spec="$export_spec,EXPERIMENT_CONTEXT=$modality_ctx"; fi
     if [ -n "$extra_export" ]; then export_spec="$export_spec,$extra_export"; fi
     local raw=""
     if [ "$DRY_RUN" = "1" ]; then
