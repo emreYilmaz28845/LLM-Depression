@@ -386,7 +386,8 @@ class WandbAdapter(Protocol):
         entity: str | None,
         mode: str,
         tags: list[str],
-    ) -> None: ...
+        group: str | None = None,
+    ) -> dict[str, Any] | None: ...
     def log_curves(self, *, run_id: str, curves: dict[str, list[dict[str, Any]]]) -> None: ...
     def log_summary(self, *, run_id: str, summary: dict[str, Any]) -> None: ...
     def set_status(self, *, run_id: str, status: str, tags: list[str]) -> None: ...
@@ -416,19 +417,32 @@ class RealWandbAdapter:
                 "performing a real export"
             ) from error
 
-    def create_run(self, *, run_id: str, name: str | None, config: Any, project: str, entity: str | None, mode: str, tags: list[str]) -> None:
+    def create_run(
+        self,
+        *,
+        run_id: str,
+        name: str | None,
+        config: Any,
+        project: str,
+        entity: str | None,
+        mode: str,
+        tags: list[str],
+        group: str | None = None,
+    ) -> dict[str, Any] | None:
         wandb = self._wandb()
         if wandb.run is not None:
             wandb.finish()
-        wandb.init(
+        run = wandb.init(
             id=run_id,
             name=name,
             project=project,
             entity=entity if entity is not None else self._entity,
             config=config,
             tags=tags,
+            group=group,
             mode=_normalize_mode(mode),
         )
+        return {"wandb_run_id": getattr(run, "id", None), "url": getattr(run, "url", None)}
 
     def log_curves(self, *, run_id: str, curves: dict[str, list[dict[str, Any]]]) -> None:
         wandb = self._wandb()
@@ -450,6 +464,11 @@ def _export_config(plan: dict[str, Any]) -> dict[str, Any]:
     config["tracking/attempt_id"] = identity.get("attempt_id")
     config["tracking/fold"] = identity.get("fold")
     config["tracking/evaluation_id"] = identity.get("evaluation_id")
+    selection = plan.get("selection")
+    if isinstance(selection, dict):
+        config["tracking/selection_ids"] = selection.get("selection_ids")
+        config["tracking/provenance_keys"] = selection.get("provenance_keys")
+        config["tracking/source_type"] = selection.get("source_type")
     return config
 
 
@@ -465,7 +484,7 @@ def execute_export(
     if adapter is None:
         raise ValueError("a WandbAdapter is required for non-dry-run export")
     run_id = plan["run_id"]
-    adapter.create_run(
+    created = adapter.create_run(
         run_id=run_id,
         name=plan.get("name"),
         config=_export_config(plan),
@@ -473,10 +492,14 @@ def execute_export(
         entity=entity,
         mode=mode,
         tags=plan["tags"],
+        group=plan.get("group"),
     )
     if plan["epoch_curves"]:
         adapter.log_curves(run_id=run_id, curves=plan["epoch_curves"])
     if plan["summary_metrics"]:
         adapter.log_summary(run_id=run_id, summary=plan["summary_metrics"])
     adapter.set_status(run_id=run_id, status=plan["status"], tags=plan["tags"])
-    return {"mode": mode, "run_id": run_id, "status": plan["status"]}
+    outcome: dict[str, Any] = {"mode": mode, "run_id": run_id, "status": plan["status"]}
+    if isinstance(created, dict):
+        outcome.update(created)
+    return outcome
