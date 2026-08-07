@@ -1,446 +1,199 @@
 # LLM-Depression
 
-Leakage-safe depression-classification pipeline for binary depression detection with audio+text, audio-only, and text-only diagnostic modes.
+Leakage-safe binary depression classification with Qwen2-Audio/Qwen2 LoRA across audio+text, audio-only, and text-only modalities.
 
-## Core Rules
-- Audio+text, audio-only, and text-only input modes
-- English prompts
-- Original transcript language
-- External diagnosis labels remain `Depressed` and `Non-depressed`
-- No SECap
-- Subject-level leakage-safe splits with configurable subject/segment evaluation reporting
-- Likelihood is the headline evaluation; generation is secondary
-- Likelihood evaluation reports AUROC from the continuous depressed-minus-non-depressed score
+This is the repository overview, not the source of truth for individual experiment settings. Read, in order:
 
-## Environment
+1. `docs/DEVICES.md` for local/MN5 environments and synchronization boundaries.
+2. `docs/MN5_AGENT_EXECUTION_RUNBOOK.md` for the complete cluster lifecycle.
+3. `configs/README.md` and the selected YAML for the current recipe.
+4. `docs/SIGNAL_FLOW.md` for the data/model/evaluation path.
 
-Target runtime: MareNostrum5 `qwen_mn5_rebuilt`
+Use experiment-specific plans under `docs/` for non-headline work. Do not infer a current protocol from an archived config or historical result document.
 
-Capture commands:
+## Canonical recipe
+
+Canonical configurations live only in `configs/main/`. They use:
+
+- English prompts and external labels `Depressed` / `Non-depressed`;
+- transcripts in their original language;
+- teacher-forced label-token decoding (`original_teacher_forced`) as the headline backend;
+- `headline/binary_strict_*` metrics, where invalid decoded labels count as wrong;
+- validation positive-F1 (`inner_val_positive_f1`, mode `max`) for checkpoint selection;
+- a frozen audio encoder by default;
+- no AUROC for the canonical teacher-forced hard-label recipe.
+
+`configs/experiments/` contains active non-headline research. `configs/archive/` is historical and must not be treated as the current recipe.
+
+Current canonical coverage is:
+
+| Dataset | Modalities | Notes |
+|---|---|---|
+| DAIC | audio+text, audio-only, text-only | Audio bundles contain a constant K=4 chunks; canonical audio evaluation uses balanced K4 coverage |
+| EDAIC | audio+text, audio-only, text-only | Subject-level audio uses K=4 |
+| CMDC | audio+text, audio-only, text-only | Response samples aggregate to the configured headline level |
+| Turkish | audio+text, audio-only, text-only | BDI threshold 17, Qwen3-ASR transcripts, five-fold `train_val` CV |
+
+Turkish BDI≥21, Turkish BDI≥25, and EATD are not current headline configs. Consult experimental or archived files only when explicitly reproducing those protocols.
+
+## Local environment and validation
+
+The shell normally starts in Conda `base`, which does not contain PyTorch. Activate the project environment before Python tests:
 
 ```bash
-./scripts/capture_environment.sh
+conda activate llmdep4090
+python -m pytest tests/
 ```
 
-## Build Manifests
+Run a targeted file while iterating:
 
 ```bash
-python src/data/build_manifest.py --config \
-  configs/daic_audio_text.yaml \
-  configs/edaic_audio_text.yaml \
-  configs/cmdc_audio_text.yaml \
-  configs/eatd_audio_text.yaml
+python -m pytest tests/test_experiment_tracking_contracts.py -q
 ```
 
-Or:
-
-```bash
-./scripts/validate_manifests.sh
-```
-
-Manifest building is shared across modalities. Audio-only and text-only presets still reuse these manifest and split artifacts, and the preprocessing inputs must still include transcripts even when `data.use_text=false` or `data.use_audio=false`.
-
-## Validation / No-Model Checks
+Never use bare `pytest`; tests import both `src` and `scripts`. The model-free dataset suite is:
 
 ```bash
 ./scripts/sanity_tests_no_model.sh
 ```
 
-This runs:
-- manifest creation
-- DAIC join audit generation
-- DAIC official train/val/test split proof with repeated full transcripts
-- CMDC fold proof output
-- EATD SDS consistency and pooled class-count recovery
+It requires the relevant dataset roots and writes manifest/audit artifacts. Use `scripts/sanity_tests_with_model.sh` only when the matching local base models and GPU capacity have been verified.
 
-## DAIC Training / Eval
+For local data/model resolution, set the relevant variables explicitly:
+
+```bash
+export DAIC_DATASET_ROOT=/path/to/DAIC
+export EDAIC_DATASET_ROOT=/path/to/EDAIC
+export CMDC_DATASET_ROOT=/path/to/CMDC
+export TURKISH_DATASET_ROOT=/path/to/Turkish
+export MODEL_PATH=/path/to/Qwen2-Audio-7B-Instruct
+export TEXT_MODEL_PATH=/path/to/Qwen2-7B-Instruct
+```
+
+## Build manifests
+
+Manifests and splits are shared across modalities. Build from one current config per dataset; preprocessing inputs must include transcripts even for audio-only runs.
+
+```bash
+python src/data/build_manifest.py --config \
+  configs/main/daic_audio_text_selposf1_tf.yaml \
+  configs/main/edaic_audio_text_selposf1_tf.yaml \
+  configs/main/cmdc_audio_text_selposf1_tf.yaml
+
+python src/data/build_manifest.py --config \
+  configs/main/turkish_t17_audio_text_selposf1_tf_qwen3asr.yaml
+```
+
+All configs reference `configs/quarantines.yaml` through `${PROJECT_ROOT}`. Never move it.
+
+## Train and evaluate
+
+All real training runs on MN5 through Slurm. The generic commands below show the application interface; use the repository wrappers and the MN5 runbook for real submission.
 
 ```bash
 torchrun --nproc_per_node=4 src/train.py \
-  --config configs/daic_audio_text.yaml \
+  --config configs/main/daic_audio_text_selposf1_tf.yaml \
   --fold 0 \
-  --run_name daic_reproduction
-```
+  --run_name <unique-run-name>
 
-Use `--set evaluation.aggregation_level=segment` to switch checkpoint selection on official `val` and held-out headline metrics on official `test` to segment-level evaluation while still writing subject-level aggregate outputs.
-
-Use `--set lora.last_n_layers=2` to restrict LoRA to the final two language-model decoder layers.
-
-Training fits on official `train`, selects checkpoints on official `val`, and evaluates held-out results on official `test`. All three splits use repeated participant `full_transcript` values from the preprocessing summary CSVs.
-
-Standalone checkpoint evaluation:
-
-```bash
 python src/evaluate.py \
-  --config configs/daic_audio_text.yaml \
+  --config configs/main/daic_audio_text_selposf1_tf.yaml \
   --fold 0 \
-  --checkpoint_dir output_model/audio_text/daic/daic_reproduction/fold_0/best_model
+  --checkpoint_dir output_model/audio_text/daic/<run-name>/fold_0/best_model
 ```
 
-Segment-level override:
-
-```bash
-python src/evaluate.py \
-  --config configs/edaic_audio_text_reg3.yaml \
-  --fold 0 \
-  --checkpoint_dir output_model/audio_text/edaic/edaic_reproduction/fold_0/best_model \
-  --set evaluation.aggregation_level=segment
-```
-
-Example training override for last-two-layer LoRA:
-
-```bash
-torchrun --nproc_per_node=4 src/train.py \
-  --config configs/edaic_audio_text_reg3.yaml \
-  --fold 0 \
-  --run_name edaic_last2_lora \
-  --set lora.last_n_layers=2
-```
-
-## Audio-Only Presets
-
-Available preset configs:
-- `configs/daic_audio_only.yaml`
-- `configs/edaic_audio_only.yaml`
-- `configs/cmdc_audio_only.yaml`
-- `configs/eatd_audio_only.yaml`
-- `configs/edaic_audio_only_reg3.yaml`
-
-Example DAIC audio-only training:
-
-```bash
-torchrun --nproc_per_node=4 src/train.py \
-  --config configs/daic_audio_only.yaml \
-  --fold 0 \
-  --run_name daic_audio_only
-```
-
-Example DAIC audio-only standalone evaluation:
-
-```bash
-python src/evaluate.py \
-  --config configs/daic_audio_only.yaml \
-  --fold 0 \
-  --checkpoint_dir output_model/audio_only/daic/daic_audio_only/fold_0/best_model
-```
-
-Example EDAIC audio-only `reg3` training:
-
-```bash
-torchrun --nproc_per_node=4 src/train.py \
-  --config configs/edaic_audio_only_reg3.yaml \
-  --fold 0 \
-  --run_name edaic_audio_only_reg3
-```
-
-Example EDAIC audio-only `reg3` standalone evaluation:
-
-```bash
-python src/evaluate.py \
-  --config configs/edaic_audio_only_reg3.yaml \
-  --fold 0 \
-  --checkpoint_dir output_model/audio_only/edaic/edaic_audio_only_reg3/fold_0/best_model
-```
-
-## Text-Only Diagnostic Presets
-
-Available preset configs:
-- `configs/daic_text_only.yaml`
-- `configs/edaic_text_only.yaml`
-- `configs/edaic_text_only_reg3.yaml`
-
-These DAIC/EDAIC diagnostics intentionally bypass chunk-level sample expansion. In text-only mode the runtime groups the shared chunk manifest by subject and builds exactly one example per subject: `1 subject = 1 transcript = 1 example = 1 label`.
-
-Local text-model override:
-
-```bash
-export TEXT_MODEL_PATH=/media/emre/Backup/AudioLLM/models/Qwen2-7B-Instruct
-```
-
-Example DAIC text-only training:
-
-```bash
-torchrun --nproc_per_node=4 src/train.py \
-  --config configs/daic_text_only.yaml \
-  --fold 0 \
-  --run_name daic_text_only_diag
-```
-
-Example DAIC text-only standalone evaluation:
-
-```bash
-python src/evaluate.py \
-  --config configs/daic_text_only.yaml \
-  --fold 0 \
-  --checkpoint_dir output_model/text_only/daic/daic_text_only_diag/fold_0/best_model
-```
-
-Example EDAIC text-only `reg3` training:
-
-```bash
-torchrun --nproc_per_node=4 src/train.py \
-  --config configs/edaic_text_only_reg3.yaml \
-  --fold 0 \
-  --run_name edaic_text_only_reg3_diag
-```
-
-Example EDAIC text-only `reg3` standalone evaluation:
-
-```bash
-python src/evaluate.py \
-  --config configs/edaic_text_only_reg3.yaml \
-  --fold 0 \
-  --checkpoint_dir output_model/text_only/edaic/edaic_text_only_reg3_diag/fold_0/best_model
-```
-
-Enable `DepAdapter` from CLI overrides:
-
-```bash
-sbatch --export=ALL,CONFIG=$PWD/configs/daic_audio_text_paper_audio_text.yaml,FOLD=0,RUN_NAME=daic_dep_adapter,EXTRA_TRAIN_ARGS="--set audio_adapter.enabled=true --set audio_adapter.adapter_dim=512 --set audio_adapter.dropout=0.1 --set audio_adapter.train_projector=false" scripts/run_train_slurm.sh
-```
-
-Enable `DepAdapter` and train `multi_modal_projector` too:
-
-```bash
-sbatch --export=ALL,CONFIG=$PWD/configs/daic_audio_text_paper_audio_text.yaml,FOLD=0,RUN_NAME=daic_dep_adapter_projector,EXTRA_TRAIN_ARGS="--set audio_adapter.enabled=true --set audio_adapter.adapter_dim=512 --set audio_adapter.dropout=0.1 --set audio_adapter.train_projector=true" scripts/run_train_slurm.sh
-```
-
-## CMDC 5-Fold Training / Eval
-
-```bash
-./scripts/run_cmdc_5fold.sh
-```
-
-Equivalent single fold:
-
-```bash
-torchrun --nproc_per_node=4 src/train.py \
-  --config configs/cmdc_audio_text.yaml \
-  --fold 0 \
-  --run_name cmdc_reproduction
-```
-
-## EATD 3-Fold Training / Eval
-
-Default mode is `subject` mode.
-
-```bash
-./scripts/run_eatd_3fold.sh
-```
-
-Equivalent single fold:
-
-```bash
-torchrun --nproc_per_node=4 src/train.py \
-  --config configs/eatd_audio_text.yaml \
-  --fold 0 \
-  --run_name eatd_reproduction
-```
-
-## EATD Sample Modes
-
-- `subject`: combine negative/neutral/positive into one subject sample
-- `response`: treat negative/neutral/positive as separate samples and aggregate back to subject level
-
-Default: `subject`
-
-Subject-mode length controls are in `configs/eatd_audio_text.yaml`:
-- `max_audio_seconds_per_response`
-- `max_total_audio_seconds`
-- `transcript_max_chars`
-
-## Turkish Training / Eval
-
-The Turkish pipeline uses `patient_id` as the leakage unit and 5-fold stratified
-subject CV. Its default `split.cv_protocol: train_val` trains on four folds,
-validates on the held-out fold after every epoch, keeps that fold's best
-validation snapshot, and averages the five selected snapshots. Audio files are
-already at most 20 seconds, so they are not re-chunked.
-
-To use the previous train/inner-validation/test protocol instead, set:
-
-```yaml
-split:
-  mode: cv
-  cv_protocol: train_val_test
-  inner_val_ratio: 0.2
-```
-
-In `train_val_test`, the inner validation split selects the checkpoint and the
-outer held-out fold supplies the reported test score. In `train_val`, the outer
-fold is both the checkpoint-selection validation set and the reported fold
-score, so it should not be described as a held-out test result.
-`training.run_final_eval_in_train` is ignored in `train_val`; it remains enabled
-in the presets so switching only `cv_protocol` restores the previous test run.
-
-Inspect and build:
-
-```bash
-export TURKISH_DATASET_ROOT=/media/emre/Backup/AudioLLM/Datasets/Turkish
-python scripts/inspect_turkish.py --root "$TURKISH_DATASET_ROOT"
-python src/data/build_manifest.py --config configs/turkish_audio_text.yaml
-```
-
-Available presets:
-
-- `configs/turkish_text_only.yaml`
-- `configs/turkish_audio_only.yaml`
-- `configs/turkish_audio_text.yaml` — one example per existing audio/transcript segment
-- `configs/turkish_subject_audio_text.yaml` — one example per subject with `K=4` audio segments and concatenated per-segment transcripts
-
-Run audio-only, text-only, and audio+text together:
-
-```bash
-sbatch scripts/run_turkish_5fold.sh
-```
-
-This submits three independent chains in parallel:
-
-- audio-only: folds `0 → 1 → 2 → 3 → 4`
-- text-only: folds `0 → 1 → 2 → 3 → 4`
-- audio+text: folds `0 → 1 → 2 → 3 → 4`
-
-Thus there are 15 GPU jobs total, but up to three jobs can run simultaneously:
-one active fold from each modality. Each chain gets its own dependent summary job.
-
-To run a single smoke fold:
+For a small local smoke, use one GPU and explicitly reduce the workload:
 
 ```bash
 torchrun --nproc_per_node=1 src/train.py \
-  --config configs/turkish_audio_text.yaml \
+  --config configs/main/<config>.yaml \
   --fold 0 \
-  --run_name turkish_smoke \
+  --run_name <unique-smoke-name> \
   --set training.num_train_epochs=1 \
   --set split.smoke_subject_limit=6
 ```
 
-Cheap subject-grouped acoustic-feature baseline:
+Any YAML key can be overridden with `--set path.to.key=value`. Record every override in experiment provenance.
+
+### DAIC leakage constraint
+
+DAIC chunk count encodes the label. Never create a canonical subject-audio example with a label-dependent or variable number of chunks. Each audio-bearing example must contain K=4 chunks. Training resamples K per epoch; the current canonical evaluation policy constructs balanced K4 bundles to cover the subject's chunks and aggregates them at subject level. State whether a reported DAIC result used balanced full coverage or a single fixed-K4 view.
+
+### Turkish protocol
+
+The leakage unit is `patient_id`. The canonical BDI≥17 configurations use five-fold `train_val` CV: the outer fold selects the checkpoint and supplies the reported fold score, so it is not an independent held-out test. Do not describe it as one. The previous `train_val_test` protocol and other thresholds are non-canonical unless explicitly selected.
+
+## MN5 lifecycle
+
+Read `docs/DEVICES.md` and `docs/MN5_AGENT_EXECUTION_RUNBOOK.md` before any SSH, rsync, or cluster action. Use:
+
+- `transfer1.bsc.es` for rsync and file inspection;
+- the currently verified scheduler login for `sbatch`, `squeue`, and `sacct`;
+- Slurm compute nodes for training/evaluation, never transfer or login nodes.
+
+Canonical single-fold submission from the verified scheduler login:
 
 ```bash
-python baselines/turkish_features_clf.py \
-  --root "$TURKISH_DATASET_ROOT" \
-  --output outputs/turkish_features_baseline.json
+CONFIG="$PWD/configs/main/<config>.yaml" \
+RUN_NAME=<unique-run-name> \
+FOLD=0 \
+bash scripts/submit_train_and_eval.sh
 ```
 
-The baseline audits and strips the numeric duplicate suffixes present in the
-CSV's inline feature strings; these features are never copied into the LLM manifest.
+Submission is not completion. Monitor through terminal accounting, retrieve compact evidence and logs, validate locally, and only then report results. Cluster mutations require explicit user authorization.
 
-## With-Model Smoke Test
+## Experiment tracking and reporting
 
-Default model path:
+Tracked folds store `metadata.json`, `status.json`, `jobs.jsonl`, `artifacts.json`, and `evaluations.json` beside the authoritative `run_config.yaml`. The rebuildable local registry lives at `outputs/experiment_registry/experiments.sqlite`.
+
+Useful entrypoints:
 
 ```bash
-MODEL_PATH=/home/emre/models/Qwen2-Audio-7B-Instruct \
-TEXT_MODEL_PATH=/media/emre/Backup/AudioLLM/models/Qwen2-7B-Instruct \
-./scripts/sanity_tests_with_model.sh
+python tools/rebuild_experiment_registry.py --scan-root output_model --dry-run
+python tools/exp.py list
+python tools/exp.py show <attempt-id>
+python tools/exp.py provenance <metric-id>
+python tools/generate_run_report.py --attempt-id <attempt-id> --fold <n>
 ```
 
-This checks:
-- processor/tokenizer load
-- model + LoRA load
-- one audio+text collated batch
-- one audio-only collated batch
-- one text-only collated batch
-- label-mask debug
-- one forward pass
-- one audio-only forward pass
-- one text-only forward pass
-- one generation
-- one audio-only generation
-- one text-only generation
-- one likelihood score pass
-- one audio-only likelihood score pass
-- one text-only likelihood score pass
+Every reported metric must identify the run/attempt and fold, config and hashes, checkpoint, backend, view, aggregation, job/resubmission chain, and a locally verified artifact path. Generate `depression_results_clean.xlsx` through `scripts/build_clean_workbook.py`; never hand-edit workbook cells.
 
-## Slurm
+## Agent journal
 
-Generic Slurm entrypoints:
+Meaningful engineering and research work is recorded in daily files under
+`docs/agent-journal/YYYY-MM-DD.md`. Agents append to the same file when several
+important events happen on one day.
 
-```bash
-sbatch scripts/run_train_slurm.sh
-sbatch scripts/run_eval_slurm.sh
-```
+Journal entries explain the context, decision, reasoning, work, result or current
+state, concrete references, and next action. They do not replace Git history,
+PRs, experiment sidecars, local result artifacts, or generated reports. Trivial
+edits and routine status checks are not journaled. See the global
+`agent-journal` skill and `AGENTS.md` for the full rule.
 
-Optuna HPO entrypoint:
-
-```bash
-sbatch scripts/run_optuna_slurm.sh
-```
-
-Set variables such as:
-- `CONFIG`
-- `FOLD`
-- `RUN_NAME`
-- `CHECKPOINT_DIR`
-- `MODEL_PATH`
-
-For Optuna studies you will typically set:
-- `CONFIG`
-- `FOLD`
-- `N_TRIALS`
-- `MODEL_PATH`
-- `STUDY_NAME`
-- `EXTRA_HPO_ARGS`
-
-Example:
-
-```bash
-sbatch --export=ALL,CONFIG=/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/configs/daic_audio_text.yaml,FOLD=0,N_TRIALS=40,STUDY_NAME=daic_fold0_optuna,EXTRA_HPO_ARGS="--run-name-prefix daic_hpo --save_strategy hpo_minimal --trial-train-epochs 10 --lr-min 5e-6 --lr-max 5e-5 --lora-r-choices 2,4,8 --lora-alpha-choices 4,8,16 --lora-dropout-min 0.1 --lora-dropout-max 0.3 --weight-decay-min 0.01 --weight-decay-max 0.1" scripts/run_optuna_slurm.sh
-```
-
-By default, Optuna now searches:
-- `lr`
-- `lora_r`
-- `lora_alpha`
-- `lora_dropout`
-- `weight_decay`
-
-Default safe HPO profile:
-- `40` trials
-- `10` epochs per trial
-- `lr`: `5e-6` to `5e-5` with log sampling
-- `lora_r`: `2, 4, 8`
-- `lora_alpha`: `4, 8, 16`
-- `lora_dropout`: `0.1` to `0.3`
-- `weight_decay`: `0.01` to `0.1`
-
-You can disable the last two with:
-
-```bash
---no-search-lora-dropout --no-search-weight-decay
-```
-
-Study artifacts are written under:
+## Output layout
 
 ```text
-outputs/optuna/{dataset}/{study_name}/
+output_model/<modality>/<dataset>/<run_name>/fold_<n>/
+├── best_model/       # selected checkpoint; normally evaluated
+├── last_model/       # never substitute silently
+├── logs/
+├── run_config.yaml
+├── metadata.json
+├── status.json
+├── jobs.jsonl
+├── artifacts.json
+└── evaluations.json
 ```
 
-Key HPO outputs:
-- `study_config.json`
-- `study_results.json`
-- `study_results_table.csv`
-- `{study_name}.db`
-- `trial_runtime/`
-- `materialized_best_trial_summary.json` when `--materialize-best-trial` is enabled
+Standalone evaluation writes mode-specific metrics plus sample/headline/subject prediction artifacts beneath the selected checkpoint's evaluation directory. Use the paths recorded in `artifacts.json` and `evaluations.json` rather than assuming a historical filename.
 
-## Outputs
+## Specialized workflows
 
-Main outputs are written under:
+- Experiment tracking and PR contract: `docs/AudioLLM_Experiment_Workflow_Implementation_Plan_v2.md`
+- Hidden-state classifiers and Optuna: `docs/QWEN2_HIDDEN_XGBOOST_IMPLEMENTATION_PLAN_2026-07-22.md` and `docs/OPTUNA_RAW_XGBOOST_FOLLOWUP.md`
+- Translation overlays: `docs/TRANSLATION_RUNBOOK.md`
+- D3TEC: `docs/D3TEC_IMPLEMENTATION.md`
+- Merged training: `docs/SYMMETRIC_MERGED_PROTOCOL_PLAN.md`
+- Turkish retranscription: `docs/qwen3_asr_turkish_retranscription_plan.md`
 
-```text
-output_model/audio_text/{dataset}/{run_name}/fold_{k}/
-```
-
-Important artifacts:
-- `best_model/`
-- `last_model/`
-- `eval/best_validation/` — selected fold-validation metrics when `split.cv_protocol=train_val`
-- `logs/split_used.json`
-- `logs/sample_partition_counts.json`
-- `logs/train_truncation.jsonl`
-- `logs/val_truncation.jsonl`
-- `logs/final_eval_truncation.jsonl`
-- `eval/best_checkpoint/`
-- `eval/last_checkpoint/`
-- `eval/best_vs_last_checkpoint_metrics.json`
+Read the workflow-specific document and current scripts/configs before executing it.

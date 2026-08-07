@@ -27,7 +27,7 @@ Raw Dataset (WAV + CSV + labels)
     │
     ├──► [Training]   cross-entropy loss on label tokens → LoRA backprop
     │
-    └──► [Inference]  likelihood scoring or generation → prediction
+    └──► [Inference]  teacher-forced decoding, likelihood, or generation → prediction
     │
     ▼
 [Stage 6]  Aggregation & Metrics  — subject-level vote → macro-F1
@@ -321,29 +321,46 @@ logits vs labels  (cross-entropy, prompt tokens masked with -100)
          Whisper encoder            (frozen by default)
 
 Optimiser:  AdamW + linear LR warmup
-Checkpoint: saved when val macro-F1 improves
+Checkpoint: saved when validation positive-F1 (`inner_val_positive_f1`) improves
 ```
 
 ---
 
 ## Inference Path
 
-### Mode A — Likelihood (headline, deterministic)
+### Mode A — Original teacher-forced decoding (canonical headline)
+
+```
+Build the prompt with the gold label tokens appended
+    → model forward pass under teacher forcing
+    → argmax token at each gold-label position
+    → decode predicted label tokens
+    → exact-label parser → {0, 1, INVALID}
+
+Candidate label scores and their margin are retained as diagnostics,
+but the headline prediction comes from the decoded token sequence.
+```
+
+No sampling is used. Read `headline/binary_strict_*`; an `INVALID` decoded label
+counts as wrong. Canonical configs use this backend for validation checkpoint
+selection and reported headline metrics. They do not report AUROC from these
+hard-label predictions.
+
+### Mode B — Likelihood scoring (alternate/diagnostic)
 
 ```
 For each candidate label ("Depressed", "Non-depressed"):
     full_text = prompt_text + candidate_label
     → model forward pass
-    → logits at label token positions
-    → mean log-prob across label tokens → score
+    → mean log-probability across label tokens
 
-pred = argmax(dep_score, non_score)  → {0, 1}
+prediction = argmax(depressed_score, non_depressed_score)
 ```
 
-No sampling, fully deterministic. Used for checkpoint selection and
-all reported headline metrics.
+This deterministic backend also yields a continuous score margin, but it is not
+the canonical headline backend for `configs/main/`.
 
-### Mode B — Generation (secondary)
+### Mode C — Generation (secondary)
 
 ```
 model.generate(prompt_text)

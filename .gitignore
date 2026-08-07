@@ -11,5 +11,6 @@ docs/
 opencode.json
 AGENTS.md
 reports/
+.agents/
 
 wandb/

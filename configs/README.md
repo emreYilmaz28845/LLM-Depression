@@ -5,6 +5,7 @@ configs/
   quarantines.yaml   # subject quarantine list — referenced by every config via
                      # ${PROJECT_ROOT}/configs/quarantines.yaml; DO NOT move.
   main/              # canonical configs — one per dataset × modality. Run these.
+  experiments/       # active non-headline research; run only when explicitly selected.
   archive/           # all prior experiments (regN sweeps, K sweeps, seeds,
                      # ablations, nofreeze/selloss/valloss, emotion, qwen3omni,
                      # eatd). Kept for reproducibility; not part of the headline.
@@ -29,8 +30,9 @@ label, not a continuous score, so there is no ranking to compute AUROC over.
 
 ## Coverage
 
-`main/` holds: DAIC, EDAIC, CMDC (×3 modalities each) and Turkish at BDI≥17 and
-BDI≥21 (×3 modalities each). EATD and Turkish BDI≥25 are not in scope (archived /
-not created).
+`main/` currently holds 12 configs: DAIC, EDAIC, and CMDC (three modalities
+each), plus Turkish BDI≥17 with Qwen3-ASR transcripts (three modalities).
+Turkish BDI≥21/25 and EATD are not current headline configs; related files are
+experimental or archived.
 
-Naming: `<dataset>[_t<threshold>]_<modality>_selposf1_tf.yaml`.
+Naming: `<dataset>[_t<threshold>]_<modality>_selposf1_tf[_variant].yaml`.
