@@ -1,0 +1,4 @@
+interface:
+  display_name: "Git PR Handoff"
+  short_description: "Publish agent changes for user review"
+  default_prompt: "Use $git-pr to commit the validated agent changes, push an agent branch, and open a PR for my review without merging it."

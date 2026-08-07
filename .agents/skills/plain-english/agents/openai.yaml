@@ -1,0 +1,4 @@
+interface:
+  display_name: "Plain English"
+  short_description: "Write clear, direct, natural English"
+  default_prompt: "Use $plain-english to rewrite this in clear, direct, natural language without corporate or AI-sounding filler."

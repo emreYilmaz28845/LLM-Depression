@@ -1,0 +1,4 @@
+interface:
+  display_name: "Experiment Tracking"
+  short_description: "Track experiment identity, lifecycle, and evidence"
+  default_prompt: "Use $experiment-tracking to plan, inspect, query, or report a tracked experiment with complete lifecycle evidence."

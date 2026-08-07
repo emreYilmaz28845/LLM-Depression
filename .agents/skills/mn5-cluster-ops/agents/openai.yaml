@@ -1,0 +1,4 @@
+interface:
+  display_name: "MN5 Cluster Operations"
+  short_description: "Run the authorized MN5 experiment lifecycle"
+  default_prompt: "Use $mn5-cluster-ops to preflight, submit, monitor, synchronize, and validate an authorized MN5 experiment."

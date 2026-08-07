@@ -1,0 +1,4 @@
+interface:
+  display_name: "Provenance Reporting"
+  short_description: "Report metrics with complete provenance"
+  default_prompt: "Use $provenance-reporting to verify and present experiment results with complete local provenance."

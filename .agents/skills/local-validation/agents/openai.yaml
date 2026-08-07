@@ -1,0 +1,4 @@
+interface:
+  display_name: "Local Validation"
+  short_description: "Validate repo changes before handoff or MN5"
+  default_prompt: "Use $local-validation to select and run the correct local checks for this repository change."
