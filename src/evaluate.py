@@ -1102,6 +1102,7 @@ def _record_evaluation_sidecars(
         )
     fold = int(args.fold)
     checkpoint_dir = Path(args.checkpoint_dir)
+    output_dir = Path(output_dir)
     fold_dir = checkpoint_dir.parent
     checkpoint_role = checkpoint_dir.name if checkpoint_dir.name in ("best_model", "last_model") else "best_model"
     active_backend = str(metrics["active_backend"])

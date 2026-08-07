@@ -298,6 +298,29 @@ def test_evaluation_refuses_overwrite_with_different_content(tmp_path: Path) -> 
         _record_evaluation_sidecars(args, config, metrics, output_dir, aggregation_level="subject", split_mode="fixed", cv_protocol=None)
 
 
+def test_evaluation_sidecars_accept_str_output_dir(tmp_path: Path) -> None:
+    context_path, context = _eval_context(tmp_path)
+    fold_dir = tmp_path / "run" / "fold_0"
+    checkpoint_dir = fold_dir / "best_model"
+    output_dir = checkpoint_dir / "standalone_eval"
+    output_dir.mkdir(parents=True)
+    headline = {"positive_f1": 0.6, "macro_f1": 0.5}
+    metrics_payload = {
+        "prediction_backend": "original_teacher_forced",
+        "aggregation_level": "subject",
+        "num_units": 6,
+        "backend_results": {"original_teacher_forced": {"headline_metrics": headline}},
+    }
+    (output_dir / "metrics_original_teacher_forced.json").write_text(json.dumps(metrics_payload), encoding="utf-8")
+    (output_dir / "predictions_subject_level.csv").write_text("a\n", encoding="utf-8")
+    config = {"dataset": "daic", "split": {"final_eval_partition": "test"}}
+    metrics = {"active_backend": "original_teacher_forced", "backend_results": metrics_payload["backend_results"]}
+    args = SimpleNamespace(experiment_context=str(context_path), checkpoint_dir=str(checkpoint_dir), fold=0)
+    _record_evaluation_sidecars(args, config, metrics, str(output_dir), aggregation_level="subject", split_mode="fixed", cv_protocol=None)
+    evaluations = json.loads((fold_dir / "evaluations.json").read_text(encoding="utf-8"))
+    assert len(evaluations["evaluations"]) == 1
+
+
 def test_no_context_evaluation_writes_no_sidecars(tmp_path: Path) -> None:
     fold_dir = tmp_path / "run" / "fold_0"
     checkpoint_dir = fold_dir / "best_model"
