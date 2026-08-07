@@ -1,2 +1,15 @@
+outputs/
+__pycache__/
+*.pyc
+.venv/
+.deps/
+.env
+logs/
+output_model
+.provenance/
+docs/
+opencode.json
+AGENTS.md
 reports/
+
 wandb/
