@@ -33,6 +33,7 @@ MODEL_PATH="${MODEL_PATH:-}"
 TEXT_MODEL_PATH="${TEXT_MODEL_PATH:-}"
 DAIC_UNPROCESSED_ROOT="${DAIC_UNPROCESSED_ROOT:?Set DAIC_UNPROCESSED_ROOT}"
 DAIC_LABEL_ROOT="${DAIC_LABEL_ROOT:?Set DAIC_LABEL_ROOT}"
+EXPERIMENT_CONTEXT="${EXPERIMENT_CONTEXT:-}"
 export DAIC_UNPROCESSED_ROOT DAIC_LABEL_ROOT
 
 LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/slurm_daic_participant_packed30_jointk4}"
@@ -57,6 +58,9 @@ CMD=(
   --set "seed=$SEED"
   --set "split.seed=1337"
 )
+if [ -n "$EXPERIMENT_CONTEXT" ]; then
+  CMD+=(--experiment-context "$EXPERIMENT_CONTEXT")
+fi
 # The config YAML already resolves the correct base model via the exported
 # MODEL_PATH env var; never pass model flags here.
 
