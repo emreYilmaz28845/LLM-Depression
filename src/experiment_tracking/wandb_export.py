@@ -119,6 +119,14 @@ def legacy_wandb_id(attempt_id: str, fold: int, evaluation_id: str) -> str:
     return f"wandb-{canonical_sha256(payload)[:24]}"
 
 
+def _run_display_name(
+    attempt_id: str, fold: int, logical_run_name: str | None, evaluation_id: str | None
+) -> str:
+    if logical_run_name is None:
+        return f"attempt-{attempt_id[-8:]}-fold{fold}"
+    return f"{logical_run_name}-attempt{attempt_id[-8:]}-fold{fold}"
+
+
 def _history_curves(training_history: Any) -> tuple[dict[str, list[dict[str, Any]]], bool]:
     curves: dict[str, list[dict[str, Any]]] = {}
     if not isinstance(training_history, list) or not training_history:
@@ -247,6 +255,7 @@ def _build_plan(
     return {
         "schema_version": EXPORT_SCHEMA_VERSION,
         "run_id": run_id,
+        "name": _run_display_name(attempt_id, fold, logical_run.get("logical_run_name"), first_evaluation_id),
         "project": project,
         "entity": None,
         "group": None,
@@ -371,6 +380,7 @@ class WandbAdapter(Protocol):
         self,
         *,
         run_id: str,
+        name: str | None,
         config: Any,
         project: str,
         entity: str | None,
@@ -406,12 +416,13 @@ class RealWandbAdapter:
                 "performing a real export"
             ) from error
 
-    def create_run(self, *, run_id: str, config: Any, project: str, entity: str | None, mode: str, tags: list[str]) -> None:
+    def create_run(self, *, run_id: str, name: str | None, config: Any, project: str, entity: str | None, mode: str, tags: list[str]) -> None:
         wandb = self._wandb()
         if wandb.run is not None:
             wandb.finish()
         wandb.init(
             id=run_id,
+            name=name,
             project=project,
             entity=entity if entity is not None else self._entity,
             config=config,
@@ -432,6 +443,16 @@ class RealWandbAdapter:
         self._wandb().summary.update({"lifecycle/status": status})
 
 
+def _export_config(plan: dict[str, Any]) -> dict[str, Any]:
+    config = dict(plan["safe_config"] or {})
+    identity = plan["identity"]
+    config["tracking/logical_run_name"] = identity.get("logical_run_name")
+    config["tracking/attempt_id"] = identity.get("attempt_id")
+    config["tracking/fold"] = identity.get("fold")
+    config["tracking/evaluation_id"] = identity.get("evaluation_id")
+    return config
+
+
 def execute_export(
     plan: dict[str, Any],
     adapter: WandbAdapter | None,
@@ -446,7 +467,8 @@ def execute_export(
     run_id = plan["run_id"]
     adapter.create_run(
         run_id=run_id,
-        config=plan["safe_config"],
+        name=plan.get("name"),
+        config=_export_config(plan),
         project=plan["project"],
         entity=entity,
         mode=mode,
