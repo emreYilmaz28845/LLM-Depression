@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/home/emre/Projects/AudioLLM/LLM-Depression/tools/export_run_to_wandb.py", line 168, in <module>
+    sys.exit(main())
+  File "/home/emre/Projects/AudioLLM/LLM-Depression/tools/export_run_to_wandb.py", line 154, in main
+    results.append(wandb_export.execute_export(plan, adapter, mode=args.mode, entity=args.entity))
+  File "/home/emre/Projects/AudioLLM/LLM-Depression/src/experiment_tracking/wandb_export.py", line 452, in execute_export
+    adapter.set_status(run_id=run_id, status=plan["status"], tags=plan["tags"])
+  File "/home/emre/Projects/AudioLLM/LLM-Depression/src/experiment_tracking/wandb_export.py", line 425, in set_status
+    wandb.run.tags.add(tag)
+AttributeError: 'tuple' object has no attribute 'add'

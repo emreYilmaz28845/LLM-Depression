@@ -1,0 +1,106 @@
+_wandb:
+    value:
+        cli_version: 0.28.1
+        e:
+            4y7u0wbo9bo62degzesw6jxdooy9pjpf:
+                args:
+                    - --run-dir
+                    - output_model/audio_text/daic/daic_replicates_20ep_s1337_daic_audio_text_selposf1_tf
+                    - --mode
+                    - cloud
+                    - --entity
+                    - emre9766-audio-llm
+                codePath: tools/export_run_to_wandb.py
+                codePathLocal: tools/export_run_to_wandb.py
+                email: emre9766@gmail.com
+                executable: /home/emre/miniconda3/envs/llmdep4090/bin/python
+                git:
+                    commit: 6784142c06e937a2152fc571b5ad3878783acf52
+                    remote: https://github.com/emreYilmaz28845/LLM-Depression.git
+                host: audiolab-server1
+                os: Linux-5.15.0-181-generic-x86_64-with-glibc2.35
+                program: /home/emre/Projects/AudioLLM/LLM-Depression/tools/export_run_to_wandb.py
+                python: CPython 3.10.20
+                root: /home/emre/Projects/AudioLLM/LLM-Depression
+                startedAt: "2026-08-07T12:50:01.756746Z"
+                writerId: 4y7u0wbo9bo62degzesw6jxdooy9pjpf
+        m: []
+        python_version: 3.10.20
+        t:
+            "3":
+                - 14
+                - 15
+                - 16
+                - 62
+            "4": 3.10.20
+            "5": 0.28.1
+            "12": 0.28.1
+            "13": linux-x86_64
+data:
+    value:
+        chunks_per_subject: 4
+        sample_mode: subject_audio
+        use_text: true
+dataset:
+    value: daic
+evaluation:
+    value:
+        aggregation_level: subject
+        do_sample: false
+        headline_mode: original_teacher_forced
+        num_beams: 1
+        sample_prediction_mode: original_teacher_forced
+labels:
+    value:
+        label_vocab_version: legacy_english_labels
+lora:
+    value:
+        alpha: 32
+        bias: none
+        dropout: 0.05
+        rank: 16
+        target_modules:
+            - q_proj
+            - k_proj
+            - v_proj
+            - o_proj
+            - gate_proj
+            - up_proj
+            - down_proj
+seed:
+    value: 1337
+split:
+    value:
+        dev_pool_partitions:
+            - train
+            - val
+        final_eval_partition: test
+        inner_val_ratio: 0.2
+        mode: fixed
+        outer_folds: 5
+        seed: 1337
+        selection_partition: val
+        train_partition: train
+training:
+    value:
+        bf16: true
+        dataloader_num_workers: 0
+        early_stopping:
+            enabled: false
+            metric: inner_val_positive_f1
+            min_delta: 0
+            mode: max
+            patience: 3
+        gradient_accumulation_steps: 8
+        gradient_checkpointing: true
+        learning_rate: 0.0002
+        logging_steps: 5
+        max_grad_norm: 1
+        num_train_epochs: 20
+        per_device_eval_batch_size: 1
+        per_device_train_batch_size: 1
+        run_final_eval_in_train: false
+        selection_metric: inner_val_positive_f1
+        selection_metric_mode: max
+        warmup_ratio: 0.03
+        weight_decay: 0

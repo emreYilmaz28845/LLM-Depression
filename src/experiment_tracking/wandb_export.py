@@ -367,10 +367,27 @@ def build_export_plan(
 
 
 class WandbAdapter(Protocol):
-    def create_run(self, *, run_id: str, config: Any, project: str, entity: str | None, mode: str) -> None: ...
+    def create_run(
+        self,
+        *,
+        run_id: str,
+        config: Any,
+        project: str,
+        entity: str | None,
+        mode: str,
+        tags: list[str],
+    ) -> None: ...
     def log_curves(self, *, run_id: str, curves: dict[str, list[dict[str, Any]]]) -> None: ...
     def log_summary(self, *, run_id: str, summary: dict[str, Any]) -> None: ...
     def set_status(self, *, run_id: str, status: str, tags: list[str]) -> None: ...
+
+
+def _normalize_mode(mode: str) -> str:
+    if mode == "cloud":
+        return "online"
+    if mode == "dry_run":
+        return "dryrun"
+    return mode
 
 
 class RealWandbAdapter:
@@ -389,7 +406,7 @@ class RealWandbAdapter:
                 "performing a real export"
             ) from error
 
-    def create_run(self, *, run_id: str, config: Any, project: str, entity: str | None, mode: str) -> None:
+    def create_run(self, *, run_id: str, config: Any, project: str, entity: str | None, mode: str, tags: list[str]) -> None:
         wandb = self._wandb()
         if wandb.run is not None:
             wandb.finish()
@@ -398,8 +415,8 @@ class RealWandbAdapter:
             project=project,
             entity=entity if entity is not None else self._entity,
             config=config,
-            mode=mode,
-            reinit=True,
+            tags=tags,
+            mode=_normalize_mode(mode),
         )
 
     def log_curves(self, *, run_id: str, curves: dict[str, list[dict[str, Any]]]) -> None:
@@ -412,10 +429,7 @@ class RealWandbAdapter:
         self._wandb().summary.update(summary)
 
     def set_status(self, *, run_id: str, status: str, tags: list[str]) -> None:
-        wandb = self._wandb()
-        for tag in tags:
-            wandb.run.tags.add(tag)
-        wandb.summary.update({"lifecycle/status": status})
+        self._wandb().summary.update({"lifecycle/status": status})
 
 
 def execute_export(
@@ -436,6 +450,7 @@ def execute_export(
         project=plan["project"],
         entity=entity,
         mode=mode,
+        tags=plan["tags"],
     )
     if plan["epoch_curves"]:
         adapter.log_curves(run_id=run_id, curves=plan["epoch_curves"])
