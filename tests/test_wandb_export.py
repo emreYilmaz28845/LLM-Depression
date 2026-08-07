@@ -124,6 +124,19 @@ def test_export_plan_config_is_safe_filtered(tmp_path: Path) -> None:
     assert plan["safe_config"]["seed"] == 1337
 
 
+def test_export_config_carries_tracking_identity(tmp_path: Path) -> None:
+    _, plan = _plan_from_tree(tmp_path)
+    adapter = FakeAdapter()
+    wandb_export.execute_export(plan, adapter, mode="offline")
+    config = adapter.calls[0][1]["config"]
+    assert config["tracking/attempt_id"] == plan["identity"]["attempt_id"]
+    assert config["tracking/logical_run_name"] == "daic_run"
+    assert config["tracking/fold"] == 0
+    assert config["tracking/evaluation_id"] == plan["identity"]["evaluation_id"]
+    assert plan["name"].endswith("-fold0")
+    assert adapter.calls[0][1]["name"] == plan["name"]
+
+
 def test_legacy_wandb_ids_are_deterministic_and_versioned() -> None:
     first = wandb_export.legacy_wandb_id("legacy-legacy-attempt-v1-abc", 0, "eval-xyz")
     second = wandb_export.legacy_wandb_id("legacy-legacy-attempt-v1-abc", 0, "eval-xyz")
