@@ -44,6 +44,7 @@ RUN_NAME="${RUN_NAME:-mn5_reproduction}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
 MODEL_PATH="${MODEL_PATH:-}"
 EXTRA_TRAIN_ARGS="${EXTRA_TRAIN_ARGS:-}"
+EXPERIMENT_CONTEXT="${EXPERIMENT_CONTEXT:-}"
 SKIP_MANIFEST_BUILD="${SKIP_MANIFEST_BUILD:-0}"
 ENABLE_LABEL_MASK_DEBUG="${ENABLE_LABEL_MASK_DEBUG:-0}"
 DATASET_NAME="$(python - <<PY
@@ -204,6 +205,10 @@ if [ -n "$EXTRA_TRAIN_ARGS" ]; then
     # shellcheck disable=SC2206
     EXTRA_ARGS_ARRAY=($EXTRA_TRAIN_ARGS)
     CMD+=("${EXTRA_ARGS_ARRAY[@]}")
+fi
+
+if [ -n "$EXPERIMENT_CONTEXT" ]; then
+    CMD+=(--experiment-context "$EXPERIMENT_CONTEXT")
 fi
 
 printf 'Launch command: ' | tee -a "$RUN_LOG_FILE"

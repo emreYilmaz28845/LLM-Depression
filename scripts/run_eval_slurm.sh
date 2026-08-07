@@ -44,6 +44,7 @@ FOLD="${FOLD:-0}"
 OUTPUT_DIR="${OUTPUT_DIR:-$CHECKPOINT_DIR/standalone_eval}"
 MODEL_PATH="${MODEL_PATH:-}"
 EXTRA_EVAL_ARGS="${EXTRA_EVAL_ARGS:-}"
+EXPERIMENT_CONTEXT="${EXPERIMENT_CONTEXT:-}"
 SKIP_MANIFEST_BUILD="${SKIP_MANIFEST_BUILD:-0}"
 DATASET_NAME="$(python - <<PY
 import sys
@@ -164,6 +165,10 @@ if [ -n "$EXTRA_EVAL_ARGS" ]; then
     # shellcheck disable=SC2206
     EXTRA_ARGS_ARRAY=($EXTRA_EVAL_ARGS)
     CMD+=("${EXTRA_ARGS_ARRAY[@]}")
+fi
+
+if [ -n "$EXPERIMENT_CONTEXT" ]; then
+    CMD+=(--experiment-context "$EXPERIMENT_CONTEXT")
 fi
 
 printf 'Launch command: ' | tee -a "$RUN_LOG_FILE"
