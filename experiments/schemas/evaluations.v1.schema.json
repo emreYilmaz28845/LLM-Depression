@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://audiollm.local/schemas/evaluations.v1.schema.json",
+  "title": "evaluations.v1",
+  "description": "Qualified evaluation and metric records (plan Section 26.9).",
+  "type": "object",
+  "required": ["schema_version", "attempt_id", "fold", "evaluations"],
+  "properties": {
+    "schema_version": { "const": "audiollm.evaluations.v1" },
+    "attempt_id": { "type": "string" },
+    "fold": { "type": "integer" },
+    "evaluations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "evaluation_id",
+          "dataset",
+          "split_name",
+          "split_protocol",
+          "checkpoint_role",
+          "checkpoint_path",
+          "backend",
+          "evaluation_view",
+          "aggregation",
+          "metric_namespace",
+          "metrics_artifact_path",
+          "predictions_artifact_path",
+          "metrics",
+          "locally_verified",
+          "reportable",
+          "warnings"
+        ],
+        "properties": {
+          "evaluation_id": { "type": "string", "pattern": "^eval-[0-9a-f]{24}$" },
+          "dataset": { "type": "string", "minLength": 1 },
+          "split_name": { "type": "string", "minLength": 1 },
+          "split_protocol": { "type": "string", "minLength": 1 },
+          "checkpoint_role": { "type": "string", "enum": ["best_model", "last_model"] },
+          "checkpoint_path": { "type": "string", "minLength": 1 },
+          "backend": { "type": "string", "minLength": 1 },
+          "evaluation_view": { "type": ["string", "null"] },
+          "aggregation": { "type": "string", "minLength": 1 },
+          "metric_namespace": { "type": "string", "minLength": 1 },
+          "metrics_artifact_path": { "type": "string", "minLength": 1 },
+          "predictions_artifact_path": { "type": ["string", "null"] },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "value", "support"],
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "value": { "type": ["number", "null"] },
+                "support": { "type": ["integer", "null"] }
+              }
+            }
+          },
+          "locally_verified": { "type": "boolean" },
+          "reportable": { "type": "boolean" },
+          "warnings": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

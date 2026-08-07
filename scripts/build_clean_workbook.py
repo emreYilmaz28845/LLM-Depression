@@ -17,6 +17,7 @@ Modes:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -831,12 +832,66 @@ def build_packed30(wb: Workbook) -> None:
 
 
 # --------------------------------------------------------------------------- main
+# --------------------------------------------------------------------------- validation
+def validate_selected_results(selected_results: Path, cell_values: dict[tuple[str, str], float | None]) -> tuple[bool, list[str]]:
+    """Cross-check an explicit selected-results export against workbook headline cells.
+
+    The workbook stays script-only: values are compared, never overwritten. Missing
+    records are listed as legacy-unmigrated; nothing is invented and nothing is zeroed.
+    """
+    payload = json.loads(Path(selected_results).read_text(encoding="utf-8"))
+    selections = payload.get("selections", [])
+    legacy_unmigrated: list[str] = []
+    mismatches: list[str] = []
+    checked = 0
+    for selection in selections:
+        cell = str(selection.get("cell"))
+        dataset_label, modality_label = cell.split("|", 1)
+        key = (dataset_label.strip(), modality_label.strip())
+        status = selection.get("status")
+        if status != "selected":
+            legacy_unmigrated.append(f"{cell}: {status} ({selection.get('reason', 'no record')})")
+            continue
+        expected = cell_values.get(key)
+        if expected is None:
+            legacy_unmigrated.append(f"{cell}: no workbook cell for selected record")
+            continue
+        value = selection.get("value")
+        if value is None:
+            mismatches.append(f"{cell}: selected record has null value")
+            continue
+        if expected is not None and abs(float(value) - float(expected)) > 1e-6 * max(1.0, abs(float(expected))):
+            mismatches.append(
+                f"{cell}: registry {float(value):.6f} differs from workbook {float(expected):.6f}"
+            )
+        checked += 1
+    report = [
+        *mismatches,
+        *[f"legacy-unmigrated: {entry}" for entry in legacy_unmigrated],
+    ]
+    return (not mismatches, report)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--detailed", action="store_true",
                         help="include XGBoost Optuna and Subject-OS columns/rows; write the detailed workbook")
+    parser.add_argument("--validate-selected", default=None,
+                        help="cross-check an explicit selected-results JSON against workbook cells; never rewrites cells")
     args = parser.parse_args()
     detailed = args.detailed
+
+    if args.validate_selected is not None:
+        cell_values: dict[tuple[str, str], float | None] = {
+            (dataset_label, modality_label): value
+            for (dataset_label, modality_label), value in STANDALONE_QWEN.items()
+        }
+        ok, report = validate_selected_results(Path(args.validate_selected), cell_values)
+        print("\n".join(report))
+        print(f"checked={sum(1 for s in json.loads(Path(args.validate_selected).read_text())['selections'] if s['status'] == 'selected')} "
+              f"mismatches={sum(1 for line in report if 'differs from' in line)} "
+              f"legacy_unmigrated={sum(1 for line in report if line.startswith('legacy-unmigrated:'))}")
+        return 0 if ok else 1
 
     wb = Workbook()
     wb.remove(wb.active)
@@ -853,4 +908,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://audiollm.local/schemas/metadata.v1.schema.json",
+  "title": "metadata.v1",
+  "description": "Fold/attempt execution metadata sidecar (plan Section 26.5).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "logical_run_name",
+    "attempt_id",
+    "fold",
+    "created_at_utc",
+    "source",
+    "hashes",
+    "paths",
+    "wandb"
+  ],
+  "properties": {
+    "schema_version": { "const": "audiollm.metadata.v1" },
+    "group_id": { "type": ["string", "null"] },
+    "logical_run_name": { "type": "string", "minLength": 1 },
+    "attempt_id": { "type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z-[a-z0-9._-]+-[0-9a-f]{8}-[0-9a-f]{8}$" },
+    "fold": { "type": "integer" },
+    "seed": { "type": ["integer", "null"] },
+    "created_at_utc": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$"
+    },
+    "source": {
+      "type": "object",
+      "required": ["git_commit", "git_branch", "git_dirty", "deployed_source_sha256"],
+      "properties": {
+        "git_commit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
+        "git_branch": { "type": ["string", "null"] },
+        "git_dirty": { "type": "boolean" },
+        "deployed_source_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "research": {
+      "type": "object",
+      "properties": {
+        "github_issue": { "type": ["integer", "null"] },
+        "github_pr": { "type": ["integer", "null"] }
+      }
+    },
+    "hashes": {
+      "type": "object",
+      "required": ["resolved_config_sha256", "manifest_sha256", "split_sha256"],
+      "properties": {
+        "resolved_config_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "manifest_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "split_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "paths": {
+      "type": "object",
+      "required": ["run_config", "best_model", "local_evidence_root"],
+      "properties": {
+        "run_config": { "type": "string", "minLength": 1 },
+        "best_model": { "type": ["string", "null"] },
+        "local_evidence_root": { "type": ["string", "null"] }
+      }
+    },
+    "wandb": {
+      "type": "object",
+      "required": ["project", "entity", "run_id", "url", "sync_status"],
+      "properties": {
+        "project": { "type": ["string", "null"] },
+        "entity": { "type": ["string", "null"] },
+        "run_id": { "type": ["string", "null"] },
+        "url": { "type": ["string", "null"] },
+        "sync_status": {
+          "type": "string",
+          "enum": ["NOT_EXPORTED", "OFFLINE", "SYNCED", "INCOMPLETE"]
+        }
+      }
+    },
+    "legacy_import": { "type": "boolean" }
+  },
+  "additionalProperties": true
+}

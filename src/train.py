@@ -98,6 +98,28 @@ from src.utils import (
     sha256_file,
 )
 
+from src.experiment_tracking.canonical import (
+    append_jsonl_atomic,
+    canonical_sha256,
+    format_utc_timestamp,
+    sha256_file as tracking_sha256_file,
+    utc_now,
+    write_json_atomic,
+)
+from src.experiment_tracking.constants import (
+    SCHEMA_VERSION_ARTIFACTS,
+    SCHEMA_VERSION_METADATA,
+    WANDB_PROJECT,
+)
+from src.experiment_tracking.identity import artifact_id, validate_attempt_id
+from src.experiment_tracking.lifecycle import (
+    StatusRecord,
+    append_job_event,
+    new_job_event,
+    read_job_events,
+    write_status,
+)
+
 
 LOGGER = get_logger(__name__)
 
@@ -1108,12 +1130,205 @@ def _write_trial_result(result_path: str | None, payload: dict[str, Any]) -> Non
     save_json_atomic(payload, result_path)
 
 
-def parse_args() -> argparse.Namespace:
+def _load_experiment_context(args: argparse.Namespace) -> dict[str, Any] | None:
+    if not getattr(args, "experiment_context", None):
+        return None
+    context_path = Path(args.experiment_context)
+    if not context_path.is_file():
+        raise ValueError(f"experiment context file not found: {context_path}")
+    context = read_json(context_path)
+    if not isinstance(context, dict):
+        raise ValueError(f"experiment context must be an object: {context_path}")
+    attempt_id = context.get("attempt_id")
+    if not isinstance(attempt_id, str) or not validate_attempt_id(attempt_id):
+        raise ValueError(f"experiment context has invalid attempt_id: {attempt_id!r}")
+    if context.get("fold") != args.fold:
+        raise ValueError(
+            f"experiment context fold {context.get('fold')!r} does not match --fold {args.fold}"
+        )
+    return context
+
+
+def _attach_tracking_block(
+    run_config: dict[str, Any], context: dict[str, Any], fold: int
+) -> None:
+    run_config["tracking"] = {
+        "schema_version": "audiollm.tracking.v1",
+        "group_id": context.get("group_id"),
+        "logical_run_name": context.get("logical_run_name"),
+        "attempt_id": context["attempt_id"],
+        "fold": fold,
+    }
+
+
+def _initialize_tracking_sidecars(
+    args: argparse.Namespace,
+    context: dict[str, Any],
+    run_root: Path,
+    run_config: dict[str, Any],
+) -> None:
+    fold = int(args.fold)
+    attempt_id = str(context["attempt_id"])
+    now = format_utc_timestamp(utc_now())
+    metadata = {
+        "schema_version": SCHEMA_VERSION_METADATA,
+        "group_id": context.get("group_id"),
+        "logical_run_name": context.get("logical_run_name") or args.run_name,
+        "attempt_id": attempt_id,
+        "fold": fold,
+        "seed": context.get("seed"),
+        "created_at_utc": now,
+        "source": {
+            "git_commit": context.get("source", {}).get("git_commit"),
+            "git_branch": context.get("source", {}).get("git_branch"),
+            "git_dirty": context.get("source", {}).get("git_dirty"),
+            "deployed_source_sha256": context.get("source", {}).get("deployed_source_sha256"),
+        },
+        "research": {
+            "github_issue": context.get("research", {}).get("github_issue"),
+            "github_pr": context.get("research", {}).get("github_pr"),
+        },
+        "hashes": {
+            "resolved_config_sha256": canonical_sha256(run_config.get("config") or {}),
+            "manifest_sha256": context.get("hashes", {}).get("manifest_sha256")
+            or run_config.get("manifest_hash"),
+            "split_sha256": context.get("hashes", {}).get("split_sha256")
+            or run_config.get("split_metadata_hash"),
+        },
+        "paths": {
+            "run_config": "run_config.yaml",
+            "best_model": "best_model",
+            "local_evidence_root": None,
+        },
+        "wandb": {
+            "project": WANDB_PROJECT,
+            "entity": None,
+            "run_id": f"{attempt_id}-fold{fold}",
+            "url": None,
+            "sync_status": "NOT_EXPORTED",
+        },
+    }
+    write_json_atomic(run_root / "metadata.json", metadata)
+    status = StatusRecord(attempt_id, fold, state="SUBMITTED")
+    status.transition("RUNNING", reason="training job started")
+    write_status(run_root / "status.json", status)
+    slurm = context.get("slurm") if isinstance(context.get("slurm"), dict) else {}
+    append_job_event(
+        run_root / "jobs.jsonl",
+        new_job_event(
+            job_key="train",
+            job_type="train",
+            event_type="STARTED",
+            attempt_id=attempt_id,
+            fold=fold,
+            slurm_job_id=slurm.get("train_job_id"),
+            status="RUNNING",
+        ),
+    )
+    _update_artifacts_json(
+        run_root,
+        attempt_id,
+        fold,
+        [
+            ("run_config.yaml", "run_config", "run_config"),
+        ],
+    )
+
+
+def _finalize_tracking_artifacts(
+    args: argparse.Namespace,
+    context: dict[str, Any],
+    run_root: Path,
+    run_config: dict[str, Any],
+) -> None:
+    fold = int(args.fold)
+    attempt_id = str(context["attempt_id"])
+    records: list[tuple[str, str, str]] = [
+        ("logs/training_history.json", "training_history", "training_history"),
+        ("logs/split_used.json", "split", "split_used"),
+        ("logs/selected_checkpoint_selection_metrics.json", "metrics", "selection_metrics"),
+        ("logs/sample_partition_counts.json", "audit", "partition_counts"),
+        ("logs/peak_gpu_memory.json", "audit", "peak_gpu_memory"),
+        ("logs/audio_budget_audit_train.json", "audit", "audio_budget_audit"),
+    ]
+    for checkpoint in ("best_model", "last_model"):
+        if (run_root / checkpoint).is_dir():
+            records.append((checkpoint, "checkpoint", "checkpoint_dir"))
+    _update_artifacts_json(run_root, attempt_id, fold, records)
+    slurm = context.get("slurm") if isinstance(context.get("slurm"), dict) else {}
+    append_job_event(
+        run_root / "jobs.jsonl",
+        new_job_event(
+            job_key="train",
+            job_type="train",
+            event_type="COMPLETED",
+            attempt_id=attempt_id,
+            fold=fold,
+            slurm_job_id=slurm.get("train_job_id"),
+            status="COMPLETED",
+        ),
+    )
+
+
+def _update_artifacts_json(
+    run_root: Path,
+    attempt_id: str,
+    fold: int,
+    records: list[tuple[str, str, str]],
+) -> None:
+    path = run_root / "artifacts.json"
+    existing: dict[str, Any] = {"artifacts": []}
+    if path.is_file():
+        try:
+            existing = read_json(path)
+        except (ValueError, OSError):
+            existing = {"artifacts": []}
+    known_paths = {artifact.get("path") for artifact in existing.get("artifacts", [])}
+    for relative_path, artifact_type, role in records:
+        if relative_path in known_paths:
+            continue
+        full_path = run_root / relative_path
+        if not full_path.is_file() and artifact_type != "checkpoint":
+            continue
+        if artifact_type == "checkpoint" and not full_path.is_dir():
+            continue
+        try:
+            sha256 = tracking_sha256_file(full_path) if full_path.is_file() else None
+            size_bytes = full_path.stat().st_size if full_path.is_file() else None
+        except OSError:
+            continue
+        existing.setdefault("artifacts", []).append(
+            {
+                "artifact_id": artifact_id(
+                    attempt_id=attempt_id,
+                    fold=fold,
+                    role=role,
+                    relative_path=relative_path,
+                    artifact_sha256=sha256,
+                ),
+                "artifact_type": artifact_type,
+                "role": role,
+                "path": relative_path,
+                "sha256": sha256,
+                "size_bytes": size_bytes,
+                "exists_on_mn5": True,
+                "exists_locally": False,
+                "locally_verified": False,
+            }
+        )
+    existing.setdefault("schema_version", SCHEMA_VERSION_ARTIFACTS)
+    existing.setdefault("attempt_id", attempt_id)
+    existing.setdefault("fold", fold)
+    write_json_atomic(path, existing)
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a leakage-safe Qwen2-Audio depression detector.")
     parser.add_argument("--config", required=True)
     parser.add_argument("--fold", type=int, default=0)
     parser.add_argument("--model_name_or_path", default=None)
     parser.add_argument("--run_name", default="reproduction")
+    parser.add_argument("--experiment-context", default=None, help="Path to experiment context JSON (attempt identity sidecars)")
     parser.add_argument("--label_mask_debug", action="store_true")
     parser.add_argument("--trial-progress-file", default=None)
     parser.add_argument("--trial-result-file", default=None)
@@ -1130,12 +1345,13 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="Override config values with KEY=VALUE, using dot paths for nested keys.",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def main() -> None:
     configure_logging()
     args = parse_args()
+    tracking_context = _load_experiment_context(args)
     config = load_yaml_with_overrides(args.config, args.config_overrides)
     log_resolved_config(
         LOGGER,
@@ -1745,8 +1961,12 @@ def main() -> None:
     selection_metric_cfg = _resolve_selection_metric(config)
     run_config["selection_protocol"]["metric_name"] = selection_metric_cfg["metric"] if selection_enabled else None
     run_config["selection_protocol"]["metric_mode"] = selection_metric_cfg["mode"] if selection_enabled else None
+    if tracking_context is not None and accelerator.is_main_process:
+        _attach_tracking_block(run_config, tracking_context, int(args.fold))
     if accelerator.is_main_process:
         save_yaml(run_config, run_root / "run_config.yaml")
+        if tracking_context is not None:
+            _initialize_tracking_sidecars(args, tracking_context, run_root, run_config)
     best_metric: float | None = (
         None
         if not selection_enabled
@@ -2321,6 +2541,8 @@ def main() -> None:
                 "Skipping final held-out evaluation inside training to avoid multi-GPU NCCL timeout. "
                 "Run scripts/run_eval_slurm.sh separately on best_model if you need a standalone held-out evaluation job."
             )
+        if tracking_context is not None:
+            _finalize_tracking_artifacts(args, tracking_context, run_root, run_config)
         _write_trial_result(
             args.trial_result_file,
             {

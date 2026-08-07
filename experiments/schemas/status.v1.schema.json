@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://audiollm.local/schemas/status.v1.schema.json",
+  "title": "status.v1",
+  "description": "Lifecycle status sidecar with append-only transition history (plan Section 26.6).",
+  "type": "object",
+  "required": ["schema_version", "attempt_id", "fold", "state", "updated_at_utc", "history"],
+  "properties": {
+    "schema_version": { "const": "audiollm.status.v1" },
+    "attempt_id": { "type": "string" },
+    "fold": { "type": "integer" },
+    "state": {
+      "type": "string",
+      "enum": [
+        "PLANNED",
+        "IMPORTED_LEGACY",
+        "DEPLOYED",
+        "SUBMITTED",
+        "RUNNING",
+        "COMPLETED_ON_MN5",
+        "FAILED",
+        "CANCELLED",
+        "SYNCED_LOCALLY",
+        "LOCALLY_VALIDATED",
+        "REPORTABLE",
+        "SUPERSEDED"
+      ]
+    },
+    "updated_at_utc": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$"
+    },
+    "history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["from", "to", "at_utc", "reason"],
+        "properties": {
+          "from": { "type": "string" },
+          "to": { "type": "string" },
+          "at_utc": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$"
+          },
+          "reason": { "type": ["string", "null"] }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

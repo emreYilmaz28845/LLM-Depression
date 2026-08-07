@@ -79,6 +79,13 @@ from src.utils import (
     write_jsonl,
 )
 
+from src.experiment_tracking.canonical import (
+    sha256_file as tracking_sha256_file,
+    write_json_atomic,
+)
+from src.experiment_tracking.constants import SCHEMA_VERSION_ARTIFACTS, SCHEMA_VERSION_EVALUATIONS
+from src.experiment_tracking.identity import artifact_id, evaluation_id, validate_attempt_id
+
 
 LOGGER = get_logger(__name__)
 
@@ -949,7 +956,7 @@ def _resolve_final_eval_subject_ids(config: dict[str, Any], metadata: dict[str, 
     return subject_ids_for_partitions(partition_rows, [str(config["split"]["final_eval_partition"])])
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate a saved Qwen2-Audio LoRA adapter checkpoint.")
     parser.add_argument("--config", required=True)
     parser.add_argument("--checkpoint_dir", required=True)
@@ -957,6 +964,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model_name_or_path", default=None)
     parser.add_argument("--output_dir", default=None)
     parser.add_argument("--sample_prediction_mode", default=None)
+    parser.add_argument("--experiment-context", default=None, help="Path to experiment context JSON (attempt identity sidecars)")
     parser.add_argument(
         "--set",
         dest="config_overrides",
@@ -964,7 +972,7 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="Override config values with KEY=VALUE, using dot paths for nested keys.",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def main() -> None:
@@ -1065,6 +1073,196 @@ def main() -> None:
         },
         Path(output_dir) / "final_and_best_validation_metrics.json",
     )
+    _record_evaluation_sidecars(args, config, metrics, output_dir, aggregation_level, split_mode, cv_protocol)
+
+
+def _record_evaluation_sidecars(
+    args: argparse.Namespace,
+    config: dict[str, Any],
+    metrics: dict[str, Any],
+    output_dir: Path,
+    aggregation_level: str,
+    split_mode: str,
+    cv_protocol: str | None,
+) -> None:
+    if not getattr(args, "experiment_context", None):
+        return
+    context_path = Path(args.experiment_context)
+    if not context_path.is_file():
+        raise ValueError(f"experiment context file not found: {context_path}")
+    context = read_json(context_path)
+    if not isinstance(context, dict):
+        raise ValueError(f"experiment context must be an object: {context_path}")
+    attempt_id = context.get("attempt_id")
+    if not isinstance(attempt_id, str) or not validate_attempt_id(attempt_id):
+        raise ValueError(f"experiment context has invalid attempt_id: {attempt_id!r}")
+    if context.get("fold") != args.fold:
+        raise ValueError(
+            f"experiment context fold {context.get('fold')!r} does not match --fold {args.fold}"
+        )
+    fold = int(args.fold)
+    checkpoint_dir = Path(args.checkpoint_dir)
+    fold_dir = checkpoint_dir.parent
+    checkpoint_role = checkpoint_dir.name if checkpoint_dir.name in ("best_model", "last_model") else "best_model"
+    active_backend = str(metrics["active_backend"])
+    headline = metrics["backend_results"][active_backend]["headline_metrics"]
+    metrics_path = output_dir / f"metrics_{active_backend}.json"
+    if not metrics_path.is_file():
+        candidates = sorted(output_dir.glob("metrics_*.json"))
+        metrics_path = candidates[0] if candidates else None
+    metrics_artifact_sha = (
+        tracking_sha256_file(metrics_path) if metrics_path is not None and metrics_path.is_file() else None
+    )
+
+    def _relative(path: Path | None) -> str | None:
+        if path is None:
+            return None
+        try:
+            return str(path.relative_to(fold_dir))
+        except ValueError:
+            return None
+
+    predictions_candidates = (
+        "predictions_subject_level.csv",
+        "subject_predictions.csv",
+        "predictions.csv",
+    )
+    predictions_path = next(
+        (output_dir / name for name in predictions_candidates if (output_dir / name).is_file()),
+        None,
+    )
+    support: int | None = None
+    if metrics_path is not None and metrics_path.is_file():
+        try:
+            content = read_json(metrics_path)
+            if isinstance(content, dict) and isinstance(content.get("num_units"), int):
+                support = int(content["num_units"])
+        except (ValueError, OSError):
+            pass
+    aggregation = aggregation_level
+    if aggregation == AGGREGATION_LEVEL_SUBJECT:
+        aggregation = "subject_level"
+    split_name = str(config["split"]["final_eval_partition"])
+    split_protocol = (
+        str(cv_protocol) if cv_protocol else ("fixed_train_val_test" if split_mode == "fixed" else None)
+    )
+    dataset = str(config["dataset"])
+    namespace = "headline/binary_strict"
+    evaluation_record = {
+        "evaluation_id": evaluation_id(
+            attempt_id=attempt_id,
+            fold=fold,
+            dataset=dataset,
+            split_name=split_name,
+            split_protocol=split_protocol,
+            checkpoint_role=checkpoint_role,
+            checkpoint_path=checkpoint_role,
+            backend=active_backend,
+            evaluation_view=None,
+            aggregation=aggregation,
+            metric_namespace=namespace,
+            metrics_artifact_sha256=metrics_artifact_sha,
+        ),
+        "dataset": dataset,
+        "split_name": split_name,
+        "split_protocol": split_protocol,
+        "checkpoint_role": checkpoint_role,
+        "checkpoint_path": checkpoint_role,
+        "backend": active_backend,
+        "evaluation_view": None,
+        "aggregation": aggregation,
+        "metric_namespace": namespace,
+        "metrics_artifact_path": _relative(metrics_path),
+        "predictions_artifact_path": _relative(predictions_path),
+        "metrics": [
+            {
+                "name": name,
+                "value": headline.get(name),
+                "support": support,
+            }
+            for name in ("accuracy", "precision", "recall", "positive_f1", "macro_f1", "weighted_f1")
+        ],
+        "locally_verified": False,
+        "reportable": False,
+        "warnings": ["evaluation view not recorded in evidence"],
+    }
+    evaluations_path = fold_dir / "evaluations.json"
+    existing_evaluations: dict[str, Any] = {"evaluations": []}
+    if evaluations_path.is_file():
+        try:
+            existing_evaluations = read_json(evaluations_path)
+        except (ValueError, OSError):
+            existing_evaluations = {"evaluations": []}
+    prior = next(
+        (
+            entry
+            for entry in existing_evaluations.get("evaluations", [])
+            if entry.get("evaluation_id") == evaluation_record["evaluation_id"]
+        ),
+        None,
+    )
+    if prior is not None:
+        if prior != evaluation_record:
+            raise ValueError(
+                "refusing to overwrite evaluation record with different content: "
+                f"{evaluation_record['evaluation_id']}"
+            )
+        return
+    existing_evaluations.setdefault("schema_version", SCHEMA_VERSION_EVALUATIONS)
+    existing_evaluations.setdefault("attempt_id", attempt_id)
+    existing_evaluations.setdefault("fold", fold)
+    existing_evaluations.setdefault("evaluations", []).append(evaluation_record)
+    write_json_atomic(evaluations_path, existing_evaluations)
+
+    artifact_additions: list[tuple[str | None, str, str]] = [
+        (_relative(metrics_path), "metrics", "standalone_eval_metrics"),
+        (_relative(predictions_path), "predictions", "standalone_eval_predictions"),
+        (_relative(output_dir / "confusion_matrix.json"), "metrics", "confusion_matrix"),
+        (_relative(output_dir / "eval_config.yaml"), "run_config", "eval_config"),
+        (
+            _relative(output_dir / "final_and_best_validation_metrics.json"),
+            "metrics",
+            "selection_metrics",
+        ),
+    ]
+    artifacts_path = fold_dir / "artifacts.json"
+    existing_artifacts: dict[str, Any] = {"artifacts": []}
+    if artifacts_path.is_file():
+        try:
+            existing_artifacts = read_json(artifacts_path)
+        except (ValueError, OSError):
+            existing_artifacts = {"artifacts": []}
+    known_paths = {artifact.get("path") for artifact in existing_artifacts.get("artifacts", [])}
+    for relative_path, artifact_type, role in artifact_additions:
+        if relative_path is None or relative_path in known_paths:
+            continue
+        full_path = fold_dir / relative_path
+        if not full_path.is_file():
+            continue
+        sha = tracking_sha256_file(full_path)
+        existing_artifacts.setdefault("artifacts", []).append(
+            {
+                "artifact_id": artifact_id(
+                    attempt_id=attempt_id,
+                    fold=fold,
+                    role=role,
+                    relative_path=relative_path,
+                    artifact_sha256=sha,
+                ),
+                "artifact_type": artifact_type,
+                "role": role,
+                "path": relative_path,
+                "sha256": sha,
+                "size_bytes": full_path.stat().st_size,
+                "exists_on_mn5": True,
+                "exists_locally": False,
+                "locally_verified": False,
+            }
+        )
+    existing_artifacts.setdefault("schema_version", SCHEMA_VERSION_ARTIFACTS)
+    existing_artifacts.setdefault("attempt_id", attempt_id)
+    existing_artifacts.setdefault("fold", fold)
+    write_json_atomic(artifacts_path, existing_artifacts)
 
 
 if __name__ == "__main__":

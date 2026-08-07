@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://audiollm.local/schemas/artifacts.v1.schema.json",
+  "title": "artifacts.v1",
+  "description": "Artifact manifest sidecar (plan Section 26.8).",
+  "type": "object",
+  "required": ["schema_version", "attempt_id", "fold", "artifacts"],
+  "properties": {
+    "schema_version": { "const": "audiollm.artifacts.v1" },
+    "attempt_id": { "type": "string" },
+    "fold": { "type": "integer" },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "artifact_id",
+          "artifact_type",
+          "role",
+          "path",
+          "sha256",
+          "size_bytes",
+          "exists_on_mn5",
+          "exists_locally",
+          "locally_verified"
+        ],
+        "properties": {
+          "artifact_id": { "type": "string", "pattern": "^art-[0-9a-f]{24}$" },
+          "artifact_type": {
+            "type": "string",
+            "enum": [
+              "run_config",
+              "source_manifest",
+              "manifest",
+              "split",
+              "checkpoint",
+              "metrics",
+              "predictions",
+              "audit",
+              "training_history",
+              "summary",
+              "report",
+              "wandb_offline"
+            ]
+          },
+          "role": { "type": "string", "minLength": 1 },
+          "path": { "type": "string", "minLength": 1 },
+          "sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+          "size_bytes": { "type": ["integer", "null"] },
+          "exists_on_mn5": { "type": ["boolean", "null"] },
+          "exists_locally": { "type": ["boolean", "null"] },
+          "locally_verified": { "type": "boolean" }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

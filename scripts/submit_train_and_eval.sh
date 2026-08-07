@@ -146,6 +146,12 @@ if [ -n "$TRAIN_CV_PROTOCOL" ] && [ -z "$EVAL_CV_PROTOCOL" ]; then
     EXTRA_EVAL_ARGS="${EXTRA_EVAL_ARGS:+$EXTRA_EVAL_ARGS }--set split.cv_protocol=$TRAIN_CV_PROTOCOL"
 fi
 
+if [ -n "${EXPERIMENT_CONTEXT:-}" ] && [ -f "$EXPERIMENT_CONTEXT" ]; then
+    EXTRA_TRAIN_ARGS="${EXTRA_TRAIN_ARGS:+$EXTRA_TRAIN_ARGS }--experiment-context $EXPERIMENT_CONTEXT"
+    EXTRA_EVAL_ARGS="${EXTRA_EVAL_ARGS:+$EXTRA_EVAL_ARGS }--experiment-context $EXPERIMENT_CONTEXT"
+    echo "experiment context: $EXPERIMENT_CONTEXT"
+fi
+
 if [ "$TRAIN_SPLIT_MODE" = "full_train" ] && [ "$SUBMIT_BEST_EVAL_SPECIFIED" = "0" ]; then
     SUBMIT_BEST_EVAL=0
 fi
@@ -193,4 +199,44 @@ if [ "$SUBMIT_LAST_EVAL" = "1" ]; then
     LAST_JOB_RAW="$(sbatch --parsable --dependency=afterok:$TRAIN_JOB_ID --export="$EXPORT_ARGS,CHECKPOINT_DIR=$LAST_CHECKPOINT_DIR,OUTPUT_DIR=$LAST_OUTPUT_DIR" "$EVAL_SCRIPT")"
     LAST_JOB_ID="${LAST_JOB_RAW%%;*}"
     echo "Submitted last-checkpoint eval job: $LAST_JOB_ID"
+fi
+
+if [ -n "${EXPERIMENT_CONTEXT:-}" ] && [ -f "$EXPERIMENT_CONTEXT" ]; then
+    mkdir -p "$FOLD_DIR"
+    python - "$FOLD_DIR" "$EXPERIMENT_CONTEXT" "$TRAIN_JOB_ID" "${BEST_JOB_ID:-}" "${LAST_JOB_ID:-}" "$PROJECT_ROOT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[6])
+from src.experiment_tracking import lifecycle
+
+fold_dir, context_path, train_job = sys.argv[1], sys.argv[2], sys.argv[3]
+best_job = sys.argv[4] or None
+last_job = sys.argv[5] or None
+context = json.loads(Path(context_path).read_text(encoding="utf-8"))
+attempt_id = context["attempt_id"]
+fold = int(context["fold"])
+jobs_path = Path(fold_dir) / "jobs.jsonl"
+events = []
+if train_job:
+    events.append(
+        lifecycle.new_job_event(
+            job_key="train", job_type="train", event_type="SUBMITTED",
+            attempt_id=attempt_id, fold=fold, slurm_job_id=train_job, status="PENDING",
+        )
+    )
+for job_id, key in ((best_job, "best_eval"), (last_job, "last_eval")):
+    if job_id:
+        events.append(
+            lifecycle.new_job_event(
+                job_key=key, job_type="evaluation", event_type="SUBMITTED",
+                attempt_id=attempt_id, fold=fold, slurm_job_id=job_id,
+                dependency_job_ids=[train_job], status="PENDING",
+            )
+        )
+for event in events:
+    lifecycle.append_job_event(jobs_path, event)
+print(f"recorded {len(events)} SUBMITTED job events -> {jobs_path}")
+PY
 fi

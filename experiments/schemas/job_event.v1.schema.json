@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://audiollm.local/schemas/job_event.v1.schema.json",
+  "title": "job_event.v1",
+  "description": "Append-only job event record (plan Section 26.7).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_id",
+    "attempt_id",
+    "fold",
+    "job_key",
+    "job_type",
+    "event_type",
+    "dependency_job_ids",
+    "at_utc"
+  ],
+  "properties": {
+    "schema_version": { "const": "audiollm.job_event.v1" },
+    "event_id": { "type": "string", "format": "uuid" },
+    "attempt_id": { "type": "string" },
+    "fold": { "type": "integer" },
+    "job_key": { "type": "string", "minLength": 1 },
+    "job_type": {
+      "type": "string",
+      "enum": ["train", "evaluation", "summary", "audit", "collect", "train_eval", "hidden_classifier"]
+    },
+    "event_type": {
+      "type": "string",
+      "enum": ["SUBMITTED", "STARTED", "COMPLETED", "FAILED", "CANCELLED", "OBSERVED"]
+    },
+    "slurm_job_id": { "type": ["string", "null"] },
+    "slurm_array_job_id": { "type": ["string", "null"] },
+    "slurm_array_task_id": { "type": ["string", "null"] },
+    "dependency_job_ids": { "type": "array", "items": { "type": "string" } },
+    "status": {
+      "type": ["string", "null"],
+      "enum": [
+        "PENDING",
+        "RUNNING",
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED",
+        "TIMEOUT",
+        "NODE_FAIL",
+        "OUT_OF_MEMORY",
+        "PREEMPTED",
+        null
+      ]
+    },
+    "at_utc": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$"
+    },
+    "reason": { "type": ["string", "null"] },
+    "resubmission_of_job_id": { "type": ["string", "null"] }
+  },
+  "additionalProperties": true
+}

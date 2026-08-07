@@ -1,0 +1,28 @@
+{
+  "accuracy": 0.7872340425531915,
+  "precision": 0.6428571428571429,
+  "recall": 0.6428571428571429,
+  "positive_f1": 0.6428571428571429,
+  "macro_f1": 0.7456709956709957,
+  "weighted_f1": 0.7872340425531915,
+  "macro_precision": 0.7456709956709957,
+  "macro_recall": 0.7456709956709957,
+  "weighted_precision": 0.7872340425531915,
+  "weighted_recall": 0.7872340425531915,
+  "support_negative": 33,
+  "support_positive": 14,
+  "confusion_matrix": [
+    [
+      28,
+      5
+    ],
+    [
+      5,
+      9
+    ]
+  ],
+  "auroc": 0.8831168831168831,
+  "num_subjects": 47,
+  "predicted_positive_rate": 0.2978723404255319,
+  "aggregation_method": "mean_depressed_probability_threshold_0.5"
+}

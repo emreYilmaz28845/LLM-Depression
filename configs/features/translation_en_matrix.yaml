@@ -1,0 +1,99 @@
+# Hidden-state head matrix for the English-translation experiment.
+# Trains LogReg/XGBoost heads on hidden features extracted from the EN-transcript
+# checkpoints (output_model_en) to compare native vs translated transcripts beyond
+# the Qwen end-to-end scores. Extraction automatically uses each checkpoint's own
+# run_config.yaml (EN manifests under outputs/manifests_en/, base model, splits).
+#
+# Added 2026-08-06. Variants kept lean (logreg_raw, xgb_raw) to match the clean
+# workbook's head columns. Expected jobs: (12 EN runs + 2 native D3TEC rotary
+# baselines) x 5 folds = 70.
+#
+# The two extra D3TEC entries are the NATIVE rotary runs: the EN D3TEC baselines
+# used the rotary recipe, but hidden heads previously existed only for the
+# normalized recipe — without them the D3TEC EN-native head comparison would be
+# mismatched. The native text-only D3TEC run already has heads (shared recipe).
+
+experiments:
+  # ---- CMDC (en_seq2, teacher-forced, pos-F1 selection) ----
+  - dataset: cmdc
+    modality: audio_text
+    condition: audio_text
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model_en/audio_text/cmdc/en_seq2_cmdc_audio_text_v1
+  - dataset: cmdc
+    modality: audio_only
+    condition: audio_only
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model_en/audio_only/cmdc/en_seq2_cmdc_audio_only_v1
+  - dataset: cmdc
+    modality: text_only
+    condition: text_only
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model_en/text_only/cmdc/en_seq2_cmdc_text_only_v1
+
+  # ---- Turkish (t17, qwen3asr transcripts, pos-F1 selection) ----
+  - dataset: turkish
+    modality: audio_text
+    condition: audio_text
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model_en/audio_text/turkish_t17_qwen3asr/en_seq_turkish_audio_text_v1
+  - dataset: turkish
+    modality: audio_only
+    condition: audio_only
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model_en/audio_only/turkish_t17_qwen3asr/en_seq_turkish_audio_only_v1
+  - dataset: turkish
+    modality: text_only
+    condition: text_only
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model_en/text_only/turkish_t17_qwen3asr/en_seq_turkish_text_only_v1
+
+  # ---- D3TEC (rotary recipe — the EN baseline recipe) ----
+  - dataset: d3tec
+    modality: audio_text
+    condition: audio_text_rotary
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model_en/experiments/d3tec/audio_text_rotary/en_seq_d3tec_audio_text_v1
+  - dataset: d3tec
+    modality: audio_only
+    condition: audio_only_rotary
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model_en/experiments/d3tec/audio_only_rotary/en_seq_d3tec_audio_only_v1
+  - dataset: d3tec
+    modality: text_only
+    condition: text_only
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model_en/experiments/d3tec/text_only/en_seq_d3tec_text_only_v1
+
+  # ---- Androids Interview (segment-aligned recipe) ----
+  - dataset: androids_interview
+    modality: audio_text
+    condition: audio_text_segment_aligned
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model_en/experiments/androids_interview/audio_text_segment_aligned/en_seq_androids_audio_text_v1
+  - dataset: androids_interview
+    modality: audio_only
+    condition: audio_only
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model_en/experiments/androids_interview/audio_only/en_seq_androids_audio_only_v1
+  - dataset: androids_interview
+    modality: text_only
+    condition: text_only
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model_en/experiments/androids_interview/text_only/en_seq_androids_text_only_v1
+
+  # ---- Matched native D3TEC rotary baselines (heads did not exist before) ----
+  - dataset: d3tec
+    modality: audio_text
+    condition: audio_text_rotary
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/experiments/d3tec/audio_text_rotary/d3tec_prod_20260728T135954Z_d3tec_audio_text_rotary
+  - dataset: d3tec
+    modality: audio_only
+    condition: audio_only_rotary
+    folds: [0, 1, 2, 3, 4]
+    run_dir: output_model/experiments/d3tec/audio_only_rotary/d3tec_prod_20260728T135954Z_d3tec_audio_only_rotary
+
+variants:
+  - logreg_raw
+  - xgb_raw

@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://audiollm.local/schemas/experiment_group.v1.schema.json",
+  "title": "experiment_group.v1",
+  "description": "Versioned experiment group definition (plan Section 7.1).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "group_id",
+    "title",
+    "research_question",
+    "dataset",
+    "baseline",
+    "treatment",
+    "expected_seeds",
+    "expected_folds",
+    "primary_metric"
+  ],
+  "properties": {
+    "schema_version": { "const": "audiollm.experiment_group.v1" },
+    "group_id": { "type": "string", "minLength": 1 },
+    "title": { "type": "string" },
+    "research_question": { "type": "string" },
+    "dataset": { "type": "string" },
+    "baseline": { "type": "string" },
+    "treatment": { "type": "string" },
+    "expected_seeds": { "type": "array", "items": { "type": "integer" } },
+    "expected_folds": { "type": "array", "items": { "type": "integer" } },
+    "primary_metric": {
+      "type": "object",
+      "required": ["namespace", "name", "backend", "aggregation", "evaluation_view"],
+      "properties": {
+        "namespace": { "type": "string" },
+        "name": { "type": "string" },
+        "backend": { "type": "string" },
+        "aggregation": { "type": "string" },
+        "evaluation_view": { "type": "string" }
+      }
+    },
+    "github_issue": { "type": ["integer", "null"] },
+    "github_pr": { "type": ["integer", "null"] }
+  },
+  "additionalProperties": true
+}
