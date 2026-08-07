@@ -144,8 +144,6 @@ Submission is not completion. Monitor through terminal accounting, retrieve comp
 
 ## Experiment tracking and reporting
 
-Tracked folds store `metadata.json`, `status.json`, `jobs.jsonl`, `artifacts.json`, and `evaluations.json` beside the authoritative `run_config.yaml`. The rebuildable local registry lives at `outputs/experiment_registry/experiments.sqlite`.
-
 Useful entrypoints:
 
 ```bash
@@ -158,42 +156,11 @@ python tools/generate_run_report.py --attempt-id <attempt-id> --fold <n>
 
 Every reported metric must identify the run/attempt and fold, config and hashes, checkpoint, backend, view, aggregation, job/resubmission chain, and a locally verified artifact path. Generate `depression_results_clean.xlsx` through `scripts/build_clean_workbook.py`; never hand-edit workbook cells.
 
-## Agent journal
-
-Meaningful engineering and research work is recorded in daily files under
-`docs/agent-journal/YYYY-MM-DD.md`. Agents append to the same file when several
-important events happen on one day.
-
-Journal entries explain the context, decision, reasoning, work, result or current
-state, concrete references, and next action. They do not replace Git history,
-PRs, experiment sidecars, local result artifacts, or generated reports. Trivial
-edits and routine status checks are not journaled. See the global
-`agent-journal` skill and `AGENTS.md` for the full rule.
-
-## Output layout
-
-```text
-output_model/<modality>/<dataset>/<run_name>/fold_<n>/
-├── best_model/       # selected checkpoint; normally evaluated
-├── last_model/       # never substitute silently
-├── logs/
-├── run_config.yaml
-├── metadata.json
-├── status.json
-├── jobs.jsonl
-├── artifacts.json
-└── evaluations.json
-```
-
-Standalone evaluation writes mode-specific metrics plus sample/headline/subject prediction artifacts beneath the selected checkpoint's evaluation directory. Use the paths recorded in `artifacts.json` and `evaluations.json` rather than assuming a historical filename.
-
 ## Specialized workflows
 
-- Experiment tracking and PR contract: `docs/AudioLLM_Experiment_Workflow_Implementation_Plan_v2.md`
-- Hidden-state classifiers and Optuna: `docs/QWEN2_HIDDEN_XGBOOST_IMPLEMENTATION_PLAN_2026-07-22.md` and `docs/OPTUNA_RAW_XGBOOST_FOLLOWUP.md`
-- Translation overlays: `docs/TRANSLATION_RUNBOOK.md`
+- Hidden-state classifiers and Optuna: `configs/features/*.yaml` matrix configs, `scripts/run_optuna_slurm.sh`, and `docs/OPTUNA_RAW_XGBOOST_FOLLOWUP.md`
+- Translation overlays: `configs/features/translation_en_matrix.yaml`
 - D3TEC: `docs/D3TEC_IMPLEMENTATION.md`
 - Merged training: `docs/SYMMETRIC_MERGED_PROTOCOL_PLAN.md`
-- Turkish retranscription: `docs/qwen3_asr_turkish_retranscription_plan.md`
 
 Read the workflow-specific document and current scripts/configs before executing it.
