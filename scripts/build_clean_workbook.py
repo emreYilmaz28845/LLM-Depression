@@ -776,20 +776,26 @@ PACKED30_SOURCE = {
 def build_packed30(wb: Workbook) -> None:
     ws = wb.create_sheet("DAIC Packed30 Family")
     _widths(ws, {"A": 34, "B": 12, "C": 14, "D": 14, "E": 12, "F": 52, "G": 46})
-    _title(ws, "DAIC runtime participant-packed30: v1 vs joint-K4 (official 47-subject test, seed 1337, strict teacher-forced)", 7)
+    _title(ws, "DAIC runtime participant-packed30: canonical vs v1 vs joint-K4 (official 47-subject test, seed 1337, strict teacher-forced)", 7)
     _note(ws, 2, "Qwen verdict = mean teacher-forced score margin per subject (INVALID counts as wrong; INVALID=0). "
                  "Heads = logreg_raw / xgb_raw on hidden features, mean depressed probability >= 0.5 per subject. "
+                 "Canonical joint-K4 has no head caches under this recipe (not run). "
                  "Selected epochs: joint-K4 audio-only 5, audio+text 3; v1 audio-only 3, audio+text 2.", 7)
-    _header_row(ws, 3, ["Condition", "Method", "Positive-F1", "Macro-F1", "AUROC (heads)", "Source run", "Local artifact"])
+    _header_row(ws, 3, ["Condition", "Method", "Positive-F1", "Macro-F1", "AUROC (heads)", "Canonical joint-K4 (pos / macro)", "Source run", "Local artifact"])
     row = 4
+    canonical = {
+        "Audio + Text": (0.800, 0.841),
+        "Audio only": (0.522, 0.683),
+    }
     conditions = [
-        ("Packed30 v1 Audio + Text", {"qwen_pos": 0.545, "qwen_macro": 0.703, "logreg": (0.741, 0.818, 0.846), "xgb": (0.583, 0.720, 0.908)}),
-        ("Packed30 v1 Audio only", {"qwen_pos": 0.468, "qwen_macro": 0.468, "logreg": (0.333, 0.510, 0.617), "xgb": (0.435, 0.626, 0.602)}),
-        ("Joint-K4 Audio + Text", {"qwen_pos": 0.7857, "qwen_macro": 0.8474, "logreg": (0.7333, 0.8042, 0.9156), "xgb": (0.7692, 0.8405, 0.9134)}),
-        ("Joint-K4 Audio only", {"qwen_pos": 0.4444, "qwen_macro": 0.5498, "logreg": (0.6471, 0.7235, 0.8074), "xgb": (0.2000, 0.4919, 0.7814)}),
+        ("Packed30 v1 Audio + Text", "Audio + Text", {"qwen_pos": 0.545, "qwen_macro": 0.703, "logreg": (0.741, 0.818, 0.846), "xgb": (0.583, 0.720, 0.908)}),
+        ("Packed30 v1 Audio only", "Audio only", {"qwen_pos": 0.468, "qwen_macro": 0.468, "logreg": (0.333, 0.510, 0.617), "xgb": (0.435, 0.626, 0.602)}),
+        ("Joint-K4 Audio + Text", "Audio + Text", {"qwen_pos": 0.7857, "qwen_macro": 0.8474, "logreg": (0.7333, 0.8042, 0.9156), "xgb": (0.7692, 0.8405, 0.9134)}),
+        ("Joint-K4 Audio only", "Audio only", {"qwen_pos": 0.4444, "qwen_macro": 0.5498, "logreg": (0.6471, 0.7235, 0.8074), "xgb": (0.2000, 0.4919, 0.7814)}),
     ]
-    for condition, values in conditions:
+    for condition, modality_key, values in conditions:
         source, artifact_root = PACKED30_SOURCE[condition]
+        canon = canonical[modality_key]
         for method, value in (
             ("Qwen TF", (values["qwen_pos"], values["qwen_macro"], None)),
             ("LogReg raw", values["logreg"]),
@@ -801,12 +807,14 @@ def build_packed30(wb: Workbook) -> None:
             _body_cell(ws, row, 3, pos, fmt="0.0000")
             _body_cell(ws, row, 4, macro, fmt="0.0000")
             _body_cell(ws, row, 5, auroc, fmt="0.0000")
-            _body_cell(ws, row, 6, source)
+            _body_cell(ws, row, 6, " / ".join(f"{v:0.3f}" for v in canon) if method == "Qwen TF" else "not run")
+            _body_cell(ws, row, 7, source)
             suffix = "logreg_raw/metrics.json" if method == "LogReg raw" else "xgb_raw/metrics.json" if method == "XGBoost raw" else "standalone_eval/metrics_original_teacher_forced.json"
-            _body_cell(ws, row, 7, f"{artifact_root}<run>/fold_0/best_model/{suffix} (recomputed from predictions)")
+            _body_cell(ws, row, 8, f"{artifact_root}<run>/fold_0/best_model/{suffix} (recomputed from predictions)")
             row += 1
         row += 1
-    _note(ws, row, "Provenance sheet holds the full mapping (commit, job IDs incl. resubmits, eval view, aggregation, "
+    _note(ws, row, "Canonical = preprocessed joint-K4 (2026-08-05 coverage validation; no head caches under this recipe). "
+                   "Provenance sheet holds the full mapping (commit, job IDs incl. resubmits, eval view, aggregation, "
                    "audits 44369722/44369723 GPFS PASSED + local evidence audit PASSED).", 7)
     ws.freeze_panes = "A4"
 
