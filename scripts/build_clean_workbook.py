@@ -722,17 +722,25 @@ def build_provenance(wb: Workbook, *, detailed: bool) -> None:
             "recomputed from subject rows (matches metrics JSON); audits 44369722/44369723 PASSED on GPFS + local evidence audit")
 
     packed30_head_rows = [
+        ("Canonical Audio + Text", "LogReg raw", 0.7647, "outputs/daic_coverage_heads/daic_coverage_heads_20260805_04f2e19/audio_text/classical/c2/logreg_raw/"),
+        ("Canonical Audio + Text", "XGBoost raw", 0.6429, "outputs/daic_coverage_heads/daic_coverage_heads_20260805_04f2e19/audio_text/classical/c2/xgb_raw/"),
+        ("Canonical Audio only", "LogReg raw", 0.5714, "outputs/daic_coverage_heads/daic_coverage_heads_20260805_04f2e19/audio_only/classical/c2/logreg_raw/"),
+        ("Canonical Audio only", "XGBoost raw", 0.3636, "outputs/daic_coverage_heads/daic_coverage_heads_20260805_04f2e19/audio_only/classical/c2/xgb_raw/"),
         ("Joint-K4 Audio + Text", "LogReg raw", 0.7333, "hidden_classifiers/audio_text/logreg_raw/"),
         ("Joint-K4 Audio + Text", "XGBoost raw", 0.7692, "hidden_classifiers/audio_text/xgb_raw/"),
         ("Joint-K4 Audio only", "LogReg raw", 0.6471, "hidden_classifiers/audio_only/logreg_raw/"),
         ("Joint-K4 Audio only", "XGBoost raw", 0.2000, "hidden_classifiers/audio_only/xgb_raw/"),
     ]
     for condition, method, value, artifact in packed30_head_rows:
-        put("DAIC packed30 family", "DAIC", condition, method, value,
-            "daic_participant_p30_jointk4_<mod>_s1337_e3b0f1c3 selected-epoch head fit (107 vectors, weights 1.0)",
-            "mean depressed probability >= 0.5 per subject, 47 test subjects, 617 bundles",
-            "output_model/experiments/daic_participant_packed30_jointk4/<modality>/<run>/" + artifact,
-            "matched to audited hidden-classifier outputs")
+        if condition.startswith("Canonical"):
+            source = ("daic_coverage_heads_20260805_04f2e19 canonical checkpoints "
+                      "(audio_text=daic_main_k4_control_20260804_f26dd45, audio_only=daic_replicates_20ep_s1337_daic_audio_only_selposf1_tf)")
+            aggregation = "mean depressed probability >= 0.5 per subject, 47 test subjects, complete-coverage (c2_balanced) view"
+        else:
+            source = "daic_participant_p30_jointk4_<mod>_s1337_e3b0f1c3 selected-epoch head fit (107 vectors, weights 1.0)"
+            aggregation = "mean depressed probability >= 0.5 per subject, 47 test subjects, 617 bundles"
+        put("DAIC packed30 family", "DAIC", condition, method, value, source, aggregation,
+            artifact, "recomputed from predictions_subject_level.jsonl (metrics match)")
 
     ws.freeze_panes = "A3"
 
@@ -779,13 +787,13 @@ def build_packed30(wb: Workbook) -> None:
     _title(ws, "DAIC runtime participant-packed30: canonical vs v1 vs joint-K4 (official 47-subject test, seed 1337, strict teacher-forced)", 7)
     _note(ws, 2, "Qwen verdict = mean teacher-forced score margin per subject (INVALID counts as wrong; INVALID=0). "
                  "Heads = logreg_raw / xgb_raw on hidden features, mean depressed probability >= 0.5 per subject. "
-                 "Canonical joint-K4 has no head caches under this recipe (not run). "
+                 "Canonical heads = daic_coverage_heads_20260805_04f2e19 complete-coverage (c2_balanced) view. "
                  "Selected epochs: joint-K4 audio-only 5, audio+text 3; v1 audio-only 3, audio+text 2.", 7)
-    _header_row(ws, 3, ["Condition", "Method", "Positive-F1", "Macro-F1", "AUROC (heads)", "Canonical joint-K4 (pos / macro)", "Source run", "Local artifact"])
+    _header_row(ws, 3, ["Condition", "Method", "Positive-F1", "Macro-F1", "AUROC (heads)", "Canonical joint-K4 (pos / macro / AUROC)", "Source run", "Local artifact"])
     row = 4
     canonical = {
-        "Audio + Text": (0.800, 0.841),
-        "Audio only": (0.522, 0.683),
+        "Audio + Text": {"qwen": (0.800, 0.841, None), "logreg": (0.7647, 0.8157, 0.9177), "xgb": (0.6429, 0.7457, 0.8831)},
+        "Audio only": {"qwen": (0.522, 0.683, None), "logreg": (0.5714, 0.6586, 0.8225), "xgb": (0.3636, 0.5846, 0.7814)},
     }
     conditions = [
         ("Packed30 v1 Audio + Text", "Audio + Text", {"qwen_pos": 0.545, "qwen_macro": 0.703, "logreg": (0.741, 0.818, 0.846), "xgb": (0.583, 0.720, 0.908)}),
@@ -802,18 +810,21 @@ def build_packed30(wb: Workbook) -> None:
             ("XGBoost raw", values["xgb"]),
         ):
             pos, macro, auroc = value
+            canon_key = "qwen" if method == "Qwen TF" else "logreg" if method == "LogReg raw" else "xgb"
+            canon_values = canon[canon_key]
             _body_cell(ws, row, 1, condition)
             _body_cell(ws, row, 2, method)
             _body_cell(ws, row, 3, pos, fmt="0.0000")
             _body_cell(ws, row, 4, macro, fmt="0.0000")
             _body_cell(ws, row, 5, auroc, fmt="0.0000")
-            _body_cell(ws, row, 6, " / ".join(f"{v:0.3f}" for v in canon) if method == "Qwen TF" else "not run")
+            _body_cell(ws, row, 6, " / ".join("n/a" if v is None else f"{v:0.3f}" for v in canon_values))
             _body_cell(ws, row, 7, source)
             suffix = "logreg_raw/metrics.json" if method == "LogReg raw" else "xgb_raw/metrics.json" if method == "XGBoost raw" else "standalone_eval/metrics_original_teacher_forced.json"
             _body_cell(ws, row, 8, f"{artifact_root}<run>/fold_0/best_model/{suffix} (recomputed from predictions)")
             row += 1
         row += 1
-    _note(ws, row, "Canonical = preprocessed joint-K4 (2026-08-05 coverage validation; no head caches under this recipe). "
+    _note(ws, row, "Canonical = preprocessed joint-K4 (Qwen: 2026-08-05 coverage validation; heads: "
+                   "daic_coverage_heads_20260805_04f2e19 c2_balanced, verified locally by recomputation). "
                    "Provenance sheet holds the full mapping (commit, job IDs incl. resubmits, eval view, aggregation, "
                    "audits 44369722/44369723 GPFS PASSED + local evidence audit PASSED).", 7)
     ws.freeze_panes = "A4"
