@@ -167,6 +167,44 @@ def test_packing_exact_boundary_chunk() -> None:
     assert len(chunks[0]["spans"]) == 1
 
 
+def test_packing_15s_variant_chunk_size() -> None:
+    chunk_samples = PACKED30_SAMPLE_RATE * 15
+    chunks = _pack_retained_intervals([_interval(0.0, 32.0)], chunk_samples=chunk_samples)
+    assert len(chunks) == 3
+    assert [c["participant_sample_count"] for c in chunks] == [chunk_samples, chunk_samples, 32000]
+    total = sum(c["participant_sample_count"] for c in chunks)
+    assert total == int(32.0 * PACKED30_SAMPLE_RATE)
+
+
+def test_packing_45s_variant_chunk_size() -> None:
+    chunk_samples = PACKED30_SAMPLE_RATE * 45
+    chunks = _pack_retained_intervals([_interval(0.0, 90.0)], chunk_samples=chunk_samples)
+    assert len(chunks) == 2
+    assert chunks[0]["participant_sample_count"] == chunk_samples
+    assert chunks[1]["participant_sample_count"] == chunk_samples
+    total = sum(c["participant_sample_count"] for c in chunks)
+    assert total == int(90.0 * PACKED30_SAMPLE_RATE)
+
+
+def test_audit_subject_include_ellie_keeps_interviewer_rows(tmp_path: Path) -> None:
+    tsv = tmp_path / "t.tsv"
+    make_tsv(
+        tsv,
+        [
+            participant_row(1.0, 2.0),
+            ("3.0", "4.0", "Ellie", "how are you today"),
+            participant_row(5.0, 6.0, "fine thanks"),
+        ],
+    )
+    parsed, _ = _parse_participant_transcript_tsv(tsv)
+    frames = int(6.0 * PACKED30_SAMPLE_RATE)
+    excluded = _audit_subject_source_rows("300", frames, parsed)
+    assert any(e["reason"] == "excluded_non_participant" for e in excluded["exclusions"])
+    included = _audit_subject_source_rows("300", frames, parsed, include_ellie=True)
+    assert all(e["reason"] != "excluded_non_participant" for e in included["exclusions"])
+    assert len(included["retained_intervals"]) == 3
+
+
 def test_packing_splits_long_turn_across_chunks() -> None:
     chunks = _pack_retained_intervals([_interval(0.0, 37.5)])
     assert len(chunks) == 2

@@ -33,6 +33,9 @@ PREPROCESSED_TEST_FULL_TRANSCRIPT_VARIANT = "preprocessed_test_full_transcript"
 
 PACKED30_PROTOCOL_ID = "daic_participant_speech_packed30_v1"
 PACKED30_MANIFEST_VARIANT = "unprocessed_participant_speech_packed30_v1"
+PACKED30_MANIFEST_VARIANT_15S = "unprocessed_participant_speech_packed30_15s_v1"
+PACKED30_MANIFEST_VARIANT_45S = "unprocessed_participant_speech_packed30_45s_v1"
+PACKED30_MANIFEST_VARIANT_ELLIE = "unprocessed_participant_speech_packed30_ellie_v1"
 PACKED30_SCHEMA_VERSION = "daic_participant_speech_packed30_manifest.v1"
 PACKED30_CHUNK_SAMPLES = 480000
 PACKED30_SAMPLE_RATE = 16000
@@ -584,13 +587,17 @@ def _audit_subject_source_rows(
     subject_id: str,
     wav_frames: int,
     parsed_rows: list[dict[str, Any]],
+    *,
+    include_ellie: bool = False,
 ) -> dict[str, Any]:
     """Apply the Section 3.2 filter/validation to one subject's transcript rows.
 
     Every parsed row is timestamp-validated (including rows later excluded by
     the speaker/non-empty filter). The invalid rows MUST match the locked
-    allowlist exactly. Retained Participant intervals are then checked for
-    chronological non-overlap (equal adjacency allowed).
+    allowlist exactly. Retained intervals are then checked for chronological
+    non-overlap (equal adjacency allowed). Participant-only packing excludes
+    Ellie rows (``include_ellie=False``); the participant+Ellie variant keeps
+    them so the audio stream covers the whole interview.
     """
     invalid_rows: list[dict[str, Any]] = []
     for row in parsed_rows:
@@ -640,7 +647,7 @@ def _audit_subject_source_rows(
                 }
             )
             continue
-        if row["speaker"] != "Participant":
+        if row["speaker"] != "Participant" and not include_ellie:
             exclusions.append(
                 {
                     "subject_id": subject_id,
@@ -707,12 +714,16 @@ def _audit_subject_source_rows(
 
 def _pack_retained_intervals(
     intervals: list[dict[str, Any]],
+    *,
+    chunk_samples: int = PACKED30_CHUNK_SAMPLES,
 ) -> list[dict[str, Any]]:
-    """Divide the chronological participant-speech stream into 480000-sample chunks.
+    """Divide the chronological speech stream into ``chunk_samples``-sample chunks.
 
     Implements the Section 3.2 state machine exactly: no silence is inserted,
     long turns are split at chunk boundaries, short turns are concatenated, and
     the final partial chunk is kept whenever it contains at least one sample.
+    The default 480000 samples is the locked v1 30s packing; Tier-2 search
+    variants override it (240000 = 15s, 720000 = 45s).
     """
     chunks: list[dict[str, Any]] = []
     current_spans: list[dict[str, Any]] = []
@@ -722,7 +733,7 @@ def _pack_retained_intervals(
         cursor = int(interval["start_frame"])
         end_frame = int(interval["end_frame"])
         while cursor < end_frame:
-            capacity = PACKED30_CHUNK_SAMPLES - current_samples
+            capacity = chunk_samples - current_samples
             take = min(capacity, end_frame - cursor)
             current_spans.append(
                 {
@@ -735,11 +746,11 @@ def _pack_retained_intervals(
             )
             cursor += take
             current_samples += take
-            if current_samples == PACKED30_CHUNK_SAMPLES:
+            if current_samples == chunk_samples:
                 chunks.append(
                     {
                         "chunk_index": chunk_index,
-                        "participant_sample_count": PACKED30_CHUNK_SAMPLES,
+                        "participant_sample_count": chunk_samples,
                         "spans": current_spans,
                     }
                 )
@@ -828,15 +839,38 @@ def _source_hash(path: Path) -> str:
 
 
 def _build_participant_packed30_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> dict[str, Any]:
-    """Build the v1 participant-only packed-30s manifest and corpus audit.
+    """Build a participant-packed30 manifest variant and its corpus audit.
 
     Source audio is the original ``unprocessed/<subject>_AUDIO.wav`` only and
     labels/splits come from the sibling ``minimal_zips/`` official CSVs only.
     The manifest records ordered integer-frame spans; no derived WAVs are
     materialized.
+
+    Variants (``config["manifest_variant"]``):
+    - ``unprocessed_participant_speech_packed30_v1``: 480000-sample (30s)
+      participant-only chunks, the locked v1 recipe.
+    - ``unprocessed_participant_speech_packed30_15s_v1``: 240000-sample chunks.
+    - ``unprocessed_participant_speech_packed30_45s_v1``: 720000-sample chunks.
+    - ``unprocessed_participant_speech_packed30_ellie_v1``: 480000-sample
+      chunks including Ellie rows (full interview audio).
     """
     from src.data.build_manifest import manifest_build_signature
 
+    variant = str(config.get("manifest_variant", "")).strip().lower()
+    if variant == PACKED30_MANIFEST_VARIANT:
+        chunk_samples = PACKED30_CHUNK_SAMPLES
+        include_ellie = False
+    elif variant == PACKED30_MANIFEST_VARIANT_15S:
+        chunk_samples = PACKED30_SAMPLE_RATE * 15
+        include_ellie = False
+    elif variant == PACKED30_MANIFEST_VARIANT_45S:
+        chunk_samples = PACKED30_SAMPLE_RATE * 45
+        include_ellie = False
+    elif variant == PACKED30_MANIFEST_VARIANT_ELLIE:
+        chunk_samples = PACKED30_CHUNK_SAMPLES
+        include_ellie = True
+    else:
+        raise ValueError(f"Unsupported packed30 manifest_variant={variant!r}.")
     unprocessed_root = Path(config["dataset_root"])
     label_root = Path(config["label_root"])
     if not unprocessed_root.is_dir():
@@ -915,7 +949,9 @@ def _build_participant_packed30_manifest(config: dict[str, Any], quarantine: dic
         }
         parsed_rows, blank_lines = _parse_participant_transcript_tsv(transcript_path)
         blank_lines_total += blank_lines
-        audit = _audit_subject_source_rows(subject_id, int(info.frames), parsed_rows)
+        audit = _audit_subject_source_rows(
+            subject_id, int(info.frames), parsed_rows, include_ellie=include_ellie
+        )
         invalid_allowlisted_total += len(audit["invalid_rows"])
         excluded_non_participant_total += sum(
             1 for exclusion in audit["exclusions"] if exclusion["reason"] == "excluded_non_participant"
@@ -928,7 +964,7 @@ def _build_participant_packed30_manifest(config: dict[str, Any], quarantine: dic
         intervals = audit["retained_intervals"]
         retained_frames, retained_rows = _source_row_span_coverage(intervals)
         retained_row_counts[subject_id] = retained_rows
-        chunks = _pack_retained_intervals(intervals)
+        chunks = _pack_retained_intervals(intervals, chunk_samples=chunk_samples)
         chunks_per_subject[subject_id] = len(chunks)
         values_by_row = {int(interval["source_row_index"]): interval["value"] for interval in intervals}
         full_transcript = "\n".join(interval["value"] for interval in intervals)
@@ -1032,49 +1068,53 @@ def _build_participant_packed30_manifest(config: dict[str, Any], quarantine: dic
     total_retained_rows = sum(retained_row_counts.values())
     total_chunks = len(manifest_rows)
     total_subjects = len(subject_rows)
-    expected = PACKED30_EXPECTED_TOTALS
-    if blank_lines_total != expected["blank_lines"]:
+    # The locked v1 expected-totals audit applies only to the canonical 30s
+    # participant-only variant. Search variants (15s/45s/ellie) record their
+    # observed totals in the corpus audit instead; their manifest hashes lock
+    # the content.
+    expected = PACKED30_EXPECTED_TOTALS if variant == PACKED30_MANIFEST_VARIANT else None
+    if expected is not None and blank_lines_total != expected["blank_lines"]:
         raise ValueError(
             f"DAIC packed30 blank-line count {blank_lines_total} != expected {expected['blank_lines']}."
         )
-    if excluded_non_participant_total != expected["excluded_non_participant_rows"]:
+    if expected is not None and excluded_non_participant_total != expected["excluded_non_participant_rows"]:
         raise ValueError(
             f"DAIC packed30 excluded non-participant rows {excluded_non_participant_total} "
             f"!= expected {expected['excluded_non_participant_rows']}."
         )
-    if excluded_empty_total != expected["excluded_empty_participant_rows"]:
+    if expected is not None and excluded_empty_total != expected["excluded_empty_participant_rows"]:
         raise ValueError(
             f"DAIC packed30 excluded empty rows {excluded_empty_total} != expected "
             f"{expected['excluded_empty_participant_rows']}."
         )
     nonblank_rows = total_retained_rows + excluded_non_participant_total + excluded_empty_total + invalid_allowlisted_total
-    if nonblank_rows != expected["nonblank_rows"]:
+    if expected is not None and nonblank_rows != expected["nonblank_rows"]:
         raise ValueError(f"DAIC packed30 nonblank row total {nonblank_rows} != expected {expected['nonblank_rows']}.")
-    if total_retained_rows != expected["retained_rows"]:
+    if expected is not None and total_retained_rows != expected["retained_rows"]:
         raise ValueError(f"DAIC packed30 retained rows {total_retained_rows} != expected {expected['retained_rows']}.")
-    if total_retained_frames != expected["retained_frames"]:
+    if expected is not None and total_retained_frames != expected["retained_frames"]:
         raise ValueError(
             f"DAIC packed30 retained frames {total_retained_frames} != expected {expected['retained_frames']}."
         )
-    if total_chunks != expected["chunks"]:
+    if expected is not None and total_chunks != expected["chunks"]:
         raise ValueError(f"DAIC packed30 emitted chunks {total_chunks} != expected {expected['chunks']}.")
     observed_chunks_by_split_label = {
         split_name: dict(chunks_by_split_label.get(split_name, Counter()))
         for split_name in PACKED30_OFFICIAL_SPLIT_ORDER
     }
-    if observed_chunks_by_split_label != expected["chunks_by_split_label"]:
+    if expected is not None and observed_chunks_by_split_label != expected["chunks_by_split_label"]:
         raise ValueError(
             f"DAIC packed30 chunk split/label totals mismatch: {observed_chunks_by_split_label}"
         )
     if len(final_chunk_samples) != total_subjects or not final_chunk_samples:
         raise ValueError("DAIC packed30 expects exactly one final chunk per subject.")
-    if (min(final_chunk_samples), max(final_chunk_samples)) != expected["final_chunk_samples_range"]:
+    if expected is not None and (min(final_chunk_samples), max(final_chunk_samples)) != expected["final_chunk_samples_range"]:
         raise ValueError(
             f"DAIC packed30 final-chunk range {(min(final_chunk_samples), max(final_chunk_samples))} "
             f"!= expected {expected['final_chunk_samples_range']}."
         )
     chunk_count_values = sorted(chunks_per_subject.values())
-    if (min(chunk_count_values), max(chunk_count_values)) != expected["chunks_per_subject_range"]:
+    if expected is not None and (min(chunk_count_values), max(chunk_count_values)) != expected["chunks_per_subject_range"]:
         raise ValueError(
             f"DAIC packed30 per-subject chunk range {(min(chunk_count_values), max(chunk_count_values))} "
             f"!= expected {expected['chunks_per_subject_range']}."
@@ -1159,8 +1199,9 @@ def _build_participant_packed30_manifest(config: dict[str, Any], quarantine: dic
             "transcript_subject_sha256": {row["subject_id"]: row["transcript_sha256"] for row in subject_rows},
         },
         "locked_contract": {
-            "chunk_samples": PACKED30_CHUNK_SAMPLES,
+            "chunk_samples": chunk_samples,
             "sample_rate": PACKED30_SAMPLE_RATE,
+            "include_ellie": include_ellie,
             "expected_totals": expected,
             "invalid_row_allowlist": list(PACKED30_INVALID_ROW_ALLOWLIST),
         },
@@ -1197,7 +1238,7 @@ def _build_participant_packed30_manifest(config: dict[str, Any], quarantine: dic
             "transcript": {row["subject_id"]: row["transcript_sha256"] for row in subject_rows},
         },
         "packing_constants": {
-            "chunk_samples": PACKED30_CHUNK_SAMPLES,
+            "chunk_samples": chunk_samples,
             "sample_rate": PACKED30_SAMPLE_RATE,
             "inter_span_silence_samples": 0,
             "transcript_max_chars": transcript_max_chars,
@@ -1271,8 +1312,13 @@ def build_daic_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> d
     base_dir = Path(config["dataset_root"])
     manifest_variant = str(config.get("manifest_variant", "")).strip().lower()
     result: dict[str, Any]
-    if manifest_variant == PACKED30_MANIFEST_VARIANT:
-        LOGGER.info("Building DAIC participant-packed30 manifest: %s", base_dir)
+    if manifest_variant in {
+        PACKED30_MANIFEST_VARIANT,
+        PACKED30_MANIFEST_VARIANT_15S,
+        PACKED30_MANIFEST_VARIANT_45S,
+        PACKED30_MANIFEST_VARIANT_ELLIE,
+    }:
+        LOGGER.info("Building DAIC participant-packed30 manifest (%s): %s", manifest_variant, base_dir)
         result = _build_participant_packed30_manifest(config, quarantine)
     elif manifest_variant in {PREPROCESSED_TRAIN_DEV_VARIANT, PREPROCESSED_FULL_TRANSCRIPT_ALL_SPLITS_VARIANT}:
         LOGGER.info("Building DAIC manifest from preprocessed train/dev/test full-transcript layout: %s", base_dir)

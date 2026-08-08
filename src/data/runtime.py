@@ -978,10 +978,15 @@ def _build_participant_speech_packed30_joint_examples(
             )
         for row in rows:
             sample_count = int(row.get("participant_sample_count", 0))
-            if not (1 <= sample_count <= JOINT_PACKED30_MAX_CHUNK_SAMPLES):
+            # Chunk-size ceiling follows the manifest variant (30s=480000,
+            # 45s=720000); participant_chunk_samples defaults to the 30s lock.
+            max_chunk_samples = int(
+                data_cfg.get("participant_chunk_samples", JOINT_PACKED30_MAX_CHUNK_SAMPLES)
+            )
+            if not (1 <= sample_count <= max_chunk_samples):
                 raise ValueError(
                     f"{JOINT_PACKED30_MODE} requires 1 <= participant_sample_count "
-                    f"<= {JOINT_PACKED30_MAX_CHUNK_SAMPLES}; subject_id={subject_id} "
+                    f"<= {max_chunk_samples}; subject_id={subject_id} "
                     f"sample_id={row['sample_id']} got {sample_count}."
                 )
         groups = [
