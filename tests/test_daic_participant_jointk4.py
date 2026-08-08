@@ -315,6 +315,56 @@ def test_transcript_rendered_once_per_joint_prompt() -> None:
     assert "line one" in prompt
 
 
+def test_chunk_aligned_transcript_uses_bundle_chunks() -> None:
+    rows = synthetic_rows({"300": (10, 0)})
+    for row in rows:
+        row["chunk_transcript"] = f"chunk text {row['chunk_index']}"
+        row["full_participant_transcript"] = "full participant transcript"
+        row["full_participant_transcript_sha256"] = hashlib.sha256(
+            b"full participant transcript"
+        ).hexdigest()
+    config = joint_config(
+        use_audio=True, use_text=True, audio_text_transcript_scope="chunk_aligned"
+    )
+    examples = build_examples(rows, config, "val")
+    assert examples
+    for example in examples:
+        prompt = example["prompt_text"]
+        assert "full participant transcript" not in prompt
+        assert prompt.count("The transcript of the subject's speech is:") == 1
+        assert prompt.count(AUDIO_PLACEHOLDER) == len(example["audio_span_groups"])
+        for group in example["audio_span_groups"]:
+            idx = int(group["chunk_index"])
+            assert f"chunk text {idx}" in prompt
+
+
+def test_chunk_aligned_transcript_scope_validation() -> None:
+    rows = synthetic_rows({"300": (10, 0)})
+    with pytest.raises(ValueError, match="audio_text_transcript_scope"):
+        build_examples(
+            rows,
+            joint_config(use_audio=True, use_text=True, audio_text_transcript_scope="bogus"),
+            "val",
+        )
+
+
+def test_chunk_aligned_transcript_train_source_keeps_scope() -> None:
+    rows = synthetic_rows({"300": (10, 0)})
+    for row in rows:
+        row["chunk_transcript"] = f"train chunk {row['chunk_index']}"
+        row["full_participant_transcript"] = "full transcript"
+        row["full_participant_transcript_sha256"] = hashlib.sha256(b"full transcript").hexdigest()
+    config = joint_config(
+        use_audio=True, use_text=True, audio_text_transcript_scope="chunk_aligned"
+    )
+    examples = build_examples(rows, config, "train")
+    assert len(examples) == 1
+    example = examples[0]
+    assert example["prompt_transcript_scope"] == "chunk_aligned"
+    assert "full transcript" not in example["prompt_text"]
+    assert any("train chunk" in g.get("chunk_transcript", "") for g in example["subject_chunk_span_groups"])
+
+
 def test_no_transcript_in_audio_only_prompts() -> None:
     rows = synthetic_rows({"300": (10, 0)})
     examples = build_examples(rows, joint_config(use_audio=True, use_text=False), "train")
