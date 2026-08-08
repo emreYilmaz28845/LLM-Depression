@@ -24,6 +24,9 @@ MODALITIES="${MODALITIES:-audio_only audio_text}"
 EXTRA_TRAIN_ARGS="${EXTRA_TRAIN_ARGS:-}"
 EXTRA_EVAL_ARGS="${EXTRA_EVAL_ARGS:-}"
 EXPERIMENT_CONTEXT="${EXPERIMENT_CONTEXT:-}"
+# Optional suffix appended to the generated run name (e.g. _ep40lr1e4) so
+# multiple knob variants of the same seed/modality get distinct run dirs.
+RUN_NAME_SUFFIX="${RUN_NAME_SUFFIX:-}"
 CONFIG_DIR="$PROJECT_ROOT/configs/experiments/daic_participant_packed30_jointk4"
 AUDIT_SCRIPT="$PROJECT_ROOT/scripts/audit_daic_participant_packed30_jointk4.py"
 TRAIN_WORKER="$PROJECT_ROOT/scripts/run_daic_participant_packed30_jointk4_train_slurm.sh"
@@ -87,7 +90,7 @@ declare -A MODALITY_JOBS
 # audits a half-finished run-root.
 for modality in $MODALITIES; do
     config="${CONFIG_BY_MODALITY[$modality]}"
-    run_name="daic_participant_p30_jointk4_${modality}_s${SEED}_${SHORTCOMMIT}"
+    run_name="daic_participant_p30_jointk4_${modality}_s${SEED}_${SHORTCOMMIT}${RUN_NAME_SUFFIX}"
     run_root="$(python - "$config" "$run_name" <<PY
 import sys
 from pathlib import Path
