@@ -699,6 +699,21 @@ def _audit_subject_source_rows(
     previous_end: int | None = None
     for interval in retained_intervals:
         if previous_end is not None and interval["start_frame"] < previous_end:
+            if include_ellie:
+                # Both speakers are active in the full-interview stream, so
+                # participant and Ellie rows legitimately overlap in time.
+                # Merge overlapping/adjacent intervals (union) so every audio
+                # sample is packed exactly once; transcript text is joined.
+                merged: list[dict[str, Any]] = []
+                for current in retained_intervals:
+                    if merged and current["start_frame"] <= merged[-1]["end_frame"]:
+                        merged[-1]["end_frame"] = max(merged[-1]["end_frame"], current["end_frame"])
+                        merged[-1]["stop_time"] = current["stop_time"]
+                        merged[-1]["value"] = f"{merged[-1]['value']} {current['value']}".strip()
+                    else:
+                        merged.append(dict(current))
+                retained_intervals = merged
+                break
             raise ValueError(
                 f"Retained Participant intervals overlap for subject_id={subject_id}: "
                 f"row_index={interval['source_row_index']} starts at {interval['start_frame']} "
