@@ -315,6 +315,33 @@ def test_transcript_rendered_once_per_joint_prompt() -> None:
     assert "line one" in prompt
 
 
+def test_joint_rotary_k_guard_allows_packed30_and_rerenders() -> None:
+    from src.daic_chunking import resolve_chunking_controls
+    from src.data.runtime import render_joint_packed30_bundle
+
+    rows = synthetic_rows({"300": (10, 0)})
+    for row in rows:
+        row["full_participant_transcript"] = "full transcript"
+        row["full_participant_transcript_sha256"] = hashlib.sha256(b"full transcript").hexdigest()
+    config = joint_config(use_audio=True, use_text=True, train_chunk_policy="joint_rotary_k")
+    controls = resolve_chunking_controls(config)
+    assert controls["train_chunk_policy"] == "joint_rotary_k"
+    train_examples = build_examples(rows, config, "train")
+    schedules, _ = build_joint_epoch_schedule(
+        train_examples,
+        policy="joint_rotary_k",
+        k=4,
+        seed=int(config["seed"]),
+        epochs=2,
+        loss_weight_rescale="mean_one",
+    )
+    row = schedules[0][0]
+    row["prompt_text"], row["training_text"] = render_joint_packed30_bundle(
+        row, len(row["audio_span_groups"])
+    )
+    assert row["prompt_text"].count(AUDIO_PLACEHOLDER) == len(row["audio_span_groups"])
+
+
 def test_chunk_aligned_transcript_uses_bundle_chunks() -> None:
     rows = synthetic_rows({"300": (10, 0)})
     for row in rows:
