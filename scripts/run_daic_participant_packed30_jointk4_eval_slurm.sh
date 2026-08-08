@@ -35,6 +35,7 @@ MODEL_PATH="${MODEL_PATH:-}"
 TEXT_MODEL_PATH="${TEXT_MODEL_PATH:-}"
 DAIC_UNPROCESSED_ROOT="${DAIC_UNPROCESSED_ROOT:?Set DAIC_UNPROCESSED_ROOT}"
 DAIC_LABEL_ROOT="${DAIC_LABEL_ROOT:?Set DAIC_LABEL_ROOT}"
+EXPERIMENT_CONTEXT="${EXPERIMENT_CONTEXT:-}"
 export DAIC_UNPROCESSED_ROOT DAIC_LABEL_ROOT
 
 LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/slurm_daic_participant_packed30_jointk4}"
@@ -71,6 +72,7 @@ CMD=(
 )
 if [ -n "$SMOKE_SUBJECT_LIMIT" ]; then CMD+=(--set "split.smoke_subject_limit=$SMOKE_SUBJECT_LIMIT"); fi
 if [ -n "$OUTPUT_DIR" ]; then CMD+=(--output_dir "$OUTPUT_DIR"); fi
+if [ -n "$EXPERIMENT_CONTEXT" ]; then CMD+=(--experiment-context "$EXPERIMENT_CONTEXT"); fi
 # The base model is resolved from the saved checkpoint's run_config; do not
 # pass model flags that could override the config default.
 

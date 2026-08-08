@@ -15,6 +15,10 @@ ENV_ACTIVATE="${ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_reb
 DRY_RUN="${DRY_RUN:-1}"
 RUN_ID="${RUN_ID:-}"
 SEED="${SEED:-1337}"
+# Which stages to chain. Seed-variance search runs need only train+eval;
+# the full chain (extract/heads/audit) is for finalists.
+STAGES="${STAGES:-train eval extract heads audit}"
+EXPERIMENT_CONTEXT="${EXPERIMENT_CONTEXT:-}"
 CONFIG_DIR="$PROJECT_ROOT/configs/experiments/daic_participant_packed30_jointk4"
 AUDIT_SCRIPT="$PROJECT_ROOT/scripts/audit_daic_participant_packed30_jointk4.py"
 TRAIN_WORKER="$PROJECT_ROOT/scripts/run_daic_participant_packed30_jointk4_train_slurm.sh"
@@ -111,6 +115,9 @@ submit_stage() {
         audit) worker="$AUDIT_WORKER" ;;
     esac
     local export_spec="PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV_ACTIVATE,CONFIG=$config,FOLD=0,RUN_NAME=$run_name,SEED=$SEED,DAIC_UNPROCESSED_ROOT=$DAIC_UNPROCESSED_ROOT,DAIC_LABEL_ROOT=$DAIC_LABEL_ROOT,MODEL_PATH=$MODEL_PATH"
+    local ctx_var="EXPERIMENT_CONTEXT_${modality^^}"
+    local modality_ctx="${!ctx_var:-$EXPERIMENT_CONTEXT}"
+    if [ -n "$modality_ctx" ]; then export_spec="$export_spec,EXPERIMENT_CONTEXT=$modality_ctx"; fi
     if [ -n "$extra_export" ]; then export_spec="$export_spec,$extra_export"; fi
     local raw=""
     if [ "$DRY_RUN" = "1" ]; then
@@ -143,6 +150,10 @@ fi
 # Stage 2: both evals after their own train.
 submit_stage eval audio_only "afterok:${MODALITY_JOBS[audio_only,train]}" ""
 submit_stage eval audio_text "afterok:${MODALITY_JOBS[audio_text,train]}" ""
+case " $STAGES " in
+    *" extract "*) : ;;
+    *) echo "STAGES=$STAGES: skipping extract/heads/audit (seed-variance mode)."; exit 0 ;;
+esac
 # Stage 3: both extracts after their own eval (fp32).
 submit_stage extract audio_only "afterok:${MODALITY_JOBS[audio_only,eval]}" "CHECKPOINT_DIR=${FOLD_DIR_BY_MODALITY[audio_only]}/best_model,CACHE_DIR=$EXPERIMENT_RUN_ROOT/audio_only/${RUN_NAME_BY_MODALITY[audio_only]}/hidden_features/audio_only,CONDITION=audio_only"
 submit_stage extract audio_text "afterok:${MODALITY_JOBS[audio_text,eval]}" "CHECKPOINT_DIR=${FOLD_DIR_BY_MODALITY[audio_text]}/best_model,CACHE_DIR=$EXPERIMENT_RUN_ROOT/audio_text/${RUN_NAME_BY_MODALITY[audio_text]}/hidden_features/audio_text,CONDITION=audio_text"
