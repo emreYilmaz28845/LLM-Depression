@@ -224,7 +224,11 @@ def train_merged_fold(
             # Only rank 0 runs the five-dataset selection evaluation. Other
             # ranks wait at the following broadcast, so the NCCL process
             # group must allow longer than its 10-minute default here.
-            InitProcessGroupKwargs(timeout=timedelta(minutes=30)),
+            InitProcessGroupKwargs(
+                timeout=timedelta(
+                    minutes=int(merged_config.get("training", {}).get("dist_timeout_minutes", 30) or 30)
+                )
+            ),
         ],
     )
     accelerator.wait_for_everyone()

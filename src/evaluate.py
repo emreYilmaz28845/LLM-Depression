@@ -956,6 +956,17 @@ def _resolve_final_eval_subject_ids(config: dict[str, Any], metadata: dict[str, 
     return subject_ids_for_partitions(partition_rows, [str(config["split"]["final_eval_partition"])])
 
 
+def _resolved_split_name(
+    config: dict[str, Any], split_mode: str, cv_protocol: str | None, fold: int
+) -> str:
+    """The evaluated partition's name for CV-mode configs that lack the fixed-mode key."""
+    if split_mode == SPLIT_MODE_FIXED:
+        return str(config["split"]["final_eval_partition"])
+    if cv_protocol == CV_PROTOCOL_TRAIN_VAL:
+        return "val"
+    return "test"
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate a saved Qwen2-Audio LoRA adapter checkpoint.")
     parser.add_argument("--config", required=True)
@@ -1049,7 +1060,7 @@ def main() -> None:
     active_backend = metrics["active_backend"]
     headline_metrics = metrics["backend_results"][active_backend]["headline_metrics"]
     final_result = {
-        "split_name": str(config["split"]["final_eval_partition"]),
+        "split_name": _resolved_split_name(config, split_mode, cv_protocol, args.fold),
         "prediction_backend": active_backend,
         "aggregation_level": aggregation_level,
         "loss": None,
@@ -1143,7 +1154,7 @@ def _record_evaluation_sidecars(
     aggregation = aggregation_level
     if aggregation == AGGREGATION_LEVEL_SUBJECT:
         aggregation = "subject_level"
-    split_name = str(config["split"]["final_eval_partition"])
+    split_name = _resolved_split_name(config, split_mode, cv_protocol, args.fold)
     split_protocol = (
         str(cv_protocol) if cv_protocol else ("fixed_train_val_test" if split_mode == "fixed" else None)
     )
