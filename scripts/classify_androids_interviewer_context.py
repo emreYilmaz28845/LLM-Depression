@@ -371,6 +371,43 @@ def finalize(args: argparse.Namespace) -> None:
         )
 
     inventory_rows = sorted(inventory.values(), key=lambda row: (-row["occurrence_count"], row["question_id"]))
+
+    # Participant segmentation can split one answer into several turns when the
+    # interviewer only acknowledges the speaker between them. In that case the
+    # immediate context is correctly classified as a non-question, but the
+    # governing question is the most recent earlier question in that interview.
+    # Preserve the distinction: direct adjacency is timestamp-derived, while a
+    # carry-forward relation is a useful but reviewable discourse inference.
+    last_question_by_recording: dict[str, dict[str, Any]] = {}
+    relation_counts: Counter[str] = Counter()
+    for row in turn_rows:
+        recording_id = str(row["recording_id"])
+        if row["question_ids"]:
+            governing = {
+                "questions": list(row["cleaned_questions_it"]),
+                "question_ids": list(row["question_ids"]),
+                "topic_codes": list(row["topic_codes"]),
+                "source_context_id": row["context_id"],
+            }
+            last_question_by_recording[recording_id] = governing
+            relation = "direct_preceding_context"
+            relation_review = bool(row["manual_review_required"])
+        elif recording_id in last_question_by_recording:
+            governing = last_question_by_recording[recording_id]
+            relation = "carried_forward_prior_question"
+            relation_review = True
+        else:
+            governing = {"questions": [], "question_ids": [], "topic_codes": [], "source_context_id": None}
+            relation = "unknown_no_prior_question"
+            relation_review = True
+        row["governing_questions_it"] = list(governing["questions"])
+        row["governing_question_ids"] = list(governing["question_ids"])
+        row["governing_topic_codes"] = list(governing["topic_codes"])
+        row["governing_question_source_context_id"] = governing["source_context_id"]
+        row["turn_question_relation"] = relation
+        row["turn_question_relation_review_required"] = relation_review
+        relation_counts[relation] += 1
+
     write_jsonl_atomic(args.turn_map, turn_rows)
     write_jsonl_atomic(args.question_inventory, inventory_rows)
     report = {
@@ -380,10 +417,12 @@ def finalize(args: argparse.Namespace) -> None:
         "num_unique_exact_normalized_questions": len(inventory_rows),
         "question_occurrences": sum(len(row["question_ids"]) for row in turn_rows),
         "verification_status_counts": dict(sorted(status_counts.items())),
+        "turn_question_relation_counts": dict(sorted(relation_counts.items())),
+        "turns_with_governing_question": sum(bool(row["governing_question_ids"]) for row in turn_rows),
         "topic_counts": dict(sorted(topic_counts.items())),
         "grounding_threshold": args.grounding_threshold,
         "deduplication": "Exact match after Unicode, case, whitespace, and punctuation normalization. Broad topic codes are derived semantic groups, not original corpus prompt IDs.",
-        "verification_scope": "interval_mapping_verified is timestamp-derived. asr_grounded_auto_high verifies extraction against ASR text, not against a human transcript or original question sheet.",
+        "verification_scope": "interval_mapping_verified is timestamp-derived. asr_grounded_auto_high verifies extraction against ASR text, not against a human transcript or original question sheet. carried_forward_prior_question is a reviewable discourse inference for participant continuations after interviewer acknowledgements.",
         "source_input_sha256": hashlib.sha256(args.input.read_bytes()).hexdigest(),
         "predictions_sha256": hashlib.sha256(args.predictions.read_bytes()).hexdigest(),
         "turn_map_sha256": hashlib.sha256(args.turn_map.read_bytes()).hexdigest(),

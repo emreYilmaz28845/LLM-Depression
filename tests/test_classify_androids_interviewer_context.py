@@ -100,4 +100,9 @@ def test_finalize_maps_every_turn_and_separates_verification_scopes(tmp_path: Pa
     assert mapped[0]["interval_mapping_verified"] is True
     assert mapped[0]["question_text_verification"] == "asr_grounded_auto_high"
     assert mapped[1]["question_text_verification"] == "high_confidence_no_question"
+    assert mapped[0]["turn_question_relation"] == "direct_preceding_context"
+    assert mapped[1]["turn_question_relation"] == "carried_forward_prior_question"
+    assert mapped[1]["governing_question_ids"] == mapped[0]["question_ids"]
+    assert mapped[1]["turn_question_relation_review_required"] is True
+    assert summary["turns_with_governing_question"] == 2
     assert summary["num_unique_exact_normalized_questions"] == 1
