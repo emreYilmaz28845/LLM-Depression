@@ -4,8 +4,10 @@
 # matrix, so failed cells are retried here with new attempt identities,
 # new run names (or new output directories), resubmission chains, and a
 # separate registry. The original jobs.tsv, contexts, sidecars, and logs
-# are never modified except for appending FAILED events and the new
-# attempt's SUBMITTED events to the fold's append-only jobs.jsonl.
+# are never modified except for appending terminal events (FAILED or
+# CANCELLED, see ORIGINAL_TERMINAL_EVENT) for the original attempt's jobs
+# and the new attempt's SUBMITTED events to the fold's append-only
+# jobs.jsonl.
 set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
@@ -14,6 +16,8 @@ CELLS="${CELLS:?Set CELLS to a TSV of failed cells}"
 DRY_RUN="${DRY_RUN:-1}"
 RETRY_TAG="${RETRY_TAG:-r1}"
 REASON="${REASON:-retry of a failed harmonized standalone cell}"
+ORIGINAL_TERMINAL_EVENT="${ORIGINAL_TERMINAL_EVENT:-FAILED}"
+case "$ORIGINAL_TERMINAL_EVENT" in FAILED|CANCELLED) ;; *) echo "ORIGINAL_TERMINAL_EVENT must be FAILED or CANCELLED" >&2; exit 2;; esac
 MAX_CONCURRENT_TRAINS="${MAX_CONCURRENT_TRAINS:-7}"
 MAX_CONCURRENT_AUX="${MAX_CONCURRENT_AUX:-4}"
 PREFLIGHT_AUDIT="${PREFLIGHT_AUDIT:-$PROJECT_ROOT/outputs/harmonized_mn5_preflight/$RUN_ID/audit.json}"
@@ -265,34 +269,35 @@ events.append(lifecycle.new_job_event(
 for event in events:
     lifecycle.append_job_event(run_root / "jobs.jsonl", event)
 PY
-        python - "$original_fold_dir" "$original_context_path" "$train_ok" "$failed_train" "$failed_eval" "$failed_hidden" "$REASON" "$PROJECT_ROOT" <<'PY'
+        python - "$original_fold_dir" "$original_context_path" "$train_ok" "$failed_train" "$failed_eval" "$failed_hidden" "$REASON" "$ORIGINAL_TERMINAL_EVENT" "$PROJECT_ROOT" <<'PY'
 import json, sys
 from pathlib import Path
-sys.path.insert(0, sys.argv[8])
+sys.path.insert(0, sys.argv[9])
 from src.experiment_tracking import lifecycle
 
-original_fold_dir, original_context_path, train_ok, failed_train, failed_eval, failed_hidden, reason = sys.argv[1:8]
+original_fold_dir, original_context_path, train_ok, failed_train, failed_eval, failed_hidden, reason, terminal_event = sys.argv[1:9]
 context = json.loads(Path(original_context_path).read_text(encoding="utf-8"))
 attempt = context["attempt_id"]
 fold_n = int(context["fold"])
+terminal_status = terminal_event
 events = []
 if train_ok == "0":
     events.append(lifecycle.new_job_event(
-        job_key="train", job_type="train", event_type="FAILED",
+        job_key="train", job_type="train", event_type=terminal_event,
         attempt_id=attempt, fold=fold_n,
-        slurm_job_id=failed_train or None, status="FAILED", reason=reason,
+        slurm_job_id=failed_train or None, status=terminal_status, reason=reason,
     ))
 if failed_eval and failed_eval not in ("", "None"):
     events.append(lifecycle.new_job_event(
-        job_key="best_eval", job_type="evaluation", event_type="FAILED",
+        job_key="best_eval", job_type="evaluation", event_type=terminal_event,
         attempt_id=attempt, fold=fold_n,
-        slurm_job_id=failed_eval, status="FAILED", reason=reason,
+        slurm_job_id=failed_eval, status=terminal_status, reason=reason,
     ))
 if failed_hidden and failed_hidden not in ("", "None"):
     events.append(lifecycle.new_job_event(
-        job_key="hidden_fixed", job_type="hidden_classifier", event_type="FAILED",
+        job_key="hidden_fixed", job_type="hidden_classifier", event_type=terminal_event,
         attempt_id=attempt, fold=fold_n,
-        slurm_job_id=failed_hidden, status="FAILED", reason=reason,
+        slurm_job_id=failed_hidden, status=terminal_status, reason=reason,
     ))
 for event in events:
     lifecycle.append_job_event(Path(original_fold_dir) / "jobs.jsonl", event)
