@@ -829,6 +829,12 @@ def render_joint_packed30_bundle(
     describe the current bundle size (never the subject's total chunk count).
     Training (epoch schedules), evaluation (balanced-cover bundles), and hidden
     extraction all route through this single renderer.
+
+    ``data.audio_text_transcript_scope`` selects the transcript source:
+    ``full_participant`` (default) renders the locked full participant
+    transcript once; ``chunk_aligned`` joins the current bundle's own
+    ``chunk_transcript`` texts, forcing the audio chunks and the text to refer
+    to the same spans.
     """
     bundle_size = int(bundle_size)
     if bundle_size < 1:
@@ -836,6 +842,17 @@ def render_joint_packed30_bundle(
     template = str(example["prompt_user_template"])
     values = dict(example["prompt_template_values"])
     values["audio_context_block"] = _bundle_audio_context(bundle_size)
+    scope = str(example.get("prompt_transcript_scope") or "full_participant").strip().lower()
+    if scope == "chunk_aligned":
+        chunk_texts = [
+            str(group.get("chunk_transcript", "")).strip()
+            for group in (example.get("audio_span_groups") or [])
+        ]
+        joined = "\n\n".join(text for text in chunk_texts if text)
+        max_chars = int(example.get("prompt_transcript_max_chars") or 0)
+        joined, _ = _truncate_text(joined, max_chars)
+        values["transcript"] = joined
+        values["transcript_block"] = _transcript_block(True, joined)
     user_text = template.format_map(values).strip()
     prompt_text = build_prompt_text(
         system_prompt=example["prompt_system"],
@@ -910,6 +927,15 @@ def _build_participant_speech_packed30_joint_examples(
     requested_k = int(data_cfg.get("train_chunks_per_subject", JOINT_PACKED30_REQUIRED_K))
     eval_k = int(data_cfg.get("eval_chunks_per_subject", JOINT_PACKED30_REQUIRED_K))
     transcript_max_chars = int(data_cfg.get("transcript_max_chars", 0) or 0)
+    transcript_scope = str(
+        data_cfg.get("audio_text_transcript_scope", "full_participant")
+    ).strip().lower()
+    if transcript_scope not in ("full_participant", "chunk_aligned"):
+        raise ValueError(
+            f"Unsupported data.audio_text_transcript_scope={transcript_scope!r} "
+            "for sample_mode=participant_speech_packed30_joint. "
+            "Expected 'full_participant' or 'chunk_aligned'."
+        )
     audio_placeholder = resolve_audio_placeholder(config)
     prompt_system = str(config["prompt"]["system"])
     user_template = _user_prompt_template(config, is_subject_bundle=True)
@@ -952,10 +978,15 @@ def _build_participant_speech_packed30_joint_examples(
             )
         for row in rows:
             sample_count = int(row.get("participant_sample_count", 0))
-            if not (1 <= sample_count <= JOINT_PACKED30_MAX_CHUNK_SAMPLES):
+            # Chunk-size ceiling follows the manifest variant (30s=480000,
+            # 45s=720000); participant_chunk_samples defaults to the 30s lock.
+            max_chunk_samples = int(
+                data_cfg.get("participant_chunk_samples", JOINT_PACKED30_MAX_CHUNK_SAMPLES)
+            )
+            if not (1 <= sample_count <= max_chunk_samples):
                 raise ValueError(
                     f"{JOINT_PACKED30_MODE} requires 1 <= participant_sample_count "
-                    f"<= {JOINT_PACKED30_MAX_CHUNK_SAMPLES}; subject_id={subject_id} "
+                    f"<= {max_chunk_samples}; subject_id={subject_id} "
                     f"sample_id={row['sample_id']} got {sample_count}."
                 )
         groups = [
@@ -965,6 +996,7 @@ def _build_participant_speech_packed30_joint_examples(
                 "participant_sample_count": int(row["participant_sample_count"]),
                 "chunk_id": f"{int(row['chunk_index']):03d}",
                 "chunk_index": int(row["chunk_index"]),
+                "chunk_transcript": str(row["chunk_transcript"]),
             }
             for row in rows
         ]
@@ -1011,6 +1043,8 @@ def _build_participant_speech_packed30_joint_examples(
             "prompt_system": prompt_system,
             "prompt_audio_placeholder": audio_placeholder,
             "prompt_internal_label_text": internal_label_text,
+            "prompt_transcript_scope": transcript_scope,
+            "prompt_transcript_max_chars": transcript_max_chars,
             "question_id": "",
         }
         source["prompt_text"], source["training_text"] = render_joint_packed30_bundle(

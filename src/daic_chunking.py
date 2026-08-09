@@ -100,10 +100,10 @@ def resolve_chunking_controls(config: dict[str, Any]) -> dict[str, Any]:
     if mode == SUBJECT_MIL and (train_policy != "all" or eval_policy not in {"all", "matched_k"}):
         raise ValueError("subject_mil requires all-chunk training and all/matched_k evaluation.")
     if mode == JOINT_PACKED30_MODE:
-        if train_policy != "joint_random_k":
+        if train_policy not in {"joint_random_k", "joint_rotary_k"}:
             raise ValueError(
                 f"sample_mode={JOINT_PACKED30_MODE} requires "
-                "train_chunk_policy=joint_random_k."
+                "train_chunk_policy=joint_random_k or joint_rotary_k."
             )
         if eval_policy != "balanced_joint_cover":
             raise ValueError(

@@ -18,7 +18,19 @@ SEED="${SEED:-1337}"
 # Which stages to chain. Seed-variance search runs need only train+eval;
 # the full chain (extract/heads/audit) is for finalists.
 STAGES="${STAGES:-train eval extract heads audit}"
+# Which modalities to submit (space-separated); search waves often run one.
+MODALITIES="${MODALITIES:-audio_only audio_text}"
+# Per-modality config overrides (variant search configs). Falls back to the
+# base joint-K4 config for each modality when unset.
+CONFIG_AUDIO_ONLY="${CONFIG_AUDIO_ONLY:-}"
+CONFIG_AUDIO_TEXT="${CONFIG_AUDIO_TEXT:-}"
+# Extra --set overrides passed to the train/eval workers (Tier-1 knobs).
+EXTRA_TRAIN_ARGS="${EXTRA_TRAIN_ARGS:-}"
+EXTRA_EVAL_ARGS="${EXTRA_EVAL_ARGS:-}"
 EXPERIMENT_CONTEXT="${EXPERIMENT_CONTEXT:-}"
+# Optional suffix appended to the generated run name (e.g. _ep40lr1e4) so
+# multiple knob variants of the same seed/modality get distinct run dirs.
+RUN_NAME_SUFFIX="${RUN_NAME_SUFFIX:-}"
 CONFIG_DIR="$PROJECT_ROOT/configs/experiments/daic_participant_packed30_jointk4"
 AUDIT_SCRIPT="$PROJECT_ROOT/scripts/audit_daic_participant_packed30_jointk4.py"
 TRAIN_WORKER="$PROJECT_ROOT/scripts/run_daic_participant_packed30_jointk4_train_slurm.sh"
@@ -45,8 +57,8 @@ SOURCE_COMMIT="$(cat "$PROJECT_ROOT/.provenance/git_commit.txt" 2>/dev/null || g
 SHORTCOMMIT="$(printf '%s' "$SOURCE_COMMIT" | cut -c1-8)"
 
 declare -A CONFIG_BY_MODALITY=(
-    [audio_only]="$CONFIG_DIR/daic_participant_packed30_jointk4_audio_only.yaml"
-    [audio_text]="$CONFIG_DIR/daic_participant_packed30_jointk4_audio_text.yaml"
+    [audio_only]="${CONFIG_AUDIO_ONLY:-$CONFIG_DIR/daic_participant_packed30_jointk4_audio_only.yaml}"
+    [audio_text]="${CONFIG_AUDIO_TEXT:-$CONFIG_DIR/daic_participant_packed30_jointk4_audio_text.yaml}"
 )
 
 for path in "$AUDIT_SCRIPT" "$TRAIN_WORKER" "$EVAL_WORKER" "$EXTRACT_WORKER" "$HEADS_WORKER" "$AUDIT_WORKER" "${CONFIG_BY_MODALITY[@]}"; do
@@ -77,12 +89,12 @@ declare -A RUN_NAME_BY_MODALITY
 declare -A FOLD_DIR_BY_MODALITY
 declare -A MODALITY_JOBS
 
-# Two-pass submission: stage jobs for BOTH modalities are submitted before the
-# next stage, so each audit waits on BOTH chains' heads and never audits a
-# half-finished run-root.
-for modality in audio_only audio_text; do
+# Two-pass submission: stage jobs for the selected modalities are submitted
+# before the next stage, so each audit waits on all chains' heads and never
+# audits a half-finished run-root.
+for modality in $MODALITIES; do
     config="${CONFIG_BY_MODALITY[$modality]}"
-    run_name="daic_participant_p30_jointk4_${modality}_s${SEED}_${SHORTCOMMIT}"
+    run_name="daic_participant_p30_jointk4_${modality}_s${SEED}_${SHORTCOMMIT}${RUN_NAME_SUFFIX}"
     run_root="$(python - "$config" "$run_name" <<PY
 import sys
 from pathlib import Path
@@ -114,7 +126,7 @@ submit_stage() {
         heads) worker="$HEADS_WORKER" ;;
         audit) worker="$AUDIT_WORKER" ;;
     esac
-    local export_spec="PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV_ACTIVATE,CONFIG=$config,FOLD=0,RUN_NAME=$run_name,SEED=$SEED,DAIC_UNPROCESSED_ROOT=$DAIC_UNPROCESSED_ROOT,DAIC_LABEL_ROOT=$DAIC_LABEL_ROOT,MODEL_PATH=$MODEL_PATH"
+    local export_spec="PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV_ACTIVATE,CONFIG=$config,FOLD=0,RUN_NAME=$run_name,SEED=$SEED,DAIC_UNPROCESSED_ROOT=$DAIC_UNPROCESSED_ROOT,DAIC_LABEL_ROOT=$DAIC_LABEL_ROOT,MODEL_PATH=$MODEL_PATH,EXTRA_TRAIN_ARGS=$EXTRA_TRAIN_ARGS,EXTRA_EVAL_ARGS=$EXTRA_EVAL_ARGS"
     local ctx_var="EXPERIMENT_CONTEXT_${modality^^}"
     local modality_ctx="${!ctx_var:-$EXPERIMENT_CONTEXT}"
     if [ -n "$modality_ctx" ]; then export_spec="$export_spec,EXPERIMENT_CONTEXT=$modality_ctx"; fi
@@ -137,19 +149,23 @@ submit_stage() {
 }
 
 # Stage 1: both trains (independent, parallel).
-submit_stage train audio_only "" ""
-submit_stage train audio_text "" ""
+for modality in $MODALITIES; do
+    submit_stage train "$modality" "" ""
+done
 if [ "$DRY_RUN" = "1" ]; then
-    if [ "${MODALITY_JOBS[audio_only,train_jobs]}" != "1" ] || [ "${MODALITY_JOBS[audio_text,train_jobs]}" != "1" ]; then
-        echo "DRY RUN expected exactly 2 backbone trainings; found a mismatch." >&2
-        exit 1
-    fi
+    for modality in $MODALITIES; do
+        if [ "${MODALITY_JOBS[$modality,train_jobs]}" != "1" ]; then
+            echo "DRY RUN expected exactly 1 backbone training for $modality; found a mismatch." >&2
+            exit 1
+        fi
+    done
     echo "DRY RUN complete: no jobs submitted. Review the plan, then submit with DRY_RUN=0 and explicit approval."
     exit 0
 fi
-# Stage 2: both evals after their own train.
-submit_stage eval audio_only "afterok:${MODALITY_JOBS[audio_only,train]}" ""
-submit_stage eval audio_text "afterok:${MODALITY_JOBS[audio_text,train]}" ""
+# Stage 2: evals after their own train.
+for modality in $MODALITIES; do
+    submit_stage eval "$modality" "afterok:${MODALITY_JOBS[$modality,train]}" ""
+done
 case " $STAGES " in
     *" extract "*) : ;;
     *) echo "STAGES=$STAGES: skipping extract/heads/audit (seed-variance mode)."; exit 0 ;;

@@ -1651,7 +1651,7 @@ def main() -> None:
         )
         if (
             str(config["data"].get("sample_mode", "")).lower() == JOINT_PACKED30_MODE
-            and str(config["data"].get("train_chunk_policy", "")) == "joint_random_k"
+            and str(config["data"].get("train_chunk_policy", "")) in {"joint_random_k", "joint_rotary_k"}
         ):
             if str(config["data"].get("loss_weight_rescale", "none")) != "mean_one":
                 raise ValueError(
@@ -1661,7 +1661,9 @@ def main() -> None:
             # Span-group bundles re-render the prompt per epoch because the
             # placeholder count follows the current bundle size (K, or 3 for
             # subject 385). Training, evaluation, and hidden extraction share
-            # the same renderer.
+            # the same renderer. joint_random_k and joint_rotary_k both draw
+            # K=min(requested_k, N) chunks per subject per epoch, so both need
+            # the re-render.
             for epoch_rows in daic_epoch_schedule:
                 for row in epoch_rows:
                     row["prompt_text"], row["training_text"] = render_joint_packed30_bundle(
