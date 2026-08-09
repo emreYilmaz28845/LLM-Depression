@@ -8,6 +8,7 @@ from src.merged.protocol import (
     DATASETS,
     audit_protocol_splits,
     build_dataset_aware_schedule,
+    build_component_outer_folds,
     build_final_partitions,
     build_grouped_inner_folds,
     build_merged_manifest,
@@ -107,6 +108,39 @@ def test_protocol_has_exact_outer_coverage_and_disjoint_inner_partitions() -> No
             holdouts.extend(payload["outer_holdout_subject_ids"])
         assert len(holdouts) == len(set(holdouts))
         assert not any(subject.startswith("daic::") for subject in holdouts if dataset == "daic" and subject.endswith("10"))
+
+
+def test_fixed_daic_component_folds_expand_to_complete_non_test_pool() -> None:
+    labels = {f"d-{index:02d}": index % 2 for index in range(12)}
+    official = ["d-10", "d-11"]
+    train_only = [f"d-{index:02d}" for index in range(8)]
+    stored = {}
+    for fold in range(5):
+        holdout = train_only[fold::5]
+        stored[str(fold)] = {
+            "outer_train_subject_ids": sorted(set(train_only) - set(holdout)),
+            "final_eval_subject_ids": holdout,
+        }
+    record = {
+        "dataset": "daic",
+        "config": {"dataset": "daic", "split": {"mode": "fixed"}},
+        "labels": labels,
+        "folds": stored,
+        "official_test_subject_ids": official,
+    }
+
+    folds = build_component_outer_folds(record, seed=1337)
+    holdouts = {
+        subject
+        for payload in folds.values()
+        for subject in payload["final_eval_subject_ids"]
+    }
+    assert holdouts == set(labels) - set(official)
+    assert all(
+        payload["source"]
+        == "deterministic_stratified_group_folds_from_fixed_development_pool"
+        for payload in folds.values()
+    )
 
 
 def test_final_partitions_keep_only_daic_official_test_outside_training() -> None:

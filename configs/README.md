@@ -51,3 +51,23 @@ E-DAIC was outside the harmonization scope and was not inspected, moved, or rewr
 - 3 unchanged E-DAIC configs outside the harmonized family.
 
 See `docs/harmonized_dataset_baseline.md` for the methodology and dataset-specific adapters.
+
+## Harmonized reproduction matrix
+
+The standalone execution matrix is `configs/experiments/harmonized/standalone_matrix.yaml`. It expands to 63 four-GPU training jobs: one DAIC fold and five folds for each other dataset, across three modalities. D3TEC, Androids, and DAIC also receive separate deterministic evaluation jobs. Hidden-state postprocessing runs fixed Logistic Regression and fixed XGBoost; it does not run Optuna.
+
+The matching merged configs are:
+
+- `configs/experiments/merged/symmetric_merged_harmonized_audio_text.yaml`
+- `configs/experiments/merged/symmetric_merged_harmonized_audio_only.yaml`
+- `configs/experiments/merged/symmetric_merged_harmonized_text_only.yaml`
+
+They use only the 15 harmonized component configs. Each component and merged fit has a maximum of 20 epochs, validation macro-F1 checkpoint selection, patience 3, and no XGBoost Optuna. Merged cross-validation selects by mean dataset macro-F1; the final training epoch is the rounded median selected cross-validation epoch.
+
+MN5 execution order:
+
+1. `scripts/submit_harmonized_preflight.sh` rebuilds all manifests on GPFS and validates paths, files, hashes, splits, and merged protocols without using a GPU.
+2. `scripts/submit_harmonized_standalone.sh` submits the standalone reproduction matrix only after that preflight passes.
+3. `scripts/submit_harmonized_merged.sh` submits the merged smoke, cross-validation, and final stages separately.
+
+All launchers default to dry-run. Their default throttles reserve seven four-GPU training lanes (28 H100s) and at most four one-GPU auxiliary jobs, for a hard ceiling of 32 allocated H100s.

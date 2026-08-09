@@ -53,6 +53,33 @@ def _job_id(run_id: str, modality: str, stage: str, fold: int, kind: str) -> str
     return "dry_" + hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
 
 
+def _head_trials(config: dict[str, Any], *, stage: str, smoke_trials: int) -> int:
+    optuna = (config.get("heads") or {}).get("optuna") or {}
+    if optuna.get("enabled") is False:
+        return 0
+    if stage == "smoke":
+        return int(smoke_trials)
+    return int(optuna.get("target_trials", 150))
+
+
+def _apply_concurrency_lanes(jobs: list[dict[str, Any]], *, kind: str, limit: int) -> None:
+    """Add afterany lane dependencies without changing scientific dependencies."""
+
+    if int(limit) < 0:
+        raise ValueError(f"Concurrency limit for {kind} cannot be negative.")
+    if int(limit) == 0:
+        return
+    previous_by_lane: list[str | None] = [None] * int(limit)
+    candidates = [job for job in jobs if job.get("kind") == kind]
+    for index, job in enumerate(candidates):
+        lane = index % int(limit)
+        previous = previous_by_lane[lane]
+        if previous:
+            job["throttle_dependency_job_key"] = previous
+        job["concurrency_lane"] = lane
+        previous_by_lane[lane] = str(job["job_key"])
+
+
 def _run_roots(config: dict[str, Any], run_id: str, stage: str, fold: int) -> dict[str, Path]:
     return {
         "train": Path(config["output_dirs"]["run_root"]) / run_id / stage / f"fold_{fold}",
@@ -237,12 +264,19 @@ def _check_final_gate(config: dict[str, Any], run_id: str, modality: str) -> Pat
 
 
 def build_job_specs(
-    configs: list[Path], *, stage: str, run_id: str, dry_run: bool, smoke_subjects: int, smoke_epochs: int, smoke_trials: int
+    configs: list[Path], *, stage: str, run_id: str, dry_run: bool, smoke_subjects: int,
+    smoke_epochs: int, smoke_trials: int, max_concurrent_trains: int = 0,
+    max_concurrent_postprocess: int = 0,
 ) -> dict[str, Any]:
     if stage not in {"smoke", "cv", "final"}:
         raise ValueError(stage)
     if stage == "smoke":
-        configs = [CONFIG_BY_MODALITY["audio_text"]]
+        configs = [
+            path for path in configs
+            if str(load_merged_config(path).get("modality")) == "audio_text"
+        ]
+        if len(configs) != 1:
+            raise ValueError("Merged smoke requires exactly one audio_text config.")
         folds = [0]
     elif stage == "cv":
         folds = list(range(5))
@@ -253,6 +287,7 @@ def build_job_specs(
     for config_path in configs:
         config = load_merged_config(config_path)
         modality = str(config["modality"])
+        head_trials = _head_trials(config, stage=stage, smoke_trials=smoke_trials)
         config_identities.append(
             {
                 "path": str(config_path),
@@ -310,7 +345,7 @@ def build_job_specs(
                     "run_root": str(roots["post"] / "heads"),
                     "features_dir": str(roots["post"] / "features"),
                     "resource": {"gpus": 0, "cpus": 20, "time": config["execution"]["head_time"]},
-                    "trials": smoke_trials if stage == "smoke" else 150,
+                    "trials": head_trials,
                 },
             ]
             previous_id: str | None = None
@@ -342,6 +377,10 @@ def build_job_specs(
                         job["dependency_job_id"] = previous_id
                     previous_id = job["expected_job_id"]
                 jobs.append(job)
+    for order, job in enumerate(jobs):
+        job["submission_order"] = order
+    _apply_concurrency_lanes(jobs, kind="train", limit=int(max_concurrent_trains))
+    _apply_concurrency_lanes(jobs, kind="postprocess", limit=int(max_concurrent_postprocess))
     # The default production invocation has three modalities (45 CV or 9
     # final jobs), while targeted retries may intentionally pass one or more
     # configs. Count the actual planned chain so retry registries remain
@@ -353,6 +392,8 @@ def build_job_specs(
         "smoke_subjects": int(smoke_subjects),
         "smoke_epochs": int(smoke_epochs),
         "smoke_trials": int(smoke_trials),
+        "max_concurrent_trains": int(max_concurrent_trains),
+        "max_concurrent_postprocess": int(max_concurrent_postprocess),
     }
     stage_plan = {
         "stage": stage,
@@ -378,7 +419,10 @@ def build_job_specs(
     }
 
 
-def _submit_job(job: dict[str, Any], *, worker: Path, dependency_id: str | None) -> str:
+def _submit_job(
+    job: dict[str, Any], *, worker: Path, dependency_id: str | None,
+    throttle_dependency_id: str | None,
+) -> str:
     export_values = {
         "PROJECT_ROOT": str(PROJECT_ROOT),
         "CONFIG": job["config"],
@@ -392,8 +436,13 @@ def _submit_job(job: dict[str, Any], *, worker: Path, dependency_id: str | None)
             export_values[key.upper()] = str(job[key])
     export_text = "ALL," + ",".join(f"{key}={value}" for key, value in export_values.items())
     arguments = ["sbatch", "--parsable", f"--job-name=sym-{job['modality'][:4]}-{job['stage'][:4]}-{job['fold']}-{job['kind'][:4]}"]
+    dependencies: list[str] = []
     if dependency_id:
-        arguments.append(f"--dependency=afterok:{dependency_id}")
+        dependencies.append(f"afterok:{dependency_id}")
+    if throttle_dependency_id:
+        dependencies.append(f"afterany:{throttle_dependency_id}")
+    if dependencies:
+        arguments.append(f"--dependency={','.join(dependencies)}")
     reservation = _reservation()
     if reservation:
         arguments.append(f"--reservation={reservation}")
@@ -424,13 +473,25 @@ def submit_registry(registry: dict[str, Any], *, dry_run: bool) -> dict[str, Any
             continue
         dependency_job_key = job.get("dependency_job_key")
         dependency_id = previous_ids.get(dependency_job_key) if dependency_job_key else None
+        throttle_dependency_job_key = job.get("throttle_dependency_job_key")
+        throttle_dependency_id = (
+            previous_ids.get(throttle_dependency_job_key)
+            if throttle_dependency_job_key else None
+        )
         if dry_run:
             submitted_id = job["expected_job_id"]
         else:
-            submitted_id = _submit_job(job, worker=worker_by_kind[job["kind"]], dependency_id=dependency_id)
+            submitted_id = _submit_job(
+                job,
+                worker=worker_by_kind[job["kind"]],
+                dependency_id=dependency_id,
+                throttle_dependency_id=throttle_dependency_id,
+            )
         job["job_id"] = submitted_id
         if dependency_id:
             job["dependency_job_id"] = dependency_id
+        if throttle_dependency_id:
+            job["throttle_dependency_job_id"] = throttle_dependency_id
         job["submission_time_utc"] = datetime.now(timezone.utc).isoformat()
         job["state"] = "planned_dry_run" if dry_run else "submitted"
         previous_ids[job["job_key"]] = submitted_id
@@ -445,6 +506,12 @@ def submit_registry(registry: dict[str, Any], *, dry_run: bool) -> dict[str, Any
             job["dependency_job_id"] = dependency_id
         elif not dependency_id:
             job.pop("dependency_job_id", None)
+        throttle_key = job.get("throttle_dependency_job_key")
+        throttle_id = previous_ids.get(str(throttle_key)) if throttle_key else None
+        if throttle_id and not str(throttle_id).startswith("dry_"):
+            job["throttle_dependency_job_id"] = throttle_id
+        elif not throttle_id:
+            job.pop("throttle_dependency_job_id", None)
     registry["submission_mode"] = "dry_run" if dry_run else "sbatch"
     registry["terminal"] = False
     registry["planned_job_count"] = active_before
@@ -513,6 +580,7 @@ def merge_existing_registry(registry: dict[str, Any], existing: dict[str, Any]) 
         for key in (
             "job_id",
             "dependency_job_id",
+            "throttle_dependency_job_id",
             "submission_time_utc",
             "observed_state",
             "exit_code",
@@ -550,6 +618,7 @@ def merge_existing_registry(registry: dict[str, Any], existing: dict[str, Any]) 
     dependency_order = {"train": 0, "postprocess": 1, "head": 2}
     registry["jobs"].sort(
         key=lambda job: (
+            int(job.get("submission_order", 10**9)),
             str(job.get("stage", "")),
             str(job.get("modality", "")),
             int(job.get("fold", 0)),
@@ -620,14 +689,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--smoke-subjects", type=int, default=2)
     parser.add_argument("--smoke-epochs", type=int, default=1)
     parser.add_argument("--smoke-trials", type=int, default=2)
+    parser.add_argument("--max-concurrent-trains", type=int, default=0)
+    parser.add_argument("--max-concurrent-postprocess", type=int, default=0)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     configs = [resolve_project_path(value) for value in (args.configs or list(CONFIG_BY_MODALITY.values()))]
-    if args.stage == "smoke":
-        configs = [CONFIG_BY_MODALITY["audio_text"]]
     run_id = args.run_id
     if not run_id:
         identity = {
@@ -644,6 +713,8 @@ def main() -> None:
         smoke_subjects=args.smoke_subjects,
         smoke_epochs=args.smoke_epochs,
         smoke_trials=args.smoke_trials,
+        max_concurrent_trains=args.max_concurrent_trains,
+        max_concurrent_postprocess=args.max_concurrent_postprocess,
     )
     registry_path = resolve_project_path(args.registry) if args.registry else PROJECT_ROOT / "outputs/symmetric_merged_jobs" / f"{run_id}.json"
     if registry_path.exists():
