@@ -14,8 +14,12 @@ PREFLIGHT_AUDIT="${PREFLIGHT_AUDIT:-$PROJECT_ROOT/outputs/harmonized_mn5_preflig
 TRAIN_WORKER="${TRAIN_WORKER:-$PROJECT_ROOT/scripts/run_train_slurm.sh}"
 EVAL_WORKER="${EVAL_WORKER:-$PROJECT_ROOT/scripts/run_eval_slurm.sh}"
 HIDDEN_WORKER="${HIDDEN_WORKER:-$PROJECT_ROOT/scripts/run_qwen_hidden_extract_slurm.sh}"
+GITHUB_ISSUE="${GITHUB_ISSUE:?Set the harmonized campaign GITHUB_ISSUE}"
+GITHUB_PR="${GITHUB_PR:?Set the primary harmonized methodology GITHUB_PR}"
 
 case "$DRY_RUN" in 0|1) ;; *) echo "DRY_RUN must be 0 or 1" >&2; exit 2;; esac
+case "$GITHUB_ISSUE" in ''|*[!0-9]*|0) echo "GITHUB_ISSUE must be a positive integer." >&2; exit 2;; esac
+case "$GITHUB_PR" in ''|*[!0-9]*|0) echo "GITHUB_PR must be a positive integer." >&2; exit 2;; esac
 if [ "$MAX_CONCURRENT_TRAINS" -lt 1 ] || [ "$MAX_CONCURRENT_AUX" -lt 1 ]; then
     echo "Concurrency limits must be positive." >&2
     exit 2
@@ -101,12 +105,12 @@ for task in "${TASKS[@]}"; do
     context_path="$context_dir/context.json"
     if [ "$DRY_RUN" = 0 ]; then
         mkdir -p "$context_dir"
-        python - "$context_path" "$PREFLIGHT_AUDIT" "$RUN_ID" "$dataset" "$modality" "$fold" "$run_name" "$PROJECT_ROOT" <<'PY'
+        python - "$context_path" "$PREFLIGHT_AUDIT" "$RUN_ID" "$dataset" "$modality" "$fold" "$run_name" "$PROJECT_ROOT" "$GITHUB_ISSUE" "$GITHUB_PR" <<'PY'
 import json, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[8])
 from src.experiment_tracking.identity import new_attempt_id
-context_path, audit_path, run_id, dataset, modality, fold, run_name, root = sys.argv[1:]
+context_path, audit_path, run_id, dataset, modality, fold, run_name, root, github_issue, github_pr = sys.argv[1:]
 audit = json.load(open(audit_path, encoding="utf-8"))
 component = next(item for item in audit["components"] if item["dataset"] == dataset)
 commit = str(audit.get("source_commit") or "")
@@ -121,7 +125,7 @@ payload = {
     "fold": int(fold),
     "seed": 1337,
     "source": {"git_commit": commit, "git_branch": audit.get("source_branch"), "git_dirty": False},
-    "research": {"github_issue": None, "github_pr": None},
+    "research": {"github_issue": int(github_issue), "github_pr": int(github_pr)},
     "hashes": {"manifest_sha256": component["manifest_file_sha256"], "split_sha256": component["split_metadata_sha256"]},
     "slurm": {"train_job_id": None, "eval_job_ids": []},
 }
@@ -212,5 +216,5 @@ PY
     unset eval_raw
 done
 
-echo "Harmonized standalone plan: tasks=${#TASKS[@]} train_lanes=$MAX_CONCURRENT_TRAINS aux_lanes=$MAX_CONCURRENT_AUX max_gpus=$((MAX_CONCURRENT_TRAINS * 4 + MAX_CONCURRENT_AUX)) dry_run=$DRY_RUN"
+echo "Harmonized standalone plan: tasks=${#TASKS[@]} train_lanes=$MAX_CONCURRENT_TRAINS aux_lanes=$MAX_CONCURRENT_AUX max_gpus=$((MAX_CONCURRENT_TRAINS * 4 + MAX_CONCURRENT_AUX)) github_issue=$GITHUB_ISSUE github_pr=$GITHUB_PR dry_run=$DRY_RUN"
 [ "$DRY_RUN" = 1 ] || echo "Submission registry: $registry"

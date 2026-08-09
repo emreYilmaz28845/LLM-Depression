@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -67,6 +68,8 @@ def test_merged_planner_disables_optuna_and_applies_32_gpu_lanes() -> None:
         smoke_trials=99,
         max_concurrent_trains=7,
         max_concurrent_postprocess=4,
+        github_issue=12,
+        github_pr=10,
     )
     jobs = registry["jobs"]
     assert len(jobs) == 45
@@ -79,6 +82,8 @@ def test_merged_planner_disables_optuna_and_applies_32_gpu_lanes() -> None:
     assert sum("throttle_dependency_job_key" not in job for job in posts) == 4
     assert registry["plan_identity"]["max_concurrent_trains"] == 7
     assert registry["plan_identity"]["max_concurrent_postprocess"] == 4
+    assert registry["research"] == {"github_issue": 12, "github_pr": 10}
+    assert registry["plan_identity"]["research"] == registry["research"]
 
 
 def test_harmonized_smoke_keeps_custom_config_and_zero_trials() -> None:
@@ -92,6 +97,8 @@ def test_harmonized_smoke_keeps_custom_config_and_zero_trials() -> None:
         smoke_subjects=2,
         smoke_epochs=1,
         smoke_trials=50,
+        github_issue=12,
+        github_pr=10,
     )
     assert len(registry["jobs"]) == 3
     assert {job["config"] for job in registry["jobs"]} == {str(MERGED["audio_text"])}
@@ -138,6 +145,8 @@ def test_standalone_dry_run_has_63_trains_33_evals_and_63_fixed_heads() -> None:
             "PROJECT_ROOT": str(ROOT),
             "RUN_ID": "unit",
             "DRY_RUN": "1",
+            "GITHUB_ISSUE": "12",
+            "GITHUB_PR": "10",
         },
         text=True,
         capture_output=True,
@@ -150,3 +159,53 @@ def test_standalone_dry_run_has_63_trains_33_evals_and_63_fixed_heads() -> None:
     assert sum("run_qwen_hidden_extract_slurm.sh" in line for line in commands) == 63
     assert "max_gpus=32" in result.stdout
     assert "xgb_optuna" not in result.stdout + result.stderr
+    assert "github_issue=12 github_pr=10" in result.stdout
+
+
+def test_harmonized_launchers_require_campaign_provenance() -> None:
+    for launcher, extra_env in (
+        ("scripts/submit_harmonized_standalone.sh", {}),
+        ("scripts/submit_harmonized_merged.sh", {"STAGE": "smoke"}),
+    ):
+        env = {
+            **os.environ,
+            "PROJECT_ROOT": str(ROOT),
+            "RUN_ID": "unit",
+            "DRY_RUN": "1",
+            **extra_env,
+        }
+        env.pop("GITHUB_ISSUE", None)
+        env.pop("GITHUB_PR", None)
+        result = subprocess.run(
+            ["bash", str(ROOT / launcher)],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+        assert result.returncode != 0
+        assert "GITHUB_ISSUE" in result.stderr
+
+
+def test_harmonized_merged_wrapper_records_campaign_provenance(tmp_path: Path) -> None:
+    registry_path = tmp_path / "merged_registry.json"
+    subprocess.run(
+        ["bash", str(ROOT / "scripts/submit_harmonized_merged.sh")],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PROJECT_ROOT": str(ROOT),
+            "RUN_ID": "provenance_unit",
+            "STAGE": "smoke",
+            "DRY_RUN": "1",
+            "GITHUB_ISSUE": "12",
+            "GITHUB_PR": "10",
+            "REGISTRY": str(registry_path),
+        },
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    assert registry["research"] == {"github_issue": 12, "github_pr": 10}
+    assert registry["stage_plans"]["smoke"]["plan_identity"]["research"] == registry["research"]
