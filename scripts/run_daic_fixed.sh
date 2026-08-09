@@ -14,13 +14,13 @@
 #
 # audio+text and text-only are already on the recipe (their table numbers stand);
 # to redo only audio-only, pass a single config:
-#   CONFIGS="$PROJECT_ROOT/configs/main/daic_audio_only_selposf1_tf.yaml" \
+#   CONFIGS="$PROJECT_ROOT/configs/main/daic_audio_only_harmonized_selmacrof1_tf.yaml" \
 #     RUN_NAME_PREFIX=daic_tf bash scripts/run_daic_fixed.sh
 
 set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
-CONFIGS="${CONFIGS:-$PROJECT_ROOT/configs/main/daic_audio_only_selposf1_tf.yaml $PROJECT_ROOT/configs/main/daic_text_only_selposf1_tf.yaml $PROJECT_ROOT/configs/main/daic_audio_text_selposf1_tf.yaml}"
+CONFIGS="${CONFIGS:-$PROJECT_ROOT/configs/main/daic_audio_only_harmonized_selmacrof1_tf.yaml $PROJECT_ROOT/configs/main/daic_text_only_harmonized_selmacrof1_tf.yaml $PROJECT_ROOT/configs/main/daic_audio_text_harmonized_selmacrof1_tf.yaml}"
 FOLD="${FOLD:-0}"
 RUN_NAME_PREFIX="${RUN_NAME_PREFIX:-daic_tf}"
 SUBMIT_BEST_EVAL="${SUBMIT_BEST_EVAL:-1}"

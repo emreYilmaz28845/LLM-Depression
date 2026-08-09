@@ -1,3 +1,4 @@
+# Archived 2026-08-09 before the harmonized macro-F1 recipe.
 dataset: daic
 seed: 1337
 dataset_root: ${DAIC_DATASET_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/DAIC-WOZ/preprocessed}

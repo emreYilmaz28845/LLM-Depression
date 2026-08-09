@@ -18,7 +18,7 @@ module load bsc/1.0 miniforge/24.3.0-0
 source "${ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate}"
 
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
-CONFIG="${CONFIG:-$PROJECT_ROOT/configs/main/daic_audio_text_selposf1_tf.yaml}"
+CONFIG="${CONFIG:-$PROJECT_ROOT/configs/archive/pre_harmonized_posf1_20260809/daic/daic_audio_text_selposf1_tf.yaml}"
 CHECKPOINT_DIR="${CHECKPOINT_DIR:?Set CHECKPOINT_DIR}"
 RUN_ID="${RUN_ID:?Set a unique RUN_ID}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-$PROJECT_ROOT/outputs/daic_k4_coverage_audit}"

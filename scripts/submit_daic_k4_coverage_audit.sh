@@ -3,7 +3,7 @@ set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
 RUN_ID="${RUN_ID:?Set a unique RUN_ID}"
-CONFIG="${CONFIG:-$PROJECT_ROOT/configs/main/daic_audio_text_selposf1_tf.yaml}"
+CONFIG="${CONFIG:-$PROJECT_ROOT/configs/archive/pre_harmonized_posf1_20260809/daic/daic_audio_text_selposf1_tf.yaml}"
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-$PROJECT_ROOT/output_model/audio_text/daic/daic_main_k4_control_20260804_f26dd45/fold_0/best_model}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-$PROJECT_ROOT/outputs/daic_k4_coverage_audit}"
 LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/daic_k4_coverage_audit/$RUN_ID}"

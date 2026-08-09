@@ -933,9 +933,12 @@ def _build_participant_packed30_manifest(config: dict[str, Any], quarantine: dic
     for subject_id in ordered_subjects:
         subject_ids_by_split[split_lookup[subject_id]].append(subject_id)
     all_subject_ids = list(ordered_subjects)
-    transcript_max_chars = int(config.get("data", {}).get("transcript_max_chars", PACKED30_DEFAULT_TRANSCRIPT_MAX_CHARS) or 0)
-    if transcript_max_chars <= 0:
-        transcript_max_chars = PACKED30_DEFAULT_TRANSCRIPT_MAX_CHARS
+    transcript_limit_value = config.get("data", {}).get("transcript_max_chars")
+    transcript_max_chars = (
+        PACKED30_DEFAULT_TRANSCRIPT_MAX_CHARS
+        if transcript_limit_value is None
+        else int(transcript_limit_value)
+    )
 
     manifest_rows: list[dict[str, Any]] = []
     subject_rows: list[dict[str, Any]] = []

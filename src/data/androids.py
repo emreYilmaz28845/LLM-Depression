@@ -477,11 +477,11 @@ def build_androids_interview_manifest(
     }
 
 
-def apply_androids_training_weights(
+def apply_hierarchical_training_weights(
     examples: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if not examples:
-        raise ValueError("Cannot weight an empty ANDROIDS training partition.")
+        raise ValueError("Cannot weight an empty hierarchical training partition.")
     turns_by_subject: dict[str, set[str]] = defaultdict(set)
     windows_by_turn: Counter[str] = Counter()
     turn_subject: dict[str, str] = {}
@@ -489,9 +489,9 @@ def apply_androids_training_weights(
         subject_id = str(example["subject_id"])
         turn_key = str(example.get("response_id", "")).strip()
         if not turn_key:
-            raise ValueError("ANDROIDS training weights require response_id on every window.")
+            raise ValueError("Hierarchical training weights require response_id on every window.")
         if turn_key in turn_subject and turn_subject[turn_key] != subject_id:
-            raise ValueError(f"ANDROIDS turn {turn_key} spans multiple subjects.")
+            raise ValueError(f"Source unit {turn_key} spans multiple subjects.")
         turn_subject[turn_key] = subject_id
         turns_by_subject[subject_id].add(turn_key)
         windows_by_turn[turn_key] += 1
@@ -518,22 +518,33 @@ def apply_androids_training_weights(
     for subject_id, total in raw_subject_totals.items():
         if not math.isclose(total, 1.0, rel_tol=0.0, abs_tol=1e-9):
             raise ValueError(
-                f"ANDROIDS subject weight total is not one for {subject_id}: {total}"
+                f"Subject weight total is not one for {subject_id}: {total}"
             )
     for turn_key, total in raw_turn_totals.items():
         expected = 1.0 / len(turns_by_subject[turn_subject[turn_key]])
         if not math.isclose(total, expected, rel_tol=0.0, abs_tol=1e-9):
             raise ValueError(
-                f"ANDROIDS turn weight total mismatch for {turn_key}: "
+                f"Source-unit weight total mismatch for {turn_key}: "
                 f"{total} != {expected}"
             )
     audit = {
-        "formula": "1 / (turns_for_subject * windows_for_parent_turn), rescaled_to_mean_one",
+        "formula": "1 / (source_units_for_subject * windows_for_source_unit), rescaled_to_mean_one",
         "sample_count": len(weighted),
         "subject_count": len(turns_by_subject),
-        "turn_count": len(windows_by_turn),
+        "source_unit_count": len(windows_by_turn),
         "mean_loss_weight": sum(float(row["loss_weight"]) for row in weighted) / len(weighted),
         "raw_subject_weight_totals": dict(sorted(raw_subject_totals.items())),
-        "raw_turn_weight_totals": dict(sorted(raw_turn_totals.items())),
+        "raw_source_unit_weight_totals": dict(sorted(raw_turn_totals.items())),
     }
+    return weighted, audit
+
+
+def apply_androids_training_weights(
+    examples: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Backward-compatible Androids name for hierarchical source-unit weights."""
+    weighted, generic_audit = apply_hierarchical_training_weights(examples)
+    audit = dict(generic_audit)
+    audit["turn_count"] = audit["source_unit_count"]
+    audit["raw_turn_weight_totals"] = audit["raw_source_unit_weight_totals"]
     return weighted, audit

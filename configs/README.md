@@ -1,38 +1,53 @@
 # Configs
 
-```
+```text
 configs/
-  quarantines.yaml   # subject quarantine list — referenced by every config via
-                     # ${PROJECT_ROOT}/configs/quarantines.yaml; DO NOT move.
-  main/              # canonical configs — one per dataset × modality. Run these.
-  experiments/       # active non-headline research; run only when explicitly selected.
-  archive/           # all prior experiments (regN sweeps, K sweeps, seeds,
-                     # ablations, nofreeze/selloss/valloss, emotion, qwen3omni,
-                     # eatd). Kept for reproducibility; not part of the headline.
+  quarantines.yaml   # subject quarantine list; every config references it
+  main/              # active configs
+  experiments/       # active non-headline research
+  archive/           # superseded recipes retained for reproducibility
 ```
 
-## The `main/` recipe
+## Harmonized main recipe
 
-Every config in `main/` uses the same standardized recipe:
+The active harmonized family is:
 
-- **teacher-forced eval** — `evaluation.sample_prediction_mode: original_teacher_forced`
-  and `headline_mode: original_teacher_forced`.
-- **positive-F1 selection** — `training.selection_metric: inner_val_positive_f1`
-  and `early_stopping.metric: inner_val_positive_f1`, with
-  `selection_metric_mode: max`.
-- **frozen audio encoder** — the default (`audio_adapter.enabled` and
-  `train_projector` both default to `false` in `src/model/qwen2audio_lora.py`, and
-  `enforce_audio_encoder_freeze` guards it). No config needs an explicit freeze block;
-  the archived `*_nofreeze` configs are the only ones that train the encoder.
+`harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1`
 
-AUROC is **not** reported under this recipe — teacher-forced decoding emits a hard
-label, not a continuous score, so there is no ranking to compute AUROC over.
+It covers D3TEC, Turkish BDI≥17 with Qwen3-ASR, Androids, DAIC-WOZ, and CMDC in audio-only, text-only, and audio+text modes.
 
-## Coverage
+- One participant-audio window per prompt; never a joint-audio bundle.
+- Windows are at most 30 seconds and do not overlap.
+- Audio+text repeats the full participant transcript on every window.
+- Every training window appears once per epoch; DataLoader shuffling changes only its order.
+- `training.class_balance: none`.
+- D3TEC, Turkish, Androids, and CMDC use subject → source unit → window loss weighting and response-subject evaluation.
+- DAIC uses participant-only speech packed from raw timestamp intervals into consecutive 30-second chunks, subject-normalized loss weighting, and all-chunk subject aggregation.
+- Validation checkpoint selection and early stopping use `inner_val_macro_f1`, mode `max`.
+- Evaluation uses `original_teacher_forced` and reports strict subject-level metrics.
+- The audio encoder remains frozen because `audio_adapter.enabled` and `train_projector` are false.
 
-`main/` currently holds 12 configs: DAIC, EDAIC, and CMDC (three modalities
-each), plus Turkish BDI≥17 with Qwen3-ASR transcripts (three modalities).
-Turkish BDI≥21/25 and EATD are not current headline configs; related files are
-experimental or archived.
+Naming:
 
-Naming: `<dataset>[_t<threshold>]_<modality>_selposf1_tf[_variant].yaml`.
+```text
+<dataset>[_t<threshold>]_<modality>_harmonized_selmacrof1_tf[_variant].yaml
+```
+
+The nine superseded DAIC, CMDC, and Turkish positive-F1 main configs were moved to:
+
+```text
+configs/archive/pre_harmonized_posf1_20260809/
+```
+
+## E-DAIC exception
+
+E-DAIC was outside the harmonization scope and was not inspected, moved, or rewritten. Its three existing positive-F1 configs remain in `main/` unchanged. They are not members of the harmonized family.
+
+## Current coverage
+
+`main/` contains 18 configs:
+
+- 15 harmonized configs: five datasets × three modalities.
+- 3 unchanged E-DAIC configs outside the harmonized family.
+
+See `docs/harmonized_dataset_baseline.md` for the methodology and dataset-specific adapters.

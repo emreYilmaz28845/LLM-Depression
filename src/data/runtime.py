@@ -61,6 +61,7 @@ JOINT_PACKED30_MAX_CHUNK_SAMPLES = 480000
 JOINT_PACKED30_SAMPLE_RATE = 16000
 JOINT_PACKED30_REQUIRED_K = 4
 JOINT_PACKED30_CONTEXT_SENTINEL = "__JOINT_BUNDLE_AUDIO_CONTEXT__"
+HARMONIZED_RESPONSE_WINDOWS_MODE = "harmonized_response_windows"
 
 
 def resolve_audio_placeholder(config: dict[str, Any]) -> str:
@@ -317,10 +318,12 @@ def _base_example_from_row(
             transcript = str(row["segment_transcript"])
         elif scope == "full_turn":
             transcript = str(row["full_turn_transcript"])
+        elif scope == "full_subject":
+            transcript = str(row["full_subject_transcript"])
         else:
             raise ValueError(
                 "Unsupported data.audio_text_transcript_scope="
-                f"{scope!r}. Expected 'segment_aligned' or 'full_turn'."
+                f"{scope!r}. Expected 'segment_aligned', 'full_turn', or 'full_subject'."
             )
     transcript, transcript_log = _truncate_text(transcript, transcript_max_chars)
     emotion_block = ""
@@ -483,6 +486,160 @@ def _build_subject_level_text_only_examples(
                 }
             )
 
+    if truncation_log_path:
+        write_jsonl(truncation_logs, truncation_log_path)
+    return examples
+
+
+def _harmonized_natural_unit_id(row: dict[str, Any], dataset_name: str) -> str:
+    if dataset_name in {"d3tec", "androids_interview"}:
+        value = row.get("response_id")
+    else:
+        value = row.get("response_id") or row.get("question_id") or row.get("audio_path")
+    value = str(value or "").strip()
+    if not value:
+        value = str(row["sample_id"])
+    return value
+
+
+def _harmonized_unit_transcript(row: dict[str, Any], dataset_name: str) -> str:
+    if dataset_name == "d3tec":
+        return str(row.get("full_response_transcript", row.get("transcript", ""))).strip()
+    if dataset_name == "androids_interview":
+        return str(row.get("full_turn_transcript", row.get("transcript", ""))).strip()
+    return str(row.get("transcript", "")).strip()
+
+
+def _harmonized_subject_transcripts(
+    manifest_rows: list[dict[str, Any]], dataset_name: str
+) -> dict[str, str]:
+    units: dict[str, dict[str, tuple[tuple[str, str, str], str]]] = defaultdict(dict)
+    for row in manifest_rows:
+        subject_id = str(row["subject_id"])
+        unit_id = _harmonized_natural_unit_id(row, dataset_name)
+        text = _harmonized_unit_transcript(row, dataset_name)
+        if not text:
+            continue
+        order = (
+            str(row.get("prompt_id", row.get("question_id", ""))).zfill(12),
+            str(row.get("turn_id", "")).zfill(12),
+            str(row.get("sample_id", "")),
+        )
+        prior = units[subject_id].get(unit_id)
+        if prior is not None and prior[1] != text:
+            raise ValueError(
+                f"Harmonized source unit {unit_id!r} has inconsistent transcripts "
+                f"for subject_id={subject_id}."
+            )
+        units[subject_id][unit_id] = (order, text)
+    return {
+        subject_id: "\n".join(text for _, text in sorted(subject_units.values()))
+        for subject_id, subject_units in units.items()
+    }
+
+
+def _build_harmonized_response_window_examples(
+    manifest_rows: list[dict[str, Any]],
+    config: dict[str, Any],
+    partition_name: str,
+    truncation_log_path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    dataset_name = str(config["dataset"]).lower()
+    if dataset_name not in {"d3tec", "turkish", "androids_interview", "cmdc"}:
+        raise ValueError(
+            f"sample_mode={HARMONIZED_RESPONSE_WINDOWS_MODE} is unsupported for "
+            f"dataset={dataset_name!r}."
+        )
+    input_modality = resolve_input_modality(config)
+    use_audio, use_text = _modality_flags(input_modality)
+    transcript_max_chars = int(config["data"].get("transcript_max_chars", 0) or 0)
+    window_seconds = float(config["data"].get("segment_seconds", 30.0))
+    if window_seconds <= 0.0 or window_seconds > 30.0:
+        raise ValueError("Harmonized segment_seconds must be in (0, 30].")
+    subject_transcripts = _harmonized_subject_transcripts(manifest_rows, dataset_name)
+    expected_subjects = {str(row["subject_id"]) for row in manifest_rows}
+    missing = sorted(expected_subjects - set(subject_transcripts))
+    if use_text and missing:
+        raise ValueError(f"Harmonized full transcripts are missing for subjects: {missing}")
+
+    if input_modality == INPUT_MODALITY_TEXT_ONLY:
+        representatives: dict[str, dict[str, Any]] = {}
+        for row in sorted(manifest_rows, key=lambda item: str(item["sample_id"])):
+            representatives.setdefault(str(row["subject_id"]), row)
+        examples: list[dict[str, Any]] = []
+        for subject_id, source in sorted(representatives.items()):
+            row = dict(source)
+            row.update(
+                {
+                    "sample_id": subject_id,
+                    "transcript": subject_transcripts[subject_id],
+                    "full_subject_transcript": subject_transcripts[subject_id],
+                }
+            )
+            example, _ = _base_example_from_row(row, config, transcript_max_chars)
+            example["response_id"] = ""
+            examples.append(example)
+        return examples
+
+    expanded_rows: list[dict[str, Any]] = []
+    for source in sorted(manifest_rows, key=lambda item: str(item["sample_id"])):
+        subject_id = str(source["subject_id"])
+        unit_id = _harmonized_natural_unit_id(source, dataset_name)
+        response_id = f"{subject_id}::{unit_id}"
+        if dataset_name in {"d3tec", "androids_interview"}:
+            windows = [
+                (
+                    float(source.get("start_time", 0.0) or 0.0),
+                    float(source["end_time"]) if source.get("end_time") not in (None, "") else None,
+                    int(source.get("segment_index", 0) or 0),
+                    int(source.get("num_segments", 1) or 1),
+                )
+            ]
+        else:
+            info = sf.info(str(source["audio_path"]))
+            duration = float(info.frames / info.samplerate)
+            count = max(1, int(np.ceil(duration / window_seconds)))
+            equal_window_seconds = duration / count
+            windows = [
+                (
+                    index * equal_window_seconds,
+                    duration if index == count - 1 else (index + 1) * equal_window_seconds,
+                    index,
+                    count,
+                )
+                for index in range(count)
+            ]
+        for start_time, end_time, window_index, num_windows in windows:
+            row = dict(source)
+            row.update(
+                {
+                    "sample_id": f"{source['sample_id']}_hw{window_index:03d}",
+                    "response_id": response_id,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "segment_index": window_index,
+                    "num_segments": num_windows,
+                    "transcript": subject_transcripts.get(subject_id, "") if use_text else "",
+                    "full_subject_transcript": subject_transcripts.get(subject_id, ""),
+                }
+            )
+            expanded_rows.append(row)
+
+    examples: list[dict[str, Any]] = []
+    truncation_logs: list[dict[str, Any]] = []
+    for row in expanded_rows:
+        example, transcript_log = _base_example_from_row(row, config, transcript_max_chars)
+        example["response_id"] = str(row["response_id"])
+        examples.append(example)
+        if transcript_log:
+            truncation_logs.append(
+                {
+                    "partition": partition_name,
+                    "subject_id": row["subject_id"],
+                    "sample_id": row["sample_id"],
+                    **transcript_log,
+                }
+            )
     if truncation_log_path:
         write_jsonl(truncation_logs, truncation_log_path)
     return examples
@@ -796,14 +953,15 @@ def _build_participant_speech_packed30_examples(
                 "question_id": "",
             }
         )
-        if len(transcript) > int(config["data"].get("transcript_max_chars", 4000) or 4000):
+        transcript_limit = int(config["data"].get("transcript_max_chars", 0) or 0)
+        if transcript_limit > 0 and len(str(row["full_participant_transcript"])) > transcript_limit:
             truncation_logs.append(
                 {
                     "partition": partition_name,
                     "subject_id": row["subject_id"],
                     "sample_id": row["sample_id"],
                     "transcript_original_chars": len(str(row["full_participant_transcript"])),
-                    "transcript_kept_chars": len(transcript),
+                    "transcript_kept_chars": min(len(transcript), transcript_limit),
                     "transcript_truncated": True,
                 }
             )
@@ -1098,6 +1256,14 @@ def build_examples(
     transcript_max_chars = int(config["data"].get("transcript_max_chars", 0) or 0)
     truncation_logs: list[dict[str, Any]] = []
     examples: list[dict[str, Any]] = []
+
+    if sample_mode == HARMONIZED_RESPONSE_WINDOWS_MODE:
+        return _build_harmonized_response_window_examples(
+            manifest_rows,
+            config,
+            partition_name,
+            truncation_log_path=truncation_log_path,
+        )
 
     if sample_mode == "participant_speech_packed30":
         if dataset_name != "daic":

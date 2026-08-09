@@ -58,7 +58,7 @@ SAMPLING_RATE = 16_000
 def _smoke_config(*, use_audio: bool = True, use_text: bool = True) -> dict:
     """A minimal in-memory config that satisfies the prompt builder + label helpers.
 
-    Mirrors configs/main/daic_audio_text_selposf1_tf.yaml's prompt/labels blocks; no paths or datasets needed.
+    Mirrors the harmonized DAIC audio+text prompt/labels blocks; no paths or datasets needed.
     """
     return {
         "data": {"use_audio": use_audio, "use_text": use_text},

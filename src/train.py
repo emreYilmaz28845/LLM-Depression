@@ -25,7 +25,7 @@ from transformers import get_linear_schedule_with_warmup
 
 from src.data.build_manifest import build_for_config, manifest_build_signature
 from src.data.d3tec import build_d3tec_training_schedule
-from src.data.androids import apply_androids_training_weights
+from src.data.androids import apply_androids_training_weights, apply_hierarchical_training_weights
 from src.daic_chunking import (
     JOINT_PACKED30_MODE,
     build_independent_epoch_schedule,
@@ -1514,21 +1514,31 @@ def main() -> None:
         run_root,
     )
     androids_weight_audit: dict[str, Any] | None = None
-    if (
-        str(config["dataset"]).lower() == "androids_interview"
-        and input_modality != "text_only"
+    hierarchical_policy = (
+        str(config["data"].get("train_chunk_policy", "")).strip().lower()
+        == "all_windows_hierarchical_weighted"
+    )
+    if input_modality != "text_only" and (
+        hierarchical_policy or str(config["dataset"]).lower() == "androids_interview"
     ):
         if int(config["training"]["per_device_train_batch_size"]) != 1:
             raise ValueError(
-                "ANDROIDS Interview hierarchical weighting requires "
+                "Hierarchical window weighting requires "
                 "per_device_train_batch_size=1."
             )
-        train_examples, androids_weight_audit = apply_androids_training_weights(
-            train_examples
+        train_examples, androids_weight_audit = (
+            apply_hierarchical_training_weights(train_examples)
+            if hierarchical_policy
+            else apply_androids_training_weights(train_examples)
         )
         save_json(
             androids_weight_audit,
-            logs_dir / "androids_training_weight_audit.json",
+            logs_dir
+            / (
+                "harmonized_training_weight_audit.json"
+                if hierarchical_policy
+                else "androids_training_weight_audit.json"
+            ),
         )
     packed30_weight_audit: dict[str, Any] | None = None
     if (
@@ -1558,7 +1568,11 @@ def main() -> None:
     d3tec_schedule_audit: dict[str, Any] | None = None
     daic_epoch_schedule: list[list[dict[str, Any]]] | None = None
     daic_schedule_audit: dict[str, Any] | None = None
-    if str(config["dataset"]).lower() == "d3tec" and input_modality != "text_only":
+    if (
+        str(config["dataset"]).lower() == "d3tec"
+        and input_modality != "text_only"
+        and not hierarchical_policy
+    ):
         if int(config["training"]["per_device_train_batch_size"]) != 1:
             raise ValueError("D3TEC audio policies require per_device_train_batch_size=1.")
         if int(config["training"]["dataloader_num_workers"]) != 0:

@@ -12,7 +12,7 @@ from src.utils import load_yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAIN_CONFIG = ROOT / "configs/main/daic_audio_text_selposf1_tf.yaml"
+MAIN_CONFIG = ROOT / "configs/archive/pre_harmonized_posf1_20260809/daic/daic_audio_text_selposf1_tf.yaml"
 EXPERIMENT_CONFIG = (
     ROOT
     / "configs/experiments/daic_chunking/daic_audio_text_independent_all_equalrow_selposf1_tf.yaml"
