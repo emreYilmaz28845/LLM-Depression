@@ -371,6 +371,19 @@ def build_component_outer_folds(
             "outer_train_subject_ids": train,
             "final_eval_subject_ids": holdout,
         }
+    if len(resolved) == OUTER_FOLDS:
+        try:
+            _validate_outer_coverage(dataset, resolved, eligible, sorted(official))
+        except ValueError:
+            split_mode = str((record.get("config") or {}).get("split", {}).get("mode", ""))
+            if dataset != "daic" or split_mode != "fixed":
+                raise
+            # Standalone harmonized DAIC keeps the official train/val/test
+            # split. Its stored fold file covers only the configured train
+            # pool, while merged CV must cover the complete non-test
+            # development pool (official train + validation). Generate that
+            # CV here without ever admitting official-test subjects.
+            resolved = {}
     if len(resolved) != OUTER_FOLDS:
         generated = assign_stratified_group_folds(
             {subject: labels[subject] for subject in eligible},
@@ -384,7 +397,11 @@ def build_component_outer_folds(
             }
             for fold, payload in generated.items()
         }
-        source = "deterministic_stratified_group_folds"
+        source = (
+            "deterministic_stratified_group_folds_from_fixed_development_pool"
+            if dataset == "daic" and str((record.get("config") or {}).get("split", {}).get("mode", "")) == "fixed"
+            else "deterministic_stratified_group_folds"
+        )
     else:
         source = "component_official_folds"
     _validate_outer_coverage(dataset, resolved, eligible, sorted(official))

@@ -66,12 +66,14 @@ export TEXT_MODEL_PATH=/path/to/Qwen2-7B-Instruct
 Manifests and splits are shared across modalities — build them once per dataset, and include transcripts even for audio-only runs:
 
 ```bash
-python src/data/build_manifest.py --config \
+for config in \
   configs/main/d3tec_audio_text_harmonized_selmacrof1_tf.yaml \
   configs/main/turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml \
   configs/main/androids_audio_text_harmonized_selmacrof1_tf.yaml \
   configs/main/daic_audio_text_harmonized_selmacrof1_tf.yaml \
-  configs/main/cmdc_audio_text_harmonized_selmacrof1_tf.yaml
+  configs/main/cmdc_audio_text_harmonized_selmacrof1_tf.yaml; do
+  python src/data/build_manifest.py --config "$config"
+done
 ```
 
 Every config references `configs/quarantines.yaml` via `${PROJECT_ROOT}` — never move it. Config values support `${VAR}` / `${VAR:-default}` interpolation, and any key can be overridden on the CLI with `--set path.to.key=value`.
@@ -129,6 +131,18 @@ bash scripts/submit_train_and_eval.sh
 ```
 
 Submission is not completion. Monitor jobs, rsync the compact evidence back (metrics JSONs, `predictions_subject_level.csv`, `final_summary.json`, `run_config.yaml` — not just checkpoints), validate locally, then report. Cluster mutations require explicit user authorization.
+
+### Harmonized reproduction launchers
+
+The harmonized matrix must pass a CPU-only MN5 preflight before any GPU job is submitted. The preflight rebuilds manifests from GPFS data, rejects local `/media/...` paths, checks every referenced file, and builds the merged protocols. Start every command with `DRY_RUN=1` and inspect its output before using `DRY_RUN=0`:
+
+```bash
+RUN_ID=<unique-id> DRY_RUN=1 bash scripts/submit_harmonized_preflight.sh
+RUN_ID=<same-id> DRY_RUN=1 bash scripts/submit_harmonized_standalone.sh
+RUN_ID=<same-id> STAGE=smoke DRY_RUN=1 bash scripts/submit_harmonized_merged.sh
+```
+
+After the real preflight finishes successfully, reuse its `RUN_ID` for the standalone launcher and each merged stage. The default standalone schedule uses seven four-GPU training lanes plus one shared four-job auxiliary pool, so at most 32 H100s can be allocated at once. The merged launcher uses the same 28-GPU training ceiling and at most four one-GPU postprocessing jobs. Hidden-state postprocessing runs fixed Logistic Regression and fixed XGBoost only; XGBoost Optuna is disabled. The merged smoke, cross-validation, and final stages remain separate so later stages cannot start before their acceptance checks.
 
 ## Experiment tracking and reporting
 
