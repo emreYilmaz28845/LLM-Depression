@@ -2,21 +2,19 @@ dataset: daic
 seed: 1337
 protocol_id: daic_participant_speech_packed30_v1
 manifest_variant: unprocessed_participant_speech_packed30_45s_v1
-dataset_root: /gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/DAIC-WOZ/unprocessed
-label_root: /gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/DAIC-WOZ/minimal_zips
-quarantine_path: /home/emre/Projects/AudioLLM/LLM-Depression/configs/quarantines.yaml
-model_name_or_path: /gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instruct
+dataset_root: ${DAIC_UNPROCESSED_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/DAIC-WOZ/unprocessed}
+label_root: ${DAIC_LABEL_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/DAIC-WOZ/minimal_zips}
+quarantine_path: ${PROJECT_ROOT}/configs/quarantines.yaml
+model_name_or_path: ${MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instruct}
 output_dirs:
   manifest_dir: ${PROJECT_ROOT}/outputs/manifests_daic_participant_packed30_45s
   split_dir: ${PROJECT_ROOT}/outputs/splits_daic_participant_packed30_45s
-  run_root: /home/emre/Projects/AudioLLM/LLM-Depression/output_model/experiments/daic_participant_packed30_jointk4/audio_text
+  run_root: ${PROJECT_ROOT}/output_model/experiments/daic_participant_packed30_jointk4/audio_text
 prompt:
-  system: You are a psychologist analyzing speech and transcript information for depression
-    screening.
+  system: You are a psychologist analyzing speech and transcript information for depression screening.
   user_template: '{audio_context_block}
 
-    {transcript_block}Based on the {decision_basis}, determine whether the subject
-    is {label_descriptor}.
+    {transcript_block}Based on the {decision_basis}, determine whether the subject is {label_descriptor}.
 
     {label_instruction}'
   prompt_language: english

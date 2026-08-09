@@ -9,9 +9,9 @@ model_name_or_path: ${MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen2-A
 output_dirs:
   manifest_dir: ${PROJECT_ROOT}/outputs/manifests_daic_participant_packed30
   split_dir: ${PROJECT_ROOT}/outputs/splits_daic_participant_packed30
-  run_root: ${PROJECT_ROOT}/output_model/experiments/daic_participant_packed30_jointk4/audio_only
+  run_root: ${PROJECT_ROOT}/output_model/experiments/daic_participant_packed30_jointk4/audio_text
 prompt:
-  system: You are a psychologist analyzing speech audio for depression screening.
+  system: You are a psychologist analyzing speech and transcript information for depression screening.
   user_template: '{audio_context_block}
 
     {transcript_block}Based on the {decision_basis}, determine whether the subject is {label_descriptor}.
@@ -22,7 +22,7 @@ labels:
   label_vocab_version: legacy_english_labels
 data:
   use_audio: true
-  use_text: false
+  use_text: true
   silence_audio: false
   recipe_id: runtime_packed30_joint_random_k4_fullcover_v1
   sample_mode: participant_speech_packed30_joint
@@ -34,6 +34,7 @@ data:
   eval_chunks_per_subject: 4
   loss_weight_rescale: mean_one
   equal_row_weight: false
+  audio_text_transcript_scope: full_participant
   transcript_max_chars: 4000
   allow_empty_transcript: false
   audio_augment:
