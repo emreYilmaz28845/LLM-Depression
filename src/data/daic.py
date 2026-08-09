@@ -36,6 +36,7 @@ PACKED30_MANIFEST_VARIANT = "unprocessed_participant_speech_packed30_v1"
 PACKED30_MANIFEST_VARIANT_15S = "unprocessed_participant_speech_packed30_15s_v1"
 PACKED30_MANIFEST_VARIANT_45S = "unprocessed_participant_speech_packed30_45s_v1"
 PACKED30_MANIFEST_VARIANT_ELLIE = "unprocessed_participant_speech_packed30_ellie_v1"
+PACKED30_MANIFEST_VARIANT_FULLTRANSCRIPT = "unprocessed_participant_speech_packed30_fulltranscript_v1"
 PACKED30_SCHEMA_VERSION = "daic_participant_speech_packed30_manifest.v1"
 PACKED30_CHUNK_SAMPLES = 480000
 PACKED30_SAMPLE_RATE = 16000
@@ -863,11 +864,16 @@ def _build_participant_packed30_manifest(config: dict[str, Any], quarantine: dic
 
     Variants (``config["manifest_variant"]``):
     - ``unprocessed_participant_speech_packed30_v1``: 480000-sample (30s)
-      participant-only chunks, the locked v1 recipe.
+      participant-only chunks, the locked v1 recipe (participant-only transcript).
     - ``unprocessed_participant_speech_packed30_15s_v1``: 240000-sample chunks.
     - ``unprocessed_participant_speech_packed30_45s_v1``: 720000-sample chunks.
     - ``unprocessed_participant_speech_packed30_ellie_v1``: 480000-sample
       chunks including Ellie rows (full interview audio).
+    - ``unprocessed_participant_speech_packed30_fulltranscript_v1``:
+      480000-sample participant-only audio chunks (same packing as v1) but the
+      rendered full transcript keeps BOTH speakers (participant + Ellie), i.e.
+      the interviewer's text is not removed. Matches the Androids/D3TEC
+      all-chunks + full-transcript presentation on DAIC.
     """
     from src.data.build_manifest import manifest_build_signature
 
@@ -875,15 +881,23 @@ def _build_participant_packed30_manifest(config: dict[str, Any], quarantine: dic
     if variant == PACKED30_MANIFEST_VARIANT:
         chunk_samples = PACKED30_CHUNK_SAMPLES
         include_ellie = False
+        full_interview_transcript = False
     elif variant == PACKED30_MANIFEST_VARIANT_15S:
         chunk_samples = PACKED30_SAMPLE_RATE * 15
         include_ellie = False
+        full_interview_transcript = False
     elif variant == PACKED30_MANIFEST_VARIANT_45S:
         chunk_samples = PACKED30_SAMPLE_RATE * 45
         include_ellie = False
+        full_interview_transcript = False
     elif variant == PACKED30_MANIFEST_VARIANT_ELLIE:
         chunk_samples = PACKED30_CHUNK_SAMPLES
         include_ellie = True
+        full_interview_transcript = False
+    elif variant == PACKED30_MANIFEST_VARIANT_FULLTRANSCRIPT:
+        chunk_samples = PACKED30_CHUNK_SAMPLES
+        include_ellie = False
+        full_interview_transcript = True
     else:
         raise ValueError(f"Unsupported packed30 manifest_variant={variant!r}.")
     unprocessed_root = Path(config["dataset_root"])
@@ -982,7 +996,22 @@ def _build_participant_packed30_manifest(config: dict[str, Any], quarantine: dic
         chunks = _pack_retained_intervals(intervals, chunk_samples=chunk_samples)
         chunks_per_subject[subject_id] = len(chunks)
         values_by_row = {int(interval["source_row_index"]): interval["value"] for interval in intervals}
-        full_transcript = "\n".join(interval["value"] for interval in intervals)
+        if full_interview_transcript:
+            # Keep BOTH speakers' text (participant + Ellie), in chronological
+            # row order, skipping invalid and empty rows only. Audio packing is
+            # still participant-only; only the rendered transcript widens.
+            invalid_indices = {
+                int(row["source_row_index"]) for row in audit["invalid_rows"]
+            }
+            interview_values = [
+                str(row["value"]).strip()
+                for row in parsed_rows
+                if int(row["source_row_index"]) not in invalid_indices
+                and str(row["value"]).strip()
+            ]
+            full_transcript = "\n".join(interview_values)
+        else:
+            full_transcript = "\n".join(interval["value"] for interval in intervals)
         full_transcript, truncation_log = _truncate_packed30_text(full_transcript, transcript_max_chars)
         full_transcript_sha256 = hashlib.sha256(full_transcript.encode("utf-8")).hexdigest()
         num_chunks = len(chunks)
@@ -1217,6 +1246,7 @@ def _build_participant_packed30_manifest(config: dict[str, Any], quarantine: dic
             "chunk_samples": chunk_samples,
             "sample_rate": PACKED30_SAMPLE_RATE,
             "include_ellie": include_ellie,
+            "full_interview_transcript": full_interview_transcript,
             "expected_totals": expected,
             "invalid_row_allowlist": list(PACKED30_INVALID_ROW_ALLOWLIST),
         },
@@ -1332,6 +1362,7 @@ def build_daic_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> d
         PACKED30_MANIFEST_VARIANT_15S,
         PACKED30_MANIFEST_VARIANT_45S,
         PACKED30_MANIFEST_VARIANT_ELLIE,
+        PACKED30_MANIFEST_VARIANT_FULLTRANSCRIPT,
     }:
         LOGGER.info("Building DAIC participant-packed30 manifest (%s): %s", manifest_variant, base_dir)
         result = _build_participant_packed30_manifest(config, quarantine)

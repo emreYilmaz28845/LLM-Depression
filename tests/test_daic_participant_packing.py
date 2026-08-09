@@ -167,6 +167,39 @@ def test_packing_exact_boundary_chunk() -> None:
     assert len(chunks[0]["spans"]) == 1
 
 
+def test_fulltranscript_variant_keeps_interviewer_text(tmp_path: Path) -> None:
+    """Fulltranscript variant: participant-only audio packing, both-speaker transcript."""
+    tsv = tmp_path / "t.tsv"
+    make_tsv(
+        tsv,
+        [
+            ("1.0", "2.0", "Ellie", "hi i'm ellie thanks for coming in"),
+            participant_row(2.0, 4.0, "i'm fine"),
+            ("4.0", "5.0", "Ellie", "where are you from"),
+            participant_row(5.0, 7.0, "los angeles"),
+        ],
+    )
+    parsed, _ = _parse_participant_transcript_tsv(tsv)
+    frames = int(7.0 * PACKED30_SAMPLE_RATE)
+    audit = _audit_subject_source_rows("300", frames, parsed)
+    intervals = audit["retained_intervals"]
+    # Participant-only audio packing: Ellie rows excluded from intervals.
+    assert all("ellie" not in interval["value"].lower() for interval in intervals)
+    assert len(intervals) == 2
+    # Full-interview transcript: both speakers, invalid/empty rows skipped.
+    invalid_indices = {int(row["source_row_index"]) for row in audit["invalid_rows"]}
+    interview_values = [
+        str(row["value"]).strip()
+        for row in parsed
+        if int(row["source_row_index"]) not in invalid_indices and str(row["value"]).strip()
+    ]
+    joined = "\n".join(interview_values)
+    assert "hi i'm ellie thanks for coming in" in joined
+    assert "where are you from" in joined
+    assert "i'm fine" in joined
+    assert "los angeles" in joined
+
+
 def test_packing_15s_variant_chunk_size() -> None:
     chunk_samples = PACKED30_SAMPLE_RATE * 15
     chunks = _pack_retained_intervals([_interval(0.0, 32.0)], chunk_samples=chunk_samples)
