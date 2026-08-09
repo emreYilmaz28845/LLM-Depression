@@ -9,9 +9,14 @@ DRY_RUN="${DRY_RUN:-1}"
 PREFLIGHT_AUDIT="${PREFLIGHT_AUDIT:-$PROJECT_ROOT/outputs/harmonized_mn5_preflight/$RUN_ID/audit.json}"
 MAX_CONCURRENT_TRAINS="${MAX_CONCURRENT_TRAINS:-7}"
 MAX_CONCURRENT_POSTPROCESS="${MAX_CONCURRENT_POSTPROCESS:-4}"
+GITHUB_ISSUE="${GITHUB_ISSUE:?Set the harmonized campaign GITHUB_ISSUE}"
+GITHUB_PR="${GITHUB_PR:?Set the primary harmonized methodology GITHUB_PR}"
+REGISTRY="${REGISTRY:-}"
 
 case "$DRY_RUN" in 0|1) ;; *) echo "DRY_RUN must be 0 or 1" >&2; exit 2;; esac
 case "$STAGE" in smoke|cv|final) ;; *) echo "STAGE must be smoke, cv, or final" >&2; exit 2;; esac
+case "$GITHUB_ISSUE" in ''|*[!0-9]*|0) echo "GITHUB_ISSUE must be a positive integer." >&2; exit 2;; esac
+case "$GITHUB_PR" in ''|*[!0-9]*|0) echo "GITHUB_PR must be a positive integer." >&2; exit 2;; esac
 if [ $((MAX_CONCURRENT_TRAINS * 4 + MAX_CONCURRENT_POSTPROCESS)) -gt 32 ]; then
     echo "Merged concurrency can exceed 32 GPUs." >&2
     exit 2
@@ -37,6 +42,9 @@ args=(
     --smoke-trials 0
     --max-concurrent-trains "$MAX_CONCURRENT_TRAINS"
     --max-concurrent-postprocess "$MAX_CONCURRENT_POSTPROCESS"
+    --github-issue "$GITHUB_ISSUE"
+    --github-pr "$GITHUB_PR"
 )
+[ -n "$REGISTRY" ] && args+=(--registry "$REGISTRY")
 [ "$DRY_RUN" = 1 ] && args+=(--dry-run)
 "${args[@]}"

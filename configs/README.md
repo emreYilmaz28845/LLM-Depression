@@ -70,4 +70,6 @@ MN5 execution order:
 2. `scripts/submit_harmonized_standalone.sh` submits the standalone reproduction matrix only after that preflight passes.
 3. `scripts/submit_harmonized_merged.sh` submits the merged smoke, cross-validation, and final stages separately.
 
+Both GPU launchers require `GITHUB_ISSUE` and `GITHUB_PR`. For the full harmonized reproduction campaign, use Issue #12 and primary methodology PR #10. The production Git SHA must contain both PR #10 and its PR #11 acceptance-auditor correction. These fields provide scientific context; the full Git SHA and deployed-source hash remain the canonical source identity.
+
 All launchers default to dry-run. Their default throttles reserve seven four-GPU training lanes (28 H100s) and at most four one-GPU auxiliary jobs, for a hard ceiling of 32 allocated H100s.

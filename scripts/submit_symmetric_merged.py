@@ -266,10 +266,15 @@ def _check_final_gate(config: dict[str, Any], run_id: str, modality: str) -> Pat
 def build_job_specs(
     configs: list[Path], *, stage: str, run_id: str, dry_run: bool, smoke_subjects: int,
     smoke_epochs: int, smoke_trials: int, max_concurrent_trains: int = 0,
-    max_concurrent_postprocess: int = 0,
+    max_concurrent_postprocess: int = 0, github_issue: int | None = None,
+    github_pr: int | None = None,
 ) -> dict[str, Any]:
     if stage not in {"smoke", "cv", "final"}:
         raise ValueError(stage)
+    if (github_issue is None) != (github_pr is None):
+        raise ValueError("GitHub Issue and PR provenance must be provided together.")
+    if github_issue is not None and (github_issue < 1 or github_pr is None or github_pr < 1):
+        raise ValueError("GitHub Issue and PR provenance must use positive integers.")
     if stage == "smoke":
         configs = [
             path for path in configs
@@ -394,6 +399,7 @@ def build_job_specs(
         "smoke_trials": int(smoke_trials),
         "max_concurrent_trains": int(max_concurrent_trains),
         "max_concurrent_postprocess": int(max_concurrent_postprocess),
+        "research": {"github_issue": github_issue, "github_pr": github_pr},
     }
     stage_plan = {
         "stage": stage,
@@ -407,6 +413,7 @@ def build_job_specs(
         "stage": stage,
         "source_commit": _source_commit(),
         "reservation": _reservation() or None,
+        "research": {"github_issue": github_issue, "github_pr": github_pr},
         "plan_identity": plan_identity,
         "plan_hash": stage_plan["plan_hash"],
         "stages": [stage],
@@ -669,6 +676,14 @@ def _set_combined_registry_metadata(
             for stage in stages
         }
     }
+    research_values = {
+        canonical_sha256((ordered[stage].get("plan_identity") or {}).get("research")):
+            (ordered[stage].get("plan_identity") or {}).get("research")
+        for stage in stages
+    }
+    if len(research_values) != 1:
+        raise ValueError("Merged stages have incompatible GitHub Issue/PR provenance.")
+    registry["research"] = next(iter(research_values.values()))
     registry["plan_hash"] = canonical_sha256(
         {stage: ordered[stage].get("plan_hash") for stage in stages}
     )
@@ -691,6 +706,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--smoke-trials", type=int, default=2)
     parser.add_argument("--max-concurrent-trains", type=int, default=0)
     parser.add_argument("--max-concurrent-postprocess", type=int, default=0)
+    parser.add_argument("--github-issue", type=int)
+    parser.add_argument("--github-pr", type=int)
     return parser.parse_args()
 
 
@@ -715,6 +732,8 @@ def main() -> None:
         smoke_trials=args.smoke_trials,
         max_concurrent_trains=args.max_concurrent_trains,
         max_concurrent_postprocess=args.max_concurrent_postprocess,
+        github_issue=args.github_issue,
+        github_pr=args.github_pr,
     )
     registry_path = resolve_project_path(args.registry) if args.registry else PROJECT_ROOT / "outputs/symmetric_merged_jobs" / f"{run_id}.json"
     if registry_path.exists():
