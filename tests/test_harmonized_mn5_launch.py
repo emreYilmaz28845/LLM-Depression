@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 
 from scripts.submit_symmetric_merged import _head_trials, build_job_specs
+from src.merged.audit import _expected_head_methods, _job_registry_path
 from src.merged.runtime import load_merged_config
 
 
@@ -95,6 +96,14 @@ def test_harmonized_smoke_keeps_custom_config_and_zero_trials() -> None:
     assert len(registry["jobs"]) == 3
     assert {job["config"] for job in registry["jobs"]} == {str(MERGED["audio_text"])}
     assert next(job for job in registry["jobs"] if job["kind"] == "head")["trials"] == 0
+
+
+def test_harmonized_auditor_requires_only_enabled_heads_and_global_registry() -> None:
+    config = load_merged_config(MERGED["audio_text"])
+    assert _expected_head_methods(config) == ("logreg", "xgb_fixed")
+    historical = {"heads": {"optuna": {"target_trials": 150}}}
+    assert _expected_head_methods(historical) == ("logreg", "xgb_fixed", "xgb_optuna")
+    assert _job_registry_path("run-1") == ROOT / "outputs/symmetric_merged_jobs/run-1.json"
 
 
 def test_workers_export_every_harmonized_dataset_root() -> None:

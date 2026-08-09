@@ -24,6 +24,22 @@ from src.merged.runtime import load_merged_config, load_protocol_artifact
 from src.utils import configure_logging, read_json, read_jsonl, save_json, sha256_file
 
 
+def _expected_head_methods(config: dict[str, Any]) -> tuple[str, ...]:
+    """Return the head artifacts required by the configured protocol."""
+
+    methods = ["logreg", "xgb_fixed"]
+    optuna = (config.get("heads") or {}).get("optuna") or {}
+    if optuna.get("enabled") is not False:
+        methods.append("xgb_optuna")
+    return tuple(methods)
+
+
+def _job_registry_path(run_id: str) -> Path:
+    """Resolve the global merged-job registry independently of result layout."""
+
+    return PROJECT_ROOT / "outputs" / "symmetric_merged_jobs" / f"{run_id}.json"
+
+
 def _check_required(path: Path, failures: list[str], label: str) -> None:
     if not path.is_file():
         failures.append(f"missing:{label}:{path}")
@@ -276,6 +292,7 @@ def audit_symmetric_run(
     omitted_heavy_artifacts: list[str] = []
     expected_final_epoch: int | None = None
     expected_head_inner_folds = resolve_head_inner_folds(config, stage)
+    expected_head_methods = _expected_head_methods(config)
     if stage == "final":
         cv_train_root = train_stage_root.parent / "cv"
         cv_epochs: list[int] = []
@@ -326,7 +343,7 @@ def audit_symmetric_run(
             (fold_root / "features" / "outer_train.npz", "outer_train_features"),
             (fold_root / "features" / "outer_holdout.npz", "outer_holdout_features"),
         )
-        for method in ("logreg", "xgb_fixed", "xgb_optuna"):
+        for method in expected_head_methods:
             heavy_paths += (
                 (fold_root / "heads" / method / "classifier.joblib", f"{method}:classifier"),
             )
@@ -508,9 +525,9 @@ def audit_symmetric_run(
         heads_summary_path = fold_root / "heads" / "summary.json"
         if heads_summary_path.is_file():
             heads = read_json(heads_summary_path)
-            if set(heads) != {"logreg", "xgb_fixed", "xgb_optuna"}:
+            if set(heads) != set(expected_head_methods):
                 failures.append(f"head_method_coverage:{fold}:found={sorted(heads)}")
-            for method in ("logreg", "xgb_fixed", "xgb_optuna"):
+            for method in expected_head_methods:
                 method_dir = fold_root / "heads" / method
                 for filename in ("classifier_metadata.json", "metrics_by_dataset.json", "predictions_subject_level.jsonl"):
                     _check_required(method_dir / filename, failures, f"fold_{fold}:{method}:{filename}")
@@ -535,15 +552,16 @@ def audit_symmetric_run(
                 fold=fold,
                 expected_inner_folds=expected_head_inner_folds,
             )
-            optuna_summary = fold_root / "heads" / "xgb_optuna" / "optuna" / "study_summary.json"
-            if stage != "smoke":
-                _check_required(optuna_summary, failures, f"fold_{fold}:optuna_summary")
-                if optuna_summary.is_file() and int(read_json(optuna_summary).get("completed_trials", -1)) != 150:
-                    failures.append(f"optuna_trial_count:{fold}")
-            elif optuna_summary.is_file() and int(read_json(optuna_summary).get("completed_trials", -1)) != 2:
-                failures.append(f"smoke_optuna_trial_count:{fold}")
+            if "xgb_optuna" in expected_head_methods:
+                optuna_summary = fold_root / "heads" / "xgb_optuna" / "optuna" / "study_summary.json"
+                if stage != "smoke":
+                    _check_required(optuna_summary, failures, f"fold_{fold}:optuna_summary")
+                    if optuna_summary.is_file() and int(read_json(optuna_summary).get("completed_trials", -1)) != 150:
+                        failures.append(f"optuna_trial_count:{fold}")
+                elif optuna_summary.is_file() and int(read_json(optuna_summary).get("completed_trials", -1)) != 2:
+                    failures.append(f"smoke_optuna_trial_count:{fold}")
         fold_results.append(fold_payload)
-    registry_path = Path(config["output_dirs"]["merged_root"]).parents[1] / "symmetric_merged_jobs" / f"{run_id}.json"
+    registry_path = _job_registry_path(run_id)
     registry = None
     if not registry_path.is_file():
         failures.append(f"missing:job_registry:{registry_path}")
