@@ -20,6 +20,10 @@ SEED="${SEED:-1337}"
 STAGES="${STAGES:-train eval extract heads audit}"
 # Which modalities to submit (space-separated); search waves often run one.
 MODALITIES="${MODALITIES:-audio_only audio_text}"
+# Per-modality config overrides (variant search configs). Falls back to the
+# base joint-K4 config for each modality when unset.
+CONFIG_AUDIO_ONLY="${CONFIG_AUDIO_ONLY:-}"
+CONFIG_AUDIO_TEXT="${CONFIG_AUDIO_TEXT:-}"
 # Extra --set overrides passed to the train/eval workers (Tier-1 knobs).
 EXTRA_TRAIN_ARGS="${EXTRA_TRAIN_ARGS:-}"
 EXTRA_EVAL_ARGS="${EXTRA_EVAL_ARGS:-}"
@@ -53,8 +57,8 @@ SOURCE_COMMIT="$(cat "$PROJECT_ROOT/.provenance/git_commit.txt" 2>/dev/null || g
 SHORTCOMMIT="$(printf '%s' "$SOURCE_COMMIT" | cut -c1-8)"
 
 declare -A CONFIG_BY_MODALITY=(
-    [audio_only]="$CONFIG_DIR/daic_participant_packed30_jointk4_audio_only.yaml"
-    [audio_text]="$CONFIG_DIR/daic_participant_packed30_jointk4_audio_text.yaml"
+    [audio_only]="${CONFIG_AUDIO_ONLY:-$CONFIG_DIR/daic_participant_packed30_jointk4_audio_only.yaml}"
+    [audio_text]="${CONFIG_AUDIO_TEXT:-$CONFIG_DIR/daic_participant_packed30_jointk4_audio_text.yaml}"
 )
 
 for path in "$AUDIT_SCRIPT" "$TRAIN_WORKER" "$EVAL_WORKER" "$EXTRACT_WORKER" "$HEADS_WORKER" "$AUDIT_WORKER" "${CONFIG_BY_MODALITY[@]}"; do
