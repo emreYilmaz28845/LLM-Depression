@@ -65,7 +65,10 @@ for line in Path(sys.argv[3]).read_text(encoding="utf-8").splitlines():
         continue
     parts = line.split("\t")
     if len(parts) < 7:
-        raise SystemExit(f"Cells row must have 7 columns (dataset modality fold train_ok failed_train failed_eval failed_hidden): {line}")
+        raise SystemExit(f"Cells row must have at least 7 columns (dataset modality fold train_ok failed_train failed_eval failed_hidden): {line}")
+    for term in parts[7:10]:
+        if term not in ("", "FAILED", "CANCELLED"):
+            raise SystemExit(f"Terminal-event columns must be FAILED, CANCELLED, or empty: {line}")
     if parts[3] not in ("0", "1"):
         raise SystemExit(f"train_ok must be 0 or 1: {line}")
     try:
@@ -86,7 +89,8 @@ for item in matrix["experiments"]:
     run_root = str(config["output_dirs"]["run_root"]).replace("${PROJECT_ROOT}", str(root))
     for cell in cells:
         if (cell[0], cell[1]) == key:
-            print("\t".join((str(config_path), run_root, "1" if item["separate_eval"] else "0", cell[0], cell[1], cell[2], cell[3], cell[4], cell[5], cell[6] if len(cell) > 6 else "")))
+            terms = [cell[i] if len(cell) > i else "" for i in (7, 8, 9)]
+            print("\t".join((str(config_path), run_root, "1" if item["separate_eval"] else "0", cell[0], cell[1], cell[2], cell[3], cell[4], cell[5], cell[6] if len(cell) > 6 else "", *terms)))
 missing = wanted - matched
 if missing:
     raise SystemExit(f"Cells reference unknown dataset/modality: {sorted(missing)}")
@@ -122,7 +126,7 @@ if [ "$DRY_RUN" = 0 ]; then
 fi
 
 for spec in "${CELL_SPECS[@]}"; do
-    IFS=$'\t' read -r config run_root separate_eval dataset modality fold train_ok failed_train failed_eval failed_hidden <<< "$spec"
+    IFS=$'\t' read -r config run_root separate_eval dataset modality fold train_ok failed_train failed_eval failed_hidden train_term eval_term hidden_term <<< "$spec"
     run_name_base="harmonized_v1_${RUN_ID}_${dataset}_${modality}"
     if [ "$train_ok" = "1" ]; then
         run_name="$run_name_base"
@@ -269,35 +273,41 @@ events.append(lifecycle.new_job_event(
 for event in events:
     lifecycle.append_job_event(run_root / "jobs.jsonl", event)
 PY
-        python - "$original_fold_dir" "$original_context_path" "$train_ok" "$failed_train" "$failed_eval" "$failed_hidden" "$REASON" "$ORIGINAL_TERMINAL_EVENT" "$PROJECT_ROOT" <<'PY'
+        python - "$original_fold_dir" "$original_context_path" "$train_ok" "$failed_train" "$failed_eval" "$failed_hidden" "$REASON" "$ORIGINAL_TERMINAL_EVENT" "$train_term" "$eval_term" "$hidden_term" "$PROJECT_ROOT" <<'PY'
 import json, sys
 from pathlib import Path
-sys.path.insert(0, sys.argv[9])
+sys.path.insert(0, sys.argv[12])
 from src.experiment_tracking import lifecycle
 
-original_fold_dir, original_context_path, train_ok, failed_train, failed_eval, failed_hidden, reason, terminal_event = sys.argv[1:9]
+original_fold_dir, original_context_path, train_ok, failed_train, failed_eval, failed_hidden, reason, terminal_event, train_term, eval_term, hidden_term = sys.argv[1:12]
 context = json.loads(Path(original_context_path).read_text(encoding="utf-8"))
 attempt = context["attempt_id"]
 fold_n = int(context["fold"])
-terminal_status = terminal_event
+
+def terminal_type(value: str) -> str:
+    return value if value in ("FAILED", "CANCELLED") else terminal_event
+
 events = []
 if train_ok == "0":
+    event_type = terminal_type(train_term)
     events.append(lifecycle.new_job_event(
-        job_key="train", job_type="train", event_type=terminal_event,
+        job_key="train", job_type="train", event_type=event_type,
         attempt_id=attempt, fold=fold_n,
-        slurm_job_id=failed_train or None, status=terminal_status, reason=reason,
+        slurm_job_id=failed_train or None, status=event_type, reason=reason,
     ))
 if failed_eval and failed_eval not in ("", "None"):
+    event_type = terminal_type(eval_term)
     events.append(lifecycle.new_job_event(
-        job_key="best_eval", job_type="evaluation", event_type=terminal_event,
+        job_key="best_eval", job_type="evaluation", event_type=event_type,
         attempt_id=attempt, fold=fold_n,
-        slurm_job_id=failed_eval, status=terminal_status, reason=reason,
+        slurm_job_id=failed_eval, status=event_type, reason=reason,
     ))
 if failed_hidden and failed_hidden not in ("", "None"):
+    event_type = terminal_type(hidden_term)
     events.append(lifecycle.new_job_event(
-        job_key="hidden_fixed", job_type="hidden_classifier", event_type=terminal_event,
+        job_key="hidden_fixed", job_type="hidden_classifier", event_type=event_type,
         attempt_id=attempt, fold=fold_n,
-        slurm_job_id=failed_hidden, status=terminal_status, reason=reason,
+        slurm_job_id=failed_hidden, status=event_type, reason=reason,
     ))
 for event in events:
     lifecycle.append_job_event(Path(original_fold_dir) / "jobs.jsonl", event)
