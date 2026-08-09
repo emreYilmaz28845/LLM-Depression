@@ -40,7 +40,7 @@ def _row(subject: str, index: int, label: int, transcript: str) -> dict:
 
 
 def test_audio_only_diff_is_limited_to_independent_construction() -> None:
-    main = _without_output_root(load_yaml(ROOT / "configs/main/daic_audio_only_selposf1_tf.yaml"))
+    main = _without_output_root(load_yaml(ROOT / "configs/archive/pre_harmonized_posf1_20260809/daic/daic_audio_only_selposf1_tf.yaml"))
     experiment = _without_output_root(load_yaml(AUDIO_CONFIG))
     assert main["data"].pop("sample_mode") == "subject_audio"
     assert main["data"].pop("chunks_per_subject") == 4
@@ -64,7 +64,7 @@ def test_audio_only_diff_is_limited_to_independent_construction() -> None:
 
 
 def test_text_only_is_the_main_subject_recipe_with_isolated_output() -> None:
-    main = _without_output_root(load_yaml(ROOT / "configs/main/daic_text_only_selposf1_tf.yaml"))
+    main = _without_output_root(load_yaml(ROOT / "configs/archive/pre_harmonized_posf1_20260809/daic/daic_text_only_selposf1_tf.yaml"))
     experiment = _without_output_root(load_yaml(TEXT_CONFIG))
     assert experiment == main
     assert load_yaml(TEXT_CONFIG)["data"]["sample_mode"] == "subject"

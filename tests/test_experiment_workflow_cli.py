@@ -136,7 +136,7 @@ def _run_script(script: str, *args: str) -> subprocess.CompletedProcess:
 
 def test_plan_action_prints_matrix_and_endpoints() -> None:
     group_def = PROJECT_ROOT / "experiments" / "schemas" / "experiment_group.v1.schema.json"
-    config = PROJECT_ROOT / "configs" / "main" / "daic_audio_text_selposf1_tf.yaml"
+    config = PROJECT_ROOT / "configs" / "main" / "daic_audio_text_harmonized_selmacrof1_tf.yaml"
     result = _run_script(
         "submit_experiment.sh",
         "plan",

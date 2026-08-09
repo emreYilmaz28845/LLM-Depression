@@ -11,13 +11,13 @@
 #   RUN_NAME_PREFIX=cmdc_tf bash scripts/run_cmdc_cv.sh
 #
 # Override the config set or folds if needed:
-#   CONFIGS="$PROJECT_ROOT/configs/main/cmdc_audio_only_selposf1_tf.yaml" \
+#   CONFIGS="$PROJECT_ROOT/configs/main/cmdc_audio_only_harmonized_selmacrof1_tf.yaml" \
 #     RUN_NAME_PREFIX=cmdc_tf bash scripts/run_cmdc_cv.sh
 
 set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
-CONFIGS="${CONFIGS:-$PROJECT_ROOT/configs/main/cmdc_audio_only_selposf1_tf.yaml $PROJECT_ROOT/configs/main/cmdc_text_only_selposf1_tf.yaml $PROJECT_ROOT/configs/main/cmdc_audio_text_selposf1_tf.yaml}"
+CONFIGS="${CONFIGS:-$PROJECT_ROOT/configs/main/cmdc_audio_only_harmonized_selmacrof1_tf.yaml $PROJECT_ROOT/configs/main/cmdc_text_only_harmonized_selmacrof1_tf.yaml $PROJECT_ROOT/configs/main/cmdc_audio_text_harmonized_selmacrof1_tf.yaml}"
 FOLDS="${FOLDS:-0 1 2 3 4}"
 RUN_NAME_PREFIX="${RUN_NAME_PREFIX:-cmdc_tf}"
 CV_SUBMIT_BEST_EVAL="${CV_SUBMIT_BEST_EVAL:-1}"

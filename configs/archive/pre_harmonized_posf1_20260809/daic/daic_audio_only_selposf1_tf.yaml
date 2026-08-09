@@ -1,3 +1,4 @@
+# Archived 2026-08-09 before the harmonized macro-F1 recipe.
 dataset: daic
 seed: 1337
 dataset_root: ${DAIC_DATASET_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/DAIC-WOZ/preprocessed}
@@ -7,9 +8,9 @@ model_name_or_path: /gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instru
 output_dirs:
   manifest_dir: ${PROJECT_ROOT}/outputs/manifests
   split_dir: ${PROJECT_ROOT}/outputs/splits
-  run_root: ${PROJECT_ROOT}/output_model/audio_text/daic
+  run_root: ${PROJECT_ROOT}/output_model/subject_audio/daic
 prompt:
-  system: You are a psychologist analyzing speech and transcript information for depression screening.
+  system: You are a psychologist analyzing speech audio for depression screening.
   user_template: |-
     {audio_context_block}
     {transcript_block}Based on the {decision_basis}, determine whether the subject is {label_descriptor}.
@@ -19,15 +20,16 @@ labels:
   label_vocab_version: legacy_english_labels
 data:
   use_audio: true
-  use_text: true
+  use_text: false
   silence_audio: false
   # Subject-level audio: one example per subject from a FIXED K chunks. Fixed K is
   # required for leakage safety on DAIC: chunk count perfectly encodes the label
   # (non-dep=10, dep=15), so a constant count per subject carries zero label info.
   # Training samples K per epoch (random_k, unchanged); val/test use COMPLETE
   # COVERAGE via balanced K=4 joint bundles (min-cover: 5 bundles for 10 chunks,
-  # 15 bundles for 15 chunks), score margins averaged per subject. This is the
-  # full-coverage protocol validated on 2026-08-05 (A+T: 0.703 -> 0.800 pos F1).
+  # 15 bundles for 15 chunks), score margins averaged per subject. Full coverage
+  # was validated on 2026-08-05; for audio-only it lowers recall vs fixed4 (the
+  # canonical checkpoint gains are on audio+text).
   sample_mode: subject_audio
   chunks_per_subject: 4
   eval_chunk_policy: balanced_joint_cover
@@ -79,8 +81,6 @@ training:
   dataloader_num_workers: 0
   audio_budget_audit: true
   max_grad_norm: 1.0
-  # Select best_model on positive-F1 (averages both classes → less jumpy than the
-  # default positive-only F1 on N=35 val / 12 positives). mode auto → max.
   selection_metric: inner_val_positive_f1
   selection_metric_mode: max
   early_stopping:
@@ -90,8 +90,6 @@ training:
     patience: 3
     min_delta: 0.0
 evaluation:
-  # Positive-F1 SELECTION (see training.selection_metric) + teacher-forced test verdict.
-  # Read headline/binary_strict_* (INVALID counted as wrong); ignore valid_only_*.
   sample_prediction_mode: original_teacher_forced
   aggregation_level: subject
   generation_max_new_tokens: 8

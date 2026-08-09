@@ -60,7 +60,7 @@ config_for() {
     local stage_kind="$1"
     local modality="$2"
     if [ "$stage_kind" = "baseline" ]; then
-        printf '%s/configs/main/daic_%s_selposf1_tf.yaml\n' \
+        printf '%s/configs/archive/pre_harmonized_posf1_20260809/daic/daic_%s_selposf1_tf.yaml\n' \
             "$PROJECT_ROOT" "$modality"
         return 0
     fi
