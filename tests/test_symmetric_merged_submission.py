@@ -445,10 +445,19 @@ def test_merged_train_preflight_does_not_self_create_an_incomplete_run() -> None
 def test_merged_train_extends_process_group_timeout_for_rank_zero_selection() -> None:
     source = Path("src/merged/train.py").read_text(encoding="utf-8")
 
-    assert "InitProcessGroupKwargs(timeout=timedelta(minutes=30))" in source
+    assert "InitProcessGroupKwargs(" in source
+    assert 'dist_timeout_minutes' in source
+    assert "timeout=timedelta(" in source
     assert "TORCH_DISTRIBUTED_DEFAULT_TIMEOUT" not in Path(
         "scripts/run_symmetric_merged_train_slurm.sh"
     ).read_text(encoding="utf-8")
+
+
+def test_merged_configs_set_dist_timeout_minutes() -> None:
+    for path in Path("configs/experiments/merged").glob("symmetric_merged_harmonized_*.yaml"):
+        config = load_merged_config(path)
+        assert int(config["training"]["dist_timeout_minutes"]) >= 120
+
 
 
 def test_merged_postprocess_preflight_does_not_self_create_an_incomplete_run() -> None:

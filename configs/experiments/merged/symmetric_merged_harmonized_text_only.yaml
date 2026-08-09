@@ -38,6 +38,7 @@ protocol_settings:
   daic_official_test_only: true
 training:
   num_train_epochs: 20
+  dist_timeout_minutes: 180
   final_epoch_policy: rounded_median_selected_epoch
   learning_rate: 2.0e-4
   weight_decay: 0.0
