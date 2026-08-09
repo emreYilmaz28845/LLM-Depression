@@ -197,18 +197,25 @@ PY
     if [ "$separate_eval" = "1" ]; then
         aux_lane=$((aux_index % MAX_CONCURRENT_AUX))
         aux_throttle="${aux_lanes[$aux_lane]:-}"
-        eval_dep="$(dependency_arg "$chain_job" "$aux_throttle")"
         if [ "$train_ok" = "1" ]; then
+            # The original train already completed; its job id may have been
+            # purged from Slurm accounting, so no afterok dependency is used.
+            eval_dep="$(dependency_arg "" "$aux_throttle" || true)"
+            eval_chain=""
             eval_out="$fold_dir/best_model/standalone_eval_${RETRY_TAG}"
         else
+            eval_dep="$(dependency_arg "$chain_job" "$aux_throttle")"
+            eval_chain="$chain_job"
             eval_out="$fold_dir/best_model/standalone_eval"
         fi
-        eval_cmd=(sbatch --parsable --job-name="hre-${dataset:0:4}-${modality:0:2}-f$fold" "$eval_dep" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$config,FOLD=$fold,RUN_NAME=$run_name,SKIP_MANIFEST_BUILD=1,EXPERIMENT_CONTEXT=$context_path,CHECKPOINT_DIR=$fold_dir/best_model,OUTPUT_DIR=$eval_out" "$EVAL_WORKER")
+        eval_cmd=(sbatch --parsable --job-name="hre-${dataset:0:4}-${modality:0:2}-f$fold")
+        [ -n "$eval_dep" ] && eval_cmd+=("$eval_dep")
+        eval_cmd+=(--export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$config,FOLD=$fold,RUN_NAME=$run_name,SKIP_MANIFEST_BUILD=1,EXPERIMENT_CONTEXT=$context_path,CHECKPOINT_DIR=$fold_dir/best_model,OUTPUT_DIR=$eval_out" "$EVAL_WORKER")
         eval_raw="$(submit "${eval_cmd[@]}")"
         eval_job="$(job_id "$eval_raw")"
         aux_lanes[$aux_lane]="$eval_job"
         aux_index=$((aux_index + 1))
-        [ "$DRY_RUN" = 1 ] || printf '%s\t%s\t%s\teval\t%s\t%s,%s\t%s\n' "$dataset" "$modality" "$fold" "$eval_job" "$chain_job" "$aux_throttle" "$failed_eval" >> "$registry"
+        [ "$DRY_RUN" = 1 ] || printf '%s\t%s\t%s\teval\t%s\t%s,%s\t%s\n' "$dataset" "$modality" "$fold" "$eval_job" "$eval_chain" "$aux_throttle" "$failed_eval" >> "$registry"
         chain_job="$eval_job"
     fi
 
@@ -261,7 +268,8 @@ if eval_job:
     events.append(lifecycle.new_job_event(
         job_key="best_eval", job_type="evaluation", event_type="SUBMITTED",
         attempt_id=attempt, fold=fold_n,
-        slurm_job_id=eval_job, dependency_job_ids=[chain_job], status="PENDING",
+        slurm_job_id=eval_job,
+        dependency_job_ids=[] if train_ok == "1" else [chain_job], status="PENDING",
         resubmission_of_job_id=failed_eval or None,
     ))
 events.append(lifecycle.new_job_event(
