@@ -344,6 +344,21 @@ def test_harmonized_recipe_view_falls_back_to_recipe_identity(tmp_path: Path) ->
     assert evaluation.backend == "original_teacher_forced"
 
 
+def test_harmonized_en_recipe_uses_same_qualifiers_as_native(tmp_path: Path) -> None:
+    EN_RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_en_v1"
+    fold_dir = _harmonized_run(tmp_path, dataset="d3tec")
+    run_config = yaml.safe_load((fold_dir / "run_config.yaml").read_text(encoding="utf-8"))
+    run_config["config"]["recipe_id"] = EN_RECIPE
+    (fold_dir / "run_config.yaml").write_text(yaml.safe_dump(run_config), encoding="utf-8")
+    result = _qualify(tmp_path)
+    assert result.status == STATUS_QUALIFIED
+    assert result.reasons == ()
+    evaluation = result.evaluations[0]
+    assert evaluation.evaluation_view == "harmonized_all_windows_full_coverage"
+    assert evaluation.backend == "original_teacher_forced"
+    assert evaluation.metrics_artifact_path.startswith("best_model/standalone_eval/")
+
+
 def test_harmonized_recipe_prefers_standalone_eval_location(tmp_path: Path) -> None:
     fold_dir = _harmonized_run(tmp_path)
     in_train = fold_dir / "eval" / "best_checkpoint"

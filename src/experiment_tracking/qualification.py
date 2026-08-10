@@ -35,6 +35,7 @@ _VIEW_MARKERS = ("k4", "k2", "coverage")
 # the artifact, filename, and evaluation config carry no view.
 RECIPE_VIEW_FALLBACK = {
     "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1": "harmonized_all_windows_full_coverage",
+    "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_en_v1": "harmonized_all_windows_full_coverage",
 }
 
 # Recipe ids that define one canonical best-eval location; when several best
@@ -42,6 +43,7 @@ RECIPE_VIEW_FALLBACK = {
 # are recorded as duplicate-evidence warnings instead of quarantining.
 RECIPE_EVAL_PRECEDENCE = {
     "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1": ("best_model/standalone_eval",),
+    "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_en_v1": ("best_model/standalone_eval",),
 }
 
 # Recipes whose documented protocol is cv train_val: the outer fold is both the
@@ -49,6 +51,7 @@ RECIPE_EVAL_PRECEDENCE = {
 # a protocol property, not an evidence defect.
 RECIPE_ALLOWED_TRAIN_VAL = {
     "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1",
+    "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_en_v1",
 }
 
 
