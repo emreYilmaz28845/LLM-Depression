@@ -309,3 +309,86 @@ def test_is_reportable_applies_job_history_check_only_when_requested() -> None:
     assert ok, issues
     ok, issues = is_reportable(evaluation, hashes_present=hashes)
     assert ok, issues
+
+
+HARMONIZED_RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1"
+
+
+def _harmonized_run(tmp_path: Path, *, dataset: str = "d3tec") -> Path:
+    fold_dir = build_standard_run(tmp_path, run_name="harmonized_run")
+    for stale in (fold_dir / "best_model" / "standalone_eval").glob("metrics_*.json"):
+        stale.unlink()
+    write_run_config(
+        fold_dir,
+        dataset=dataset,
+        split_mode="cv",
+        cv_protocol="train_val_test",
+        final_eval_split=None,
+        final_eval_partition=None,
+        recipe_id=HARMONIZED_RECIPE,
+    )
+    write_standalone_eval(
+        fold_dir,
+        metrics_files=["metrics_original_teacher_forced.json"],
+        contents=[metrics_content(view=None)],
+    )
+    return fold_dir
+
+
+def test_harmonized_recipe_view_falls_back_to_recipe_identity(tmp_path: Path) -> None:
+    _harmonized_run(tmp_path)
+    result = _qualify(tmp_path)
+    assert result.status == STATUS_QUALIFIED
+    evaluation = result.evaluations[0]
+    assert evaluation.evaluation_view == "harmonized_all_windows_full_coverage"
+    assert evaluation.backend == "original_teacher_forced"
+
+
+def test_harmonized_recipe_prefers_standalone_eval_location(tmp_path: Path) -> None:
+    fold_dir = _harmonized_run(tmp_path)
+    in_train = fold_dir / "eval" / "best_checkpoint"
+    in_train.mkdir(parents=True)
+    (in_train / "metrics_original_teacher_forced.json").write_text(
+        json.dumps(metrics_content(view=None)), encoding="utf-8"
+    )
+    result = _qualify(tmp_path)
+    assert result.status == STATUS_QUALIFIED
+    assert result.reasons == ()
+    evaluation = result.evaluations[0]
+    assert evaluation.metrics_artifact_path.startswith("best_model/standalone_eval/")
+    assert any("duplicate evaluation evidence" in warning for warning in result.warnings)
+
+
+def test_level_suffixed_metrics_copy_is_not_ambiguous(tmp_path: Path) -> None:
+    fold_dir = _harmonized_run(tmp_path)
+    (fold_dir / "best_model" / "standalone_eval" / "metrics_subject_level_original_teacher_forced.json").write_text(
+        json.dumps(metrics_content(view=None)), encoding="utf-8"
+    )
+    result = _qualify(tmp_path)
+    assert result.status == STATUS_QUALIFIED
+    assert result.reasons == ()
+    assert any("level-suffixed metrics copy ignored" in warning for warning in result.warnings)
+
+
+def test_harmonized_train_val_reports_without_held_out_test_warning(tmp_path: Path) -> None:
+    fold_dir = build_standard_run(tmp_path, run_name="harmonized_train_val_run")
+    write_run_config(
+        fold_dir,
+        dataset="turkish",
+        split_mode="cv",
+        cv_protocol="train_val",
+        final_eval_split=None,
+        final_eval_partition=None,
+        recipe_id=HARMONIZED_RECIPE,
+    )
+    write_standalone_eval(
+        fold_dir,
+        metrics_files=["metrics_original_teacher_forced.json"],
+        contents=[metrics_content(view=None)],
+    )
+    result = _qualify(tmp_path)
+    assert result.status == STATUS_QUALIFIED
+    evaluation = result.evaluations[0]
+    assert evaluation.split_protocol == "train_val"
+    assert not any("no held-out test split" in warning for warning in evaluation.warnings)
+    assert evaluation.reportable
