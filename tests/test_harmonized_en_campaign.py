@@ -429,6 +429,32 @@ def test_synthetic_translation_cache_gate(tmp_path: Path) -> None:
     assert rejected[0]["reasons"] == ["source hash mismatch"]
 
 
+def test_context_fit_assembly_dedupes_natural_units_like_runtime() -> None:
+    from scripts.prepare_harmonized_en_mn5 import _join_full_subject_transcripts
+
+    def android_row(sample_id, turn_id, text):
+        return {
+            "dataset": "androids_interview",
+            "subject_id": "S1",
+            "sample_id": sample_id,
+            "response_id": f"r{turn_id}",
+            "recording_id": "rec1",
+            "turn_id": turn_id,
+            "prompt_id": 1,
+            "question_id": "1",
+            "full_turn_transcript": text,
+            "transcript": text[:10],
+        }
+
+    rows = [
+        android_row("t1_w00", 1, "First turn text."),
+        android_row("t1_w01", 1, "First turn text."),
+        android_row("t2_w00", 2, "Second turn text."),
+    ]
+    joined = _join_full_subject_transcripts(rows)
+    assert joined == {"S1": "First turn text.\nSecond turn text."}
+
+
 def test_retry_script_english_compatibility_dry_run(tmp_path: Path) -> None:
     cells = tmp_path / "cells.tsv"
     cells.write_text("d3tec\taudio_text\t0\t0\t123456\t\t\tFAILED\n", encoding="utf-8")
