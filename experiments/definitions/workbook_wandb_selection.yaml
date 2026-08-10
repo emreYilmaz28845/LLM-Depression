@@ -4079,7 +4079,13 @@ entries:
   - legacy-legacy-attempt-v1-321d9b6902a999bf79a8c03b
   expected_folds:
   - 0
-  required_evaluations: []
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
   group: Harmonized standalone
   wandb_policy: sync
   blocking_reasons: []
@@ -4129,7 +4135,13 @@ entries:
   - legacy-legacy-attempt-v1-9ef808110286daf6402336d6
   expected_folds:
   - 0
-  required_evaluations: []
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
   group: Harmonized standalone
   wandb_policy: sync
   blocking_reasons: []
@@ -4176,7 +4188,13 @@ entries:
   - legacy-legacy-attempt-v1-313e412848c3f380eede8eed
   expected_folds:
   - 0
-  required_evaluations: []
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
   group: Harmonized standalone
   wandb_policy: sync
   blocking_reasons: []
@@ -4231,7 +4249,13 @@ entries:
   - 2
   - 3
   - 4
-  required_evaluations: []
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: response_subject
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
   group: Harmonized standalone
   wandb_policy: sync
   blocking_reasons: []
@@ -4291,7 +4315,13 @@ entries:
   - 2
   - 3
   - 4
-  required_evaluations: []
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: response_subject
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
   group: Harmonized standalone
   wandb_policy: sync
   blocking_reasons: []
@@ -4346,7 +4376,13 @@ entries:
   - 2
   - 3
   - 4
-  required_evaluations: []
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
   group: Harmonized standalone
   wandb_policy: sync
   blocking_reasons: []
@@ -4401,7 +4437,13 @@ entries:
   - 2
   - 3
   - 4
-  required_evaluations: []
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: response_subject
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
   group: Harmonized standalone
   wandb_policy: sync
   blocking_reasons: []
@@ -4461,7 +4503,13 @@ entries:
   - 2
   - 3
   - 4
-  required_evaluations: []
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: response_subject
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
   group: Harmonized standalone
   wandb_policy: sync
   blocking_reasons: []
@@ -4516,7 +4564,13 @@ entries:
   - 2
   - 3
   - 4
-  required_evaluations: []
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
   group: Harmonized standalone
   wandb_policy: sync
   blocking_reasons: []
@@ -4571,7 +4625,13 @@ entries:
   - 2
   - 3
   - 4
-  required_evaluations: []
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: response_subject
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
   group: Harmonized standalone
   wandb_policy: sync
   blocking_reasons: []
@@ -4631,7 +4691,13 @@ entries:
   - 2
   - 3
   - 4
-  required_evaluations: []
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: response_subject
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
   group: Harmonized standalone
   wandb_policy: sync
   blocking_reasons: []
@@ -4686,7 +4752,13 @@ entries:
   - 2
   - 3
   - 4
-  required_evaluations: []
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
   group: Harmonized standalone
   wandb_policy: sync
   blocking_reasons: []
@@ -4741,7 +4813,13 @@ entries:
   - 2
   - 3
   - 4
-  required_evaluations: []
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: response_subject
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
   group: Harmonized standalone
   wandb_policy: sync
   blocking_reasons: []
@@ -4801,7 +4879,13 @@ entries:
   - 2
   - 3
   - 4
-  required_evaluations: []
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: response_subject
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
   group: Harmonized standalone
   wandb_policy: sync
   blocking_reasons: []
@@ -4856,7 +4940,13 @@ entries:
   - 2
   - 3
   - 4
-  required_evaluations: []
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
   group: Harmonized standalone
   wandb_policy: sync
   blocking_reasons: []
