@@ -1,9 +1,9 @@
 schema_version: audiollm.workbook_wandb_selection.v1
 workbook:
   path: depression_results_clean.xlsx
-  sha256: 74d7a234fd84cbb70b6c661523aa39e359fff85ec96e7c6b0d1530fa0c610918
+  sha256: 7e51f3e9226430fa5a3c236698ddcd4122feddd2ed28e4cab9c9a4f5a59372f4
   builder_path: scripts/build_clean_workbook.py
-  builder_sha256: a19ed2d2f03c5d39ee017accacd7e8712769e2541e478c8aed86e7ad87b35f33
+  builder_sha256: 89217173988c56ad672ac5d3a555a28052aa937bd4bc6476a0c3b4763d6a336c
   provenance_sheet: Provenance
 entries:
 - selection_id: DAIC packed30 family|DAIC|Canonical Audio + Text|LogReg raw
