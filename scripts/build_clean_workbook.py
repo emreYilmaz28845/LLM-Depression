@@ -907,13 +907,14 @@ def _harmonized_provenance(ws, put) -> None:
                 HARMONIZED_ARTIFACT,
                 "recomputed 2026-08-10 from local predictions/metrics")
             logreg, xgb = HARMONIZED_STANDALONE_HEADS[(dataset, modality)]
+            heads_run = f"{run}_{dataset.lower().replace(' ', '_')}_{mod_key}"
             put("Harmonized heads", dataset, modality, "LogReg head", logreg,
-                f"{run}_{mod_key} (best-model hidden features)",
+                f"{heads_run} (best-model hidden features, retry _r1 feature dirs)",
                 "5-fold mean subject-level, logreg_raw",
                 HARMONIZED_HEADS_ARTIFACT,
                 "recomputed 2026-08-10 from local fold metrics")
             put("Harmonized heads", dataset, modality, "XGBoost fixed", xgb,
-                f"{run}_{mod_key} (best-model hidden features)",
+                f"{heads_run} (best-model hidden features, retry _r1 feature dirs)",
                 "5-fold mean subject-level, xgb_raw",
                 HARMONIZED_HEADS_ARTIFACT,
                 "recomputed 2026-08-10 from local fold metrics")
