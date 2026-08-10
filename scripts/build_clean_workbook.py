@@ -91,7 +91,10 @@ def _delta_fill(value: float | None) -> PatternFill | None:
     return NEUTRAL_FILL
 
 
-def _delta_cell(ws, row: int, col: int, value: float) -> None:
+def _delta_cell(ws, row: int, col: int, value: float | None) -> None:
+    if value is None:
+        _body_cell(ws, row, col, None)
+        return
     _body_cell(ws, row, col, round(value, 4), fmt="0.0000")
     fill = _delta_fill(value)
     if fill is not None:
@@ -290,6 +293,83 @@ EN_HEADS_NATIVE: dict[tuple[str, str], tuple[float, float]] = {}
 
 EN_HEADS_EN: dict[tuple[str, str], tuple[float, float]] = {}
 
+# --------------------------------------------------------------------------- harmonized EN
+# Harmonized English-translation campaign (Issue #20 / PR #21; recipe
+# harmonized_full_transcript_single30_allwindows_selmacrof1_tf_en_v1; campaign
+# harmonized_en_v1_prod_20260810T152759_5dc499c4; source 5dc499c4, clean main).
+# Only transcript language differs from the native harmonized control. Values
+# recomputed 2026-08-10 from locally synced artifacts (predictions recomputed,
+# metrics matched); native macro-F1 reproduces the native harmonized campaign
+# values exactly. Audio-only cells reuse the shared native control: no new
+# training (delta zero by definition).
+HARMONIZED_EN_CAMPAIGN = {
+    "campaign_id": "harmonized_en_v1_prod_20260810T152759_5dc499c4",
+    "source_sha": "5dc499c4e0e604901072be660f3fb68a9fecec0b",
+    "github_issue": 20,
+    "github_pr": 21,
+    "recipe_id": "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_en_v1",
+    "config_sha256": {
+        "D3TEC": {"Audio + Text": "8fa341856fef769e", "Text only": "5fc4231da4615142"},
+        "Androids Interview": {"Audio + Text": "b1b6dafd27219c72", "Text only": "c93f40b36d995a55"},
+        "CMDC": {"Audio + Text": "467e0b668228c96f", "Text only": "22769cd4c22e16f6"},
+        "Turkish": {"Audio + Text": "1c43453ef2fa880c", "Text only": "3b0bb378d0d9b505"},
+    },
+    "manifest_sha256": {
+        "D3TEC": "4c2c78f97c7ece41", "Androids Interview": "e9f9ffac747aad93",
+        "CMDC": "17a9fe5ea428baf3", "Turkish": "68f6c237175a1aea",
+    },
+    "split_sha256": {
+        "D3TEC": "6c3cffd04152260d", "Androids Interview": "53f4e80aceedb22e",
+        "CMDC": "09cfb5925ec50362", "Turkish": "f1ca03d18f5ad1c9",
+    },
+    "translation_cache_sha256": {
+        "D3TEC": "6d11f8f303206dcc", "Androids Interview": "261005d04e462f2c",
+        "CMDC": "3e141f6f341e2103", "Turkish": "f9cd2748f7718e6f",
+    },
+    "translation_cache_root": "harmonized_en_complete_v1 (7,827 accepted, 0 rejected)",
+}
+
+# (dataset, modality) -> (native_macro, native_posf1, en_macro, en_posf1, aggregation, shared)
+HARMONIZED_EN_QWEN: dict[tuple[str, str], tuple[float, float, float, float, str, bool]] = {
+    ("D3TEC", "Audio + Text"): (0.5589, 0.5091, 0.6125, 0.6000, "pooled 5-fold subject-level", False),
+    ("D3TEC", "Audio only"): (0.6649, 0.6000, 0.6649, 0.6000, "pooled 5-fold subject-level", True),
+    ("D3TEC", "Text only"): (0.6113, 0.5862, 0.5465, 0.5758, "pooled 5-fold subject-level", False),
+    ("Androids Interview", "Audio + Text"): (0.8606, 0.8750, 0.8873, 0.8960, "pooled 5-fold subject-level", False),
+    ("Androids Interview", "Audio only"): (0.8690, 0.8837, 0.8690, 0.8837, "pooled 5-fold subject-level", True),
+    ("Androids Interview", "Text only"): (0.7317, 0.7826, 0.7921, 0.8065, "pooled 5-fold subject-level", False),
+    ("CMDC", "Audio + Text"): (0.9700, 0.9600, 0.9856, 0.9818, "5-fold mean", False),
+    ("CMDC", "Audio only"): (0.9516, 0.9318, 0.9516, 0.9318, "5-fold mean", True),
+    ("CMDC", "Text only"): (0.9713, 0.9636, 0.9713, 0.9636, "5-fold mean", False),
+    ("Turkish", "Audio + Text"): (0.6666, 0.7822, 0.6295, 0.7925, "5-fold mean", False),
+    ("Turkish", "Audio only"): (0.5137, 0.7719, 0.5137, 0.7719, "5-fold mean", True),
+    ("Turkish", "Text only"): (0.6502, 0.7817, 0.6641, 0.7957, "5-fold mean", False),
+}
+
+# (dataset, modality) -> (native_logreg, native_xgb, en_logreg, en_xgb) — 5-fold mean
+# subject-level macro-F1 (HARMONIZED_STANDALONE_HEADS convention). Native values
+# from STANDALONE_HEADS (verified 2026-08-10).
+HARMONIZED_EN_HEADS: dict[tuple[str, str], tuple[float, float, float, float]] = {
+    ("D3TEC", "Audio + Text"): (0.4988, 0.5585, 0.5464, 0.6134),
+    ("D3TEC", "Audio only"): (0.6031, 0.5404, 0.6031, 0.5404),
+    ("D3TEC", "Text only"): (0.4651, 0.5911, 0.5226, 0.5800),
+    ("Androids Interview", "Audio + Text"): (0.8745, 0.8656, 0.8802, 0.8562),
+    ("Androids Interview", "Audio only"): (0.8512, 0.8235, 0.8512, 0.8235),
+    ("Androids Interview", "Text only"): (0.8326, 0.8241, 0.8298, 0.8210),
+    ("CMDC", "Audio + Text"): (0.9614, 0.9700, 0.9856, 0.9134),
+    ("CMDC", "Audio only"): (0.9841, 0.9225, 0.9841, 0.9225),
+    ("CMDC", "Text only"): (0.9420, 0.9683, 0.9698, 0.9528),
+    ("Turkish", "Audio + Text"): (0.6289, 0.6325, 0.6076, 0.5953),
+    ("Turkish", "Audio only"): (0.5209, 0.4271, 0.5209, 0.4271),
+    ("Turkish", "Text only"): (0.5875, 0.5234, 0.5944, 0.5653),
+}
+
+HARMONIZED_EN_EVIDENCE = {
+    "D3TEC": "output_model/harmonized_v1_en/<modality>/d3tec/<run>/fold_<n>/best_model/standalone_eval/",
+    "Androids Interview": "output_model/harmonized_v1_en/<modality>/androids/<run>/fold_<n>/best_model/standalone_eval/",
+    "CMDC": "output_model/harmonized_v1_en/<modality>/cmdc/<run>/fold_<n>/eval/best_validation/",
+    "Turkish": "output_model/harmonized_v1_en/<modality>/turkish_t17_qwen3asr/<run>/fold_<n>/eval/best_validation/",
+}
+
 STANDALONE_QWEN_SOURCE = {
     "DAIC": (
         "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_daic_{audio_text,audio_only,text_only}_r1"
@@ -481,6 +561,92 @@ def build_en(wb: Workbook) -> None:
     ws.freeze_panes = "A5"
 
 
+def build_harmonized_en(wb: Workbook) -> None:
+    ws = wb.create_sheet("Harmonized EN Translation")
+    _widths(ws, {c: 18 for c in "ABCDEFGHIJKLMN"})
+    _title(ws, "Harmonized Recipe — English Translation vs Native (macro-F1 and positive-F1)", 14)
+    campaign = HARMONIZED_EN_CAMPAIGN
+    _note(
+        ws, 2,
+        f"Same harmonized recipe with English transcript overlay; only transcript language differs. "
+        f"Campaign {campaign['campaign_id']}; source {campaign['source_sha'][:8]} (clean main); Issue "
+        f"#{campaign['github_issue']} / PR #{campaign['github_pr']}; recipe {campaign['recipe_id']}; "
+        f"translation cache {campaign['translation_cache_root']}. Teacher-forced, binary-strict, "
+        f"best_model, macro-F1 checkpoint selection, audio encoder frozen. Native macro-F1 reproduces "
+        f"the verified native harmonized campaign values exactly. Audio-only cells reuse the shared "
+        f"native control (no new training).",
+        14, height=88,
+    )
+    _header_row(ws, 4, [
+        "Dataset", "Modality", "Method", "Native macro-F1", "EN macro-F1", "Δ macro-F1",
+        "Native pos-F1", "EN pos-F1", "Δ pos-F1", "Aggregation", "Shared control",
+        "Run / attempt identity", "Hashes (cfg/manifest/split/cache)", "Evidence path",
+    ])
+    row = 5
+    methods = [("qwen", "Qwen"), ("logreg", "LogReg"), ("xgb_fixed", "XGBoost fixed")]
+    en_ds_key = {"D3TEC": "d3tec", "Androids Interview": "androids_interview", "CMDC": "cmdc", "Turkish": "turkish"}
+    en_mod_key = {"Audio + Text": "audio_text", "Audio only": "audio_only", "Text only": "text_only"}
+    for dataset in ["D3TEC", "Androids Interview", "CMDC", "Turkish"]:
+        for modality in ["Audio + Text", "Audio only", "Text only"]:
+            key = (dataset, modality)
+            if key not in HARMONIZED_EN_QWEN:
+                continue
+            nm, np1, em, ep1, agg, shared = HARMONIZED_EN_QWEN[key]
+            nl, nx, el, ex = HARMONIZED_EN_HEADS[key]
+            run = f"harmonized_v1_en_{campaign['campaign_id']}_{en_ds_key[dataset]}_{en_mod_key[modality]}"
+            hashes = (
+                f"{campaign['config_sha256'][dataset].get(modality, '-')}/"
+                f"{campaign['manifest_sha256'][dataset]}/{campaign['split_sha256'][dataset]}/"
+                f"{campaign['translation_cache_sha256'][dataset]}"
+            )
+            evidence = HARMONIZED_EN_EVIDENCE[dataset].replace("<run>", run)
+            for method, label in methods:
+                if method == "qwen":
+                    native_m, en_m, native_p, en_p = nm, em, np1, ep1
+                else:
+                    native_p = en_p = None
+                    if method == "logreg":
+                        native_m, en_m = nl, el
+                    else:
+                        native_m, en_m = nx, ex
+                ws.cell(row, 1, dataset).font = BODY_FONT
+                ws.cell(row, 1).fill = BODY
+                ws.cell(row, 1).alignment = LEFT
+                ws.cell(row, 1).border = BORDER
+                _body_cell(ws, row, 2, modality)
+                _body_cell(ws, row, 3, label)
+                _body_cell(ws, row, 4, native_m, fmt="0.0000")
+                _body_cell(ws, row, 5, en_m, fmt="0.0000")
+                _delta_cell(ws, row, 6, en_m - native_m)
+                _body_cell(ws, row, 7, native_p, fmt="0.0000")
+                _body_cell(ws, row, 8, en_p, fmt="0.0000")
+                _delta_cell(ws, row, 9, (en_p - native_p) if (en_p is not None and native_p is not None) else None)
+                cell = ws.cell(row, 10, agg)
+                cell.font = BODY_FONT
+                cell.alignment = LEFT
+                cell.border = BORDER
+                cell.fill = BODY
+                cell = ws.cell(row, 11, "shared native audio-only control; not separately trained" if shared else "—")
+                cell.font = BODY_FONT
+                cell.alignment = LEFT
+                cell.border = BORDER
+                cell.fill = BODY
+                cell = ws.cell(row, 12, run)
+                cell.font = SMALL_FONT
+                cell.alignment = WRAP
+                cell.border = BORDER
+                cell = ws.cell(row, 13, hashes)
+                cell.font = SMALL_FONT
+                cell.alignment = WRAP
+                cell.border = BORDER
+                cell = ws.cell(row, 14, evidence)
+                cell.font = SMALL_FONT
+                cell.alignment = WRAP
+                cell.border = BORDER
+                row += 1
+    ws.freeze_panes = "A5"
+
+
 def build_merged_vs_standalone(wb: Workbook) -> None:
     ws = wb.create_sheet("Merged vs Standalone MacroF1")
     _widths(ws, {"A": 30, "B": 18, "C": 18, "D": 12, "E": 16})
@@ -568,6 +734,55 @@ def build_provenance(wb: Workbook, *, detailed: bool) -> None:
             put("Standalone", dataset, modality, "Fine-tuned Qwen",
                 STANDALONE_QWEN[(dataset, modality)], run, agg, artifact,
                 "recomputed from local artifact")
+
+    campaign = HARMONIZED_EN_CAMPAIGN
+    en_ds_key = {"D3TEC": "d3tec", "Androids Interview": "androids_interview", "CMDC": "cmdc", "Turkish": "turkish"}
+    en_mod_key = {"Audio + Text": "audio_text", "Audio only": "audio_only", "Text only": "text_only"}
+    en_run_prefix = f"harmonized_v1_en_{campaign['campaign_id']}"
+    for dataset, modality in HARMONIZED_EN_QWEN:
+        nm, np1, em, ep1, agg, shared = HARMONIZED_EN_QWEN[(dataset, modality)]
+        run = f"{en_run_prefix}_{en_ds_key[dataset]}_{en_mod_key[modality]}"
+        hashes = (
+            f"cfg {campaign['config_sha256'][dataset].get(modality, '-')} / "
+            f"manifest {campaign['manifest_sha256'][dataset]} / "
+            f"split {campaign['split_sha256'][dataset]} / "
+            f"cache {campaign['translation_cache_sha256'][dataset]}"
+        )
+        evidence = HARMONIZED_EN_EVIDENCE[dataset].replace("<run>", run)
+        if shared:
+            source = f"shared native audio-only control (native harmonized run; not separately trained); EN cell reuses {run}"
+        else:
+            source = f"campaign {campaign['campaign_id']}, run {run}, folds 0-4, source {campaign['source_sha'][:8]}, Issue #{campaign['github_issue']} / PR #{campaign['github_pr']}"
+        put("Harmonized EN", dataset, modality, "Fine-tuned Qwen", em, source,
+            f"{agg}, teacher-forced, binary-strict, harmonized_all_windows_full_coverage",
+            evidence + "metrics_original_teacher_forced.json + predictions_subject_level.csv",
+            "recomputed from locally synced predictions; native macro-F1 reproduces the verified native value")
+        put("Harmonized EN", dataset, modality, "Qwen positive-F1", ep1, source,
+            f"{agg}, teacher-forced, binary-strict, harmonized_all_windows_full_coverage",
+            evidence + "metrics_original_teacher_forced.json + predictions_subject_level.csv",
+            "recomputed from locally synced predictions")
+    for dataset, modality in HARMONIZED_EN_HEADS:
+        nl, nx, el, ex = HARMONIZED_EN_HEADS[(dataset, modality)]
+        run = f"{en_run_prefix}_{en_ds_key[dataset]}_{en_mod_key[modality]}"
+        source = f"campaign {campaign['campaign_id']}, run {run}, folds 0-4, source {campaign['source_sha'][:8]}"
+        evidence = f"outputs/hidden_classifiers/harmonized_v1_en/{en_ds_key[dataset]}/{run}/fold_<n>/variant_summary.json"
+        for value, method in ((el, "LogReg head (EN)"), (ex, "XGBoost fixed (EN)")):
+            put("Harmonized EN heads", dataset, modality, method, value, source,
+                "5-fold mean, subject-level macro-F1",
+                evidence,
+                "recomputed from locally synced variant_summary.json")
+    for dataset, modality in HARMONIZED_EN_HEADS:
+        nl, nx, el, ex = HARMONIZED_EN_HEADS[(dataset, modality)]
+        run = f"{en_run_prefix}_{en_ds_key[dataset]}_{en_mod_key[modality]}"
+        if modality == "Audio only":
+            source = f"shared native audio-only control (native harmonized heads; not separately trained); EN cell reuses {run}"
+        else:
+            source = f"campaign {campaign['campaign_id']}, run {run}, folds 0-4, source {campaign['source_sha'][:8]}"
+        for value, method in ((nl, "LogReg head (native)"), (nx, "XGBoost fixed (native)")):
+            put("Harmonized EN heads", dataset, modality, method, value, source,
+                "5-fold mean, subject-level macro-F1 (STANDALONE_HEADS convention)",
+                "outputs/hidden_classifiers/<dataset>/ (native campaign; verified 2026-08-10)",
+                "matched to audited hidden-classifier outputs")
     for dataset in DATASETS:
         for modality in MODALITIES:
             logreg, xgb, optuna, os_ = STANDALONE_HEADS[(dataset, modality)]
@@ -863,6 +1078,7 @@ def main() -> None:
     build_summary(wb, detailed=detailed)
     build_merged_summary(wb, detailed=detailed)
     build_en(wb)
+    build_harmonized_en(wb)
     build_merged_vs_standalone(wb)
     build_packed30(wb)
     build_provenance(wb, detailed=detailed)

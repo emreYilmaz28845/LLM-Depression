@@ -1,9 +1,9 @@
 schema_version: audiollm.workbook_wandb_selection.v1
 workbook:
   path: depression_results_clean.xlsx
-  sha256: 9d39ed644f775e03810a85fa22a14974f0fa64f21f57ed32d0c299b5ceeb4137
+  sha256: 16c78b6b13d9c703293d886996673e0b896aae44f0566dcad5681bdf4124dd18
   builder_path: scripts/build_clean_workbook.py
-  builder_sha256: e8f6728421ae8e4fd14ed70b9189c7d830923010b8a95c3b6e4ef0ef6ba06ae1
+  builder_sha256: 08f216d3ddb422b7ce0074ae8ae61937c205ac1b7a3f624990da3e33526d07d8
   provenance_sheet: Provenance
 entries:
 - selection_id: Standalone|DAIC|Audio + Text|Fine-tuned Qwen
@@ -2185,3 +2185,1355 @@ entries:
   blocking_reasons:
   - runs under output_model/experiments non-canonical layout; not importable by current
     discovery
+- selection_id: Harmonized EN|Androids Interview|Audio + Text|Fine-tuned Qwen
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Fine-tuned Qwen
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - legacy-legacy-attempt-v1-5b5509af6e248d603667ddf8
+  - legacy-legacy-attempt-v1-660f2f2c22e08df3d909dd28
+  - legacy-legacy-attempt-v1-590c3d06ce369ccc8283af83
+  - legacy-legacy-attempt-v1-0fd3c1eb10cfdc9e079cc426
+  - legacy-legacy-attempt-v1-6700eab7ad895a3a2b0518ce
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: response_subject
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Harmonized EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Harmonized EN|Androids Interview|Audio + Text|Qwen positive-F1
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Qwen positive-F1
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - legacy-legacy-attempt-v1-5b5509af6e248d603667ddf8
+  - legacy-legacy-attempt-v1-660f2f2c22e08df3d909dd28
+  - legacy-legacy-attempt-v1-590c3d06ce369ccc8283af83
+  - legacy-legacy-attempt-v1-0fd3c1eb10cfdc9e079cc426
+  - legacy-legacy-attempt-v1-6700eab7ad895a3a2b0518ce
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: response_subject
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Harmonized EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Harmonized EN|Androids Interview|Audio only|Fine-tuned Qwen
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: Androids Interview
+    modality: Audio only
+    method: Fine-tuned Qwen
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN|Androids Interview|Audio only|Qwen positive-F1
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: Androids Interview
+    modality: Audio only
+    method: Qwen positive-F1
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN|Androids Interview|Text only|Fine-tuned Qwen
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: Androids Interview
+    modality: Text only
+    method: Fine-tuned Qwen
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - legacy-legacy-attempt-v1-d06a1050cfd7288b692e2422
+  - legacy-legacy-attempt-v1-ac55c41273c882c230eb439c
+  - legacy-legacy-attempt-v1-db7b688d2eccc4f5965135db
+  - legacy-legacy-attempt-v1-bbf0bacc0557622387e934c4
+  - legacy-legacy-attempt-v1-7baa120c2e6d4e07640e647e
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Harmonized EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Harmonized EN|Androids Interview|Text only|Qwen positive-F1
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: Androids Interview
+    modality: Text only
+    method: Qwen positive-F1
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - legacy-legacy-attempt-v1-d06a1050cfd7288b692e2422
+  - legacy-legacy-attempt-v1-ac55c41273c882c230eb439c
+  - legacy-legacy-attempt-v1-db7b688d2eccc4f5965135db
+  - legacy-legacy-attempt-v1-bbf0bacc0557622387e934c4
+  - legacy-legacy-attempt-v1-7baa120c2e6d4e07640e647e
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Harmonized EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Harmonized EN|CMDC|Audio + Text|Fine-tuned Qwen
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: CMDC
+    modality: Audio + Text
+    method: Fine-tuned Qwen
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - legacy-legacy-attempt-v1-30b72f8aed586fb8c0e819fe
+  - legacy-legacy-attempt-v1-18257bf069b33f5af822d7e8
+  - legacy-legacy-attempt-v1-f5f39809fd526fdcd9ad08b7
+  - legacy-legacy-attempt-v1-fd59303b4f4ab36c6350fdb8
+  - legacy-legacy-attempt-v1-31329892737639d12cb6deb0
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Harmonized EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Harmonized EN|CMDC|Audio + Text|Qwen positive-F1
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: CMDC
+    modality: Audio + Text
+    method: Qwen positive-F1
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - legacy-legacy-attempt-v1-30b72f8aed586fb8c0e819fe
+  - legacy-legacy-attempt-v1-18257bf069b33f5af822d7e8
+  - legacy-legacy-attempt-v1-f5f39809fd526fdcd9ad08b7
+  - legacy-legacy-attempt-v1-fd59303b4f4ab36c6350fdb8
+  - legacy-legacy-attempt-v1-31329892737639d12cb6deb0
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Harmonized EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Harmonized EN|CMDC|Audio only|Fine-tuned Qwen
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: CMDC
+    modality: Audio only
+    method: Fine-tuned Qwen
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN|CMDC|Audio only|Qwen positive-F1
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: CMDC
+    modality: Audio only
+    method: Qwen positive-F1
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN|CMDC|Text only|Fine-tuned Qwen
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: CMDC
+    modality: Text only
+    method: Fine-tuned Qwen
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - legacy-legacy-attempt-v1-08ffc58ebe9c2cd169849029
+  - legacy-legacy-attempt-v1-6cacdc2eab1bb43cf5cb5fe7
+  - legacy-legacy-attempt-v1-f86e4ee379a249f9a0d133a2
+  - legacy-legacy-attempt-v1-ad28299b569d73921e02e5ee
+  - legacy-legacy-attempt-v1-8e2b296e5b59f13f943a7c88
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Harmonized EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Harmonized EN|CMDC|Text only|Qwen positive-F1
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: CMDC
+    modality: Text only
+    method: Qwen positive-F1
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - legacy-legacy-attempt-v1-08ffc58ebe9c2cd169849029
+  - legacy-legacy-attempt-v1-6cacdc2eab1bb43cf5cb5fe7
+  - legacy-legacy-attempt-v1-f86e4ee379a249f9a0d133a2
+  - legacy-legacy-attempt-v1-ad28299b569d73921e02e5ee
+  - legacy-legacy-attempt-v1-8e2b296e5b59f13f943a7c88
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Harmonized EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Harmonized EN|D3TEC|Audio + Text|Fine-tuned Qwen
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Fine-tuned Qwen
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - legacy-legacy-attempt-v1-e573b1f75b195b3274df487c
+  - legacy-legacy-attempt-v1-93e54bd69f62c212779d91f7
+  - legacy-legacy-attempt-v1-a03bf71e1ee1713121754880
+  - legacy-legacy-attempt-v1-8ed564db76a5c267e22b7073
+  - legacy-legacy-attempt-v1-24b77c22b5e65bf7aa5e4662
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: response_subject
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Harmonized EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Harmonized EN|D3TEC|Audio + Text|Qwen positive-F1
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Qwen positive-F1
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - legacy-legacy-attempt-v1-e573b1f75b195b3274df487c
+  - legacy-legacy-attempt-v1-93e54bd69f62c212779d91f7
+  - legacy-legacy-attempt-v1-a03bf71e1ee1713121754880
+  - legacy-legacy-attempt-v1-8ed564db76a5c267e22b7073
+  - legacy-legacy-attempt-v1-24b77c22b5e65bf7aa5e4662
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: response_subject
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Harmonized EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Harmonized EN|D3TEC|Audio only|Fine-tuned Qwen
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: D3TEC
+    modality: Audio only
+    method: Fine-tuned Qwen
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN|D3TEC|Audio only|Qwen positive-F1
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: D3TEC
+    modality: Audio only
+    method: Qwen positive-F1
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN|D3TEC|Text only|Fine-tuned Qwen
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: D3TEC
+    modality: Text only
+    method: Fine-tuned Qwen
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - legacy-legacy-attempt-v1-a753c084cf39326282420919
+  - legacy-legacy-attempt-v1-125e0ebb151b36e42a766b09
+  - legacy-legacy-attempt-v1-ada300c85648f2f5599fb7b1
+  - legacy-legacy-attempt-v1-496e3b81ce27828e90aecf00
+  - legacy-legacy-attempt-v1-e9ee7c4773921bb5d1c6b8e1
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Harmonized EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Harmonized EN|D3TEC|Text only|Qwen positive-F1
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: D3TEC
+    modality: Text only
+    method: Qwen positive-F1
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - legacy-legacy-attempt-v1-a753c084cf39326282420919
+  - legacy-legacy-attempt-v1-125e0ebb151b36e42a766b09
+  - legacy-legacy-attempt-v1-ada300c85648f2f5599fb7b1
+  - legacy-legacy-attempt-v1-496e3b81ce27828e90aecf00
+  - legacy-legacy-attempt-v1-e9ee7c4773921bb5d1c6b8e1
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Harmonized EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Harmonized EN|Turkish|Audio + Text|Fine-tuned Qwen
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: Turkish
+    modality: Audio + Text
+    method: Fine-tuned Qwen
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - legacy-legacy-attempt-v1-0084c885ea5702ea7aaed261
+  - legacy-legacy-attempt-v1-ba069ace15e1c8407b08afaa
+  - legacy-legacy-attempt-v1-3c73655155fffe4fff4b25e6
+  - legacy-legacy-attempt-v1-f575a4d004aaa7f00d8a2522
+  - legacy-legacy-attempt-v1-6d86afd051c9c43e7990e3f3
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Harmonized EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Harmonized EN|Turkish|Audio + Text|Qwen positive-F1
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: Turkish
+    modality: Audio + Text
+    method: Qwen positive-F1
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - legacy-legacy-attempt-v1-0084c885ea5702ea7aaed261
+  - legacy-legacy-attempt-v1-ba069ace15e1c8407b08afaa
+  - legacy-legacy-attempt-v1-3c73655155fffe4fff4b25e6
+  - legacy-legacy-attempt-v1-f575a4d004aaa7f00d8a2522
+  - legacy-legacy-attempt-v1-6d86afd051c9c43e7990e3f3
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Harmonized EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Harmonized EN|Turkish|Audio only|Fine-tuned Qwen
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: Turkish
+    modality: Audio only
+    method: Fine-tuned Qwen
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN|Turkish|Audio only|Qwen positive-F1
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: Turkish
+    modality: Audio only
+    method: Qwen positive-F1
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN|Turkish|Text only|Fine-tuned Qwen
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: Turkish
+    modality: Text only
+    method: Fine-tuned Qwen
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - legacy-legacy-attempt-v1-4ec9af74d968b6c989311ad3
+  - legacy-legacy-attempt-v1-08635aad0f5c5f17ec88f529
+  - legacy-legacy-attempt-v1-0c868949c4cd405bfe9572b2
+  - legacy-legacy-attempt-v1-7b07d366c7b115f5ee1c03d9
+  - legacy-legacy-attempt-v1-f37d5e08dc4ca112100995b8
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Harmonized EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Harmonized EN|Turkish|Text only|Qwen positive-F1
+  provenance_key:
+    experiment: Harmonized EN
+    dataset: Turkish
+    modality: Text only
+    method: Qwen positive-F1
+  source_type: ordinary_qwen
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - legacy-legacy-attempt-v1-4ec9af74d968b6c989311ad3
+  - legacy-legacy-attempt-v1-08635aad0f5c5f17ec88f529
+  - legacy-legacy-attempt-v1-0c868949c4cd405bfe9572b2
+  - legacy-legacy-attempt-v1-7b07d366c7b115f5ee1c03d9
+  - legacy-legacy-attempt-v1-f37d5e08dc4ca112100995b8
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Harmonized EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|CMDC|Audio + Text|LogReg head (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: CMDC
+    modality: Audio + Text
+    method: LogReg head (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
+- selection_id: Harmonized EN heads|CMDC|Audio + Text|XGBoost fixed (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: CMDC
+    modality: Audio + Text
+    method: XGBoost fixed (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
+- selection_id: Harmonized EN heads|Androids Interview|Audio + Text|LogReg head (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: LogReg head (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
+- selection_id: Harmonized EN heads|Androids Interview|Audio + Text|XGBoost fixed (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: XGBoost fixed (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
+- selection_id: Harmonized EN heads|Turkish|Audio + Text|LogReg head (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Turkish
+    modality: Audio + Text
+    method: LogReg head (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
+- selection_id: Harmonized EN heads|Turkish|Audio + Text|XGBoost fixed (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Turkish
+    modality: Audio + Text
+    method: XGBoost fixed (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
+- selection_id: Harmonized EN heads|CMDC|Text only|LogReg head (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: CMDC
+    modality: Text only
+    method: LogReg head (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
+- selection_id: Harmonized EN heads|CMDC|Text only|XGBoost fixed (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: CMDC
+    modality: Text only
+    method: XGBoost fixed (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
+- selection_id: Harmonized EN heads|Androids Interview|Text only|LogReg head (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Androids Interview
+    modality: Text only
+    method: LogReg head (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
+- selection_id: Harmonized EN heads|Androids Interview|Text only|XGBoost fixed (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Androids Interview
+    modality: Text only
+    method: XGBoost fixed (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
+- selection_id: Harmonized EN heads|D3TEC|Audio + Text|LogReg head (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: D3TEC
+    modality: Audio + Text
+    method: LogReg head (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
+- selection_id: Harmonized EN heads|D3TEC|Audio + Text|XGBoost fixed (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: D3TEC
+    modality: Audio + Text
+    method: XGBoost fixed (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
+- selection_id: Harmonized EN heads|Turkish|Text only|LogReg head (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Turkish
+    modality: Text only
+    method: LogReg head (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
+- selection_id: Harmonized EN heads|Turkish|Text only|XGBoost fixed (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Turkish
+    modality: Text only
+    method: XGBoost fixed (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
+- selection_id: Harmonized EN heads|D3TEC|Text only|LogReg head (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: D3TEC
+    modality: Text only
+    method: LogReg head (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
+- selection_id: Harmonized EN heads|D3TEC|Text only|XGBoost fixed (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: D3TEC
+    modality: Text only
+    method: XGBoost fixed (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
+- selection_id: Harmonized EN heads|Androids Interview|Audio only|LogReg head (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Androids Interview
+    modality: Audio only
+    method: LogReg head (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|Androids Interview|Audio only|XGBoost fixed (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Androids Interview
+    modality: Audio only
+    method: XGBoost fixed (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|CMDC|Audio only|LogReg head (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: CMDC
+    modality: Audio only
+    method: LogReg head (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|CMDC|Audio only|XGBoost fixed (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: CMDC
+    modality: Audio only
+    method: XGBoost fixed (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|D3TEC|Audio only|LogReg head (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: D3TEC
+    modality: Audio only
+    method: LogReg head (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|D3TEC|Audio only|XGBoost fixed (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: D3TEC
+    modality: Audio only
+    method: XGBoost fixed (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|Turkish|Audio only|LogReg head (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Turkish
+    modality: Audio only
+    method: LogReg head (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|Turkish|Audio only|XGBoost fixed (EN)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Turkish
+    modality: Audio only
+    method: XGBoost fixed (EN)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|Androids Interview|Audio + Text|LogReg head (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: LogReg head (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|Androids Interview|Audio + Text|XGBoost fixed (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: XGBoost fixed (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|Androids Interview|Audio only|LogReg head (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Androids Interview
+    modality: Audio only
+    method: LogReg head (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|Androids Interview|Audio only|XGBoost fixed (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Androids Interview
+    modality: Audio only
+    method: XGBoost fixed (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|Androids Interview|Text only|LogReg head (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Androids Interview
+    modality: Text only
+    method: LogReg head (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|Androids Interview|Text only|XGBoost fixed (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Androids Interview
+    modality: Text only
+    method: XGBoost fixed (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|CMDC|Audio + Text|LogReg head (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: CMDC
+    modality: Audio + Text
+    method: LogReg head (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|CMDC|Audio + Text|XGBoost fixed (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: CMDC
+    modality: Audio + Text
+    method: XGBoost fixed (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|CMDC|Audio only|LogReg head (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: CMDC
+    modality: Audio only
+    method: LogReg head (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|CMDC|Audio only|XGBoost fixed (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: CMDC
+    modality: Audio only
+    method: XGBoost fixed (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|CMDC|Text only|LogReg head (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: CMDC
+    modality: Text only
+    method: LogReg head (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|CMDC|Text only|XGBoost fixed (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: CMDC
+    modality: Text only
+    method: XGBoost fixed (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|D3TEC|Audio + Text|LogReg head (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: D3TEC
+    modality: Audio + Text
+    method: LogReg head (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|D3TEC|Audio + Text|XGBoost fixed (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: D3TEC
+    modality: Audio + Text
+    method: XGBoost fixed (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|D3TEC|Audio only|LogReg head (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: D3TEC
+    modality: Audio only
+    method: LogReg head (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|D3TEC|Audio only|XGBoost fixed (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: D3TEC
+    modality: Audio only
+    method: XGBoost fixed (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|D3TEC|Text only|LogReg head (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: D3TEC
+    modality: Text only
+    method: LogReg head (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|D3TEC|Text only|XGBoost fixed (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: D3TEC
+    modality: Text only
+    method: XGBoost fixed (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|Turkish|Audio + Text|LogReg head (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Turkish
+    modality: Audio + Text
+    method: LogReg head (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|Turkish|Audio + Text|XGBoost fixed (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Turkish
+    modality: Audio + Text
+    method: XGBoost fixed (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|Turkish|Audio only|LogReg head (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Turkish
+    modality: Audio only
+    method: LogReg head (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|Turkish|Audio only|XGBoost fixed (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Turkish
+    modality: Audio only
+    method: XGBoost fixed (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|Turkish|Text only|LogReg head (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Turkish
+    modality: Text only
+    method: LogReg head (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
+- selection_id: Harmonized EN heads|Turkish|Text only|XGBoost fixed (native)
+  provenance_key:
+    experiment: Harmonized EN heads
+    dataset: Turkish
+    modality: Text only
+    method: XGBoost fixed (native)
+  source_type: hidden_classifier
+  reason: harmonized_en_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids: []
+  expected_folds: []
+  required_evaluations: []
+  group: Harmonized EN heads
+  wandb_policy: skip_derived_only
+  blocking_reasons: []
