@@ -4075,15 +4075,14 @@ entries:
   source_type: ordinary_qwen
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
-  attempt_ids: []
-  expected_folds: &id001
+  attempt_ids:
+  - legacy-legacy-attempt-v1-321d9b6902a999bf79a8c03b
+  expected_folds:
   - 0
   required_evaluations: []
   group: Harmonized standalone
-  wandb_policy: pending_importer_support
-  blocking_reasons: &id002
-  - harmonized campaign runs are imported as inventory-only legacy records (evaluation_view
-    None, legacy attempt ids); no qualified importer promotion yet
+  wandb_policy: sync
+  blocking_reasons: []
 - selection_id: Harmonized heads|DAIC|Audio + Text|LogReg head
   provenance_key:
     experiment: Harmonized heads
@@ -4094,11 +4093,14 @@ entries:
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
   attempt_ids: []
-  expected_folds: *id001
+  expected_folds: &id001
+  - 0
   required_evaluations: []
   group: Harmonized heads
   wandb_policy: pending_importer_support
-  blocking_reasons: *id002
+  blocking_reasons: &id002
+  - harmonized campaign runs are imported as inventory-only legacy records (evaluation_view
+    None, legacy attempt ids); no qualified importer promotion yet
 - selection_id: Harmonized heads|DAIC|Audio + Text|XGBoost fixed
   provenance_key:
     experiment: Harmonized heads
@@ -4123,12 +4125,14 @@ entries:
   source_type: ordinary_qwen
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
-  attempt_ids: []
-  expected_folds: *id001
+  attempt_ids:
+  - legacy-legacy-attempt-v1-9ef808110286daf6402336d6
+  expected_folds:
+  - 0
   required_evaluations: []
   group: Harmonized standalone
-  wandb_policy: pending_importer_support
-  blocking_reasons: *id002
+  wandb_policy: sync
+  blocking_reasons: []
 - selection_id: Harmonized heads|DAIC|Audio only|LogReg head
   provenance_key:
     experiment: Harmonized heads
@@ -4168,12 +4172,14 @@ entries:
   source_type: ordinary_qwen
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
-  attempt_ids: []
-  expected_folds: *id001
+  attempt_ids:
+  - legacy-legacy-attempt-v1-313e412848c3f380eede8eed
+  expected_folds:
+  - 0
   required_evaluations: []
   group: Harmonized standalone
-  wandb_policy: pending_importer_support
-  blocking_reasons: *id002
+  wandb_policy: sync
+  blocking_reasons: []
 - selection_id: Harmonized heads|DAIC|Text only|LogReg head
   provenance_key:
     experiment: Harmonized heads
@@ -4213,8 +4219,13 @@ entries:
   source_type: ordinary_qwen
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
-  attempt_ids: []
-  expected_folds: &id003
+  attempt_ids:
+  - legacy-legacy-attempt-v1-78551d96a1eab3bc15d81960
+  - legacy-legacy-attempt-v1-3c6c4da453c8b7e5304f884f
+  - legacy-legacy-attempt-v1-e5551d1f34c269b3f7983e08
+  - legacy-legacy-attempt-v1-93613bed436518e536d91dc5
+  - legacy-legacy-attempt-v1-13f4c4e830ed75b53c5cec06
+  expected_folds:
   - 0
   - 1
   - 2
@@ -4222,8 +4233,8 @@ entries:
   - 4
   required_evaluations: []
   group: Harmonized standalone
-  wandb_policy: pending_importer_support
-  blocking_reasons: *id002
+  wandb_policy: sync
+  blocking_reasons: []
 - selection_id: Harmonized heads|CMDC|Audio + Text|LogReg head
   provenance_key:
     experiment: Harmonized heads
@@ -4234,7 +4245,12 @@ entries:
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
   attempt_ids: []
-  expected_folds: *id003
+  expected_folds: &id003
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
   required_evaluations: []
   group: Harmonized heads
   wandb_policy: pending_importer_support
@@ -4263,12 +4279,22 @@ entries:
   source_type: ordinary_qwen
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
-  attempt_ids: []
-  expected_folds: *id003
+  attempt_ids:
+  - legacy-legacy-attempt-v1-e9eafc4b8434e1850baff28f
+  - legacy-legacy-attempt-v1-cd49800f2742675a051a82e2
+  - legacy-legacy-attempt-v1-cb2fdc7760416a26d6036c9e
+  - legacy-legacy-attempt-v1-1918398242a0527d7141fcee
+  - legacy-legacy-attempt-v1-b528c1f8e64b30006758660e
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
   required_evaluations: []
   group: Harmonized standalone
-  wandb_policy: pending_importer_support
-  blocking_reasons: *id002
+  wandb_policy: sync
+  blocking_reasons: []
 - selection_id: Harmonized heads|CMDC|Audio only|LogReg head
   provenance_key:
     experiment: Harmonized heads
@@ -4308,12 +4334,22 @@ entries:
   source_type: ordinary_qwen
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
-  attempt_ids: []
-  expected_folds: *id003
+  attempt_ids:
+  - legacy-legacy-attempt-v1-ccbbe963e57704bbd8f18eca
+  - legacy-legacy-attempt-v1-a14bff3051e7bda1d9a28e98
+  - legacy-legacy-attempt-v1-1b1b4bc7e47bb0a1a89eb894
+  - legacy-legacy-attempt-v1-ef04c968735801ac3e640523
+  - legacy-legacy-attempt-v1-3f83ae24e454d1d796a07c8d
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
   required_evaluations: []
   group: Harmonized standalone
-  wandb_policy: pending_importer_support
-  blocking_reasons: *id002
+  wandb_policy: sync
+  blocking_reasons: []
 - selection_id: Harmonized heads|CMDC|Text only|LogReg head
   provenance_key:
     experiment: Harmonized heads
@@ -4353,8 +4389,13 @@ entries:
   source_type: ordinary_qwen
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
-  attempt_ids: []
-  expected_folds: &id004
+  attempt_ids:
+  - legacy-legacy-attempt-v1-71856290155115e0a97970f0
+  - legacy-legacy-attempt-v1-ec9739946b825b976da4bcd7
+  - legacy-legacy-attempt-v1-a0f355485a8a4d0428233a61
+  - legacy-legacy-attempt-v1-ff0c10cabea4f069418eff49
+  - legacy-legacy-attempt-v1-d4f9e4c1e05efdef0e692836
+  expected_folds:
   - 0
   - 1
   - 2
@@ -4362,8 +4403,8 @@ entries:
   - 4
   required_evaluations: []
   group: Harmonized standalone
-  wandb_policy: pending_importer_support
-  blocking_reasons: *id002
+  wandb_policy: sync
+  blocking_reasons: []
 - selection_id: Harmonized heads|Turkish|Audio + Text|LogReg head
   provenance_key:
     experiment: Harmonized heads
@@ -4374,7 +4415,12 @@ entries:
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
   attempt_ids: []
-  expected_folds: *id004
+  expected_folds: &id004
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
   required_evaluations: []
   group: Harmonized heads
   wandb_policy: pending_importer_support
@@ -4403,12 +4449,22 @@ entries:
   source_type: ordinary_qwen
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
-  attempt_ids: []
-  expected_folds: *id004
+  attempt_ids:
+  - legacy-legacy-attempt-v1-e57d3beb1511c49fd3dab26d
+  - legacy-legacy-attempt-v1-dacf720ea335654b0303efc7
+  - legacy-legacy-attempt-v1-98615d5950161713c3cbb2e5
+  - legacy-legacy-attempt-v1-5f1fd3dd2706aadfeed2d728
+  - legacy-legacy-attempt-v1-d1406d986ac2593f68fdf559
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
   required_evaluations: []
   group: Harmonized standalone
-  wandb_policy: pending_importer_support
-  blocking_reasons: *id002
+  wandb_policy: sync
+  blocking_reasons: []
 - selection_id: Harmonized heads|Turkish|Audio only|LogReg head
   provenance_key:
     experiment: Harmonized heads
@@ -4448,12 +4504,22 @@ entries:
   source_type: ordinary_qwen
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
-  attempt_ids: []
-  expected_folds: *id004
+  attempt_ids:
+  - legacy-legacy-attempt-v1-dd12f9a4d64f90b7d7878f6a
+  - legacy-legacy-attempt-v1-951312542b935d05d8748737
+  - legacy-legacy-attempt-v1-1e31b9f6a9b54806baeabbd7
+  - legacy-legacy-attempt-v1-c7a5c76aac3525cf7b71a593
+  - legacy-legacy-attempt-v1-ba2730096fc58fac364820c1
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
   required_evaluations: []
   group: Harmonized standalone
-  wandb_policy: pending_importer_support
-  blocking_reasons: *id002
+  wandb_policy: sync
+  blocking_reasons: []
 - selection_id: Harmonized heads|Turkish|Text only|LogReg head
   provenance_key:
     experiment: Harmonized heads
@@ -4493,8 +4559,13 @@ entries:
   source_type: ordinary_qwen
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
-  attempt_ids: []
-  expected_folds: &id005
+  attempt_ids:
+  - legacy-legacy-attempt-v1-5273bc217bfdcec5fbb805be
+  - legacy-legacy-attempt-v1-fcf3662af6a336dce1ca7dc4
+  - legacy-legacy-attempt-v1-b9f1da3b424076f091cd1588
+  - legacy-legacy-attempt-v1-23bea2a9ee672be1ab14ba3e
+  - legacy-legacy-attempt-v1-ed912b53c015b9409215bdeb
+  expected_folds:
   - 0
   - 1
   - 2
@@ -4502,8 +4573,8 @@ entries:
   - 4
   required_evaluations: []
   group: Harmonized standalone
-  wandb_policy: pending_importer_support
-  blocking_reasons: *id002
+  wandb_policy: sync
+  blocking_reasons: []
 - selection_id: Harmonized heads|D3TEC|Audio + Text|LogReg head
   provenance_key:
     experiment: Harmonized heads
@@ -4514,7 +4585,12 @@ entries:
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
   attempt_ids: []
-  expected_folds: *id005
+  expected_folds: &id005
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
   required_evaluations: []
   group: Harmonized heads
   wandb_policy: pending_importer_support
@@ -4543,12 +4619,22 @@ entries:
   source_type: ordinary_qwen
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
-  attempt_ids: []
-  expected_folds: *id005
+  attempt_ids:
+  - legacy-legacy-attempt-v1-cbd93d3e174be80be47ec75c
+  - legacy-legacy-attempt-v1-59de82fe21808e5fe14cc9eb
+  - legacy-legacy-attempt-v1-e81afde4f02fc562be378d1d
+  - legacy-legacy-attempt-v1-e3f41123f31d6a4dc954cb00
+  - legacy-legacy-attempt-v1-749dd32caf6c37c218d0e874
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
   required_evaluations: []
   group: Harmonized standalone
-  wandb_policy: pending_importer_support
-  blocking_reasons: *id002
+  wandb_policy: sync
+  blocking_reasons: []
 - selection_id: Harmonized heads|D3TEC|Audio only|LogReg head
   provenance_key:
     experiment: Harmonized heads
@@ -4588,12 +4674,22 @@ entries:
   source_type: ordinary_qwen
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
-  attempt_ids: []
-  expected_folds: *id005
+  attempt_ids:
+  - legacy-legacy-attempt-v1-0c67cdcc01cb8e7609dcf171
+  - legacy-legacy-attempt-v1-b680f2c20c1f534f4e59fe2c
+  - legacy-legacy-attempt-v1-6b7087abef48de0334c627f4
+  - legacy-legacy-attempt-v1-49b02fe286fb125ed1285fe0
+  - legacy-legacy-attempt-v1-a422907b83fc79127b7e4e25
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
   required_evaluations: []
   group: Harmonized standalone
-  wandb_policy: pending_importer_support
-  blocking_reasons: *id002
+  wandb_policy: sync
+  blocking_reasons: []
 - selection_id: Harmonized heads|D3TEC|Text only|LogReg head
   provenance_key:
     experiment: Harmonized heads
@@ -4633,8 +4729,13 @@ entries:
   source_type: ordinary_qwen
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
-  attempt_ids: []
-  expected_folds: &id006
+  attempt_ids:
+  - legacy-legacy-attempt-v1-a4a39bbe52b2db19edeb6e01
+  - legacy-legacy-attempt-v1-b07bfd89a5ba73937f0b104c
+  - legacy-legacy-attempt-v1-1a9d48907d605c1fa9983954
+  - legacy-legacy-attempt-v1-7ce344664f72240e7869f104
+  - legacy-legacy-attempt-v1-19730811f89cc26db480b662
+  expected_folds:
   - 0
   - 1
   - 2
@@ -4642,8 +4743,8 @@ entries:
   - 4
   required_evaluations: []
   group: Harmonized standalone
-  wandb_policy: pending_importer_support
-  blocking_reasons: *id002
+  wandb_policy: sync
+  blocking_reasons: []
 - selection_id: Harmonized heads|Androids Interview|Audio + Text|LogReg head
   provenance_key:
     experiment: Harmonized heads
@@ -4654,7 +4755,12 @@ entries:
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
   attempt_ids: []
-  expected_folds: *id006
+  expected_folds: &id006
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
   required_evaluations: []
   group: Harmonized heads
   wandb_policy: pending_importer_support
@@ -4683,12 +4789,22 @@ entries:
   source_type: ordinary_qwen
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
-  attempt_ids: []
-  expected_folds: *id006
+  attempt_ids:
+  - legacy-legacy-attempt-v1-6e6634fd6f59c8915589211c
+  - legacy-legacy-attempt-v1-943c89a721cf8e1f754885db
+  - legacy-legacy-attempt-v1-134071f1d24942ce855ea398
+  - legacy-legacy-attempt-v1-58135f6f31c2bbaa096d5e0c
+  - legacy-legacy-attempt-v1-a841aebb15c5f6737835206c
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
   required_evaluations: []
   group: Harmonized standalone
-  wandb_policy: pending_importer_support
-  blocking_reasons: *id002
+  wandb_policy: sync
+  blocking_reasons: []
 - selection_id: Harmonized heads|Androids Interview|Audio only|LogReg head
   provenance_key:
     experiment: Harmonized heads
@@ -4728,12 +4844,22 @@ entries:
   source_type: ordinary_qwen
   reason: harmonized_campaign
   dependency_policy: all_contributing_folds
-  attempt_ids: []
-  expected_folds: *id006
+  attempt_ids:
+  - legacy-legacy-attempt-v1-bc984c7bf02302f37dc6ba5b
+  - legacy-legacy-attempt-v1-a16917cdb541da8536f2e595
+  - legacy-legacy-attempt-v1-eff81d743f19770cf82674b3
+  - legacy-legacy-attempt-v1-812a92f6fa5e5e61831d7018
+  - legacy-legacy-attempt-v1-36b3d6466abdc852e2e4437a
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
   required_evaluations: []
   group: Harmonized standalone
-  wandb_policy: pending_importer_support
-  blocking_reasons: *id002
+  wandb_policy: sync
+  blocking_reasons: []
 - selection_id: Harmonized heads|Androids Interview|Text only|LogReg head
   provenance_key:
     experiment: Harmonized heads

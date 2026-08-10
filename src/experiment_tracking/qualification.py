@@ -31,6 +31,31 @@ _BACKEND_TOKENS = (
 _AGGREGATION_MODIFIERS = ("subject_level", "sample_level")
 _VIEW_MARKERS = ("k4", "k2", "coverage")
 
+# Recipe ids that define exactly one evaluation view; used as a fallback when
+# the artifact, filename, and evaluation config carry no view.
+RECIPE_VIEW_FALLBACK = {
+    "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1": "harmonized_all_windows_full_coverage",
+}
+
+# Recipe ids that define one canonical best-eval location; when several best
+# locations carry evaluation evidence, the canonical one wins and the others
+# are recorded as duplicate-evidence warnings instead of quarantining.
+RECIPE_EVAL_PRECEDENCE = {
+    "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1": ("best_model/standalone_eval",),
+}
+
+# Recipes whose documented protocol is cv train_val: the outer fold is both the
+# selection and the reported score, so the "no held-out test split" warning is
+# a protocol property, not an evidence defect.
+RECIPE_ALLOWED_TRAIN_VAL = {
+    "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1",
+}
+
+
+def _split_warning_allowed(discovered: Any) -> bool:
+    recipe_id = (discovered.resolved_config or {}).get("recipe_id")
+    return isinstance(recipe_id, str) and recipe_id in RECIPE_ALLOWED_TRAIN_VAL
+
 _HEADLINE_METRIC_NAMES = (
     "accuracy",
     "precision",
@@ -136,6 +161,17 @@ def _filename_backend_and_modifiers(stem: str) -> tuple[str | None, tuple[str, .
     return best, tuple(part for part in rest.split("_") if part)
 
 
+def _level_suffix_of(stem: str) -> str | None:
+    """The level modifier of a metrics filename, e.g. 'subject_level' in
+    metrics_subject_level_original_teacher_forced.json; None for the base
+    metrics_<backend>.json."""
+    if stem.endswith(".json"):
+        stem = stem[: -len(".json")]
+    _, modifiers = _filename_backend_and_modifiers(stem)
+    joined = "_".join(modifiers)
+    return joined if joined in _AGGREGATION_MODIFIERS else None
+
+
 def _filename_view_and_aggregation(stem: str) -> tuple[str | None, str | None]:
     _, modifiers = _filename_backend_and_modifiers(stem)
     if not modifiers:
@@ -224,6 +260,14 @@ def _resolve_identity(
         view, _ = _filename_view_and_aggregation(Path(artifact.relative_path).name)
     if view is None and isinstance(evaluation_config.get("evaluation_view"), str):
         view = evaluation_config["evaluation_view"]
+    if view is None:
+        # Completed runs carry their recipe in the resolved run_config; the
+        # harmonized recipe defines exactly one evaluation view (every
+        # accessible window once: response windows, or DAIC participant-only
+        # packed30 chunks), so the recipe identifies the view.
+        recipe_id = config.get("recipe_id") if isinstance(config, dict) else None
+        if isinstance(recipe_id, str):
+            view = RECIPE_VIEW_FALLBACK.get(recipe_id)
 
     aggregation = _content_aggregation(content)
     if aggregation is None:
@@ -351,7 +395,7 @@ def _build_fold_evaluation(
     else:
         warnings.append("dataset not recorded in resolved config")
     split_name, split_protocol, no_held_out_test = _split_identity(config, protocol)
-    if no_held_out_test:
+    if no_held_out_test and not _split_warning_allowed(discovered):
         warnings.append("cv protocol train_val has no held-out test split")
     if split_name is None:
         warnings.append("final split name not recorded")
@@ -455,7 +499,7 @@ def _build_summary_evaluations(
             "predictions_artifact_path": None,
             "locally_verified": False,
         }
-        if no_held_out_test:
+        if no_held_out_test and not _split_warning_allowed(discovered):
             warnings.append("cv protocol train_val has no held-out test split")
         if isinstance(pooled, dict) and pooled:
             support: int | None = None
@@ -583,6 +627,18 @@ def qualify_run(discovered: DiscoveredRun) -> QualificationResult:
         for location, artifacts in location_metrics.items()
     }
     best_locations = [location for location in BEST_EVAL_LOCATIONS if readable_at[location]]
+    recipe_id = (discovered.resolved_config or {}).get("recipe_id")
+    precedence = RECIPE_EVAL_PRECEDENCE.get(recipe_id) if isinstance(recipe_id, str) else None
+    if precedence is not None and len(best_locations) > 1 and any(
+        location in precedence for location in best_locations
+    ):
+        dropped = [location for location in best_locations if location not in precedence]
+        for location in dropped:
+            warnings.append(
+                f"recipe {recipe_id} canonical eval location {precedence[0]}; "
+                f"ignoring duplicate evaluation evidence at {location}"
+            )
+        best_locations = [location for location in best_locations if location in precedence]
     last_metrics = _metrics_artifacts_at(discovered, LAST_EVAL_LOCATION)
     last_has_metrics = any(artifact.parse_ok is not False for artifact in last_metrics)
     if not best_locations:
@@ -670,6 +726,26 @@ def qualify_run(discovered: DiscoveredRun) -> QualificationResult:
             evaluations=(),
         )
     duplicates = {key: items for key, items in groups.items() if len(items) > 1}
+    if duplicates:
+        # evaluate_examples writes both the base metrics_<backend>.json and
+        # level-suffixed copies (metrics_<level>_<backend>.json) with the same
+        # identity; the base file is the headline artifact. Drop the redundant
+        # level-suffixed copies with a warning instead of quarantining.
+        reduced: dict[Any, list[Any]] = {}
+        dropped_duplicates: list[str] = []
+        for key, items in sorted(duplicates.items()):
+            base = [item for item in items if _level_suffix_of(Path(item[0].relative_path).name) is None]
+            if base and len(base) == 1:
+                reduced[key] = base
+                dropped_duplicates.extend(
+                    item[0].relative_path for item in items if item is not base[0]
+                )
+            else:
+                reduced[key] = items
+        for path in dropped_duplicates:
+            warnings.append(f"redundant level-suffixed metrics copy ignored: {path}")
+        groups = {key: items for key, items in reduced.items()}
+        duplicates = {key: items for key, items in groups.items() if len(items) > 1}
     if duplicates:
         descriptions = [
             f"{artifact.relative_path} ({','.join(str(part) for part in key)})"

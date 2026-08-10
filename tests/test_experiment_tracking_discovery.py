@@ -21,9 +21,11 @@ def write_run_config(
     manifest_hash: str | None = MANIFEST_HASH,
     split_hash: str | None = SPLIT_HASH,
     final_eval_partition: str = "test",
+    split_mode: str = "fixed",
+    recipe_id: str | None = None,
 ) -> None:
     split = {
-        "mode": "fixed",
+        "mode": split_mode,
         "train_partition": "train",
         "selection_partition": "val",
         "final_eval_partition": final_eval_partition,
@@ -40,6 +42,8 @@ def write_run_config(
             "headline_mode": "original_teacher_forced",
         },
     }
+    if recipe_id is not None:
+        config["recipe_id"] = recipe_id
     top = {
         "fold": 0,
         "base_config_path": "configs/main/daic_audio_text_selposf1_tf.yaml",
