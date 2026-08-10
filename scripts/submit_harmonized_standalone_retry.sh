@@ -21,12 +21,21 @@ case "$ORIGINAL_TERMINAL_EVENT" in FAILED|CANCELLED) ;; *) echo "ORIGINAL_TERMIN
 MAX_CONCURRENT_TRAINS="${MAX_CONCURRENT_TRAINS:-7}"
 MAX_CONCURRENT_AUX="${MAX_CONCURRENT_AUX:-4}"
 PREFLIGHT_AUDIT="${PREFLIGHT_AUDIT:-$PROJECT_ROOT/outputs/harmonized_mn5_preflight/$RUN_ID/audit.json}"
+PREFLIGHT_COMPONENTS="${PREFLIGHT_COMPONENTS:-5}"
+PREFLIGHT_MERGED="${PREFLIGHT_MERGED:-3}"
 TRAIN_WORKER="${TRAIN_WORKER:-$PROJECT_ROOT/scripts/run_train_slurm.sh}"
 EVAL_WORKER="${EVAL_WORKER:-$PROJECT_ROOT/scripts/run_eval_slurm.sh}"
 HIDDEN_WORKER="${HIDDEN_WORKER:-$PROJECT_ROOT/scripts/run_qwen_hidden_extract_slurm.sh}"
 GITHUB_ISSUE="${GITHUB_ISSUE:?Set the harmonized campaign GITHUB_ISSUE}"
 GITHUB_PR="${GITHUB_PR:?Set the primary harmonized methodology GITHUB_PR}"
 MATRIX="${MATRIX:-$PROJECT_ROOT/configs/experiments/harmonized/standalone_matrix.yaml}"
+SUBMISSIONS_ROOT="${SUBMISSIONS_ROOT:-$PROJECT_ROOT/outputs/harmonized_submissions}"
+CONTEXTS_ROOT="${CONTEXTS_ROOT:-$PROJECT_ROOT/outputs/harmonized_experiment_contexts}"
+FEATURES_ROOT="${FEATURES_ROOT:-$PROJECT_ROOT/outputs/hidden_features/harmonized_v1}"
+CLASSIFIERS_ROOT="${CLASSIFIERS_ROOT:-$PROJECT_ROOT/outputs/hidden_classifiers/harmonized_v1}"
+RUN_PREFIX="${RUN_PREFIX:-harmonized_v1}"
+GROUP_PREFIX="${GROUP_PREFIX:-harmonized-v1}"
+LOGICAL_PREFIX="${LOGICAL_PREFIX:-harmonized_v1}"
 
 case "$DRY_RUN" in 0|1) ;; *) echo "DRY_RUN must be 0 or 1" >&2; exit 2;; esac
 case "$GITHUB_ISSUE" in ''|*[!0-9]*|0) echo "GITHUB_ISSUE must be a positive integer." >&2; exit 2;; esac
@@ -40,13 +49,19 @@ for path in "$CELLS" "$MATRIX" "$TRAIN_WORKER" "$EVAL_WORKER" "$HIDDEN_WORKER"; 
 done
 
 if [ "$DRY_RUN" = 0 ]; then
-    python - "$PREFLIGHT_AUDIT" "$RUN_ID" <<'PY'
+    python - "$PREFLIGHT_AUDIT" "$RUN_ID" "$PREFLIGHT_COMPONENTS" "$PREFLIGHT_MERGED" <<'PY'
 import json, sys
 payload = json.load(open(sys.argv[1], encoding="utf-8"))
 if payload.get("status") != "passed" or payload.get("run_id") != sys.argv[2]:
     raise SystemExit(f"Incompatible MN5 preflight audit: {sys.argv[1]}")
-if len(payload.get("components", [])) != 5 or len(payload.get("merged", [])) != 3:
+components = payload.get("components", [])
+merged = payload.get("merged")
+if len(components) != int(sys.argv[3]):
     raise SystemExit(f"Incomplete MN5 preflight audit: {sys.argv[1]}")
+if int(sys.argv[4]) > 0 and len(merged or []) != int(sys.argv[4]):
+    raise SystemExit(f"Incomplete MN5 preflight audit: {sys.argv[1]}")
+if int(sys.argv[4]) == 0 and merged not in (None, [], {}):
+    raise SystemExit(f"Preflight audit must not contain merged records: {sys.argv[1]}")
 PY
 fi
 
@@ -118,7 +133,7 @@ dependency_arg() {
 train_index=0
 aux_index=0
 declare -a train_lanes aux_lanes
-registry="$PROJECT_ROOT/outputs/harmonized_submissions/$RUN_ID/retry_${RETRY_TAG}_jobs.tsv"
+registry="$SUBMISSIONS_ROOT/$RUN_ID/retry_${RETRY_TAG}_jobs.tsv"
 if [ "$DRY_RUN" = 0 ]; then
     [ ! -e "$registry" ] || { echo "Refusing existing retry registry: $registry" >&2; exit 4; }
     mkdir -p "$(dirname "$registry")"
@@ -127,38 +142,38 @@ fi
 
 for spec in "${CELL_SPECS[@]}"; do
     IFS=$'\t' read -r config run_root separate_eval dataset modality fold train_ok failed_train failed_eval failed_hidden train_term eval_term hidden_term <<< "$spec"
-    run_name_base="harmonized_v1_${RUN_ID}_${dataset}_${modality}"
+    run_name_base="${RUN_PREFIX}_${RUN_ID}_${dataset}_${modality}"
     if [ "$train_ok" = "1" ]; then
         run_name="$run_name_base"
         fold_dir="$run_root/$run_name/fold_$fold"
-        context_dir="$PROJECT_ROOT/outputs/harmonized_experiment_contexts/$RUN_ID/retry_${RETRY_TAG}/$dataset/$modality/fold_$fold"
+        context_dir="$CONTEXTS_ROOT/$RUN_ID/retry_${RETRY_TAG}/$dataset/$modality/fold_$fold"
     else
         run_name="${run_name_base}_${RETRY_TAG}"
         fold_dir="$run_root/$run_name/fold_$fold"
-        context_dir="$PROJECT_ROOT/outputs/harmonized_experiment_contexts/$RUN_ID/retry_${RETRY_TAG}/$dataset/$modality/fold_$fold"
+        context_dir="$CONTEXTS_ROOT/$RUN_ID/retry_${RETRY_TAG}/$dataset/$modality/fold_$fold"
     fi
     context_path="$context_dir/context.json"
     original_fold_dir="$run_root/${run_name_base}/fold_$fold"
-    original_context_path="$PROJECT_ROOT/outputs/harmonized_experiment_contexts/$RUN_ID/$dataset/$modality/fold_$fold/context.json"
+    original_context_path="$CONTEXTS_ROOT/$RUN_ID/$dataset/$modality/fold_$fold/context.json"
 
     if [ "$DRY_RUN" = 0 ]; then
         [ -f "$original_context_path" ] || { echo "Missing original experiment context: $original_context_path" >&2; exit 3; }
         mkdir -p "$context_dir"
-        python - "$context_path" "$PREFLIGHT_AUDIT" "$RUN_ID" "$dataset" "$modality" "$fold" "$run_name" "$PROJECT_ROOT" "$GITHUB_ISSUE" "$GITHUB_PR" "$RETRY_TAG" <<'PY'
+        python - "$context_path" "$PREFLIGHT_AUDIT" "$RUN_ID" "$dataset" "$modality" "$fold" "$run_name" "$PROJECT_ROOT" "$GITHUB_ISSUE" "$GITHUB_PR" "$RETRY_TAG" "$GROUP_PREFIX" "$LOGICAL_PREFIX" <<'PY'
 import json, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[9])
 from src.experiment_tracking.identity import new_attempt_id
-context_path, audit_path, run_id, dataset, modality, fold, run_name, root, github_issue, github_pr, retry_tag = sys.argv[1:]
+context_path, audit_path, run_id, dataset, modality, fold, run_name, root, github_issue, github_pr, retry_tag, group_prefix, logical_prefix = sys.argv[1:]
 audit = json.load(open(audit_path, encoding="utf-8"))
 component = next(item for item in audit["components"] if item["dataset"] == dataset)
 commit = str(audit.get("source_commit") or "")
 if len(commit) != 40:
     raise SystemExit("Preflight audit has no full source commit")
-logical = f"harmonized_v1_{dataset}_{modality}_seed1337"
+logical = f"{logical_prefix}_{dataset}_{modality}_seed1337"
 payload = {
     "schema_version": "audiollm.experiment_context.v1",
-    "group_id": f"harmonized-v1-{run_id}",
+    "group_id": f"{group_prefix}-{run_id}",
     "logical_run_name": logical,
     "attempt_id": new_attempt_id(logical, commit),
     "fold": int(fold),
@@ -223,11 +238,11 @@ PY
     aux_throttle="${aux_lanes[$aux_lane]:-}"
     hidden_dep="$(dependency_arg "$chain_job" "$aux_throttle")"
     if [ "$train_ok" = "1" ]; then
-        cache="$PROJECT_ROOT/outputs/hidden_features/harmonized_v1/$dataset/${run_name_base}_${RETRY_TAG}/fold_$fold"
-        classifiers="$PROJECT_ROOT/outputs/hidden_classifiers/harmonized_v1/$dataset/${run_name_base}_${RETRY_TAG}/fold_$fold"
+        cache="$FEATURES_ROOT/$dataset/${run_name_base}_${RETRY_TAG}/fold_$fold"
+        classifiers="$CLASSIFIERS_ROOT/$dataset/${run_name_base}_${RETRY_TAG}/fold_$fold"
     else
-        cache="$PROJECT_ROOT/outputs/hidden_features/harmonized_v1/$dataset/$run_name/fold_$fold"
-        classifiers="$PROJECT_ROOT/outputs/hidden_classifiers/harmonized_v1/$dataset/$run_name/fold_$fold"
+        cache="$FEATURES_ROOT/$dataset/$run_name/fold_$fold"
+        classifiers="$CLASSIFIERS_ROOT/$dataset/$run_name/fold_$fold"
     fi
     hidden_cmd=(sbatch --parsable --job-name="hrh-${dataset:0:4}-${modality:0:2}-f$fold" "$hidden_dep" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CHECKPOINT_DIR=$fold_dir/best_model,CACHE_DIR=$cache,CLASSIFIER_DIR=$classifiers,CONDITION=$modality,CLASSIFIER_VARIANTS=logreg_raw:xgb_raw" "$HIDDEN_WORKER")
     hidden_raw="$(submit "${hidden_cmd[@]}")"

@@ -10,7 +10,11 @@ DATASETS = {"d3tec", "turkish", "androids_interview", "daic", "cmdc"}
 
 
 def harmonized_configs():
-    return sorted(MAIN.glob("*harmonized_selmacrof1_tf*.yaml"))
+    return sorted(
+        path
+        for path in MAIN.glob("*harmonized_selmacrof1_tf*.yaml")
+        if not path.name.endswith("_en.yaml")
+    )
 
 
 def test_harmonized_main_has_five_datasets_by_three_modalities() -> None:

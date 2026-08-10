@@ -73,3 +73,19 @@ MN5 execution order:
 Both GPU launchers require `GITHUB_ISSUE` and `GITHUB_PR`. For the full harmonized reproduction campaign, use Issue #12 and primary methodology PR #10. The production Git SHA must contain both PR #10 and its PR #11 acceptance-auditor correction. These fields provide scientific context; the full Git SHA and deployed-source hash remain the canonical source identity.
 
 All launchers default to dry-run. Their default throttles reserve seven four-GPU training lanes (28 H100s) and at most four one-GPU auxiliary jobs, for a hard ceiling of 32 allocated H100s.
+
+## Harmonized English-translation family
+
+Issue #20 tracks the English-transcript comparison. The eight canonical English configs in `main/` are named `<dataset>_<modality>_harmonized_selmacrof1_tf[_qwen3asr]_en.yaml` and are derived only from the native harmonized counterparts, never from `configs/experiments/translation_en/` (historical recipe, do not reuse).
+
+- Recipe ID: `harmonized_full_transcript_single30_allwindows_selmacrof1_tf_en_v1`.
+- Each config adds a `transcripts:` block: `variant: english`, `cache_path: ${TRANSLATION_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/translations}/harmonized_en_complete_v1/<dataset>/accepted.jsonl`, `minimum_status: automatic_low`, `require_complete: true`, `include_failed: false`.
+- Outputs are English-specific: `outputs/manifests_harmonized_en/`, `outputs/splits_harmonized_en/`, `output_model/harmonized_v1_en/`.
+- Only audio+text and text-only exist for D3TEC, Androids, CMDC, and Turkish t17. No English audio-only, DAIC, or E-DAIC configs.
+- The fixed English matrix is `configs/experiments/harmonized/english_translation_matrix.yaml`: 8 experiments, 40 training folds, 20 separate evaluation folds (D3TEC, Androids), 40 hidden-extraction/fixed-head folds, exactly 100 jobs, no Optuna, no merged training, no audio-only cells.
+
+MN5 execution order:
+
+1. `scripts/submit_harmonized_en_preflight.sh` rebuilds the four English manifests on GPFS from the repaired `harmonized_en_complete_v1` translation cache, audits translation completeness, native/English input equivalence, and tokenizer/context fit, and records the expected 100-job scope. Requires `GITHUB_ISSUE=20` and the implementation `GITHUB_PR`.
+2. `scripts/submit_harmonized_en_standalone.sh` submits the English matrix only after that preflight audit passes with `status: passed` and zero failures. Use the same `GITHUB_ISSUE=20` and `GITHUB_PR`.
+3. `scripts/submit_harmonized_standalone_retry.sh` retries failed cells with new attempt identities; it accepts the English roots and prefixes through `PREFLIGHT_COMPONENTS=4`, `PREFLIGHT_MERGED=0`, `SUBMISSIONS_ROOT`, `CONTEXTS_ROOT`, `FEATURES_ROOT`, `CLASSIFIERS_ROOT`, `RUN_PREFIX`, `GROUP_PREFIX`, and `LOGICAL_PREFIX` (native defaults are unchanged).
