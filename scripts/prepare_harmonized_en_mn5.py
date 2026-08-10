@@ -26,7 +26,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data.build_manifest import build_for_config, manifest_build_signature
-from src.data.runtime import qwen2audio_audio_token_length
+from src.data.runtime import _harmonized_subject_transcripts, qwen2audio_audio_token_length
 from src.utils import (
     load_yaml_with_overrides,
     read_json,
@@ -311,25 +311,12 @@ def equivalence_audit(native_meta: dict[str, Any], native_rows: list[dict[str, A
 
 
 def _join_full_subject_transcripts(rows: list[dict[str, Any]]) -> dict[str, str]:
+    # The harmonized runtime assembles the model-visible full-subject text by
+    # deduplicating natural units (response/turn/question) and joining them in
+    # unit order. The context audit must measure exactly that text; joining raw
+    # manifest rows would duplicate full-response/turn text across segments.
     dataset = str(rows[0]["dataset"]).lower()
-    field = FULL_SCOPE_FIELD[dataset]
-    if dataset == "d3tec":
-        order_key = lambda row: (natural_key(row.get("prompt_id", "")), natural_key(row.get("sample_id", "")))
-    elif dataset == "androids_interview":
-        order_key = lambda row: (natural_key(row.get("recording_id", "")), natural_key(row.get("turn_id", "")), natural_key(row.get("sample_id", "")))
-    elif dataset == "cmdc":
-        order_key = lambda row: (natural_key(row.get("question_id", "")), natural_key(row.get("sample_id", "")))
-    else:
-        order_key = lambda row: (natural_key(row.get("sample_id", "")),)
-    grouped: dict[str, list[tuple[tuple[Any, ...], str]]] = defaultdict(list)
-    for row in rows:
-        text = str(row.get(field, "")).strip()
-        if text:
-            grouped[str(row["subject_id"])].append((order_key(row), text))
-    return {
-        subject: "\n".join(text for _, text in sorted(items, key=lambda item: item[0]))
-        for subject, items in grouped.items()
-    }
+    return _harmonized_subject_transcripts(rows, dataset)
 
 
 def context_fit(en_rows_by_dataset: dict[str, list[dict[str, Any]]],
@@ -351,7 +338,7 @@ def context_fit(en_rows_by_dataset: dict[str, list[dict[str, Any]]],
     for dataset, rows in en_rows_by_dataset.items():
         transcripts = _join_full_subject_transcripts(rows)
         subjects = {str(row["subject_id"]) for row in rows}
-        _, summary = audit_dataset(
+        details, summary = audit_dataset(
             dataset,
             transcripts,
             subjects,
@@ -361,6 +348,16 @@ def context_fit(en_rows_by_dataset: dict[str, list[dict[str, Any]]],
             context_limit,
             safety_margin=128,
         )
+        over_limit_subjects = [
+            {
+                "subject_id": row["subject_id"],
+                "effective_multimodal_tokens": row["effective_multimodal_tokens"],
+                "transcript_token_count": row["transcript_token_count"],
+            }
+            for row in details
+            if not row["fits"]
+        ]
+        summary["over_limit_subjects"] = over_limit_subjects
         if summary["subjects_over_limit"]:
             failures.append(
                 f"{dataset}: {summary['subjects_over_limit']} subjects over context limit"
