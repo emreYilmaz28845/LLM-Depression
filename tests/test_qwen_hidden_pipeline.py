@@ -187,7 +187,7 @@ class PoolingTests(unittest.TestCase):
                 "outer_train": [row["subject_id"] for row in rows if row["partition"] != "test"],
                 "final_eval": [row["subject_id"] for row in rows if row["partition"] == "test"],
             }
-            self.assertEqual(_validate_saved_split(saved, config, partitions, 0), metadata)
+            self.assertEqual(_validate_saved_split(saved, config, partitions, 0, 2), metadata)
 
     def test_audio_expansion_uses_aligned_all_valid_mask(self):
         hidden = torch.zeros((1, 5, 2))

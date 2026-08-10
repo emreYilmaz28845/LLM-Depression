@@ -414,6 +414,7 @@ def _validate_saved_split(
     config: dict[str, Any],
     partition_subject_ids: dict[str, list[str]],
     fold: int,
+    train_source_count: int,
 ) -> Path:
     split_metadata_path = _saved_path(saved["split_metadata_path"])
     if not split_metadata_path.exists():
@@ -463,23 +464,11 @@ def _validate_saved_split(
             )
         # Fixed train/val/test extraction deliberately fits classifiers on the
         # union of the saved train and selection partitions. A smoke limit is
-        # applied independently to both source partitions by split creation,
-        # so their union may contain up to 2 * smoke_limit subjects.
-        train_source_count = 1
-        if str(saved.get("split_mode", "")) != "cv":
-            cv_protocol = str(
-                saved.get("cv_protocol")
-                or config.get("split", {}).get("cv_protocol")
-                or ""
-            )
-            is_daic_chunking = _is_daic_chunking(config)
-            if cv_protocol != "train_val" and not is_daic_chunking:
-                train_source_count = len(
-                    set(config.get("split", {}).get("dev_pool_partitions") or [
-                        config["split"]["train_partition"],
-                        config["split"]["selection_partition"],
-                    ])
-                )
+        # applied independently to every source partition by split creation
+        # (see train._apply_smoke_subject_limit), so the outer-train union may
+        # contain up to train_source_count * smoke_limit subjects. The count is
+        # resolved by the caller from the protocol, mirroring
+        # _resolve_subject_partitions (train_val/daic: 1, train_val_test: 2).
         if len(train_ids) > smoke_limit * train_source_count or len(heldout_ids) > smoke_limit:
             raise ValueError(
                 "Smoke checkpoint split exceeds split.smoke_subject_limit."
@@ -653,8 +642,12 @@ def main() -> None:
     partition_subject_ids, evaluation_provenance = _resolve_subject_partitions(
         saved, config, split_payload
     )
+    cv_protocol = str(
+        saved.get("cv_protocol") or config.get("split", {}).get("cv_protocol") or ""
+    )
+    train_source_count = 1 if (cv_protocol == "train_val" or _is_daic_chunking(config)) else 2
     split_metadata_path = _validate_saved_split(
-        saved, config, partition_subject_ids, fold
+        saved, config, partition_subject_ids, fold, train_source_count
     )
     manifest_path = args.manifest_path.resolve() if args.manifest_path else _saved_path(saved["manifest_path"])
     if not manifest_path.exists():

@@ -42,6 +42,7 @@ from src.features.androids_hidden_policy import (
 from src.features.extract_qwen_hidden import (
     _decoder_hidden_size,
     _git_commit,
+    _is_daic_chunking,
     _load_saved_run,
     _package_version,
     _partition_examples,
@@ -296,7 +297,11 @@ def main() -> None:
     fold = int(saved["fold"])
     split_payload = read_json(split_path)
     partitions, evaluation_provenance = _resolve_subject_partitions(saved, config, split_payload)
-    split_metadata_path = _validate_saved_split(saved, config, partitions, fold)
+    cv_protocol = str(
+        saved.get("cv_protocol") or config.get("split", {}).get("cv_protocol") or ""
+    )
+    train_source_count = 1 if (cv_protocol == "train_val" or _is_daic_chunking(config)) else 2
+    split_metadata_path = _validate_saved_split(saved, config, partitions, fold, train_source_count)
     manifest_path = args.manifest_path.resolve()
     if not manifest_path.is_file():
         raise FileNotFoundError(f"Missing Androids manifest: {manifest_path}")
