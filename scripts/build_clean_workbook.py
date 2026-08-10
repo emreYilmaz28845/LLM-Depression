@@ -204,6 +204,98 @@ MERGED_RUNS: dict[str, dict[str, Any]] = {
     },
 }
 
+# ---- Harmonized campaign (2026-08-09/10) ----------------------------------
+# Recipe harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1,
+# campaign harmonized_v1_prod_20260809T171705Z_d1e8130b (Issue #12 / PR #10,
+# source d1e8130b -> 22f297d -> 0a10063; retries under _r1 run names,
+# retry registry retry_r1_jobs.tsv). Backend original_teacher_forced,
+# headline/binary_strict, best_model checkpoints, seed 1337.
+# Aggregations follow the workbook conventions: D3TEC/Androids pooled
+# subject-level 5-fold; Turkish/CMDC 5-fold mean; DAIC fixed official test.
+# All values recomputed 2026-08-10 from the local artifacts in the
+# Provenance sheet. Optuna/Subject-OS were not run (fixed heads only).
+
+HARMONIZED_STANDALONE_QWEN: dict[tuple[str, str], float] = {
+    ("DAIC", "Audio + Text"): 0.7353,
+    ("DAIC", "Audio only"): 0.5392,
+    ("DAIC", "Text only"): 0.7353,
+    ("CMDC", "Audio + Text"): 0.9700,
+    ("CMDC", "Audio only"): 0.9516,
+    ("CMDC", "Text only"): 0.9713,
+    ("Turkish", "Audio + Text"): 0.6666,
+    ("Turkish", "Audio only"): 0.5137,
+    ("Turkish", "Text only"): 0.6502,
+    ("D3TEC", "Audio + Text"): 0.5589,
+    ("D3TEC", "Audio only"): 0.6649,
+    ("D3TEC", "Text only"): 0.6113,
+    ("Androids Interview", "Audio + Text"): 0.8606,
+    ("Androids Interview", "Audio only"): 0.8690,
+    ("Androids Interview", "Text only"): 0.7317,
+}
+
+# Harmonized standalone fixed heads: (dataset, modality) -> (logreg_raw, xgb_raw), 5-fold mean macro-F1.
+HARMONIZED_STANDALONE_HEADS: dict[tuple[str, str], tuple[float, float]] = {
+    ("DAIC", "Audio + Text"): (0.7432, 0.7353),
+    ("DAIC", "Audio only"): (0.5583, 0.5190),
+    ("DAIC", "Text only"): (0.7235, 0.7457),
+    ("CMDC", "Audio + Text"): (0.9614, 0.9700),
+    ("CMDC", "Audio only"): (0.9841, 0.9225),
+    ("CMDC", "Text only"): (0.9420, 0.9683),
+    ("Turkish", "Audio + Text"): (0.6289, 0.6325),
+    ("Turkish", "Audio only"): (0.5209, 0.4271),
+    ("Turkish", "Text only"): (0.5875, 0.5234),
+    ("D3TEC", "Audio + Text"): (0.4988, 0.5585),
+    ("D3TEC", "Audio only"): (0.6031, 0.5404),
+    ("D3TEC", "Text only"): (0.4651, 0.5911),
+    ("Androids Interview", "Audio + Text"): (0.8745, 0.8656),
+    ("Androids Interview", "Audio only"): (0.8512, 0.8235),
+    ("Androids Interview", "Text only"): (0.8326, 0.8241),
+}
+
+# Harmonized merged runs: official = DAIC protected test (47 subjects,
+# daic_official_test_only); cv = 5-fold mean of per-fold holdout macro-F1.
+HARMONIZED_MERGED: dict[str, dict[str, Any]] = {
+    "audio_text": {
+        "run_id": "harmonized_v1_prod_20260809T171705Z_d1e8130b",
+        "epochs": 2,
+        "official": {"qwen": 0.7631, "logreg": 0.7432, "xgb_fixed": 0.7432},
+        "cv": {
+            ("daic", "qwen"): 0.6540, ("cmdc", "qwen"): 0.9262, ("turkish", "qwen"): 0.5133,
+            ("d3tec", "qwen"): 0.6071, ("androids_interview", "qwen"): 0.7874,
+            ("daic", "logreg"): 0.6634, ("cmdc", "logreg"): 0.9421, ("turkish", "logreg"): 0.4786,
+            ("d3tec", "logreg"): 0.6115, ("androids_interview", "logreg"): 0.8062,
+            ("daic", "xgb_fixed"): 0.6835, ("cmdc", "xgb_fixed"): 0.9577, ("turkish", "xgb_fixed"): 0.4940,
+            ("d3tec", "xgb_fixed"): 0.5737, ("androids_interview", "xgb_fixed"): 0.7842,
+        },
+    },
+    "audio_only": {
+        "run_id": "harmonized_v1_prod_20260809T171705Z_d1e8130b",
+        "epochs": 4,
+        "official": {"qwen": 0.5332, "logreg": 0.6189, "xgb_fixed": 0.5554},
+        "cv": {
+            ("daic", "qwen"): 0.6018, ("cmdc", "qwen"): 0.9500, ("turkish", "qwen"): 0.4516,
+            ("d3tec", "qwen"): 0.5925, ("androids_interview", "qwen"): 0.8564,
+            ("daic", "logreg"): 0.5586, ("cmdc", "logreg"): 0.9683, ("turkish", "logreg"): 0.4820,
+            ("d3tec", "logreg"): 0.5387, ("androids_interview", "logreg"): 0.8441,
+            ("daic", "xgb_fixed"): 0.5631, ("cmdc", "xgb_fixed"): 0.9366, ("turkish", "xgb_fixed"): 0.4484,
+            ("d3tec", "xgb_fixed"): 0.5378, ("androids_interview", "xgb_fixed"): 0.8531,
+        },
+    },
+    "text_only": {
+        "run_id": "harmonized_v1_prod_20260809T171705Z_d1e8130b",
+        "epochs": 5,
+        "official": {"qwen": 0.7756, "logreg": 0.7157, "xgb_fixed": 0.7552},
+        "cv": {
+            ("daic", "qwen"): 0.7219, ("cmdc", "qwen"): 0.9539, ("turkish", "qwen"): 0.6515,
+            ("d3tec", "qwen"): 0.6528, ("androids_interview", "qwen"): 0.7903,
+            ("daic", "logreg"): 0.7168, ("cmdc", "logreg"): 0.9698, ("turkish", "logreg"): 0.6684,
+            ("d3tec", "logreg"): 0.5733, ("androids_interview", "logreg"): 0.7714,
+            ("daic", "xgb_fixed"): 0.7093, ("cmdc", "xgb_fixed"): 0.9405, ("turkish", "xgb_fixed"): 0.6288,
+            ("d3tec", "xgb_fixed"): 0.5622, ("androids_interview", "xgb_fixed"): 0.8079,
+        },
+    },
+}
+
 DATASET_LABELS = {
     "daic": "DAIC",
     "cmdc": "CMDC",
@@ -743,6 +835,7 @@ def build_provenance(wb: Workbook, *, detailed: bool) -> None:
         put("DAIC packed30 family", "DAIC", condition, method, value, source, aggregation,
             artifact, "recomputed from predictions_subject_level.jsonl (metrics match)")
 
+    _harmonized_provenance(ws, put)
     ws.freeze_panes = "A3"
 
 
@@ -780,6 +873,65 @@ PACKED30_SOURCE = {
     "Joint-K4 Audio only": ("daic_participant_p30_jointk4_audio_only_s1337_e3b0f1c3 (commit e3b0f1c)",
                             "output_model/experiments/daic_participant_packed30_jointk4/audio_only/"),
 }
+
+HARMONIZED_RUN = "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b"
+HARMONIZED_ARTIFACT = (
+    "output_model/harmonized_v1/<modality>/<dataset>/<run>[_r1]/fold_<n>/"
+    "best_model/standalone_eval(_r1)/metrics_original_teacher_forced.json + predictions_subject_level.csv"
+)
+HARMONIZED_HEADS_ARTIFACT = (
+    "outputs/hidden_classifiers/harmonized_v1/<dataset>/<run>_r1/fold_<n>/{logreg_raw,xgb_raw}/metrics.json"
+)
+HARMONIZED_AGG = {
+    "DAIC": "fixed official test (47 subjects)",
+    "CMDC": "5-fold mean",
+    "Turkish": "5-fold mean",
+    "D3TEC": "pooled subject-level 5-fold",
+    "Androids Interview": "pooled subject-level 5-fold",
+}
+
+
+def _harmonized_provenance(ws, put) -> None:
+    run = HARMONIZED_RUN
+    modality_key = {"Audio + Text": "audio_text", "Audio only": "audio_only", "Text only": "text_only"}
+    for dataset in DATASETS:
+        for modality in MODALITIES:
+            agg = HARMONIZED_AGG[dataset]
+            mod_key = modality_key[modality]
+            put("Harmonized standalone", dataset, modality, "Fine-tuned Qwen",
+                HARMONIZED_STANDALONE_QWEN[(dataset, modality)],
+                f"{run}_{dataset.lower().replace(' ', '_')}_{mod_key}"
+                f" (campaign harmonized_v1_prod_20260809T171705Z_d1e8130b; first-wave failures replaced by _r1 retries, "
+                f"retry_r1_jobs.tsv)",
+                f"original_teacher_forced, headline/binary_strict, best_model; {agg}",
+                HARMONIZED_ARTIFACT,
+                "recomputed 2026-08-10 from local predictions/metrics")
+            logreg, xgb = HARMONIZED_STANDALONE_HEADS[(dataset, modality)]
+            put("Harmonized heads", dataset, modality, "LogReg head", logreg,
+                f"{run}_{mod_key} (best-model hidden features)",
+                "5-fold mean subject-level, logreg_raw",
+                HARMONIZED_HEADS_ARTIFACT,
+                "recomputed 2026-08-10 from local fold metrics")
+            put("Harmonized heads", dataset, modality, "XGBoost fixed", xgb,
+                f"{run}_{mod_key} (best-model hidden features)",
+                "5-fold mean subject-level, xgb_raw",
+                HARMONIZED_HEADS_ARTIFACT,
+                "recomputed 2026-08-10 from local fold metrics")
+    for modality in ["audio_text", "audio_only", "text_only"]:
+        mod_label = MODALITY_LABELS[modality]
+        for method, method_label in (("qwen", "Fine-tuned Qwen"), ("logreg", "LogReg head"), ("xgb_fixed", "XGBoost fixed")):
+            value = HARMONIZED_MERGED[modality]["official"].get(method)
+            put("Harmonized merged final", "DAIC", mod_label, method_label, value,
+                f"merged {mod_label}, final stage {HARMONIZED_MERGED[modality]['epochs']} epochs, run {run}",
+                "protected official holdout (47 subjects), teacher-forced",
+                f"outputs/symmetric_merged/harmonized_v1/{modality}/{run}/final/fold_0/postprocess_complete.json",
+                "recomputed 2026-08-10 from local postprocess summary")
+        for (ds_key, method), value in sorted(HARMONIZED_MERGED[modality]["cv"].items()):
+            put("Harmonized merged CV", DATASET_LABELS[ds_key], mod_label, METHOD_LABELS[method], value,
+                f"merged {mod_label} CV run {run}",
+                "mean of per-fold holdout macro-F1, 5 folds, teacher-forced",
+                f"outputs/symmetric_merged/harmonized_v1/{modality}/{run}/cv/fold_*/postprocess_complete.json + heads/*/metrics_by_dataset.json",
+                "recomputed 2026-08-10 from local fold summaries")
 
 
 def build_packed30(wb: Workbook) -> None:
@@ -829,6 +981,78 @@ def build_packed30(wb: Workbook) -> None:
                    "Provenance sheet holds the full mapping (commit, job IDs incl. resubmits, eval view, aggregation, "
                    "audits 44369722/44369723 GPFS PASSED + local evidence audit PASSED).", 7)
     ws.freeze_panes = "A4"
+
+
+# --------------------------------------------------------------------------- harmonized campaign sheet
+def build_harmonized(wb: Workbook) -> None:
+    """Harmonized full-training campaign (2026-08-09/10) summary sheet."""
+    ws = wb.create_sheet("Harmonized Campaign")
+    _widths(ws, {"A": 30, "B": 15, "C": 15, "D": 15, "E": 17})
+    _title(ws, "Harmonized Campaign (recipe harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1) — Macro-F1", 5)
+    _note(
+        ws, 2,
+        "Campaign harmonized_v1_prod_20260809T171705Z_d1e8130b (Issue #12 / PR #10); teacher-forced, binary-strict, "
+        "best_model, seed 1337; 20-epoch cap, patience 3, macro-F1 selection; audio encoder frozen; no Optuna. "
+        "Standalone aggregations: D3TEC/Androids pooled subject-level 5-fold; Turkish/CMDC 5-fold mean; DAIC fixed "
+        "official test (47 subjects). First wave had two documented failure classes (NCCL watchdog on long final "
+        "evals; standalone-eval KeyError), fixed in PRs #14/#16 and rerun under _r1 attempt names; retry registry "
+        "retry_r1_jobs.tsv (148 jobs, all COMPLETED). Merged: five-dataset CV (holdout per fold, 5-fold mean) and "
+        "final training on the DAIC protected official test only (daic_official_test_only), final epochs 2/4/5 "
+        "(rounded median of CV-selected epochs). Optuna/Subject-OS not run -> blank. All values recomputed "
+        "2026-08-10 from local artifacts; per-cell provenance on the Provenance sheet.",
+        5, height=110,
+    )
+    methods = [("qwen", "Fine-tuned Qwen"), ("logreg", "LogReg head"), ("xgb_fixed", "XGBoost fixed")]
+    headers = ["Evaluation / Modality", *(label for _, label in methods)]
+    _header_row(ws, 4, headers)
+
+    row = 5
+    _section(ws, row, "Standalone — Qwen (headline macro-F1)", 4)
+    row += 1
+    _header_row(ws, row, headers)
+    row += 1
+    for dataset in DATASETS:
+        for modality in MODALITIES:
+            ws.cell(row, 1, f"{dataset} — {modality}").font = BODY_FONT
+            ws.cell(row, 1).fill = BODY
+            ws.cell(row, 1).alignment = LEFT
+            ws.cell(row, 1).border = BORDER
+            _body_cell(ws, row, 2, HARMONIZED_STANDALONE_QWEN[(dataset, modality)], fmt="0.0000")
+            logreg, xgb = HARMONIZED_STANDALONE_HEADS[(dataset, modality)]
+            _body_cell(ws, row, 3, logreg, fmt="0.0000")
+            _body_cell(ws, row, 4, xgb, fmt="0.0000")
+            row += 1
+
+    row += 1
+    _section(ws, row, "Merged final — DAIC protected official test (n=47)", 4)
+    row += 1
+    _header_row(ws, row, headers)
+    row += 1
+    for modality, modality_label in zip(["audio_text", "audio_only", "text_only"], MODALITIES):
+        ws.cell(row, 1, f"Merged {modality_label} (final, {HARMONIZED_MERGED[modality]['epochs']} epochs)").font = BODY_FONT
+        ws.cell(row, 1).fill = BODY
+        ws.cell(row, 1).alignment = LEFT
+        ws.cell(row, 1).border = BORDER
+        for col, (method, _) in enumerate(methods, start=2):
+            _body_cell(ws, row, col, HARMONIZED_MERGED[modality]["official"].get(method), fmt="0.0000")
+        row += 1
+
+    row += 1
+    _section(ws, row, "Merged five-dataset CV — mean of per-fold holdout macro-F1", 4)
+    row += 1
+    _header_row(ws, row, headers)
+    row += 1
+    for modality in ["audio_text", "audio_only", "text_only"]:
+        for dataset in ["daic", "cmdc", "turkish", "d3tec", "androids_interview"]:
+            label = f"{DATASET_LABELS[dataset]} — {MODALITY_LABELS[modality]} (merged CV)"
+            ws.cell(row, 1, label).font = BODY_FONT
+            ws.cell(row, 1).fill = BODY
+            ws.cell(row, 1).alignment = LEFT
+            ws.cell(row, 1).border = BORDER
+            for col, (method, _) in enumerate(methods, start=2):
+                _body_cell(ws, row, col, HARMONIZED_MERGED[modality]["cv"].get((dataset, method)), fmt="0.0000")
+            row += 1
+    ws.freeze_panes = "A5"
 
 
 # --------------------------------------------------------------------------- main
@@ -900,6 +1124,7 @@ def main() -> None:
     build_en(wb)
     build_merged_vs_standalone(wb)
     build_packed30(wb)
+    build_harmonized(wb)
     build_provenance(wb, detailed=detailed)
     out = OUT_DETAILED if detailed else OUT
     out.parent.mkdir(parents=True, exist_ok=True)

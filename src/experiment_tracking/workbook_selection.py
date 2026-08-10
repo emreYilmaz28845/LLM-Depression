@@ -65,6 +65,10 @@ _FAMILY_RULES: tuple[tuple[str, str | None, str], ...] = (
     ("DAIC packed30 family", "Qwen TF", "ordinary_qwen"),
     ("DAIC packed30 family", "LogReg raw", "hidden_classifier"),
     ("DAIC packed30 family", "XGBoost raw", "hidden_classifier"),
+    ("Harmonized standalone", "Fine-tuned Qwen", "ordinary_qwen"),
+    ("Harmonized heads", None, "hidden_classifier"),
+    ("Harmonized merged final", None, "merged"),
+    ("Harmonized merged CV", None, "merged"),
 )
 
 _NOT_RUN_HINTS = ("not run", "optuna not run", "not_run", "never run")
