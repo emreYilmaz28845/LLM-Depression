@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 import yaml
+import pytest
 
 from scripts.prepare_harmonized_en_mn5 import (
     EN_RECIPE,
@@ -453,6 +454,43 @@ def test_context_fit_assembly_dedupes_natural_units_like_runtime() -> None:
     ]
     joined = _join_full_subject_transcripts(rows)
     assert joined == {"S1": "First turn text.\nSecond turn text."}
+
+
+def test_cv_smoke_split_guard_allows_per_partition_limits(tmp_path: Path) -> None:
+    from src.features.extract_qwen_hidden import _validate_saved_split
+
+    def make_meta(tmp: Path) -> Path:
+        path = tmp / "folds.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "0": {
+                        "outer_train_subject_ids": [f"t{i}" for i in range(12)],
+                        "final_eval_subject_ids": [f"h{i}" for i in range(6)],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    meta = make_meta(tmp_path)
+    saved = {"split_mode": "cv", "cv_protocol": "train_val_test", "split_metadata_path": str(meta)}
+    config = {
+        "split": {
+            "smoke_subject_limit": 6,
+            "train_partition": "train",
+            "selection_partition": "val",
+            "final_eval_partition": "test",
+        }
+    }
+    partitions = {
+        "outer_train": [f"t{i}" for i in range(12)],
+        "final_eval": [f"h{i}" for i in range(6)],
+    }
+    assert _validate_saved_split(saved, config, partitions, 0, 2) == meta
+    with pytest.raises(ValueError, match="exceeds split.smoke_subject_limit"):
+        _validate_saved_split(saved, config, partitions, 0, 1)
 
 
 def test_retry_script_english_compatibility_dry_run(tmp_path: Path) -> None:

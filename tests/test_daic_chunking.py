@@ -262,6 +262,7 @@ def test_hidden_split_validation_accepts_only_explicit_smoke_subsets(tmp_path) -
         base_config,
         {"outer_train": ["train_a"], "final_eval": ["test_a"]},
         0,
+        1,
     ) == split_path
     with pytest.raises(ValueError, match="not a subset"):
         _validate_saved_split(
@@ -269,6 +270,7 @@ def test_hidden_split_validation_accepts_only_explicit_smoke_subsets(tmp_path) -
             base_config,
             {"outer_train": ["test_a"], "final_eval": ["test_b"]},
             0,
+            1,
         )
     production = copy.deepcopy(base_config)
     production["split"].pop("smoke_subject_limit")
@@ -278,4 +280,5 @@ def test_hidden_split_validation_accepts_only_explicit_smoke_subsets(tmp_path) -
             production,
             {"outer_train": ["train_a"], "final_eval": ["test_a"]},
             0,
+            1,
         )
