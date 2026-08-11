@@ -230,12 +230,28 @@ MODALITY_LABELS = {"audio_text": "Audio + Text", "audio_only": "Audio only", "te
 METHOD_LABELS = {"qwen": "Fine-tuned Qwen", "logreg": "LogReg head", "xgb_fixed": "XGBoost fixed", "xgb_optuna": "XGBoost Optuna"}
 METHOD_LABELS_SHORT = {"qwen": "qwen", "logreg": "logreg", "xgb_fixed": "xgb_fixed", "xgb_optuna": "xgb_optuna"}
 
-# EN translation: (dataset, modality) -> (native macro, translated macro). Native =
-# 5-fold mean of the native-language runs (verified locally). Translated = MN5
-# final_summary.json values (docs/ENGLISH_TRANSLATION_RESULTS_2026-08-06.md §2).
+# EN translation (historical recipe): (dataset, modality) -> (native macro, translated macro).
+# Native = 5-fold mean of the native-language runs (output_model/... runs listed in
+# docs/ENGLISH_TRANSLATION_RESULTS_2026-08-06.md §3). Translated = MN5
+# final_summary.json values (docs/ENGLISH_TRANSLATION_RESULTS_2026-08-06.md §2),
+# MN5-only, not locally verifiable. Recipe differs from the harmonized campaign
+# (configs/experiments/translation_en/, 3 epochs, pos-F1 selection, require_complete
+# false, include_failed true) — see the Harmonized EN Translation sheet for the
+# harmonized-recipe comparison.
 EN_DATA: dict[tuple[str, str], tuple[float, float]] = {
-    # EN translation training is running (2026-08-10); results absent until
-    # the new campaign completes and its evidence is verified locally.
+    # Historical 12-run matrix (2026-08-06). Values as printed in the results doc.
+    ("CMDC", "Audio + Text"): (0.916, 0.950),
+    ("CMDC", "Audio only"): (0.904, 0.956),
+    ("CMDC", "Text only"): (0.971, 0.956),
+    ("Turkish", "Audio + Text"): (0.488, 0.486),
+    ("Turkish", "Audio only"): (0.613, 0.577),
+    ("Turkish", "Text only"): (0.512, 0.458),
+    ("D3TEC", "Audio + Text"): (0.530, 0.611),
+    ("D3TEC", "Audio only"): (0.535, 0.541),
+    ("D3TEC", "Text only"): (0.479, 0.389),
+    ("Androids Interview", "Audio + Text"): (0.833, 0.769),
+    ("Androids Interview", "Audio only"): (0.887, 0.884),
+    ("Androids Interview", "Text only"): (0.854, 0.785),
 }
 
 EN_NATIVE_RUNS = {
@@ -514,9 +530,13 @@ def build_en(wb: Workbook) -> None:
     _title(ws, "English Translation vs Native — Macro-F1", 7)
     _note(
         ws, 2,
-        "EN translation training is running (2026-08-10); results are absent until "
-        "the campaign completes and its evidence is verified locally.",
-        4, height=60,
+        "Historical recipe (configs/experiments/translation_en/, 3 epochs, pos-F1 selection, "
+        "require_complete false, include_failed true; runs en_seq*/en_seq2*). Values as documented in "
+        "docs/ENGLISH_TRANSLATION_RESULTS_2026-08-06.md: EN macro-F1 from MN5 final_summary.json "
+        "(MN5-only, not locally verifiable); native baselines from the native-language runs. "
+        "The harmonized-recipe comparison lives in the 'Harmonized EN Translation' sheet; do not "
+        "mix these recipes.",
+        4, height=78,
     )
     _header_row(ws, 4, ["Evaluation / Modality", "Native Macro-F1", "Translated (EN) Macro-F1", "Δ Macro-F1"])
     row = 5
@@ -539,6 +559,12 @@ def build_en(wb: Workbook) -> None:
     _section(ws, row, "Hidden-state heads (pooled 5-fold subject-level macro-F1)", 7)
     _header_row(ws, row + 1, ["Evaluation / Modality", "Native LogReg", "EN LogReg", "Δ LogReg",
                               "Native XGB", "EN XGB", "Δ XGB"])
+    if not EN_HEADS_NATIVE:
+        note_cell = ws.cell(row + 2, 1, "Not computed for the historical recipe (no hidden-head evidence).")
+        note_cell.font = BODY_FONT
+        note_cell.fill = NOTE
+        note_cell.alignment = LEFT
+        note_cell.border = BORDER
     r = row + 2
     for dataset in DATASETS:
         for modality in MODALITIES:
