@@ -1,9 +1,9 @@
 schema_version: audiollm.workbook_wandb_selection.v1
 workbook:
   path: depression_results_clean.xlsx
-  sha256: 725c71c095b8801943d0fe25e8d002f5d704a0e65115419e595cc12eca099d64
+  sha256: 8a7bf80dd89135f06449cc3dcacd5738d99f468f98290fb47de76dac050bd58a
   builder_path: scripts/build_clean_workbook.py
-  builder_sha256: 97fa8d2e863c446a1a61432069c52cfa5171332a729558c365a22b7e5016161a
+  builder_sha256: a2681032a71b69c7993467482cd66ea63844b541f93b0907ae1365055fbb7eb8
   provenance_sheet: Provenance
 entries:
 - selection_id: Standalone|DAIC|Audio + Text|Fine-tuned Qwen
@@ -2172,9 +2172,9 @@ entries:
   wandb_policy: quarantine_ambiguous
   blocking_reasons:
   - runs under output_model/experiments non-canonical layout; not importable by current discovery
-- selection_id: Harmonized EN|Androids Interview|Audio + Text|Fine-tuned Qwen
+- selection_id: EN Translation|Androids Interview|Audio + Text|Fine-tuned Qwen
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: Androids Interview
     modality: Audio + Text
     method: Fine-tuned Qwen
@@ -2200,12 +2200,12 @@ entries:
     aggregation: response_subject
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Harmonized EN|Androids Interview|Audio + Text|Qwen positive-F1
+- selection_id: EN Translation|Androids Interview|Audio + Text|Qwen positive-F1
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: Androids Interview
     modality: Audio + Text
     method: Qwen positive-F1
@@ -2231,12 +2231,12 @@ entries:
     aggregation: response_subject
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Harmonized EN|Androids Interview|Audio only|Fine-tuned Qwen
+- selection_id: EN Translation|Androids Interview|Audio only|Fine-tuned Qwen
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: Androids Interview
     modality: Audio only
     method: Fine-tuned Qwen
@@ -2246,12 +2246,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN|Androids Interview|Audio only|Qwen positive-F1
+- selection_id: EN Translation|Androids Interview|Audio only|Qwen positive-F1
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: Androids Interview
     modality: Audio only
     method: Qwen positive-F1
@@ -2261,12 +2261,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN|Androids Interview|Text only|Fine-tuned Qwen
+- selection_id: EN Translation|Androids Interview|Text only|Fine-tuned Qwen
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: Androids Interview
     modality: Text only
     method: Fine-tuned Qwen
@@ -2292,12 +2292,12 @@ entries:
     aggregation: subject_level
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Harmonized EN|Androids Interview|Text only|Qwen positive-F1
+- selection_id: EN Translation|Androids Interview|Text only|Qwen positive-F1
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: Androids Interview
     modality: Text only
     method: Qwen positive-F1
@@ -2323,12 +2323,12 @@ entries:
     aggregation: subject_level
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Harmonized EN|CMDC|Audio + Text|Fine-tuned Qwen
+- selection_id: EN Translation|CMDC|Audio + Text|Fine-tuned Qwen
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: CMDC
     modality: Audio + Text
     method: Fine-tuned Qwen
@@ -2354,12 +2354,12 @@ entries:
     aggregation: subject_level
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Harmonized EN|CMDC|Audio + Text|Qwen positive-F1
+- selection_id: EN Translation|CMDC|Audio + Text|Qwen positive-F1
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: CMDC
     modality: Audio + Text
     method: Qwen positive-F1
@@ -2385,12 +2385,12 @@ entries:
     aggregation: subject_level
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Harmonized EN|CMDC|Audio only|Fine-tuned Qwen
+- selection_id: EN Translation|CMDC|Audio only|Fine-tuned Qwen
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: CMDC
     modality: Audio only
     method: Fine-tuned Qwen
@@ -2400,12 +2400,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN|CMDC|Audio only|Qwen positive-F1
+- selection_id: EN Translation|CMDC|Audio only|Qwen positive-F1
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: CMDC
     modality: Audio only
     method: Qwen positive-F1
@@ -2415,12 +2415,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN|CMDC|Text only|Fine-tuned Qwen
+- selection_id: EN Translation|CMDC|Text only|Fine-tuned Qwen
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: CMDC
     modality: Text only
     method: Fine-tuned Qwen
@@ -2446,12 +2446,12 @@ entries:
     aggregation: subject_level
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Harmonized EN|CMDC|Text only|Qwen positive-F1
+- selection_id: EN Translation|CMDC|Text only|Qwen positive-F1
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: CMDC
     modality: Text only
     method: Qwen positive-F1
@@ -2477,12 +2477,12 @@ entries:
     aggregation: subject_level
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Harmonized EN|D3TEC|Audio + Text|Fine-tuned Qwen
+- selection_id: EN Translation|D3TEC|Audio + Text|Fine-tuned Qwen
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: D3TEC
     modality: Audio + Text
     method: Fine-tuned Qwen
@@ -2508,12 +2508,12 @@ entries:
     aggregation: response_subject
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Harmonized EN|D3TEC|Audio + Text|Qwen positive-F1
+- selection_id: EN Translation|D3TEC|Audio + Text|Qwen positive-F1
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: D3TEC
     modality: Audio + Text
     method: Qwen positive-F1
@@ -2539,12 +2539,12 @@ entries:
     aggregation: response_subject
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Harmonized EN|D3TEC|Audio only|Fine-tuned Qwen
+- selection_id: EN Translation|D3TEC|Audio only|Fine-tuned Qwen
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: D3TEC
     modality: Audio only
     method: Fine-tuned Qwen
@@ -2554,12 +2554,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN|D3TEC|Audio only|Qwen positive-F1
+- selection_id: EN Translation|D3TEC|Audio only|Qwen positive-F1
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: D3TEC
     modality: Audio only
     method: Qwen positive-F1
@@ -2569,12 +2569,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN|D3TEC|Text only|Fine-tuned Qwen
+- selection_id: EN Translation|D3TEC|Text only|Fine-tuned Qwen
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: D3TEC
     modality: Text only
     method: Fine-tuned Qwen
@@ -2600,12 +2600,12 @@ entries:
     aggregation: subject_level
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Harmonized EN|D3TEC|Text only|Qwen positive-F1
+- selection_id: EN Translation|D3TEC|Text only|Qwen positive-F1
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: D3TEC
     modality: Text only
     method: Qwen positive-F1
@@ -2631,12 +2631,12 @@ entries:
     aggregation: subject_level
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Harmonized EN|Turkish|Audio + Text|Fine-tuned Qwen
+- selection_id: EN Translation|Turkish|Audio + Text|Fine-tuned Qwen
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: Turkish
     modality: Audio + Text
     method: Fine-tuned Qwen
@@ -2662,12 +2662,12 @@ entries:
     aggregation: subject_level
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Harmonized EN|Turkish|Audio + Text|Qwen positive-F1
+- selection_id: EN Translation|Turkish|Audio + Text|Qwen positive-F1
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: Turkish
     modality: Audio + Text
     method: Qwen positive-F1
@@ -2693,12 +2693,12 @@ entries:
     aggregation: subject_level
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Harmonized EN|Turkish|Audio only|Fine-tuned Qwen
+- selection_id: EN Translation|Turkish|Audio only|Fine-tuned Qwen
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: Turkish
     modality: Audio only
     method: Fine-tuned Qwen
@@ -2708,12 +2708,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN|Turkish|Audio only|Qwen positive-F1
+- selection_id: EN Translation|Turkish|Audio only|Qwen positive-F1
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: Turkish
     modality: Audio only
     method: Qwen positive-F1
@@ -2723,12 +2723,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN|Turkish|Text only|Fine-tuned Qwen
+- selection_id: EN Translation|Turkish|Text only|Fine-tuned Qwen
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: Turkish
     modality: Text only
     method: Fine-tuned Qwen
@@ -2754,12 +2754,12 @@ entries:
     aggregation: subject_level
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Harmonized EN|Turkish|Text only|Qwen positive-F1
+- selection_id: EN Translation|Turkish|Text only|Qwen positive-F1
   provenance_key:
-    experiment: Harmonized EN
+    experiment: EN Translation
     dataset: Turkish
     modality: Text only
     method: Qwen positive-F1
@@ -2785,12 +2785,12 @@ entries:
     aggregation: subject_level
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
-  group: Harmonized EN
+  group: EN Translation
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Harmonized EN heads|CMDC|Audio + Text|LogReg head (EN)
+- selection_id: EN heads|CMDC|Audio + Text|LogReg head (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: CMDC
     modality: Audio + Text
     method: LogReg head (EN)
@@ -2800,13 +2800,13 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: pending_importer_support
   blocking_reasons:
   - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
-- selection_id: Harmonized EN heads|CMDC|Audio + Text|XGBoost fixed (EN)
+- selection_id: EN heads|CMDC|Audio + Text|XGBoost fixed (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: CMDC
     modality: Audio + Text
     method: XGBoost fixed (EN)
@@ -2816,13 +2816,13 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: pending_importer_support
   blocking_reasons:
   - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
-- selection_id: Harmonized EN heads|Androids Interview|Audio + Text|LogReg head (EN)
+- selection_id: EN heads|Androids Interview|Audio + Text|LogReg head (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Androids Interview
     modality: Audio + Text
     method: LogReg head (EN)
@@ -2832,13 +2832,13 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: pending_importer_support
   blocking_reasons:
   - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
-- selection_id: Harmonized EN heads|Androids Interview|Audio + Text|XGBoost fixed (EN)
+- selection_id: EN heads|Androids Interview|Audio + Text|XGBoost fixed (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Androids Interview
     modality: Audio + Text
     method: XGBoost fixed (EN)
@@ -2848,13 +2848,13 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: pending_importer_support
   blocking_reasons:
   - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
-- selection_id: Harmonized EN heads|Turkish|Audio + Text|LogReg head (EN)
+- selection_id: EN heads|Turkish|Audio + Text|LogReg head (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Turkish
     modality: Audio + Text
     method: LogReg head (EN)
@@ -2864,13 +2864,13 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: pending_importer_support
   blocking_reasons:
   - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
-- selection_id: Harmonized EN heads|Turkish|Audio + Text|XGBoost fixed (EN)
+- selection_id: EN heads|Turkish|Audio + Text|XGBoost fixed (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Turkish
     modality: Audio + Text
     method: XGBoost fixed (EN)
@@ -2880,13 +2880,13 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: pending_importer_support
   blocking_reasons:
   - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
-- selection_id: Harmonized EN heads|CMDC|Text only|LogReg head (EN)
+- selection_id: EN heads|CMDC|Text only|LogReg head (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: CMDC
     modality: Text only
     method: LogReg head (EN)
@@ -2896,13 +2896,13 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: pending_importer_support
   blocking_reasons:
   - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
-- selection_id: Harmonized EN heads|CMDC|Text only|XGBoost fixed (EN)
+- selection_id: EN heads|CMDC|Text only|XGBoost fixed (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: CMDC
     modality: Text only
     method: XGBoost fixed (EN)
@@ -2912,13 +2912,13 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: pending_importer_support
   blocking_reasons:
   - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
-- selection_id: Harmonized EN heads|Androids Interview|Text only|LogReg head (EN)
+- selection_id: EN heads|Androids Interview|Text only|LogReg head (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Androids Interview
     modality: Text only
     method: LogReg head (EN)
@@ -2928,13 +2928,13 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: pending_importer_support
   blocking_reasons:
   - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
-- selection_id: Harmonized EN heads|Androids Interview|Text only|XGBoost fixed (EN)
+- selection_id: EN heads|Androids Interview|Text only|XGBoost fixed (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Androids Interview
     modality: Text only
     method: XGBoost fixed (EN)
@@ -2944,13 +2944,13 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: pending_importer_support
   blocking_reasons:
   - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
-- selection_id: Harmonized EN heads|D3TEC|Audio + Text|LogReg head (EN)
+- selection_id: EN heads|D3TEC|Audio + Text|LogReg head (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: D3TEC
     modality: Audio + Text
     method: LogReg head (EN)
@@ -2960,13 +2960,13 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: pending_importer_support
   blocking_reasons:
   - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
-- selection_id: Harmonized EN heads|D3TEC|Audio + Text|XGBoost fixed (EN)
+- selection_id: EN heads|D3TEC|Audio + Text|XGBoost fixed (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: D3TEC
     modality: Audio + Text
     method: XGBoost fixed (EN)
@@ -2976,13 +2976,13 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: pending_importer_support
   blocking_reasons:
   - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
-- selection_id: Harmonized EN heads|Turkish|Text only|LogReg head (EN)
+- selection_id: EN heads|Turkish|Text only|LogReg head (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Turkish
     modality: Text only
     method: LogReg head (EN)
@@ -2992,13 +2992,13 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: pending_importer_support
   blocking_reasons:
   - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
-- selection_id: Harmonized EN heads|Turkish|Text only|XGBoost fixed (EN)
+- selection_id: EN heads|Turkish|Text only|XGBoost fixed (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Turkish
     modality: Text only
     method: XGBoost fixed (EN)
@@ -3008,13 +3008,13 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: pending_importer_support
   blocking_reasons:
   - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
-- selection_id: Harmonized EN heads|D3TEC|Text only|LogReg head (EN)
+- selection_id: EN heads|D3TEC|Text only|LogReg head (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: D3TEC
     modality: Text only
     method: LogReg head (EN)
@@ -3024,13 +3024,13 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: pending_importer_support
   blocking_reasons:
   - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
-- selection_id: Harmonized EN heads|D3TEC|Text only|XGBoost fixed (EN)
+- selection_id: EN heads|D3TEC|Text only|XGBoost fixed (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: D3TEC
     modality: Text only
     method: XGBoost fixed (EN)
@@ -3040,13 +3040,13 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: pending_importer_support
   blocking_reasons:
   - harmonized hidden-state runs have no qualified SQLite evaluation importer yet
-- selection_id: Harmonized EN heads|Androids Interview|Audio only|LogReg head (EN)
+- selection_id: EN heads|Androids Interview|Audio only|LogReg head (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Androids Interview
     modality: Audio only
     method: LogReg head (EN)
@@ -3056,12 +3056,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|Androids Interview|Audio only|XGBoost fixed (EN)
+- selection_id: EN heads|Androids Interview|Audio only|XGBoost fixed (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Androids Interview
     modality: Audio only
     method: XGBoost fixed (EN)
@@ -3071,12 +3071,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|CMDC|Audio only|LogReg head (EN)
+- selection_id: EN heads|CMDC|Audio only|LogReg head (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: CMDC
     modality: Audio only
     method: LogReg head (EN)
@@ -3086,12 +3086,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|CMDC|Audio only|XGBoost fixed (EN)
+- selection_id: EN heads|CMDC|Audio only|XGBoost fixed (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: CMDC
     modality: Audio only
     method: XGBoost fixed (EN)
@@ -3101,12 +3101,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|D3TEC|Audio only|LogReg head (EN)
+- selection_id: EN heads|D3TEC|Audio only|LogReg head (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: D3TEC
     modality: Audio only
     method: LogReg head (EN)
@@ -3116,12 +3116,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|D3TEC|Audio only|XGBoost fixed (EN)
+- selection_id: EN heads|D3TEC|Audio only|XGBoost fixed (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: D3TEC
     modality: Audio only
     method: XGBoost fixed (EN)
@@ -3131,12 +3131,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|Turkish|Audio only|LogReg head (EN)
+- selection_id: EN heads|Turkish|Audio only|LogReg head (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Turkish
     modality: Audio only
     method: LogReg head (EN)
@@ -3146,12 +3146,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|Turkish|Audio only|XGBoost fixed (EN)
+- selection_id: EN heads|Turkish|Audio only|XGBoost fixed (EN)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Turkish
     modality: Audio only
     method: XGBoost fixed (EN)
@@ -3161,12 +3161,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|Androids Interview|Audio + Text|LogReg head (native)
+- selection_id: EN heads|Androids Interview|Audio + Text|LogReg head (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Androids Interview
     modality: Audio + Text
     method: LogReg head (native)
@@ -3176,12 +3176,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|Androids Interview|Audio + Text|XGBoost fixed (native)
+- selection_id: EN heads|Androids Interview|Audio + Text|XGBoost fixed (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Androids Interview
     modality: Audio + Text
     method: XGBoost fixed (native)
@@ -3191,12 +3191,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|Androids Interview|Audio only|LogReg head (native)
+- selection_id: EN heads|Androids Interview|Audio only|LogReg head (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Androids Interview
     modality: Audio only
     method: LogReg head (native)
@@ -3206,12 +3206,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|Androids Interview|Audio only|XGBoost fixed (native)
+- selection_id: EN heads|Androids Interview|Audio only|XGBoost fixed (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Androids Interview
     modality: Audio only
     method: XGBoost fixed (native)
@@ -3221,12 +3221,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|Androids Interview|Text only|LogReg head (native)
+- selection_id: EN heads|Androids Interview|Text only|LogReg head (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Androids Interview
     modality: Text only
     method: LogReg head (native)
@@ -3236,12 +3236,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|Androids Interview|Text only|XGBoost fixed (native)
+- selection_id: EN heads|Androids Interview|Text only|XGBoost fixed (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Androids Interview
     modality: Text only
     method: XGBoost fixed (native)
@@ -3251,12 +3251,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|CMDC|Audio + Text|LogReg head (native)
+- selection_id: EN heads|CMDC|Audio + Text|LogReg head (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: CMDC
     modality: Audio + Text
     method: LogReg head (native)
@@ -3266,12 +3266,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|CMDC|Audio + Text|XGBoost fixed (native)
+- selection_id: EN heads|CMDC|Audio + Text|XGBoost fixed (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: CMDC
     modality: Audio + Text
     method: XGBoost fixed (native)
@@ -3281,12 +3281,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|CMDC|Audio only|LogReg head (native)
+- selection_id: EN heads|CMDC|Audio only|LogReg head (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: CMDC
     modality: Audio only
     method: LogReg head (native)
@@ -3296,12 +3296,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|CMDC|Audio only|XGBoost fixed (native)
+- selection_id: EN heads|CMDC|Audio only|XGBoost fixed (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: CMDC
     modality: Audio only
     method: XGBoost fixed (native)
@@ -3311,12 +3311,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|CMDC|Text only|LogReg head (native)
+- selection_id: EN heads|CMDC|Text only|LogReg head (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: CMDC
     modality: Text only
     method: LogReg head (native)
@@ -3326,12 +3326,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|CMDC|Text only|XGBoost fixed (native)
+- selection_id: EN heads|CMDC|Text only|XGBoost fixed (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: CMDC
     modality: Text only
     method: XGBoost fixed (native)
@@ -3341,12 +3341,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|D3TEC|Audio + Text|LogReg head (native)
+- selection_id: EN heads|D3TEC|Audio + Text|LogReg head (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: D3TEC
     modality: Audio + Text
     method: LogReg head (native)
@@ -3356,12 +3356,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|D3TEC|Audio + Text|XGBoost fixed (native)
+- selection_id: EN heads|D3TEC|Audio + Text|XGBoost fixed (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: D3TEC
     modality: Audio + Text
     method: XGBoost fixed (native)
@@ -3371,12 +3371,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|D3TEC|Audio only|LogReg head (native)
+- selection_id: EN heads|D3TEC|Audio only|LogReg head (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: D3TEC
     modality: Audio only
     method: LogReg head (native)
@@ -3386,12 +3386,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|D3TEC|Audio only|XGBoost fixed (native)
+- selection_id: EN heads|D3TEC|Audio only|XGBoost fixed (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: D3TEC
     modality: Audio only
     method: XGBoost fixed (native)
@@ -3401,12 +3401,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|D3TEC|Text only|LogReg head (native)
+- selection_id: EN heads|D3TEC|Text only|LogReg head (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: D3TEC
     modality: Text only
     method: LogReg head (native)
@@ -3416,12 +3416,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|D3TEC|Text only|XGBoost fixed (native)
+- selection_id: EN heads|D3TEC|Text only|XGBoost fixed (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: D3TEC
     modality: Text only
     method: XGBoost fixed (native)
@@ -3431,12 +3431,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|Turkish|Audio + Text|LogReg head (native)
+- selection_id: EN heads|Turkish|Audio + Text|LogReg head (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Turkish
     modality: Audio + Text
     method: LogReg head (native)
@@ -3446,12 +3446,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|Turkish|Audio + Text|XGBoost fixed (native)
+- selection_id: EN heads|Turkish|Audio + Text|XGBoost fixed (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Turkish
     modality: Audio + Text
     method: XGBoost fixed (native)
@@ -3461,12 +3461,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|Turkish|Audio only|LogReg head (native)
+- selection_id: EN heads|Turkish|Audio only|LogReg head (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Turkish
     modality: Audio only
     method: LogReg head (native)
@@ -3476,12 +3476,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|Turkish|Audio only|XGBoost fixed (native)
+- selection_id: EN heads|Turkish|Audio only|XGBoost fixed (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Turkish
     modality: Audio only
     method: XGBoost fixed (native)
@@ -3491,12 +3491,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|Turkish|Text only|LogReg head (native)
+- selection_id: EN heads|Turkish|Text only|LogReg head (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Turkish
     modality: Text only
     method: LogReg head (native)
@@ -3506,12 +3506,12 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: Harmonized EN heads|Turkish|Text only|XGBoost fixed (native)
+- selection_id: EN heads|Turkish|Text only|XGBoost fixed (native)
   provenance_key:
-    experiment: Harmonized EN heads
+    experiment: EN heads
     dataset: Turkish
     modality: Text only
     method: XGBoost fixed (native)
@@ -3521,534 +3521,6 @@ entries:
   attempt_ids: []
   expected_folds: []
   required_evaluations: []
-  group: Harmonized EN heads
+  group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
-- selection_id: EN translation|CMDC|Audio + Text|Native (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: CMDC
-    modality: Audio + Text
-    method: Native (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: cmdc_audio_text
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_importer_support
-  blocking_reasons:
-  - historical recipe runs have no qualified SQLite evaluation importer support
-- selection_id: EN translation|CMDC|Audio + Text|Translated EN (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: CMDC
-    modality: Audio + Text
-    method: Translated EN (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: en_seq2_cmdc_audio_text_v1
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_local_evidence
-  blocking_reasons:
-  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
-- selection_id: EN translation|CMDC|Audio only|Native (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: CMDC
-    modality: Audio only
-    method: Native (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: cmdc_audio_only
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_importer_support
-  blocking_reasons:
-  - historical recipe runs have no qualified SQLite evaluation importer support
-- selection_id: EN translation|CMDC|Audio only|Translated EN (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: CMDC
-    modality: Audio only
-    method: Translated EN (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: en_seq2_cmdc_audio_only_v1
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_local_evidence
-  blocking_reasons:
-  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
-- selection_id: EN translation|CMDC|Text only|Native (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: CMDC
-    modality: Text only
-    method: Native (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: cmdc_text_only
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_importer_support
-  blocking_reasons:
-  - historical recipe runs have no qualified SQLite evaluation importer support
-- selection_id: EN translation|CMDC|Text only|Translated EN (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: CMDC
-    modality: Text only
-    method: Translated EN (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: en_seq2_cmdc_text_only_v1
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_local_evidence
-  blocking_reasons:
-  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
-- selection_id: EN translation|Turkish|Audio + Text|Native (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: Turkish
-    modality: Audio + Text
-    method: Native (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: t17_posf1_tf_qwen3asr_turkish_t17_audio_text_selposf1_tf_qwen3asr
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_importer_support
-  blocking_reasons:
-  - historical recipe runs have no qualified SQLite evaluation importer support
-- selection_id: EN translation|Turkish|Audio + Text|Translated EN (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: Turkish
-    modality: Audio + Text
-    method: Translated EN (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: en_seq_turkish_audio_text_v1
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_local_evidence
-  blocking_reasons:
-  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
-- selection_id: EN translation|Turkish|Audio only|Native (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: Turkish
-    modality: Audio only
-    method: Native (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: t17_posf1_tf_qwen3asr_turkish_t17_audio_only_selposf1_tf_qwen3asr
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_importer_support
-  blocking_reasons:
-  - historical recipe runs have no qualified SQLite evaluation importer support
-- selection_id: EN translation|Turkish|Audio only|Translated EN (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: Turkish
-    modality: Audio only
-    method: Translated EN (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: en_seq_turkish_audio_only_v1
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_local_evidence
-  blocking_reasons:
-  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
-- selection_id: EN translation|Turkish|Text only|Native (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: Turkish
-    modality: Text only
-    method: Native (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: t17_posf1_tf_qwen3asr_turkish_t17_text_only_selposf1_tf_qwen3asr
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_importer_support
-  blocking_reasons:
-  - historical recipe runs have no qualified SQLite evaluation importer support
-- selection_id: EN translation|Turkish|Text only|Translated EN (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: Turkish
-    modality: Text only
-    method: Translated EN (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: en_seq_turkish_text_only_v1
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_local_evidence
-  blocking_reasons:
-  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
-- selection_id: EN translation|D3TEC|Audio + Text|Native (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: D3TEC
-    modality: Audio + Text
-    method: Native (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: d3tec_prod_20260728T135954Z_d3tec_audio_text_rotary
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_importer_support
-  blocking_reasons:
-  - historical recipe runs have no qualified SQLite evaluation importer support
-- selection_id: EN translation|D3TEC|Audio + Text|Translated EN (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: D3TEC
-    modality: Audio + Text
-    method: Translated EN (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: en_seq_d3tec_audio_text_v1
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_local_evidence
-  blocking_reasons:
-  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
-- selection_id: EN translation|D3TEC|Audio only|Native (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: D3TEC
-    modality: Audio only
-    method: Native (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: d3tec_prod_20260728T135954Z_d3tec_audio_only_rotary
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_importer_support
-  blocking_reasons:
-  - historical recipe runs have no qualified SQLite evaluation importer support
-- selection_id: EN translation|D3TEC|Audio only|Translated EN (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: D3TEC
-    modality: Audio only
-    method: Translated EN (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: en_seq_d3tec_audio_only_v1
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_local_evidence
-  blocking_reasons:
-  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
-- selection_id: EN translation|D3TEC|Text only|Native (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: D3TEC
-    modality: Text only
-    method: Native (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: d3tec_prod_20260728T135954Z_d3tec_text_only
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_importer_support
-  blocking_reasons:
-  - historical recipe runs have no qualified SQLite evaluation importer support
-- selection_id: EN translation|D3TEC|Text only|Translated EN (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: D3TEC
-    modality: Text only
-    method: Translated EN (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: en_seq_d3tec_text_only_v1
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_local_evidence
-  blocking_reasons:
-  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
-- selection_id: EN translation|Androids Interview|Audio + Text|Native (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: Androids Interview
-    modality: Audio + Text
-    method: Native (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: androids_interview_prod_20260730T145948Z_androids_interview_audio_text_segment_aligned
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_importer_support
-  blocking_reasons:
-  - historical recipe runs have no qualified SQLite evaluation importer support
-- selection_id: EN translation|Androids Interview|Audio + Text|Translated EN (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: Androids Interview
-    modality: Audio + Text
-    method: Translated EN (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: en_seq_androids_audio_text_v1
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_local_evidence
-  blocking_reasons:
-  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
-- selection_id: EN translation|Androids Interview|Audio only|Native (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: Androids Interview
-    modality: Audio only
-    method: Native (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: androids_interview_prod_20260730T145948Z_androids_interview_audio_only
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_importer_support
-  blocking_reasons:
-  - historical recipe runs have no qualified SQLite evaluation importer support
-- selection_id: EN translation|Androids Interview|Audio only|Translated EN (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: Androids Interview
-    modality: Audio only
-    method: Translated EN (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: en_seq_androids_audio_only_v1
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_local_evidence
-  blocking_reasons:
-  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
-- selection_id: EN translation|Androids Interview|Text only|Native (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: Androids Interview
-    modality: Text only
-    method: Native (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: androids_interview_prod_20260730T145948Z_androids_interview_text_only
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_importer_support
-  blocking_reasons:
-  - historical recipe runs have no qualified SQLite evaluation importer support
-- selection_id: EN translation|Androids Interview|Text only|Translated EN (fold-mean)
-  provenance_key:
-    experiment: EN translation
-    dataset: Androids Interview
-    modality: Text only
-    method: Translated EN (fold-mean)
-  source_type: ordinary_qwen
-  reason: historical_en_recipe
-  dependency_policy: all_contributing_folds
-  logical_run_name: en_seq_androids_text_only_v1
-  attempt_ids: []
-  expected_folds:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
-  required_evaluations: []
-  group: EN translation
-  wandb_policy: pending_local_evidence
-  blocking_reasons:
-  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
