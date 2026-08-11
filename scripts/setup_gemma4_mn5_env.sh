@@ -18,6 +18,9 @@ set -euo pipefail
 QENV="/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt"
 GEMMA_ENV_TARGET="${GEMMA_ENV_TARGET:-/gpfs/projects/etur92/ozu647717/venvs/gemma4_12b_tf5_14_1}"
 GEMMA_WHEELHOUSE="${GEMMA_WHEELHOUSE:-/gpfs/projects/etur92/ozu647717/wheelhouses/gemma4_tf5_14_1}"
+# Staged standalone CPython 3.11 (MN5 has no outbound internet and no conda
+# package cache, so the base interpreter itself is delivered offline).
+GEMMA_PYTHON_BASE="${GEMMA_PYTHON_BASE:-/gpfs/projects/etur92/ozu647717/venvs/gemma4_python311_stage/python}"
 GEMMA_AUDIT_DIR="${GEMMA_AUDIT_DIR:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/outputs/gemma4_env_audits}"
 REQUIREMENTS="${REQUIREMENTS:-$PWD/requirements_mn5_gemma4.txt}"
 
@@ -44,12 +47,16 @@ if [ ! -d "$GEMMA_WHEELHOUSE" ] || [ -z "$(ls -A "$GEMMA_WHEELHOUSE" 2>/dev/null
     echo "ERROR: wheelhouse missing or empty: $GEMMA_WHEELHOUSE" >&2
     exit 1
 fi
+if [ ! -x "$GEMMA_PYTHON_BASE/bin/python3.11" ]; then
+    echo "ERROR: staged standalone Python 3.11 not found: $GEMMA_PYTHON_BASE" >&2
+    exit 1
+fi
 
 mkdir -p "$GEMMA_AUDIT_DIR"
 
 if [ ! -f "$GEMMA_ENV_TARGET/bin/activate" ]; then
     echo "Creating dedicated Python 3.11 environment at $GEMMA_ENV_TARGET"
-    python3.11 -m venv "$GEMMA_ENV_TARGET" || python3 -m venv --copies "$GEMMA_ENV_TARGET"
+    "$GEMMA_PYTHON_BASE/bin/python3.11" -m venv --copies "$GEMMA_ENV_TARGET"
 else
     echo "Environment exists: $GEMMA_ENV_TARGET (revalidating instead of recreating)"
 fi
@@ -72,6 +79,10 @@ python -m pip install --no-index --find-links "$GEMMA_WHEELHOUSE" -r "$REQUIREME
 echo "Running pip check"
 python -m pip check
 
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+export HF_DATASETS_OFFLINE=1
+
 TIMESTAMP="$(date +%Y-%m-%d_%H:%M:%S)"
 FREEZE_FILE="$GEMMA_AUDIT_DIR/pip_freeze_${TIMESTAMP}.txt"
 AUDIT_FILE="$GEMMA_AUDIT_DIR/env_audit_${TIMESTAMP}.json"
@@ -79,11 +90,16 @@ pip freeze > "$FREEZE_FILE"
 python - <<PY
 import json, os, sys
 import torch, torchvision, transformers, peft, accelerate, numpy, librosa, soundfile, PIL
+from transformers import Gemma4UnifiedProcessor, Gemma4UnifiedForConditionalGeneration
+import torch.cuda as tc
 audit = {
     "environment": "$GEMMA_ENV_TARGET",
     "python": sys.version.split()[0],
     "torch": torch.__version__,
     "torch.cuda": torch.version.cuda,
+    "cuda_available": tc.is_available(),
+    "cuda_device_count": tc.device_count(),
+    "cuda_device_name": (tc.get_device_name(0) if tc.is_available() and tc.device_count() > 0 else None),
     "torchvision": torchvision.__version__,
     "transformers": transformers.__version__,
     "peft": peft.__version__,
@@ -92,6 +108,8 @@ audit = {
     "librosa": librosa.__version__,
     "soundfile": soundfile.__version__,
     "pillow": PIL.__version__,
+    "gemma4_processor_class": Gemma4UnifiedProcessor.__name__,
+    "gemma4_model_class": Gemma4UnifiedForConditionalGeneration.__name__,
     "freeze_file": "$FREEZE_FILE",
 }
 with open("$AUDIT_FILE", "w", encoding="utf-8") as handle:
