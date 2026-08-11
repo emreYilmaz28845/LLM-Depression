@@ -334,3 +334,174 @@ def test_no_context_evaluation_writes_no_sidecars(tmp_path: Path) -> None:
     _record_evaluation_sidecars(args, config, metrics, output_dir, aggregation_level="subject", split_mode="fixed", cv_protocol=None)
     assert not (fold_dir / "evaluations.json").exists()
     assert not (fold_dir / "artifacts.json").exists()
+
+
+def test_evaluation_absent_view_preserves_null_record(tmp_path: Path) -> None:
+    context_path, _ = _eval_context(tmp_path)
+    fold_dir = tmp_path / "run" / "fold_0"
+    checkpoint_dir = fold_dir / "best_model"
+    output_dir = checkpoint_dir / "standalone_eval"
+    output_dir.mkdir(parents=True)
+    headline = {"positive_f1": 0.6, "macro_f1": 0.5}
+    metrics_payload = {
+        "prediction_backend": "original_teacher_forced",
+        "aggregation_level": "subject",
+        "num_units": 6,
+        "backend_results": {"original_teacher_forced": {"headline_metrics": headline}},
+    }
+    (output_dir / "metrics_original_teacher_forced.json").write_text(json.dumps(metrics_payload), encoding="utf-8")
+    (output_dir / "predictions_subject_level.csv").write_text("a\n", encoding="utf-8")
+    config = {"dataset": "daic", "split": {"final_eval_partition": "test"}}
+    metrics = {"active_backend": "original_teacher_forced", "backend_results": metrics_payload["backend_results"]}
+    args = SimpleNamespace(experiment_context=str(context_path), checkpoint_dir=str(checkpoint_dir), fold=0)
+    _record_evaluation_sidecars(args, config, metrics, output_dir, aggregation_level="subject", split_mode="fixed", cv_protocol=None)
+    evaluations = json.loads((fold_dir / "evaluations.json").read_text(encoding="utf-8"))
+    record = evaluations["evaluations"][0]
+    assert record["evaluation_view"] is None
+    assert record["warnings"] == ["evaluation view not recorded in evidence"]
+    assert "evaluation_view" not in json.loads((output_dir / "metrics_original_teacher_forced.json").read_text(encoding="utf-8"))
+
+
+def test_evaluation_configured_view_recorded_in_evidence(tmp_path: Path) -> None:
+    context_path, _ = _eval_context(tmp_path)
+    fold_dir = tmp_path / "run" / "fold_0"
+    checkpoint_dir = fold_dir / "best_model"
+    output_dir = checkpoint_dir / "standalone_eval"
+    output_dir.mkdir(parents=True)
+    view = "harmonized_all_windows_full_coverage"
+    headline = {"positive_f1": 0.6, "macro_f1": 0.5}
+    metrics_payload = {
+        "prediction_backend": "original_teacher_forced",
+        "aggregation_level": "subject",
+        "num_units": 6,
+        "evaluation_view": view,
+        "backend_results": {"original_teacher_forced": {"headline_metrics": headline}},
+    }
+    (output_dir / "metrics_original_teacher_forced.json").write_text(json.dumps(metrics_payload), encoding="utf-8")
+    (output_dir / "predictions_subject_level.csv").write_text("a\n", encoding="utf-8")
+    config = {
+        "dataset": "daic",
+        "split": {"final_eval_partition": "test"},
+        "evaluation": {"evaluation_view": view},
+    }
+    metrics = {"active_backend": "original_teacher_forced", "backend_results": metrics_payload["backend_results"]}
+    args = SimpleNamespace(experiment_context=str(context_path), checkpoint_dir=str(checkpoint_dir), fold=0)
+    _record_evaluation_sidecars(args, config, metrics, output_dir, aggregation_level="subject", split_mode="fixed", cv_protocol=None)
+    evaluations = json.loads((fold_dir / "evaluations.json").read_text(encoding="utf-8"))
+    record = evaluations["evaluations"][0]
+    assert record["evaluation_view"] == view
+    assert record["warnings"] == []
+    metric_evidence = json.loads((output_dir / "metrics_original_teacher_forced.json").read_text(encoding="utf-8"))
+    assert metric_evidence["evaluation_view"] == view
+
+
+def test_evaluation_identical_repeat_with_view_skips_cleanly(tmp_path: Path) -> None:
+    context_path, _ = _eval_context(tmp_path)
+    fold_dir = tmp_path / "run" / "fold_0"
+    checkpoint_dir = fold_dir / "best_model"
+    output_dir = checkpoint_dir / "standalone_eval"
+    output_dir.mkdir(parents=True)
+    headline = {"positive_f1": 0.6, "macro_f1": 0.5}
+    metrics_payload = {
+        "prediction_backend": "original_teacher_forced",
+        "aggregation_level": "subject",
+        "num_units": 6,
+        "backend_results": {"original_teacher_forced": {"headline_metrics": headline}},
+    }
+    (output_dir / "metrics_original_teacher_forced.json").write_text(json.dumps(metrics_payload), encoding="utf-8")
+    (output_dir / "predictions_subject_level.csv").write_text("a\n", encoding="utf-8")
+    config = {
+        "dataset": "daic",
+        "split": {"final_eval_partition": "test"},
+        "evaluation": {"evaluation_view": "harmonized_all_windows_full_coverage"},
+    }
+    metrics = {"active_backend": "original_teacher_forced", "backend_results": metrics_payload["backend_results"]}
+    args = SimpleNamespace(experiment_context=str(context_path), checkpoint_dir=str(checkpoint_dir), fold=0)
+    for _ in range(3):
+        _record_evaluation_sidecars(args, config, metrics, output_dir, aggregation_level="subject", split_mode="fixed", cv_protocol=None)
+    evaluations = json.loads((fold_dir / "evaluations.json").read_text(encoding="utf-8"))
+    assert len(evaluations["evaluations"]) == 1
+
+
+def test_evaluation_different_view_creates_distinct_evaluation_id(tmp_path: Path) -> None:
+    context_path, _ = _eval_context(tmp_path)
+    fold_dir = tmp_path / "run" / "fold_0"
+    checkpoint_dir = fold_dir / "best_model"
+    output_dir = checkpoint_dir / "standalone_eval"
+    output_dir.mkdir(parents=True)
+    headline = {"positive_f1": 0.6, "macro_f1": 0.5}
+    metrics_payload = {
+        "prediction_backend": "original_teacher_forced",
+        "aggregation_level": "subject",
+        "num_units": 6,
+        "backend_results": {"original_teacher_forced": {"headline_metrics": headline}},
+    }
+    (output_dir / "metrics_original_teacher_forced.json").write_text(json.dumps(metrics_payload), encoding="utf-8")
+    (output_dir / "predictions_subject_level.csv").write_text("a\n", encoding="utf-8")
+    metrics = {"active_backend": "original_teacher_forced", "backend_results": metrics_payload["backend_results"]}
+    args = SimpleNamespace(experiment_context=str(context_path), checkpoint_dir=str(checkpoint_dir), fold=0)
+    for view in ("harmonized_all_windows_full_coverage", "fixed_k4"):
+        config = {"dataset": "daic", "split": {"final_eval_partition": "test"}, "evaluation": {"evaluation_view": view}}
+        _record_evaluation_sidecars(args, config, metrics, output_dir, aggregation_level="subject", split_mode="fixed", cv_protocol=None)
+    evaluations = json.loads((fold_dir / "evaluations.json").read_text(encoding="utf-8"))
+    assert len(evaluations["evaluations"]) == 2
+    ids = {record["evaluation_id"] for record in evaluations["evaluations"]}
+    assert len(ids) == 2
+    assert {record["evaluation_view"] for record in evaluations["evaluations"]} == {
+        "fixed_k4",
+        "harmonized_all_windows_full_coverage",
+    }
+
+
+def test_evaluation_empty_view_is_refused(tmp_path: Path) -> None:
+    context_path, _ = _eval_context(tmp_path)
+    fold_dir = tmp_path / "run" / "fold_0"
+    checkpoint_dir = fold_dir / "best_model"
+    output_dir = checkpoint_dir / "standalone_eval"
+    output_dir.mkdir(parents=True)
+    headline = {"positive_f1": 0.6, "macro_f1": 0.5}
+    metrics_payload = {
+        "prediction_backend": "original_teacher_forced",
+        "aggregation_level": "subject",
+        "num_units": 6,
+        "backend_results": {"original_teacher_forced": {"headline_metrics": headline}},
+    }
+    (output_dir / "metrics_original_teacher_forced.json").write_text(json.dumps(metrics_payload), encoding="utf-8")
+    (output_dir / "predictions_subject_level.csv").write_text("a\n", encoding="utf-8")
+    metrics = {"active_backend": "original_teacher_forced", "backend_results": metrics_payload["backend_results"]}
+    args = SimpleNamespace(experiment_context=str(context_path), checkpoint_dir=str(checkpoint_dir), fold=0)
+    config = {"dataset": "daic", "split": {"final_eval_partition": "test"}, "evaluation": {"evaluation_view": "   "}}
+    with pytest.raises(ValueError, match="evaluation_view"):
+        _record_evaluation_sidecars(args, config, metrics, output_dir, aggregation_level="subject", split_mode="fixed", cv_protocol=None)
+    assert not (fold_dir / "evaluations.json").exists()
+
+
+def test_evaluation_conflicting_same_id_content_refused_with_view(tmp_path: Path) -> None:
+    context_path, _ = _eval_context(tmp_path)
+    fold_dir = tmp_path / "run" / "fold_0"
+    checkpoint_dir = fold_dir / "best_model"
+    output_dir = checkpoint_dir / "standalone_eval"
+    output_dir.mkdir(parents=True)
+    headline = {"positive_f1": 0.6, "macro_f1": 0.5}
+    metrics_payload = {
+        "prediction_backend": "original_teacher_forced",
+        "aggregation_level": "subject",
+        "num_units": 6,
+        "backend_results": {"original_teacher_forced": {"headline_metrics": headline}},
+    }
+    (output_dir / "metrics_original_teacher_forced.json").write_text(json.dumps(metrics_payload), encoding="utf-8")
+    (output_dir / "predictions_subject_level.csv").write_text("a\n", encoding="utf-8")
+    config = {
+        "dataset": "daic",
+        "split": {"final_eval_partition": "test"},
+        "evaluation": {"evaluation_view": "harmonized_all_windows_full_coverage"},
+    }
+    metrics = {"active_backend": "original_teacher_forced", "backend_results": metrics_payload["backend_results"]}
+    args = SimpleNamespace(experiment_context=str(context_path), checkpoint_dir=str(checkpoint_dir), fold=0)
+    _record_evaluation_sidecars(args, config, metrics, output_dir, aggregation_level="subject", split_mode="fixed", cv_protocol=None)
+    evaluations = json.loads((fold_dir / "evaluations.json").read_text(encoding="utf-8"))
+    record = evaluations["evaluations"][0]
+    record["metrics"][0]["value"] = 0.999
+    (fold_dir / "evaluations.json").write_text(json.dumps(evaluations), encoding="utf-8")
+    with pytest.raises(ValueError, match="refusing to overwrite"):
+        _record_evaluation_sidecars(args, config, metrics, output_dir, aggregation_level="subject", split_mode="fixed", cv_protocol=None)
