@@ -1,9 +1,9 @@
 schema_version: audiollm.workbook_wandb_selection.v1
 workbook:
   path: depression_results_clean.xlsx
-  sha256: 16c78b6b13d9c703293d886996673e0b896aae44f0566dcad5681bdf4124dd18
+  sha256: 725c71c095b8801943d0fe25e8d002f5d704a0e65115419e595cc12eca099d64
   builder_path: scripts/build_clean_workbook.py
-  builder_sha256: 08f216d3ddb422b7ce0074ae8ae61937c205ac1b7a3f624990da3e33526d07d8
+  builder_sha256: 97fa8d2e863c446a1a61432069c52cfa5171332a729558c365a22b7e5016161a
   provenance_sheet: Provenance
 entries:
 - selection_id: Standalone|DAIC|Audio + Text|Fine-tuned Qwen
@@ -935,8 +935,7 @@ entries:
   group: Merged DAIC official
   wandb_policy: pending_importer_support
   blocking_reasons: &id007
-  - harmonized merged runs are not imported into the registry (inventory-oriented
-    layout only)
+  - harmonized merged runs are not imported into the registry (inventory-oriented layout only)
 - selection_id: Merged DAIC official|DAIC|Audio + Text|LogReg head
   provenance_key:
     experiment: Merged DAIC official
@@ -1981,8 +1980,7 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
-    yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
 - selection_id: DAIC packed30 family|DAIC|Canonical Audio + Text|XGBoost raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -1999,8 +1997,7 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
-    yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
 - selection_id: DAIC packed30 family|DAIC|Canonical Audio only|LogReg raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -2017,8 +2014,7 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
-    yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
 - selection_id: DAIC packed30 family|DAIC|Canonical Audio only|XGBoost raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -2035,8 +2031,7 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
-    yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
 - selection_id: DAIC packed30 family|DAIC|Joint-K4 Audio + Text|LogReg raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -2053,8 +2048,7 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
-    yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
 - selection_id: DAIC packed30 family|DAIC|Joint-K4 Audio + Text|Qwen TF
   provenance_key:
     experiment: DAIC packed30 family
@@ -2072,8 +2066,7 @@ entries:
   group: DAIC packed30 family
   wandb_policy: quarantine_ambiguous
   blocking_reasons:
-  - runs under output_model/experiments non-canonical layout; not importable by current
-    discovery
+  - runs under output_model/experiments non-canonical layout; not importable by current discovery
 - selection_id: DAIC packed30 family|DAIC|Joint-K4 Audio + Text|XGBoost raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -2090,8 +2083,7 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
-    yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
 - selection_id: DAIC packed30 family|DAIC|Joint-K4 Audio only|LogReg raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -2108,8 +2100,7 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
-    yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
 - selection_id: DAIC packed30 family|DAIC|Joint-K4 Audio only|Qwen TF
   provenance_key:
     experiment: DAIC packed30 family
@@ -2127,8 +2118,7 @@ entries:
   group: DAIC packed30 family
   wandb_policy: quarantine_ambiguous
   blocking_reasons:
-  - runs under output_model/experiments non-canonical layout; not importable by current
-    discovery
+  - runs under output_model/experiments non-canonical layout; not importable by current discovery
 - selection_id: DAIC packed30 family|DAIC|Joint-K4 Audio only|XGBoost raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -2145,8 +2135,7 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
-    yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
 - selection_id: DAIC packed30 family|DAIC|Packed30 v1 Audio + Text|Qwen TF
   provenance_key:
     experiment: DAIC packed30 family
@@ -2164,8 +2153,7 @@ entries:
   group: DAIC packed30 family
   wandb_policy: quarantine_ambiguous
   blocking_reasons:
-  - runs under output_model/experiments non-canonical layout; not importable by current
-    discovery
+  - runs under output_model/experiments non-canonical layout; not importable by current discovery
 - selection_id: DAIC packed30 family|DAIC|Packed30 v1 Audio only|Qwen TF
   provenance_key:
     experiment: DAIC packed30 family
@@ -2183,8 +2171,7 @@ entries:
   group: DAIC packed30 family
   wandb_policy: quarantine_ambiguous
   blocking_reasons:
-  - runs under output_model/experiments non-canonical layout; not importable by current
-    discovery
+  - runs under output_model/experiments non-canonical layout; not importable by current discovery
 - selection_id: Harmonized EN|Androids Interview|Audio + Text|Fine-tuned Qwen
   provenance_key:
     experiment: Harmonized EN
@@ -3537,3 +3524,531 @@ entries:
   group: Harmonized EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
+- selection_id: EN translation|CMDC|Audio + Text|Native (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: CMDC
+    modality: Audio + Text
+    method: Native (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: cmdc_audio_text
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - historical recipe runs have no qualified SQLite evaluation importer support
+- selection_id: EN translation|CMDC|Audio + Text|Translated EN (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: CMDC
+    modality: Audio + Text
+    method: Translated EN (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: en_seq2_cmdc_audio_text_v1
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_local_evidence
+  blocking_reasons:
+  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
+- selection_id: EN translation|CMDC|Audio only|Native (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: CMDC
+    modality: Audio only
+    method: Native (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: cmdc_audio_only
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - historical recipe runs have no qualified SQLite evaluation importer support
+- selection_id: EN translation|CMDC|Audio only|Translated EN (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: CMDC
+    modality: Audio only
+    method: Translated EN (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: en_seq2_cmdc_audio_only_v1
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_local_evidence
+  blocking_reasons:
+  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
+- selection_id: EN translation|CMDC|Text only|Native (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: CMDC
+    modality: Text only
+    method: Native (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: cmdc_text_only
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - historical recipe runs have no qualified SQLite evaluation importer support
+- selection_id: EN translation|CMDC|Text only|Translated EN (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: CMDC
+    modality: Text only
+    method: Translated EN (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: en_seq2_cmdc_text_only_v1
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_local_evidence
+  blocking_reasons:
+  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
+- selection_id: EN translation|Turkish|Audio + Text|Native (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: Turkish
+    modality: Audio + Text
+    method: Native (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: t17_posf1_tf_qwen3asr_turkish_t17_audio_text_selposf1_tf_qwen3asr
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - historical recipe runs have no qualified SQLite evaluation importer support
+- selection_id: EN translation|Turkish|Audio + Text|Translated EN (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: Turkish
+    modality: Audio + Text
+    method: Translated EN (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: en_seq_turkish_audio_text_v1
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_local_evidence
+  blocking_reasons:
+  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
+- selection_id: EN translation|Turkish|Audio only|Native (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: Turkish
+    modality: Audio only
+    method: Native (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: t17_posf1_tf_qwen3asr_turkish_t17_audio_only_selposf1_tf_qwen3asr
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - historical recipe runs have no qualified SQLite evaluation importer support
+- selection_id: EN translation|Turkish|Audio only|Translated EN (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: Turkish
+    modality: Audio only
+    method: Translated EN (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: en_seq_turkish_audio_only_v1
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_local_evidence
+  blocking_reasons:
+  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
+- selection_id: EN translation|Turkish|Text only|Native (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: Turkish
+    modality: Text only
+    method: Native (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: t17_posf1_tf_qwen3asr_turkish_t17_text_only_selposf1_tf_qwen3asr
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - historical recipe runs have no qualified SQLite evaluation importer support
+- selection_id: EN translation|Turkish|Text only|Translated EN (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: Turkish
+    modality: Text only
+    method: Translated EN (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: en_seq_turkish_text_only_v1
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_local_evidence
+  blocking_reasons:
+  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
+- selection_id: EN translation|D3TEC|Audio + Text|Native (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Native (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: d3tec_prod_20260728T135954Z_d3tec_audio_text_rotary
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - historical recipe runs have no qualified SQLite evaluation importer support
+- selection_id: EN translation|D3TEC|Audio + Text|Translated EN (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Translated EN (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: en_seq_d3tec_audio_text_v1
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_local_evidence
+  blocking_reasons:
+  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
+- selection_id: EN translation|D3TEC|Audio only|Native (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: D3TEC
+    modality: Audio only
+    method: Native (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: d3tec_prod_20260728T135954Z_d3tec_audio_only_rotary
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - historical recipe runs have no qualified SQLite evaluation importer support
+- selection_id: EN translation|D3TEC|Audio only|Translated EN (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: D3TEC
+    modality: Audio only
+    method: Translated EN (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: en_seq_d3tec_audio_only_v1
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_local_evidence
+  blocking_reasons:
+  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
+- selection_id: EN translation|D3TEC|Text only|Native (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: D3TEC
+    modality: Text only
+    method: Native (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: d3tec_prod_20260728T135954Z_d3tec_text_only
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - historical recipe runs have no qualified SQLite evaluation importer support
+- selection_id: EN translation|D3TEC|Text only|Translated EN (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: D3TEC
+    modality: Text only
+    method: Translated EN (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: en_seq_d3tec_text_only_v1
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_local_evidence
+  blocking_reasons:
+  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
+- selection_id: EN translation|Androids Interview|Audio + Text|Native (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Native (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: androids_interview_prod_20260730T145948Z_androids_interview_audio_text_segment_aligned
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - historical recipe runs have no qualified SQLite evaluation importer support
+- selection_id: EN translation|Androids Interview|Audio + Text|Translated EN (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Translated EN (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: en_seq_androids_audio_text_v1
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_local_evidence
+  blocking_reasons:
+  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
+- selection_id: EN translation|Androids Interview|Audio only|Native (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: Androids Interview
+    modality: Audio only
+    method: Native (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: androids_interview_prod_20260730T145948Z_androids_interview_audio_only
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - historical recipe runs have no qualified SQLite evaluation importer support
+- selection_id: EN translation|Androids Interview|Audio only|Translated EN (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: Androids Interview
+    modality: Audio only
+    method: Translated EN (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: en_seq_androids_audio_only_v1
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_local_evidence
+  blocking_reasons:
+  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable
+- selection_id: EN translation|Androids Interview|Text only|Native (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: Androids Interview
+    modality: Text only
+    method: Native (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: androids_interview_prod_20260730T145948Z_androids_interview_text_only
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_importer_support
+  blocking_reasons:
+  - historical recipe runs have no qualified SQLite evaluation importer support
+- selection_id: EN translation|Androids Interview|Text only|Translated EN (fold-mean)
+  provenance_key:
+    experiment: EN translation
+    dataset: Androids Interview
+    modality: Text only
+    method: Translated EN (fold-mean)
+  source_type: ordinary_qwen
+  reason: historical_en_recipe
+  dependency_policy: all_contributing_folds
+  logical_run_name: en_seq_androids_text_only_v1
+  attempt_ids: []
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations: []
+  group: EN translation
+  wandb_policy: pending_local_evidence
+  blocking_reasons:
+  - evidence lives under output_model_en on MN5; not synced locally; MN5-only, not locally verifiable

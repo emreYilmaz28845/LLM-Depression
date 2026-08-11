@@ -686,6 +686,6 @@ def test_real_selection_yaml_covers_all_real_workbook_rows() -> None:
     policies = Counter(entry["wandb_policy"] for entry in selection["entries"])
     assert policies["sync"] == 31
     assert policies["quarantine_ambiguous"] == 4
-    assert policies["pending_importer_support"] == 108
-    assert policies["pending_local_evidence"] == 0
+    assert policies["pending_importer_support"] == 120
+    assert policies["pending_local_evidence"] == 12
     assert policies["skip_derived_only"] == 40
