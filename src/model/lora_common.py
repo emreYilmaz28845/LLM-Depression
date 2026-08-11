@@ -87,12 +87,20 @@ def resolve_lora_layer_selection(config: dict[str, Any], model_or_config) -> dic
 def build_lora_config(config: dict[str, Any], model_or_config) -> tuple[LoraConfig, dict[str, Any]]:
     lora_cfg = config["lora"]
     layer_selection = resolve_lora_layer_selection(config, model_or_config)
+    raw_target_modules = lora_cfg["target_modules"]
+    if isinstance(raw_target_modules, str):
+        # A regex string is a PEFT-native target pattern matched with
+        # re.fullmatch against module keys (e.g. the Gemma 4 unified decoder
+        # regex). Never split it into a list of characters.
+        target_modules: str | list[str] = raw_target_modules
+    else:
+        target_modules = list(raw_target_modules)
     lora_kwargs: dict[str, Any] = {
         "r": int(lora_cfg["rank"]),
         "lora_alpha": int(lora_cfg["alpha"]),
         "lora_dropout": float(lora_cfg["dropout"]),
         "bias": str(lora_cfg["bias"]),
-        "target_modules": list(lora_cfg["target_modules"]),
+        "target_modules": target_modules,
         "task_type": "CAUSAL_LM",
     }
     if layer_selection["layers_to_transform"] is not None:

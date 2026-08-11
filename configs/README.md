@@ -39,15 +39,40 @@ The nine superseded DAIC, CMDC, and Turkish positive-F1 main configs were moved 
 configs/archive/pre_harmonized_posf1_20260809/
 ```
 
+## Gemma 4 DAIC family
+
+The Gemma 4 backbone comparison is scoped to DAIC only and uses three configs:
+
+```text
+daic_<modality>_harmonized_selmacrof1_tf_gemma4_12b.yaml   (text_only | audio_only | audio_text)
+```
+
+- Backend: `model_backend: gemma4` on `google/gemma-4-12B-it` revision
+  `707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7` (see
+  `docs/GEMMA4_DAIC_IMPLEMENTATION_RUNBOOK.md`).
+- They preserve every scientific invariant of their Qwen counterparts
+  (dataset, seed, sample mode, packed30 chunking, subject-normalized weights,
+  inner-validation macro-F1 selection, teacher-forced evaluation) and change
+  only: backbone, model path/revision, isolated output roots
+  (`output_model/harmonized_v1_gemma4/`), the LoRA target regex (six modules
+  per layer across all 48 decoder layers, exactly 288), and
+  `evaluation.evaluation_view: harmonized_all_windows_full_coverage`.
+- Manifests and splits are shared with the Qwen DAIC harmonized campaign;
+  `build_manifest.py` is backend-agnostic.
+- The dedicated MN5 environment (`gemma4_12b_tf5_14_1`) is offline-only:
+  installed from a local wheelhouse, model loaded from the GPFS snapshot with
+  `local_files_only=True`.
+
 ## E-DAIC exception
 
 E-DAIC was outside the harmonization scope and was not inspected, moved, or rewritten. Its three existing positive-F1 configs remain in `main/` unchanged. They are not members of the harmonized family.
 
 ## Current coverage
 
-`main/` contains 18 configs:
+`main/` contains 21 configs:
 
 - 15 harmonized configs: five datasets × three modalities.
+- 3 Gemma 4 DAIC configs (see the Gemma 4 DAIC family section above).
 - 3 unchanged E-DAIC configs outside the harmonized family.
 
 See `docs/harmonized_dataset_baseline.md` for the methodology and dataset-specific adapters.

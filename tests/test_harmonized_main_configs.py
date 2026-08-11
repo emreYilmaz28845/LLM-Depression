@@ -13,7 +13,7 @@ def harmonized_configs():
     return sorted(
         path
         for path in MAIN.glob("*harmonized_selmacrof1_tf*.yaml")
-        if not path.name.endswith("_en.yaml")
+        if not path.name.endswith("_en.yaml") and "_gemma4_12b" not in path.name
     )
 
 
@@ -28,6 +28,12 @@ def test_harmonized_main_has_five_datasets_by_three_modalities() -> None:
             for config in members
         }
         assert modalities == {(True, False), (False, True), (True, True)}
+
+
+def test_gemma4_variants_exist_for_daic_only() -> None:
+    gemma = sorted(MAIN.glob("*harmonized_selmacrof1_tf_gemma4_12b.yaml"))
+    assert len(gemma) == 3
+    assert all("daic_" in path.name for path in gemma)
 
 
 def test_harmonized_selection_and_teacher_forced_recipe_is_locked() -> None:

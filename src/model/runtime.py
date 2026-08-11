@@ -9,6 +9,7 @@ from src.model import qwen2audio_lora, qwen3omni_lora, text_lora
 from src.model.lora_common import resolve_lora_layer_selection, resolved_lora_layer_selection
 from src.utils import (
     INPUT_MODALITY_TEXT_ONLY,
+    MODEL_BACKEND_GEMMA4,
     MODEL_BACKEND_QWEN2AUDIO,
     MODEL_BACKEND_QWEN3OMNI,
     MODEL_BACKEND_TEXT,
@@ -20,8 +21,16 @@ from src.utils import (
 def _backend(config: dict[str, Any]):
     # An explicit model_backend wins over the modality default. This is what lets
     # the same-backbone text-only control (data.use_audio=false) route through the
-    # omni Thinker instead of the dense text model (QWEN3_OMNI_IMPLEMENTATION.md §4.2).
+    # omni Thinker instead of the dense text model (QWEN3_OMNI_IMPLEMENTATION.md §4.2)
+    # and what selects the Gemma 4 unified backend.
     backend = resolve_model_backend(config)
+    if backend == MODEL_BACKEND_GEMMA4:
+        # Lazy: the Gemma classes only exist in the dedicated Gemma environment
+        # (transformers==5.14.1). Importing this module in the Qwen environment
+        # must never happen while Qwen is selected.
+        from src.model import gemma4_lora  # noqa: PLC0415
+
+        return gemma4_lora
     if backend == MODEL_BACKEND_QWEN3OMNI:
         return qwen3omni_lora
     if backend == MODEL_BACKEND_QWEN2AUDIO:
@@ -32,6 +41,35 @@ def _backend(config: dict[str, Any]):
     if resolve_input_modality(config) == INPUT_MODALITY_TEXT_ONLY:
         return text_lora
     return qwen2audio_lora
+
+
+def build_collator(config: dict[str, Any], processor, debug: bool = False):
+    """Backend-dispatched collator factory for train/selection/final DataLoaders."""
+    if resolve_model_backend(config) == MODEL_BACKEND_GEMMA4:
+        from src.model.gemma4_io import Gemma4SFTCollator  # noqa: PLC0415
+
+        return Gemma4SFTCollator(processor=processor, debug=debug)
+    from src.model.collator import Qwen2AudioSFTCollator  # noqa: PLC0415
+
+    return Qwen2AudioSFTCollator(processor=processor, debug=debug)
+
+
+def prepare_backend_examples(
+    examples: list[dict[str, Any]],
+    config: dict[str, Any],
+    processor,
+) -> list[dict[str, Any]]:
+    """Backend-dispatched example prompt preparation.
+
+    Gemma re-renders ``prompt_text``/``training_text`` from the raw system/user
+    fields through its pinned chat template; Qwen keeps the pre-rendered text
+    (no-op).
+    """
+    if resolve_model_backend(config) == MODEL_BACKEND_GEMMA4:
+        from src.model.gemma4_io import prepare_gemma4_examples  # noqa: PLC0415
+
+        return prepare_gemma4_examples(examples, config, processor)
+    return examples
 
 
 def load_processor(model_name_or_path: str | Path, config: dict[str, Any]):

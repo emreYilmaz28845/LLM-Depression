@@ -472,6 +472,8 @@ def _build_subject_level_text_only_examples(
                 "input_modality": INPUT_MODALITY_TEXT_ONLY,
                 "prompt_text": prompt_text,
                 "training_text": build_training_text(prompt_text, internal_label_text),
+                "prompt_system_text": config["prompt"]["system"],
+                "prompt_user_text": user_text,
                 "question_id": canonical_row.get("question_id", ""),
                 "protocol_id": canonical_row.get("protocol_id", ""),
             }
@@ -950,6 +952,8 @@ def _build_participant_speech_packed30_examples(
                 "input_modality": input_modality,
                 "prompt_text": prompt_text,
                 "training_text": build_training_text(prompt_text, internal_label_text),
+                "prompt_system_text": config["prompt"]["system"],
+                "prompt_user_text": user_text,
                 "question_id": "",
             }
         )

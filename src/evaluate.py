@@ -46,8 +46,9 @@ from src.model.runtime import (
     build_generation_config,
     load_model_for_inference,
     load_processor,
-    resolve_processor_sampling_rate,
+    prepare_backend_examples,
     prepare_model_for_evaluation,
+    resolve_processor_sampling_rate,
 )
 from src.model.lora_common import resolve_lora_layer_selection
 from src.utils import (
@@ -1035,6 +1036,7 @@ def main() -> None:
 
     model_name_or_path = resolve_model_name_or_path(args.model_name_or_path, config)
     processor = load_processor(args.checkpoint_dir, config)
+    examples = prepare_backend_examples(examples, config, processor)
     model = load_model_for_inference(model_name_or_path, args.checkpoint_dir, config)
     lora_layer_selection = resolve_lora_layer_selection(config, model)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
