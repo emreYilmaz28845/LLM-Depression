@@ -770,6 +770,16 @@ def evaluate_examples(
     headline_metrics_payload["checkpoint_name"] = checkpoint_name
     subject_metrics_payload = dict(subject_metrics)
     subject_metrics_payload["checkpoint_name"] = checkpoint_name
+    evaluation_config = config.get("evaluation") if isinstance(config.get("evaluation"), dict) else {}
+    configured_view = evaluation_config.get("evaluation_view")
+    if configured_view is not None:
+        if not isinstance(configured_view, str) or not configured_view.strip():
+            raise ValueError(
+                "evaluation.evaluation_view must be a non-empty string when present: "
+                f"{configured_view!r}"
+            )
+        headline_metrics_payload["evaluation_view"] = configured_view
+        subject_metrics_payload["evaluation_view"] = configured_view
 
     secondary_aggregations: dict[str, Any] = {}
     requested_secondary = config.get("evaluation", {}).get("secondary_aggregations") or []
@@ -1160,6 +1170,17 @@ def _record_evaluation_sidecars(
     )
     dataset = str(config["dataset"])
     namespace = "headline/binary_strict"
+    evaluation_config = config.get("evaluation") if isinstance(config.get("evaluation"), dict) else {}
+    configured_view = evaluation_config.get("evaluation_view")
+    if configured_view is not None:
+        if not isinstance(configured_view, str) or not configured_view.strip():
+            raise ValueError(
+                "evaluation.evaluation_view must be a non-empty string when present: "
+                f"{configured_view!r}"
+            )
+        evaluation_view = configured_view
+    else:
+        evaluation_view = None
     evaluation_record = {
         "evaluation_id": evaluation_id(
             attempt_id=attempt_id,
@@ -1170,7 +1191,7 @@ def _record_evaluation_sidecars(
             checkpoint_role=checkpoint_role,
             checkpoint_path=checkpoint_role,
             backend=active_backend,
-            evaluation_view=None,
+            evaluation_view=evaluation_view,
             aggregation=aggregation,
             metric_namespace=namespace,
             metrics_artifact_sha256=metrics_artifact_sha,
@@ -1181,7 +1202,7 @@ def _record_evaluation_sidecars(
         "checkpoint_role": checkpoint_role,
         "checkpoint_path": checkpoint_role,
         "backend": active_backend,
-        "evaluation_view": None,
+        "evaluation_view": evaluation_view,
         "aggregation": aggregation,
         "metric_namespace": namespace,
         "metrics_artifact_path": _relative(metrics_path),
@@ -1196,7 +1217,9 @@ def _record_evaluation_sidecars(
         ],
         "locally_verified": False,
         "reportable": False,
-        "warnings": ["evaluation view not recorded in evidence"],
+        "warnings": (
+            [] if evaluation_view is not None else ["evaluation view not recorded in evidence"]
+        ),
     }
     evaluations_path = fold_dir / "evaluations.json"
     existing_evaluations: dict[str, Any] = {"evaluations": []}
