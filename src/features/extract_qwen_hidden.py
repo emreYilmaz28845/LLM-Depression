@@ -26,16 +26,42 @@ from src.data.runtime import (
     render_joint_packed30_bundle,
 )
 from src.daic_chunking import build_joint_epoch_schedule
+from src.features.gemma4_hidden_collator import (
+    GEMMA4_MODEL_INPUT_KEYS,
+    Gemma4PromptOnlyExtractionCollator,
+)
 from src.features.pooling import aligned_attention_mask, last_valid_token
 from src.features.qwen_hidden_collator import PromptOnlyExtractionCollator, load_prompt_audio
-from src.model.runtime import load_model_for_inference, load_processor, resolve_processor_sampling_rate
-from src.utils import read_json, save_json, sha256_file, sha256_jsonl_rows, sha256_text, write_jsonl
+from src.model.runtime import (
+    load_model_for_inference,
+    load_processor,
+    prepare_backend_examples,
+    resolve_processor_sampling_rate,
+)
+from src.utils import (
+    MODEL_BACKEND_GEMMA4,
+    MODEL_BACKEND_QWEN2AUDIO,
+    MODEL_BACKEND_TEXT,
+    read_json,
+    resolve_model_backend,
+    save_json,
+    sha256_file,
+    sha256_jsonl_rows,
+    sha256_text,
+    write_jsonl,
+)
 
 
-SUPPORTED_HIDDEN_SIZES = {3584, 4096}
+BACKEND_HIDDEN_SIZES: dict[str, set[int]] = {
+    MODEL_BACKEND_GEMMA4: {3840},
+    MODEL_BACKEND_QWEN2AUDIO: {4096},
+    MODEL_BACKEND_TEXT: {3584},
+}
+QWEN_HIDDEN_SIZES = {3584, 4096}
 POOLING_NAME = "last_valid_prompt_token"
 CONDITION_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_]*$")
-CACHE_SCHEMA_VERSION = "qwen_hidden_cache.v2"
+CACHE_SCHEMA_VERSION_QWEN = "qwen_hidden_cache.v2"
+CACHE_SCHEMA_VERSION_GEMMA4 = "gemma4_hidden_cache.v1"
 CACHE_ARTIFACT_NAMES = (
     "outer_train.npz",
     "outer_train_rows.jsonl",
@@ -157,7 +183,9 @@ def _package_version(name: str) -> str | None:
         return None
 
 
-def _decoder_hidden_size(model) -> int:
+def _decoder_hidden_size(model, config: dict[str, Any] | None = None) -> int:
+    backend = resolve_model_backend(config or {})
+    supported = BACKEND_HIDDEN_SIZES.get(backend, QWEN_HIDDEN_SIZES)
     configs = [getattr(model, "config", None)]
     base_model = getattr(model, "base_model", None)
     if base_model is not None:
@@ -170,12 +198,31 @@ def _decoder_hidden_size(model) -> int:
         hidden_size = getattr(text_config, "hidden_size", None) or getattr(config, "hidden_size", None)
         if hidden_size is not None:
             hidden_size = int(hidden_size)
-            if hidden_size not in SUPPORTED_HIDDEN_SIZES:
+            if hidden_size not in supported:
                 raise ValueError(
-                    f"Unexpected decoder hidden size {hidden_size}; expected one of {sorted(SUPPORTED_HIDDEN_SIZES)}."
+                    f"Unexpected decoder hidden size {hidden_size} for backend "
+                    f"{backend or 'default'}; expected one of {sorted(supported)}."
                 )
             return hidden_size
     raise ValueError("Could not resolve the decoder hidden size from the loaded model configuration.")
+
+
+def _backend_cache_schema(config: dict[str, Any]) -> str:
+    if resolve_model_backend(config) == MODEL_BACKEND_GEMMA4:
+        return CACHE_SCHEMA_VERSION_GEMMA4
+    return CACHE_SCHEMA_VERSION_QWEN
+
+
+def _parent_attempt_id(checkpoint_dir: Path) -> str | None:
+    metadata_path = checkpoint_dir.parent / "metadata.json"
+    if not metadata_path.is_file():
+        return None
+    try:
+        metadata = read_json(metadata_path)
+    except (ValueError, OSError):
+        return None
+    attempt_id = metadata.get("attempt_id")
+    return str(attempt_id) if isinstance(attempt_id, str) and attempt_id else None
 
 
 def _is_joint_packed30_recipe(config: dict[str, Any]) -> bool:
@@ -494,7 +541,12 @@ def _extract_partition(
 ) -> dict[str, Any]:
     device = next(model.parameters()).device
     sampling_rate = resolve_processor_sampling_rate(processor)
-    collator = PromptOnlyExtractionCollator(processor)
+    gemma_backend = resolve_model_backend(config) == MODEL_BACKEND_GEMMA4
+    collator = (
+        Gemma4PromptOnlyExtractionCollator(processor)
+        if gemma_backend
+        else PromptOnlyExtractionCollator(processor)
+    )
     vectors: list[np.ndarray] = []
     rows: list[dict[str, Any]] = []
     mask_sources: dict[str, int] = {}
@@ -509,7 +561,30 @@ def _extract_partition(
         prompt_text = metadata.pop("prompt_text")
         model_inputs = {key: value.to(device) for key, value in model_inputs.items()}
         if "labels" in model_inputs:
-            raise AssertionError("Gold labels must never be passed to Qwen during extraction.")
+            raise AssertionError("Gold labels must never be passed to the model during extraction.")
+        if gemma_backend:
+            base_keys = {"input_ids", "attention_mask", "mm_token_type_ids"}
+            missing_base = base_keys - set(model_inputs)
+            if missing_base:
+                raise AssertionError(
+                    f"Gemma extraction inputs missing required keys: {sorted(missing_base)}"
+                )
+            if any(
+                example.get(key)
+                for key in ("audio_paths", "audio_spans", "audio_span_groups", "audio_path")
+            ):
+                missing_audio = {"input_features", "input_features_mask"} - set(model_inputs)
+                if missing_audio:
+                    raise AssertionError(
+                        f"Gemma audio extraction inputs missing feature keys: {sorted(missing_audio)}"
+                    )
+            else:
+                extra_audio = {"input_features", "input_features_mask"}.intersection(model_inputs)
+                if extra_audio:
+                    raise AssertionError(
+                        f"Gemma text-only extraction must omit audio feature tensors: "
+                        f"{sorted(extra_audio)}"
+                    )
         with torch.inference_mode():
             outputs = model(
                 **model_inputs,
@@ -520,7 +595,16 @@ def _extract_partition(
             )
         hidden = outputs.hidden_states[-1]
         output_mask = getattr(outputs, "attention_mask", None)
-        mask, mask_source = aligned_attention_mask(hidden, model_inputs["attention_mask"], output_mask)
+        if gemma_backend:
+            if tuple(hidden.shape[:2]) != tuple(model_inputs["attention_mask"].shape):
+                raise ValueError(
+                    "Gemma hidden states must align with the processor input "
+                    f"attention mask; hidden {tuple(hidden.shape[:2])} versus "
+                    f"mask {tuple(model_inputs['attention_mask'].shape)}."
+                )
+            mask, mask_source = model_inputs["attention_mask"].to(hidden.device), "processor_input"
+        else:
+            mask, mask_source = aligned_attention_mask(hidden, model_inputs["attention_mask"], output_mask)
         vector = last_valid_token(hidden, mask).cpu().numpy()[0].astype(np.float32, copy=False)
         if vector.shape != (expected_hidden_size,):
             raise ValueError(f"Expected {expected_hidden_size} features, got {vector.shape}.")
@@ -536,11 +620,14 @@ def _extract_partition(
                     return_dict=True,
                 )
             repeated_hidden = repeated_outputs.hidden_states[-1]
-            repeated_mask, _ = aligned_attention_mask(
-                repeated_hidden,
-                model_inputs["attention_mask"],
-                getattr(repeated_outputs, "attention_mask", None),
-            )
+            if gemma_backend:
+                repeated_mask = model_inputs["attention_mask"].to(repeated_hidden.device)
+            else:
+                repeated_mask, _ = aligned_attention_mask(
+                    repeated_hidden,
+                    model_inputs["attention_mask"],
+                    getattr(repeated_outputs, "attention_mask", None),
+                )
             repeated_vector = (
                 last_valid_token(repeated_hidden, repeated_mask).cpu().numpy()[0].astype(np.float32, copy=False)
             )
@@ -591,7 +678,7 @@ def _extract_partition(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Extract prompt-only final Qwen2 hidden vectors.")
+    parser = argparse.ArgumentParser(description="Extract prompt-only final hidden vectors.")
     parser.add_argument("--checkpoint-dir", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--model-name-or-path")
@@ -600,6 +687,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--condition", help="Unique experiment condition used in metadata and output grouping.")
     parser.add_argument("--emotion-source", help="Predeclared source label for an emotion cache.")
     parser.add_argument("--emotion-language", help="Predeclared language label for emotion captions.")
+    parser.add_argument(
+        "--subject-selection",
+        type=Path,
+        help="Isolated-smoke-only JSON listing explicit train and test subject IDs; "
+        "hashed into the cache identity. Production attempts must omit it.",
+    )
     parser.add_argument(
         "--eval-chunk-policy",
         choices=("fixed_k", "balanced_joint_cover", "fixed_count_balanced_joint_cover", "all", "matched_k"),
@@ -616,6 +709,69 @@ def _require_best_model(checkpoint_dir: Path) -> None:
             "Primary experiment requires the fold-specific best_model checkpoint; "
             f"got {Path(checkpoint_dir).name!r}. last_model must never be substituted."
         )
+
+
+def load_subject_selection(path: Path | None) -> dict[str, Any] | None:
+    """Load and validate an isolated-smoke subject-selection file.
+
+    The file must list explicit ``outer_train`` and ``final_eval`` subject IDs.
+    Production attempts must omit the argument entirely; the campaign wrapper
+    refuses to pass it. Its canonical hash becomes part of the cache identity,
+    so a smoke cache can never collide with a production cache.
+    """
+    if path is None:
+        return None
+    target = Path(path)
+    if not target.is_file():
+        raise FileNotFoundError(f"Subject-selection file is unavailable: {target}")
+    try:
+        payload = read_json(target)
+    except (ValueError, OSError) as error:
+        raise ValueError(f"Unreadable subject-selection file {target}: {error}") from error
+    if not isinstance(payload, dict):
+        raise ValueError("Subject-selection file must be a JSON object.")
+    missing = [name for name in ("outer_train", "final_eval") if name not in payload]
+    if missing:
+        raise ValueError(
+            f"Subject-selection file {target} is missing keys: {missing}."
+        )
+    resolved: dict[str, list[str]] = {}
+    for name in ("outer_train", "final_eval"):
+        values = payload[name]
+        if not isinstance(values, list) or not values:
+            raise ValueError(f"Subject-selection {name} must be a non-empty list.")
+        ids = sorted({str(value) for value in values})
+        if not ids or len(ids) != len(values):
+            raise ValueError(f"Subject-selection {name} contains duplicates or empties.")
+        resolved[name] = ids
+    return {
+        "path": str(target),
+        "sha256": sha256_file(target),
+        "outer_train": resolved["outer_train"],
+        "final_eval": resolved["final_eval"],
+    }
+
+
+def _apply_subject_selection(
+    partition_subject_ids: dict[str, list[str]],
+    selection: dict[str, Any] | None,
+) -> dict[str, list[str]]:
+    """Restrict saved partition subjects to the explicit smoke selection."""
+    if selection is None:
+        return partition_subject_ids
+    restricted: dict[str, list[str]] = {}
+    for partition in ("outer_train", "final_eval"):
+        saved = set(partition_subject_ids[partition])
+        chosen = set(selection[partition])
+        if not chosen.issubset(saved):
+            raise ValueError(
+                f"Subject-selection {partition} subjects not in the saved split: "
+                f"{sorted(chosen - saved)[:10]}"
+            )
+        if not chosen:
+            raise ValueError(f"Subject-selection {partition} resolved empty.")
+        restricted[partition] = sorted(chosen)
+    return restricted
 
 
 def main() -> None:
@@ -657,8 +813,10 @@ def main() -> None:
     if saved.get("manifest_hash") and canonical_manifest_hash != saved["manifest_hash"]:
         raise ValueError("Current manifest hash does not match the checkpoint's saved manifest hash.")
     condition = resolve_condition(args.condition, saved.get("input_modality"), use_emotion(config))
+    gemma_backend = resolve_model_backend(config) == MODEL_BACKEND_GEMMA4
+    subject_selection = load_subject_selection(args.subject_selection)
     cache_config = {
-        "schema_version": CACHE_SCHEMA_VERSION,
+        "schema_version": _backend_cache_schema(config),
         "dataset": config["dataset"],
         "condition": condition,
         "input_modality": saved.get("input_modality"),
@@ -683,7 +841,17 @@ def main() -> None:
                 "subject_score_aggregation"
             ),
         },
+        "subject_selection_sha256": (
+            subject_selection["sha256"] if subject_selection is not None else None
+        ),
     }
+    if gemma_backend:
+        cache_config["model_backend"] = MODEL_BACKEND_GEMMA4
+        cache_config["base_model_revision"] = str(config.get("model_revision", ""))
+        cache_config["parent_attempt_id"] = _parent_attempt_id(checkpoint_dir)
+        cache_config["parent_checkpoint_role"] = "best_model"
+        cache_config["parent_checkpoint_path"] = str(checkpoint_dir)
+        cache_config["source_git_sha256"] = _git_commit()
     cache_config_sha256 = sha256_text(
         json.dumps(cache_config, sort_keys=True, separators=(",", ":"))
     )
@@ -722,17 +890,25 @@ def main() -> None:
         source=args.emotion_source,
         language=args.emotion_language,
     )
+    if subject_selection is not None:
+        partition_subject_ids = _apply_subject_selection(
+            partition_subject_ids, subject_selection
+        )
     examples, joint_head_fit_provenance = _partition_examples(
         manifest_rows, config, partition_subject_ids, fold, checkpoint_dir=checkpoint_dir
     )
     model_name = args.model_name_or_path or saved.get("resolved_model_name_or_path") or config["model_name_or_path"]
     processor = load_processor(checkpoint_dir, config)
+    for partition in examples:
+        examples[partition] = prepare_backend_examples(
+            examples[partition], config, processor
+        )
     model = load_model_for_inference(str(model_name), checkpoint_dir, config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dtype = torch.bfloat16 if device.type == "cuda" and bool(config.get("training", {}).get("bf16", False)) else None
     model.to(device=device, dtype=dtype)
     model.eval()
-    expected_hidden_size = _decoder_hidden_size(model)
+    expected_hidden_size = _decoder_hidden_size(model, config)
     partition_summaries = {}
     for partition in ("outer_train", "final_eval"):
         partition_summaries[partition] = _extract_partition(
@@ -752,6 +928,7 @@ def main() -> None:
         "input_modality": saved.get("input_modality"),
         "protocol_id": config.get("protocol_id", ""),
         "fold": fold,
+        "model_backend": resolve_model_backend(config),
         "checkpoint_type": "best_model",
         "checkpoint_dir": str(checkpoint_dir),
         "adapter_config_sha256": sha256_file(checkpoint_dir / "adapter_config.json"),

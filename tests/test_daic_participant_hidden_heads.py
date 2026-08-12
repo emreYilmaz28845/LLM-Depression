@@ -160,3 +160,192 @@ def test_extraction_collator_keeps_protocol_id_external(tmp_path: Path) -> None:
     assert metadata[0]["protocol_id"] == PACKED30_PROTOCOL_ID
     assert metadata[0]["chunk_index"] == 0
     assert metadata[0]["num_chunks"] == 3
+
+
+def test_mean_probability_backend_is_configurable_and_defaults_to_qwen() -> None:
+    rows = [
+        classifier_row("300", 0.9, 0),
+        classifier_row("300", 0.2, 0),
+        classifier_row("301", 0.4, 1),
+        classifier_row("301", 0.6, 1),
+    ]
+    _, metrics = aggregate_binary_classifier_predictions(rows)
+    assert metrics["prediction_backend"] == "qwen_hidden_classifier"
+    _, metrics_gemma = aggregate_binary_classifier_predictions(
+        rows, prediction_backend="gemma4_hidden_logreg_raw"
+    )
+    assert metrics_gemma["prediction_backend"] == "gemma4_hidden_logreg_raw"
+    subject_rows, _ = aggregate_binary_classifier_predictions(
+        rows, prediction_backend="gemma4_hidden_xgb_raw"
+    )
+    assert all(
+        row["prediction_backend"] == "gemma4_hidden_xgb_raw" for row in subject_rows
+    )
+
+
+def test_gemma_daic_contract_refuses_wrong_subject_counts(tmp_path: Path) -> None:
+    from baselines.qwen_hidden_classifier import _enforce_gemma_daic_contract
+
+    metadata = {"input_modality": "text_only"}
+    too_few_train = [
+        {"subject_id": str(index), "label": index % 2} for index in range(100)
+    ]
+    with pytest.raises(ValueError, match="107 official training subjects"):
+        _enforce_gemma_daic_contract(
+            metadata,
+            too_few_train,
+            [{"subject_id": str(index)} for index in range(47)],
+            {str(index) for index in range(100)},
+        )
+    train = [
+        {"subject_id": str(index), "label": index % 2} for index in range(107)
+    ]
+    with pytest.raises(ValueError, match="47 official test subjects"):
+        _enforce_gemma_daic_contract(
+            metadata,
+            train,
+            [{"subject_id": str(index)} for index in range(20)],
+            {str(index) for index in range(107)},
+        )
+
+
+def test_gemma_daic_contract_refuses_incomplete_chunk_coverage() -> None:
+    from baselines.qwen_hidden_classifier import (
+        _enforce_complete_chunk_coverage,
+        _enforce_gemma_daic_contract,
+    )
+
+    metadata = {"input_modality": "audio_only"}
+    train = []
+    for subject in range(107):
+        for chunk in range(14):
+            train.append(
+                {
+                    "subject_id": str(subject),
+                    "label": subject % 2,
+                    "chunk_index": chunk,
+                    "num_chunks": 14,
+                }
+            )
+    test = [
+        {"subject_id": str(index), "label": index % 2, "chunk_index": 0, "num_chunks": 1}
+        for index in range(47)
+    ]
+    train_subjects = {str(subject) for subject in range(107)}
+    _enforce_gemma_daic_contract(metadata, train, test, train_subjects)
+    missing = [dict(row) for row in train]
+    missing[3]["chunk_index"] = 13  # duplicate index 13, drops nothing but duplicates
+    missing[3] = dict(missing[3])
+    missing[3]["chunk_index"] = 5  # no-op keep
+    del missing[3]["chunk_index"]
+    with pytest.raises(ValueError, match="require chunk_index"):
+        _enforce_complete_chunk_coverage(missing, "outer_train")
+    dup = [dict(row) for row in train]
+    dup[0]["chunk_index"] = 1
+    with pytest.raises(ValueError, match="duplicate"):
+        _enforce_complete_chunk_coverage(dup, "outer_train")
+    dropped = train[:-1]
+    with pytest.raises(ValueError, match="missing"):
+        _enforce_complete_chunk_coverage(dropped, "outer_train")
+
+
+def test_gemma_fixed_head_identity_and_backends(tmp_path: Path) -> None:
+    from src.utils import save_json, write_jsonl
+
+    from baselines.qwen_hidden_classifier import (
+        GEMMA4_LOGREG_PREDICTION_BACKEND,
+        GEMMA4_VARIANTS,
+        GEMMA4_XGB_PREDICTION_BACKEND,
+        resolve_prediction_backend,
+    )
+
+    qwen_metadata = {"model_backend": None, "input_modality": "text_only"}
+    assert (
+        resolve_prediction_backend(qwen_metadata, "logreg_raw")
+        == "qwen_hidden_classifier"
+    )
+    assert (
+        resolve_prediction_backend(qwen_metadata, "xgb_pca32")
+        == "qwen_hidden_classifier"
+    )
+    gemma_metadata = {"model_backend": "gemma4", "input_modality": "text_only"}
+    assert (
+        resolve_prediction_backend(gemma_metadata, "logreg_raw")
+        == GEMMA4_LOGREG_PREDICTION_BACKEND
+    )
+    assert (
+        resolve_prediction_backend(gemma_metadata, "xgb_raw")
+        == GEMMA4_XGB_PREDICTION_BACKEND
+    )
+    with pytest.raises(ValueError, match="only"):
+        resolve_prediction_backend(gemma_metadata, "xgb_pca32")
+    assert set(GEMMA4_VARIANTS) == {"logreg_raw", "xgb_raw"}
+
+    cache = tmp_path / "cache"
+    output = tmp_path / "output"
+    cache.mkdir()
+    rng = np.random.default_rng(7)
+    train_x = rng.normal(size=(107, 8)).astype(np.float32)
+    test_x = rng.normal(size=(47, 8)).astype(np.float32) + 50.0
+    np.savez_compressed(cache / "outer_train.npz", vectors=train_x)
+    np.savez_compressed(cache / "final_eval.npz", vectors=test_x)
+    train_rows = [
+        {"sample_id": f"tr{i}", "subject_id": f"tr{i}", "label": i % 2}
+        for i in range(107)
+    ]
+    test_rows = [
+        {"sample_id": f"te{i}", "subject_id": f"te{i}", "label": i % 2}
+        for i in range(47)
+    ]
+    write_jsonl(train_rows, cache / "outer_train_rows.jsonl")
+    write_jsonl(test_rows, cache / "final_eval_rows.jsonl")
+    save_json(
+        {
+            "dataset": "daic",
+            "input_modality": "text_only",
+            "condition": "text_only",
+            "fold": 0,
+            "model_backend": "gemma4",
+            "checkpoint_dir": "synthetic/best_model",
+            "protocol_id": PACKED30_PROTOCOL_ID,
+        },
+        cache / "extraction_metadata.json",
+    )
+    from baselines.qwen_hidden_classifier import run_variant
+
+    summaries = [
+        run_variant(cache, output, variant, seed=1337)
+        for variant in ("logreg_raw", "xgb_raw")
+    ]
+    for variant, summary in zip(("logreg_raw", "xgb_raw"), summaries):
+        variant_dir = output / variant
+        metadata = __import__("json").loads(
+            (variant_dir / "classifier_metadata.json").read_text()
+        )
+        expected_backend = (
+            GEMMA4_LOGREG_PREDICTION_BACKEND
+            if variant == "logreg_raw"
+            else GEMMA4_XGB_PREDICTION_BACKEND
+        )
+        assert metadata["prediction_backend"] == expected_backend
+        assert metadata["aggregation_policy"] == PACKED30_AGGREGATION_POLICY
+        assert metadata["threshold"] == 0.5
+        sample_rows = [
+            __import__("json").loads(line)
+            for line in (variant_dir / "predictions_subject_level.jsonl")
+            .read_text()
+            .splitlines()
+        ]
+        assert len(sample_rows) == 47
+        assert all(
+            row["prediction_backend"] == expected_backend for row in sample_rows
+        )
+        metrics = __import__("json").loads(
+            (variant_dir / "metrics.json").read_text()
+        )
+        assert metrics["prediction_backend"] == expected_backend
+        result_config = __import__("json").loads(
+            (variant_dir / "result_config.json").read_text()
+        )
+        assert result_config["model_backend"] == "gemma4"
+        assert result_config["prediction_backend"] == expected_backend

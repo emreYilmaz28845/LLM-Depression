@@ -630,6 +630,13 @@ def _insert_modern_provenance(
         ("evidence_manifest_sha256", _evidence_manifest_hash(discovered)),
         ("modern_sidecar_sha256", source_sha256),
     ]
+    parent = sidecars.metadata.get("parent")
+    if isinstance(parent, dict):
+        rows.append(("parent_attempt_id", parent.get("parent_attempt_id")))
+        rows.append(("parent_checkpoint_role", parent.get("parent_checkpoint_role")))
+        rows.append(("parent_checkpoint_path", parent.get("parent_checkpoint_path")))
+        rows.append(("parent_adapter_config_sha256", parent.get("adapter_config_sha256")))
+        rows.append(("parent_adapter_sha256", parent.get("adapter_sha256")))
     for key, value in rows:
         cursor.execute(
             "INSERT OR REPLACE INTO provenance (attempt_id, fold_id, key, value_json, source_artifact_id) "

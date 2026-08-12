@@ -730,3 +730,88 @@ def test_missing_last_model_does_not_reject_reportable_run(tmp_path: Path) -> No
         assert connection.execute("SELECT COUNT(*) FROM run_attempts").fetchone()[0] == 1
     finally:
         connection.close()
+
+
+def test_metadata_parent_object_validates_and_imports() -> None:
+    ok, errors = validate_metadata(
+        {
+            "schema_version": "audiollm.metadata.v1",
+            "group_id": "g",
+            "logical_run_name": "run",
+            "attempt_id": ATTEMPT_ID,
+            "fold": 0,
+            "seed": 1337,
+            "created_at_utc": "2026-08-12T03:20:50.685523Z",
+            "source": {"git_commit": GIT_COMMIT, "git_branch": "main", "git_dirty": False, "deployed_source_sha256": None},
+            "research": {"github_issue": None, "github_pr": None},
+            "hashes": {"resolved_config_sha256": "a" * 64, "manifest_sha256": MANIFEST_HASH, "split_sha256": SPLIT_HASH},
+            "paths": {"run_config": "run_config.yaml", "best_model": None, "local_evidence_root": None},
+            "wandb": {"project": None, "entity": None, "run_id": None, "url": None, "sync_status": "NOT_EXPORTED"},
+            "parent": {
+                "parent_attempt_id": SUPERSEDED_ATTEMPT_ID,
+                "parent_checkpoint_role": "best_model",
+                "parent_checkpoint_path": "output_model/x/fold_0/best_model",
+                "adapter_config_sha256": "b" * 64,
+                "adapter_sha256": "c" * 64,
+            },
+        }
+    )
+    assert ok, errors
+    ok, errors = validate_metadata(
+        {
+            "schema_version": "audiollm.metadata.v1",
+            "group_id": "g",
+            "logical_run_name": "run",
+            "attempt_id": ATTEMPT_ID,
+            "fold": 0,
+            "seed": 1337,
+            "created_at_utc": "2026-08-12T03:20:50.685523Z",
+            "source": {"git_commit": GIT_COMMIT, "git_branch": "main", "git_dirty": False, "deployed_source_sha256": None},
+            "research": {"github_issue": None, "github_pr": None},
+            "hashes": {"resolved_config_sha256": "a" * 64, "manifest_sha256": MANIFEST_HASH, "split_sha256": SPLIT_HASH},
+            "paths": {"run_config": "run_config.yaml", "best_model": None, "local_evidence_root": None},
+            "wandb": {"project": None, "entity": None, "run_id": None, "url": None, "sync_status": "NOT_EXPORTED"},
+            "parent": {"parent_checkpoint_role": "last_model"},
+        }
+    )
+    assert not ok
+    assert any("parent_checkpoint_role" in error for error in errors)
+
+
+def test_parent_provenance_survives_registry_rebuild(tmp_path: Path) -> None:
+    fold_dir = build_modern_run(tmp_path, state="REPORTABLE")
+    verify_artifacts_locally(fold_dir)
+    verify_evaluations_locally(fold_dir)
+    write_status(fold_dir, state="REPORTABLE")
+    metadata = json.loads((fold_dir / "metadata.json").read_text(encoding="utf-8"))
+    metadata["parent"] = {
+        "parent_attempt_id": SUPERSEDED_ATTEMPT_ID,
+        "parent_checkpoint_role": "best_model",
+        "parent_checkpoint_path": "output_model/harmonized_v1_gemma4/text_only/daic/x/fold_0/best_model",
+        "adapter_config_sha256": "b" * 64,
+        "adapter_sha256": "c" * 64,
+    }
+    write_json_atomic(fold_dir / "metadata.json", metadata)
+    db_path = tmp_path / "registry.sqlite"
+    summary = registry.rebuild_registry(tmp_path, db_path)
+    assert summary["imported_runs"] == 1
+    assert summary["modern_rejected_runs"] == 0
+    connection = registry.connect(db_path)
+    try:
+        parent = connection.execute(
+            "SELECT key, value_json FROM provenance WHERE attempt_id = ? "
+            "AND key LIKE 'parent_%' ORDER BY key",
+            (ATTEMPT_ID,),
+        ).fetchall()
+        by_key = {row["key"]: json.loads(row["value_json"]) for row in parent}
+        assert by_key["parent_attempt_id"] == SUPERSEDED_ATTEMPT_ID
+        assert by_key["parent_checkpoint_role"] == "best_model"
+        assert by_key["parent_checkpoint_path"].endswith("best_model")
+        assert by_key["parent_adapter_config_sha256"] == "b" * 64
+        assert by_key["parent_adapter_sha256"] == "c" * 64
+        assert connection.execute(
+            "SELECT supersedes_attempt_id FROM run_attempts WHERE attempt_id = ?",
+            (ATTEMPT_ID,),
+        ).fetchone()["supersedes_attempt_id"] is None
+    finally:
+        connection.close()

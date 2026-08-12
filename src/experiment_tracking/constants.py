@@ -56,6 +56,7 @@ JOB_TYPES = (
     "collect",
     "train_eval",
     "hidden_classifier",
+    "hidden_extraction",
 )
 
 JOB_EVENT_TYPES = (

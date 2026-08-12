@@ -186,6 +186,28 @@ def validate_metadata(record: Any) -> tuple[bool, list[str]]:
             isinstance(record["legacy_import"], bool),
             "legacy_import must be a boolean when present",
         )
+    parent = record.get("parent")
+    if parent is not None:
+        if not isinstance(parent, dict):
+            errors.require(False, "parent must be an object when present")
+        else:
+            _check_safe_id(errors, parent.get("parent_attempt_id"), "parent.parent_attempt_id")
+            parent_role = parent.get("parent_checkpoint_role")
+            errors.require(
+                parent_role is None or parent_role == "best_model",
+                "parent.parent_checkpoint_role must be 'best_model' when present",
+            )
+            parent_path = parent.get("parent_checkpoint_path")
+            errors.require(
+                parent_path is None or (isinstance(parent_path, str) and parent_path),
+                "parent.parent_checkpoint_path must be a non-empty string when present",
+            )
+            for key in ("adapter_config_sha256", "adapter_sha256"):
+                value = parent.get(key)
+                errors.require(
+                    value is None or (isinstance(value, str) and _SHA256_PATTERN.fullmatch(value)),
+                    f"parent.{key} must be a 64-character hex SHA or null",
+                )
     return errors.result()
 
 
