@@ -140,7 +140,7 @@ def load_model_for_training(model_name_or_path: str, config: dict[str, Any]):
 
     model = get_peft_model(model, lora_config)
     model._resolved_lora_layer_selection = dict(lora_layer_selection)
-    from peft.utils import inspect_matched_modules  # noqa: PLC0415
+    from peft.tuners.tuners_utils import inspect_matched_modules  # noqa: PLC0415
 
     matched = {
         str(name) for name in inspect_matched_modules(model.base_model)["matched"]

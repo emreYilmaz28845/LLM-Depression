@@ -75,34 +75,33 @@ if [ ! -f "$EVAL_SCRIPT" ]; then
     exit 1
 fi
 
-DATASET_NAME="$(awk -F': *' '/^dataset:/{print $2; exit}' "$CONFIG" | tr -d '"' | tr -d "'")"
-RUN_ROOT_REL="$(awk '
-  /^output_dirs:/ {in_block=1; next}
-  in_block && /^[^[:space:]]/ {in_block=0}
-  in_block && /^[[:space:]]+run_root:/ {
-    sub(/^[[:space:]]+run_root:[[:space:]]*/, "", $0)
-    print $0
-    exit
-  }
-' "$CONFIG" | tr -d '"' | tr -d "'")"
-CONFIG_SPLIT_MODE="$(awk '
-  /^split:/ {in_block=1; next}
-  in_block && /^[^[:space:]]/ {in_block=0}
-  in_block && /^[[:space:]]+mode:/ {
-    sub(/^[[:space:]]+mode:[[:space:]]*/, "", $0)
-    print $0
-    exit
-  }
-' "$CONFIG" | tr -d '"' | tr -d "'")"
-CONFIG_CV_PROTOCOL="$(awk '
-  /^split:/ {in_block=1; next}
-  in_block && /^[^[:space:]]/ {in_block=0}
-  in_block && /^[[:space:]]+cv_protocol:/ {
-    sub(/^[[:space:]]+cv_protocol:[[:space:]]*/, "", $0)
-    print $0
-    exit
-  }
-' "$CONFIG" | tr -d '"' | tr -d "'")"
+DATASET_NAME="$(python - "$CONFIG" "$PROJECT_ROOT" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+from src.utils import load_yaml
+config = load_yaml(Path(sys.argv[1]))
+print(config["dataset"])
+PY
+)"
+CONFIG_VALUES="$(python - "$CONFIG" "$PROJECT_ROOT" <<'PY'
+import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+from src.utils import load_yaml
+config = load_yaml(Path(sys.argv[1]))
+run_root = str(config["output_dirs"]["run_root"]).replace("${PROJECT_ROOT}", sys.argv[2])
+split = config.get("split", {})
+print(json.dumps({
+    "run_root": run_root,
+    "split_mode": split.get("mode", "fixed"),
+    "cv_protocol": split.get("cv_protocol"),
+}))
+PY
+)"
+RUN_ROOT_REL="$(printf '%s' "$CONFIG_VALUES" | python -c 'import json,sys; print(json.load(sys.stdin)["run_root"])')"
+CONFIG_SPLIT_MODE="$(printf '%s' "$CONFIG_VALUES" | python -c 'import json,sys; print(json.load(sys.stdin)["split_mode"])')"
+CONFIG_CV_PROTOCOL="$(printf '%s' "$CONFIG_VALUES" | python -c 'import json,sys; v=json.load(sys.stdin)["cv_protocol"]; print(v if v is not None else "")')"
 
 if [ -z "$DATASET_NAME" ]; then
     echo "Could not parse dataset from config: $CONFIG"

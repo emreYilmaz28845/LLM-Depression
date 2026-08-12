@@ -114,9 +114,13 @@ def build_lora_config(config: dict[str, Any], model_or_config) -> tuple[LoraConf
     # config opts in with `lora.tune_audio_encoder: true`.
     explicit_exclude = lora_cfg.get("exclude_modules")
     tune_audio_encoder = bool(lora_cfg.get("tune_audio_encoder", False))
+    gemma_regex_scope = isinstance(target_modules, str)
     if explicit_exclude:
         lora_kwargs["exclude_modules"] = explicit_exclude
-    elif not tune_audio_encoder:
+    elif not tune_audio_encoder and not gemma_regex_scope:
+        # Gemma targets an exact decoder regex (six modules per layer); the
+        # regex itself already keeps LoRA out of every non-decoder module, so
+        # the Qwen audio-tower exclusion is neither needed nor applicable.
         lora_kwargs["exclude_modules"] = _default_exclude_modules(config)
     return LoraConfig(**lora_kwargs), layer_selection
 
