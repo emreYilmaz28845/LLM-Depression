@@ -39,6 +39,27 @@ CONTROL_VARIANTS = ("majority_class", "xgb_raw_shuffled_labels")
 LEGACY_SAMPLING_MODE = "legacy"
 FIXED_RESULT_SCHEMA_VERSION = "qwen_hidden_fixed_classifier.v2"
 
+QWEN_PREDICTION_BACKEND = "qwen_hidden_classifier"
+GEMMA4_LOGREG_PREDICTION_BACKEND = "gemma4_hidden_logreg_raw"
+GEMMA4_XGB_PREDICTION_BACKEND = "gemma4_hidden_xgb_raw"
+GEMMA4_VARIANTS = ("logreg_raw", "xgb_raw")
+
+
+def resolve_prediction_backend(metadata: dict[str, Any], variant: str) -> str:
+    """Map the extraction backend and classifier variant to the exact
+    prediction-backend identity written into every prediction, metric, and
+    evaluation record."""
+    if str(metadata.get("model_backend", "")).strip().lower() != "gemma4":
+        return QWEN_PREDICTION_BACKEND
+    if variant not in GEMMA4_VARIANTS:
+        raise ValueError(
+            f"Gemma fixed-head campaign accepts only {sorted(GEMMA4_VARIANTS)}, "
+            f"got {variant!r}."
+        )
+    if variant == "logreg_raw":
+        return GEMMA4_LOGREG_PREDICTION_BACKEND
+    return GEMMA4_XGB_PREDICTION_BACKEND
+
 
 def _load_partition(cache_dir: Path, name: str) -> tuple[np.ndarray, list[dict[str, Any]]]:
     with np.load(cache_dir / f"{name}.npz") as payload:
@@ -171,6 +192,91 @@ def majority_subject_control(rows: list[dict[str, Any]]) -> tuple[int, float]:
     return int(np.bincount(labels, minlength=2).argmax()), float(labels.mean())
 
 
+def _enforce_gemma_daic_contract(
+    metadata: dict[str, Any],
+    train_rows: list[dict[str, Any]],
+    test_rows: list[dict[str, Any]],
+    train_subjects: set[str],
+) -> None:
+    """Enforce the fixed Gemma DAIC scientific contract on the extracted cache.
+
+    Refuses non-finite vectors, incomplete chunk coverage, unequal
+    subject-normalized fit weights, and wrong official train/test subject
+    counts. Production must fit on exactly 107 official training subjects and
+    evaluate exactly 47 official test subjects; a count mismatch is a hard
+    stop, never a row-drop.
+    """
+    if len(train_subjects) != 107:
+        raise ValueError(
+            f"Gemma DAIC fit requires exactly 107 official training subjects, "
+            f"got {len(train_subjects)}. Do not fit on validation subjects."
+        )
+    test_subjects = {str(row["subject_id"]) for row in test_rows}
+    if len(test_subjects) != 47:
+        raise ValueError(
+            f"Gemma DAIC evaluation requires exactly 47 official test subjects, "
+            f"got {len(test_subjects)}."
+        )
+    modality = str(metadata.get("input_modality", ""))
+    packed30 = modality in {"audio_only", "audio_text"}
+    if packed30:
+        _enforce_complete_chunk_coverage(train_rows, "outer_train")
+        _enforce_complete_chunk_coverage(test_rows, "final_eval")
+
+
+def _enforce_gemma_dependency_versions() -> None:
+    """Require the locked classifier library versions on the Gemma path."""
+    from importlib.metadata import version
+
+    try:
+        sklearn_version = version("scikit-learn")
+        xgboost_version = version("xgboost")
+    except Exception as error:
+        raise RuntimeError(
+            "Gemma fixed heads require scikit-learn 1.7.0 and xgboost 2.1.4."
+        ) from error
+    if sklearn_version != "1.7.0" or xgboost_version != "2.1.4":
+        raise RuntimeError(
+            f"Gemma fixed heads require scikit-learn 1.7.0 and xgboost 2.1.4; "
+            f"got scikit-learn {sklearn_version} and xgboost {xgboost_version}."
+        )
+
+
+def _enforce_complete_chunk_coverage(
+    rows: list[dict[str, Any]], partition: str
+) -> None:
+    """Refuse a packed30 partition with missing or duplicated chunk indices."""
+    from collections import Counter, defaultdict
+
+    by_subject: dict[str, list[int]] = defaultdict(list)
+    for row in rows:
+        subject_id = str(row["subject_id"])
+        chunk_index = row.get("chunk_index")
+        if chunk_index is None:
+            raise ValueError(
+                f"Gemma packed30 {partition} rows require chunk_index; "
+                f"sample_id={row.get('sample_id')}."
+            )
+        by_subject[subject_id].append(int(chunk_index))
+    for subject_id, indices in sorted(by_subject.items()):
+        counts = Counter(indices)
+        duplicates = [index for index, count in counts.items() if count > 1]
+        if duplicates:
+            raise ValueError(
+                f"Gemma packed30 {partition} subject {subject_id} has duplicate "
+                f"chunk indices: {duplicates[:10]}."
+            )
+        expected = set(range(int(rows[0].get("num_chunks", 0)) if by_subject else 0))
+        if not expected:
+            continue
+        missing = sorted(expected - set(indices))
+        if missing:
+            raise ValueError(
+                f"Gemma packed30 {partition} subject {subject_id} is missing "
+                f"chunks: {missing[:10]}."
+            )
+
+
 def run_variant(
     cache_dir: Path,
     output_root: Path,
@@ -192,6 +298,10 @@ def run_variant(
     if set(train_y.tolist()) != {0, 1}:
         raise ValueError("Training cache must contain both classes.")
     metadata = read_json(cache_dir / "extraction_metadata.json")
+    prediction_backend = resolve_prediction_backend(metadata, variant)
+    if str(metadata.get("model_backend", "")).strip().lower() == "gemma4":
+        _enforce_gemma_dependency_versions()
+        _enforce_gemma_daic_contract(metadata, train_rows, test_rows, train_subjects)
     result_identity = {
         "schema_version": FIXED_RESULT_SCHEMA_VERSION,
         "variant": variant,
@@ -199,6 +309,8 @@ def run_variant(
         "sampling_mode": sampling_mode,
         "oversampling_ratio": oversampling_ratio,
         "oversampling_seed": int(oversampling_seed),
+        "model_backend": metadata.get("model_backend"),
+        "prediction_backend": prediction_backend,
         "cache_identity": cache_identity(cache_dir),
         "aggregation_policy": classifier_aggregation_policy(metadata),
     }
@@ -337,6 +449,7 @@ def run_variant(
             "predicted_class": int(prediction),
             "checkpoint": metadata["checkpoint_dir"],
             "classifier_variant": variant,
+            "prediction_backend": prediction_backend,
             "sampling_mode": sampling_mode,
             "oversampling_ratio": oversampling_ratio,
             "oversampling_seed": int(oversampling_seed),
@@ -345,7 +458,9 @@ def run_variant(
             classifier_row["protocol_id"] = str(metadata.get("protocol_id", ""))
             classifier_row["classifier_aggregation"] = PACKED30_AGGREGATION_POLICY
         sample_rows.append(classifier_row)
-    subject_rows, metrics = aggregate_binary_classifier_predictions(sample_rows)
+    subject_rows, metrics = aggregate_binary_classifier_predictions(
+        sample_rows, prediction_backend=prediction_backend
+    )
     for row in subject_rows:
         row.update(
             {
@@ -354,6 +469,7 @@ def run_variant(
                 "condition": condition,
                 "fold": int(metadata["fold"]),
                 "classifier_variant": variant,
+                "prediction_backend": prediction_backend,
                 "sampling_mode": sampling_mode,
                 "oversampling_ratio": oversampling_ratio,
                 "oversampling_seed": int(oversampling_seed),
@@ -384,6 +500,7 @@ def run_variant(
         "condition": condition,
         "fold": int(metadata["fold"]),
         "classifier_variant": variant,
+        "prediction_backend": prediction_backend,
         "seed": seed,
         "sampling_mode": sampling_mode,
         "oversampling_ratio": oversampling_ratio,
@@ -403,6 +520,7 @@ def run_variant(
             "split_metadata_sha256": metadata.get("split_metadata_sha256"),
             "manifest_sha256": metadata.get("manifest_sha256"),
         },
+        "parent_attempt_id": metadata.get("parent_attempt_id"),
         "threshold": 0.5,
         "input_dimension": int(train_x.shape[1]),
         "requested_pca_components": requested_components,

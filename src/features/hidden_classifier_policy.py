@@ -78,6 +78,13 @@ def response_normalized_sample_weights(
             totals: dict[str, float] = defaultdict(float)
             for row, weight in zip(rows, weights.tolist()):
                 totals[str(row["subject_id"])] += weight
+            equal_subject_totals = len(
+                {round(value, 12) for value in totals.values()}
+            ) == 1
+            if not equal_subject_totals:
+                raise AssertionError(
+                    "DAIC subjects do not have equal total classifier fit weight."
+                )
             return weights, {
                 "schema_version": "hidden_classifier_weight_audit.v1",
                 "policy": DAIC_SUBJECT_WEIGHT_POLICY,
@@ -86,9 +93,7 @@ def response_normalized_sample_weights(
                 "response_count": None,
                 "subject_count": len(counts),
                 "equal_response_totals": None,
-                "equal_subject_totals": len(
-                    {round(value, 12) for value in totals.values()}
-                ) == 1,
+                "equal_subject_totals": equal_subject_totals,
                 "subject_weight_totals": dict(sorted(totals.items())),
                 "chunks_per_subject": dict(sorted(counts.items())),
             }

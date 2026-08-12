@@ -729,8 +729,15 @@ def aggregate_margin_predictions(
 
 def aggregate_binary_classifier_predictions(
     sample_rows: list[dict[str, Any]],
+    prediction_backend: str = "qwen_hidden_classifier",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Apply the baseline majority vote and score-margin tie rule to classifiers."""
+    """Apply the baseline majority vote and score-margin tie rule to classifiers.
+
+    ``prediction_backend`` defaults to ``qwen_hidden_classifier`` so existing
+    Qwen callers and tests are unchanged; the Gemma fixed-head campaign passes
+    its exact backend value explicitly (``gemma4_hidden_logreg_raw`` /
+    ``gemma4_hidden_xgb_raw``).
+    """
     if sample_rows and all(
         str(row.get("classifier_aggregation", "")).lower()
         == "mean_depressed_probability_threshold_0_5"
@@ -740,7 +747,7 @@ def aggregate_binary_classifier_predictions(
         for row in subject_rows:
             row.update(
                 {
-                    "prediction_backend": "qwen_hidden_classifier",
+                    "prediction_backend": prediction_backend,
                     "evaluation_protocol_name": "daic_participant_packed30_hidden_mean_probability",
                     "aggregated_prediction": int(row["prediction"]),
                     "aggregation_method": "mean_depressed_probability_threshold_0_5",
@@ -748,7 +755,7 @@ def aggregate_binary_classifier_predictions(
             )
         metrics.update(
             {
-                "prediction_backend": "qwen_hidden_classifier",
+                "prediction_backend": prediction_backend,
                 "evaluation_protocol_name": "daic_participant_packed30_hidden_mean_probability",
                 "aggregation_method": "mean_depressed_probability_threshold_0_5",
                 "predicted_positive_rate": (
@@ -790,7 +797,7 @@ def aggregate_binary_classifier_predictions(
             responses = responses_by_subject[subject_id]
             subject_row.update(
                 {
-                    "prediction_backend": "qwen_hidden_classifier",
+                    "prediction_backend": prediction_backend,
                     "evaluation_protocol_name": "d3tec_hidden_response_subject",
                     "sample_count": len(samples),
                     "response_count": len(responses),
@@ -805,7 +812,7 @@ def aggregate_binary_classifier_predictions(
                     "probability": float(subject_row["dep_score"]),
                 }
             )
-        metrics["prediction_backend"] = "qwen_hidden_classifier"
+        metrics["prediction_backend"] = prediction_backend
         metrics["evaluation_protocol_name"] = "d3tec_hidden_response_subject"
         metrics["aggregation_method"] = (
             "segment_majority_probability_margin_tie_break_then_"
@@ -836,7 +843,7 @@ def aggregate_binary_classifier_predictions(
         probabilities = [float(row["probability"]) for row in rows]
         subject_row.update(
             {
-                "prediction_backend": "qwen_hidden_classifier",
+                "prediction_backend": prediction_backend,
                 "evaluation_protocol_name": "qwen_hidden_majority_vote",
                 "sample_count": len(rows),
                 "sample_predictions": [int(row["predicted_class"]) for row in rows],
@@ -846,7 +853,7 @@ def aggregate_binary_classifier_predictions(
                 "probability": float(sum(probabilities) / len(probabilities)),
             }
         )
-    metrics["prediction_backend"] = "qwen_hidden_classifier"
+    metrics["prediction_backend"] = prediction_backend
     metrics["evaluation_protocol_name"] = "qwen_hidden_majority_vote"
     metrics["auroc"] = binary_auroc(
         [int(row["label"]) for row in subject_rows],

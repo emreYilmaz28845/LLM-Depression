@@ -79,6 +79,22 @@
         }
       }
     },
+    "parent": {
+      "type": "object",
+      "description": "Optional parent checkpoint relationship for post-hoc runs. "
+        "supersedes_attempt_id is reserved for failed-run retries, never for "
+        "the parent training attempt.",
+      "properties": {
+        "parent_attempt_id": {
+          "type": "string",
+          "pattern": "^[0-9]{8}T[0-9]{6}Z-[a-z0-9._-]+-[0-9a-f]{8}-[0-9a-f]{8}$"
+        },
+        "parent_checkpoint_role": { "const": "best_model" },
+        "parent_checkpoint_path": { "type": "string", "minLength": 1 },
+        "adapter_config_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "adapter_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
     "legacy_import": { "type": "boolean" }
   },
   "additionalProperties": true
