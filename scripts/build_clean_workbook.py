@@ -341,6 +341,137 @@ MODALITIES = ["Audio + Text", "Audio only", "Text only"]
 HEAD_METHODS = [("logreg", "LogReg head"), ("xgb_fixed", "XGBoost fixed"), ("xgb_optuna", "XGBoost Optuna")]
 
 
+# --------------------------------------------------------------------------- Gemma 4 DAIC
+# First Gemma 4 DAIC backbone comparison (runbook docs/GEMMA4_DAIC_IMPLEMENTATION_RUNBOOK.md).
+# Backend gemma4 on google/gemma-4-12B-it revision 707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7;
+# BF16 LoRA (rank 16/alpha 32/dropout 0.05, exact 288-module decoder regex), SDPA, gradient
+# checkpointing, per-device batch 1, grad accumulation 32, 4xH100 DDP, seed 1337, fold 0.
+# Campaign gemma4_v1_prod_20260812T020449Z_cca3f4ae; source a6749b0 (clean main; allocator
+# fix), PR #31; recipe and data identical to the Qwen harmonized campaign (same manifest
+# 72e2dd20…/split 441333e0… hashes). Evaluation: original_teacher_forced,
+# harmonized_all_windows_full_coverage, subject mean-score aggregation, official 47-subject
+# test, headline/binary_strict (INVALID counts as wrong; INVALID=0 everywhere).
+# Qwen column = the canonical harmonized _r1 DAIC rows (STANDALONE_QWEN).
+# All values recomputed locally from predictions_subject_level.csv (match metrics JSON).
+GEMMA4_CAMPAIGN = {
+    "campaign_id": "gemma4_v1_prod_20260812T020449Z_cca3f4ae",
+    "group_id": "gemma4-daic-v1-cca3f4ae",
+    "source_sha": "a6749b05146fd44e7c164a4f0495c72dd72bc4d4",
+    "github_issue": None,
+    "github_pr": 31,
+    "model": "google/gemma-4-12B-it",
+    "revision": "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
+    "manifest_sha256": "72e2dd204b915ccba3ebf922f030531fe5678b3ea8c9c52b81b41242fe9dda17",
+    "split_sha256": "441333e0c88845eeacba9ea5355a8920cdd1f70e8cf7a7c15b9547b46da51473",
+}
+
+# modality -> (run_name, attempt_id, train_job, eval_job, selected_epoch)
+GEMMA4_RUNS = {
+    "audio_text": (
+        "gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2",
+        "20260812T031624Z-gemma4_daic_audio_text_seed1337-a6749b05-146c8805",
+        "44518086", "44518087", 3,
+    ),
+    "audio_only": (
+        "gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only",
+        "20260812T020449Z-gemma4_daic_audio_only_seed1337-cca3f4ae-8789edf2",
+        "44517565", "44517566", None,
+    ),
+    "text_only": (
+        "gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only",
+        "20260812T020449Z-gemma4_daic_text_only_seed1337-cca3f4ae-ed58a7a3",
+        "44517484", "44517485", 1,
+    ),
+}
+# modality -> (macro_f1, positive_f1, accuracy, precision, recall, confusion_matrix)
+GEMMA4_QWEN = {
+    "audio_text": (0.7631048387096775, 0.6875000000000001, 0.7872340425531915, 0.6111111111111112, 0.7857142857142857, [[26, 7], [3, 11]]),
+    "audio_only": (0.4125, 0.0, 0.7021276595744681, 0.0, 0.0, [[33, 0], [14, 0]]),
+    "text_only": (0.7552083333333333, 0.6666666666666666, 0.7872340425531915, 0.625, 0.7142857142857143, [[27, 6], [4, 10]]),
+}
+GEMMA4_EVIDENCE = "output_model/harmonized_v1_gemma4/<modality>/daic/<run>/fold_0/best_model/standalone_eval/"
+
+
+def build_gemma4(wb: Workbook) -> None:
+    ws = wb.create_sheet("Gemma 4 DAIC")
+    _widths(ws, {"A": 20, "B": 14, "C": 14, "D": 14, "E": 14, "F": 14, "G": 14, "H": 60, "I": 46})
+    campaign = GEMMA4_CAMPAIGN
+    _title(ws, "Gemma 4 vs Qwen — DAIC official test (seed 1337, fold 0, strict teacher-forced)", 8)
+    _note(
+        ws, 2,
+        f"Gemma 4: {campaign['model']} revision {campaign['revision'][:12]}…, BF16 LoRA (288 decoder "
+        f"modules, rank 16/alpha 32), SDPA, gradient checkpointing, batch 1 x 32 accum x 4 GPUs. "
+        f"Campaign {campaign['campaign_id']}; source {campaign['source_sha'][:8]} (clean main); PR "
+        f"#{campaign['github_pr']}; same manifest/split as the Qwen harmonized campaign "
+        f"({campaign['manifest_sha256'][:12]}…/{campaign['split_sha256'][:12]}…). Evaluation: "
+        f"original_teacher_forced, harmonized_all_windows_full_coverage, subject mean-score, "
+        f"headline/binary_strict, INVALID counts as wrong (INVALID=0). Qwen column = canonical "
+        f"harmonized _r1 DAIC rows. One seed each — differences are observations, not variance "
+        f"estimates. All values recomputed locally from predictions_subject_level.csv.",
+        8, height=110,
+    )
+    _header_row(ws, 4, [
+        "Modality", "Model", "Macro-F1", "Positive-F1", "Accuracy", "Precision", "Recall",
+        "Run / attempt / jobs", "Local evidence",
+    ])
+    row = 5
+    mod_keys = ["audio_text", "audio_only", "text_only"]
+    mod_labels = ["Audio + Text", "Audio only", "Text only"]
+    for mod_key, mod_label in zip(mod_keys, mod_labels):
+        run, attempt, train_job, eval_job, epoch = GEMMA4_RUNS[mod_key]
+        g_macro, g_pos, g_acc, g_prec, g_rec, g_cm = GEMMA4_QWEN[mod_key]
+        q_macro = STANDALONE_QWEN[("DAIC", mod_label)]
+        ws.cell(row, 1, mod_label).font = BODY_FONT
+        ws.cell(row, 1).fill = BODY
+        ws.cell(row, 1).alignment = LEFT
+        ws.cell(row, 1).border = BORDER
+        _body_cell(ws, row, 2, "Gemma 4")
+        _body_cell(ws, row, 3, g_macro, fmt="0.0000")
+        _body_cell(ws, row, 4, g_pos, fmt="0.0000")
+        _body_cell(ws, row, 5, g_acc, fmt="0.0000")
+        _body_cell(ws, row, 6, g_prec, fmt="0.0000")
+        _body_cell(ws, row, 7, g_rec, fmt="0.0000")
+        source = (
+            f"run {run}; attempt {attempt}; train {train_job} eval {eval_job} "
+            f"(COMPLETED 0:0); selected epoch {epoch if epoch is not None else 'n/a'}"
+        )
+        cell = ws.cell(row, 8, source)
+        cell.font = SMALL_FONT
+        cell.alignment = WRAP
+        cell.border = BORDER
+        cell = ws.cell(row, 9, GEMMA4_EVIDENCE.replace("<modality>", mod_key).replace("<run>", run) + "metrics_original_teacher_forced.json + predictions_subject_level.csv")
+        cell.font = SMALL_FONT
+        cell.alignment = WRAP
+        cell.border = BORDER
+        row += 1
+        ws.cell(row, 1, mod_label).font = BODY_FONT
+        ws.cell(row, 1).fill = BODY
+        ws.cell(row, 1).alignment = LEFT
+        ws.cell(row, 1).border = BORDER
+        _body_cell(ws, row, 2, "Qwen (harmonized _r1)")
+        _body_cell(ws, row, 3, q_macro, fmt="0.0000")
+        _body_cell(ws, row, 4, None)
+        _body_cell(ws, row, 5, None)
+        _body_cell(ws, row, 6, None)
+        _body_cell(ws, row, 7, None)
+        cell = ws.cell(row, 8, "harmonized_v1_…_daic_" + mod_key + "_r1 (campaign harmonized_v1_prod_20260809T171705Z_d1e8130b; retry registry retry_r1_jobs.tsv)")
+        cell.font = SMALL_FONT
+        cell.alignment = WRAP
+        cell.border = BORDER
+        cell = ws.cell(row, 9, "output_model/harmonized_v1/" + mod_key + "/daic/*/fold_0/best_model/standalone_eval(_r1)/metrics_original_teacher_forced.json")
+        cell.font = SMALL_FONT
+        cell.alignment = WRAP
+        cell.border = BORDER
+        row += 2
+    _note(ws, row, "Positive-F1/accuracy/precision/recall are shown for Gemma only; the Qwen "
+                   "harmonized rows in the workbook carry macro-F1 (STANDALONE_QWEN) and the same "
+                   "binary-strict headline semantics (values: DAIC audio+text 0.7353, audio-only "
+                   "0.5392, text-only 0.7353). audio_only Gemma predicted Non-depressed for all 47 "
+                   "subjects (degenerate but valid; run and evidence are sound). No winner is "
+                   "selected from test results.", 7, height=60)
+    ws.freeze_panes = "A5"
+
+
 def _fmt(v: float | None) -> str:
     return "" if v is None else f"{v:.4f}"
 
@@ -829,7 +960,43 @@ def build_provenance(wb: Workbook, *, detailed: bool) -> None:
         put("DAIC packed30 family", "DAIC", condition, method, value, source, aggregation,
             artifact, "recomputed from predictions_subject_level.jsonl (metrics match)")
 
+    build_gemma4_provenance(ws, put)
+
     ws.freeze_panes = "A3"
+
+
+def build_gemma4_provenance(ws, put) -> None:
+    campaign = GEMMA4_CAMPAIGN
+    for mod_key, mod_label in zip(
+        ["audio_text", "audio_only", "text_only"],
+        ["Audio + Text", "Audio only", "Text only"],
+    ):
+        run, attempt, train_job, eval_job, epoch = GEMMA4_RUNS[mod_key]
+        g_macro, g_pos, g_acc, g_prec, g_rec, g_cm = GEMMA4_QWEN[mod_key]
+        source = (
+            f"campaign {campaign['campaign_id']}, run {run}, attempt {attempt}, "
+            f"source {campaign['source_sha'][:8]} (clean main), PR #{campaign['github_pr']}, "
+            f"jobs {train_job}/{eval_job}, selected epoch {epoch if epoch is not None else 'n/a'}, "
+            f"model {campaign['model']} rev {campaign['revision'][:12]}…, "
+            f"cfg/manifest/split {campaign['manifest_sha256'][:12]}…/{campaign['split_sha256'][:12]}…"
+        )
+        agg = "official 47-subject test, subject mean-score, teacher-forced, binary-strict, harmonized_all_windows_full_coverage"
+        evidence = GEMMA4_EVIDENCE.replace("<modality>", mod_key).replace("<run>", run)
+        put("Gemma 4 DAIC", "DAIC", mod_label, "Gemma 4 macro-F1", g_macro, source, agg,
+            evidence + "metrics_original_teacher_forced.json + predictions_subject_level.csv",
+            "recomputed locally from predictions (matches metrics JSON); Slurm COMPLETED 0:0")
+        put("Gemma 4 DAIC", "DAIC", mod_label, "Gemma 4 positive-F1", g_pos, source, agg,
+            evidence + "metrics_original_teacher_forced.json + predictions_subject_level.csv",
+            "recomputed locally from predictions (matches metrics JSON)")
+        put("Gemma 4 DAIC", "DAIC", mod_label, "Gemma 4 accuracy", g_acc, source, agg,
+            evidence + "metrics_original_teacher_forced.json + predictions_subject_level.csv",
+            "recomputed locally from predictions (matches metrics JSON)")
+        put("Gemma 4 DAIC", "DAIC", mod_label, "Gemma 4 confusion matrix", str(g_cm), source, agg,
+            evidence + "confusion_matrix.json",
+            "recomputed locally from predictions (matches metrics JSON)")
+        put("Gemma 4 DAIC", "DAIC", mod_label, "Gemma 4 invalid count", 0, source, agg,
+            evidence + "metrics_original_teacher_forced.json",
+            "invalid_subjects == 0 in metrics JSON and recomputation")
 
 
 # --------------------------------------------------------------------------- data
@@ -971,6 +1138,12 @@ def main() -> None:
             (dataset_label, modality_label): value
             for (dataset_label, modality_label), value in STANDALONE_QWEN.items()
         }
+        # Gemma 4 DAIC macro-F1 headline cells (Gemma 4 DAIC sheet).
+        for mod_key, mod_label in zip(
+            ["audio_text", "audio_only", "text_only"],
+            ["Audio + Text", "Audio only", "Text only"],
+        ):
+            cell_values[("Gemma 4 DAIC", mod_label)] = GEMMA4_QWEN[mod_key][0]
         ok, report = validate_selected_results(Path(args.validate_selected), cell_values)
         print("\n".join(report))
         print(f"checked={sum(1 for s in json.loads(Path(args.validate_selected).read_text())['selections'] if s['status'] == 'selected')} "
@@ -986,6 +1159,7 @@ def main() -> None:
     build_en_vs_native(wb)
     build_merged_vs_standalone(wb)
     build_packed30(wb)
+    build_gemma4(wb)
     build_provenance(wb, detailed=detailed)
     out = OUT_DETAILED if detailed else OUT
     out.parent.mkdir(parents=True, exist_ok=True)

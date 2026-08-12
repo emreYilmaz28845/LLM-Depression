@@ -1,9 +1,9 @@
 schema_version: audiollm.workbook_wandb_selection.v1
 workbook:
   path: depression_results_clean.xlsx
-  sha256: 8a7bf80dd89135f06449cc3dcacd5738d99f468f98290fb47de76dac050bd58a
+  sha256: 10974accfeb6f45961d64c1e633818165a27357d5b01e59094aceed9a16cc460
   builder_path: scripts/build_clean_workbook.py
-  builder_sha256: a2681032a71b69c7993467482cd66ea63844b541f93b0907ae1365055fbb7eb8
+  builder_sha256: 07f874568d20cab533869b0e312e921cb3298df371df1cd88f8e93c15a3420c4
   provenance_sheet: Provenance
 entries:
 - selection_id: Standalone|DAIC|Audio + Text|Fine-tuned Qwen
@@ -935,7 +935,8 @@ entries:
   group: Merged DAIC official
   wandb_policy: pending_importer_support
   blocking_reasons: &id007
-  - harmonized merged runs are not imported into the registry (inventory-oriented layout only)
+  - harmonized merged runs are not imported into the registry (inventory-oriented
+    layout only)
 - selection_id: Merged DAIC official|DAIC|Audio + Text|LogReg head
   provenance_key:
     experiment: Merged DAIC official
@@ -1980,7 +1981,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
+    yet
 - selection_id: DAIC packed30 family|DAIC|Canonical Audio + Text|XGBoost raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -1997,7 +1999,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
+    yet
 - selection_id: DAIC packed30 family|DAIC|Canonical Audio only|LogReg raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -2014,7 +2017,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
+    yet
 - selection_id: DAIC packed30 family|DAIC|Canonical Audio only|XGBoost raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -2031,7 +2035,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
+    yet
 - selection_id: DAIC packed30 family|DAIC|Joint-K4 Audio + Text|LogReg raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -2048,7 +2053,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
+    yet
 - selection_id: DAIC packed30 family|DAIC|Joint-K4 Audio + Text|Qwen TF
   provenance_key:
     experiment: DAIC packed30 family
@@ -2066,7 +2072,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: quarantine_ambiguous
   blocking_reasons:
-  - runs under output_model/experiments non-canonical layout; not importable by current discovery
+  - runs under output_model/experiments non-canonical layout; not importable by current
+    discovery
 - selection_id: DAIC packed30 family|DAIC|Joint-K4 Audio + Text|XGBoost raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -2083,7 +2090,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
+    yet
 - selection_id: DAIC packed30 family|DAIC|Joint-K4 Audio only|LogReg raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -2100,7 +2108,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
+    yet
 - selection_id: DAIC packed30 family|DAIC|Joint-K4 Audio only|Qwen TF
   provenance_key:
     experiment: DAIC packed30 family
@@ -2118,7 +2127,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: quarantine_ambiguous
   blocking_reasons:
-  - runs under output_model/experiments non-canonical layout; not importable by current discovery
+  - runs under output_model/experiments non-canonical layout; not importable by current
+    discovery
 - selection_id: DAIC packed30 family|DAIC|Joint-K4 Audio only|XGBoost raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -2135,7 +2145,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
+    yet
 - selection_id: DAIC packed30 family|DAIC|Packed30 v1 Audio + Text|Qwen TF
   provenance_key:
     experiment: DAIC packed30 family
@@ -2153,7 +2164,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: quarantine_ambiguous
   blocking_reasons:
-  - runs under output_model/experiments non-canonical layout; not importable by current discovery
+  - runs under output_model/experiments non-canonical layout; not importable by current
+    discovery
 - selection_id: DAIC packed30 family|DAIC|Packed30 v1 Audio only|Qwen TF
   provenance_key:
     experiment: DAIC packed30 family
@@ -2171,7 +2183,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: quarantine_ambiguous
   blocking_reasons:
-  - runs under output_model/experiments non-canonical layout; not importable by current discovery
+  - runs under output_model/experiments non-canonical layout; not importable by current
+    discovery
 - selection_id: EN Translation|Androids Interview|Audio + Text|Fine-tuned Qwen
   provenance_key:
     experiment: EN Translation
@@ -3524,3 +3537,393 @@ entries:
   group: EN heads
   wandb_policy: skip_derived_only
   blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 macro-F1
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 macro-F1
+  source_type: ordinary_qwen
+  reason: gemma4_daic_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T031624Z-gemma4_daic_audio_text_seed1337-a6749b05-146c8805
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC
+  wandb_policy: sync
+  blocking_reasons: []
+  run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
+  train_job_id: '44518086'
+  eval_job_id: '44518087'
+- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 positive-F1
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 positive-F1
+  source_type: ordinary_qwen
+  reason: gemma4_daic_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T031624Z-gemma4_daic_audio_text_seed1337-a6749b05-146c8805
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC
+  wandb_policy: sync
+  blocking_reasons: []
+  run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
+  train_job_id: '44518086'
+  eval_job_id: '44518087'
+- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 accuracy
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 accuracy
+  source_type: ordinary_qwen
+  reason: gemma4_daic_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T031624Z-gemma4_daic_audio_text_seed1337-a6749b05-146c8805
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC
+  wandb_policy: sync
+  blocking_reasons: []
+  run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
+  train_job_id: '44518086'
+  eval_job_id: '44518087'
+- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 confusion matrix
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 confusion matrix
+  source_type: ordinary_qwen
+  reason: gemma4_daic_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T031624Z-gemma4_daic_audio_text_seed1337-a6749b05-146c8805
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC
+  wandb_policy: sync
+  blocking_reasons: []
+  run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
+  train_job_id: '44518086'
+  eval_job_id: '44518087'
+- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 invalid count
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 invalid count
+  source_type: ordinary_qwen
+  reason: gemma4_daic_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T031624Z-gemma4_daic_audio_text_seed1337-a6749b05-146c8805
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC
+  wandb_policy: sync
+  blocking_reasons: []
+  run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
+  train_job_id: '44518086'
+  eval_job_id: '44518087'
+- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 macro-F1
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 macro-F1
+  source_type: ordinary_qwen
+  reason: gemma4_daic_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T020449Z-gemma4_daic_audio_only_seed1337-cca3f4ae-8789edf2
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC
+  wandb_policy: sync
+  blocking_reasons: []
+  run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
+  train_job_id: '44517565'
+  eval_job_id: '44517566'
+- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 positive-F1
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 positive-F1
+  source_type: ordinary_qwen
+  reason: gemma4_daic_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T020449Z-gemma4_daic_audio_only_seed1337-cca3f4ae-8789edf2
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC
+  wandb_policy: sync
+  blocking_reasons: []
+  run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
+  train_job_id: '44517565'
+  eval_job_id: '44517566'
+- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 accuracy
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 accuracy
+  source_type: ordinary_qwen
+  reason: gemma4_daic_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T020449Z-gemma4_daic_audio_only_seed1337-cca3f4ae-8789edf2
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC
+  wandb_policy: sync
+  blocking_reasons: []
+  run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
+  train_job_id: '44517565'
+  eval_job_id: '44517566'
+- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 confusion matrix
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 confusion matrix
+  source_type: ordinary_qwen
+  reason: gemma4_daic_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T020449Z-gemma4_daic_audio_only_seed1337-cca3f4ae-8789edf2
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC
+  wandb_policy: sync
+  blocking_reasons: []
+  run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
+  train_job_id: '44517565'
+  eval_job_id: '44517566'
+- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 invalid count
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 invalid count
+  source_type: ordinary_qwen
+  reason: gemma4_daic_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T020449Z-gemma4_daic_audio_only_seed1337-cca3f4ae-8789edf2
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC
+  wandb_policy: sync
+  blocking_reasons: []
+  run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
+  train_job_id: '44517565'
+  eval_job_id: '44517566'
+- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 macro-F1
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 macro-F1
+  source_type: ordinary_qwen
+  reason: gemma4_daic_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T020449Z-gemma4_daic_text_only_seed1337-cca3f4ae-ed58a7a3
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC
+  wandb_policy: sync
+  blocking_reasons: []
+  run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
+  train_job_id: '44517484'
+  eval_job_id: '44517485'
+- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 positive-F1
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 positive-F1
+  source_type: ordinary_qwen
+  reason: gemma4_daic_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T020449Z-gemma4_daic_text_only_seed1337-cca3f4ae-ed58a7a3
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC
+  wandb_policy: sync
+  blocking_reasons: []
+  run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
+  train_job_id: '44517484'
+  eval_job_id: '44517485'
+- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 accuracy
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 accuracy
+  source_type: ordinary_qwen
+  reason: gemma4_daic_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T020449Z-gemma4_daic_text_only_seed1337-cca3f4ae-ed58a7a3
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC
+  wandb_policy: sync
+  blocking_reasons: []
+  run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
+  train_job_id: '44517484'
+  eval_job_id: '44517485'
+- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 confusion matrix
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 confusion matrix
+  source_type: ordinary_qwen
+  reason: gemma4_daic_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T020449Z-gemma4_daic_text_only_seed1337-cca3f4ae-ed58a7a3
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC
+  wandb_policy: sync
+  blocking_reasons: []
+  run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
+  train_job_id: '44517484'
+  eval_job_id: '44517485'
+- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 invalid count
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 invalid count
+  source_type: ordinary_qwen
+  reason: gemma4_daic_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T020449Z-gemma4_daic_text_only_seed1337-cca3f4ae-ed58a7a3
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC
+  wandb_policy: sync
+  blocking_reasons: []
+  run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
+  train_job_id: '44517484'
+  eval_job_id: '44517485'
