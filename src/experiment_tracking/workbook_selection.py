@@ -70,7 +70,19 @@ _FAMILY_RULES: tuple[tuple[str, str | None, str], ...] = (
     ("Harmonized heads", None, "hidden_classifier"),
     ("Harmonized merged final", None, "merged"),
     ("Harmonized merged CV", None, "merged"),
-    ("Gemma 4 DAIC", None, "ordinary_qwen"),
+    ("Gemma 4 DAIC", "Gemma 4 macro-F1", "ordinary_qwen"),
+    ("Gemma 4 DAIC", "Gemma 4 positive-F1", "ordinary_qwen"),
+    ("Gemma 4 DAIC", "Gemma 4 accuracy", "ordinary_qwen"),
+    ("Gemma 4 DAIC", "Gemma 4 confusion matrix", "ordinary_qwen"),
+    ("Gemma 4 DAIC", "Gemma 4 invalid count", "ordinary_qwen"),
+    ("Gemma 4 DAIC", "Gemma 4 teacher-forced head macro-F1", "ordinary_qwen"),
+    ("Gemma 4 DAIC", "Gemma 4 teacher-forced head positive-F1", "ordinary_qwen"),
+    ("Gemma 4 DAIC", "Gemma 4 teacher-forced head accuracy", "ordinary_qwen"),
+    ("Gemma 4 DAIC", "Gemma 4 teacher-forced head precision", "ordinary_qwen"),
+    ("Gemma 4 DAIC", "Gemma 4 teacher-forced head recall", "ordinary_qwen"),
+    ("Gemma 4 DAIC", "Gemma 4 teacher-forced head confusion matrix", "ordinary_qwen"),
+    ("Gemma 4 DAIC", "Gemma 4 LogReg raw hidden head", "hidden_classifier"),
+    ("Gemma 4 DAIC", "Gemma 4 XGBoost raw hidden head", "hidden_classifier"),
 )
 
 _NOT_RUN_HINTS = ("not run", "optuna not run", "not_run", "never run")
@@ -158,8 +170,17 @@ def provenance_key_dict(key: str) -> dict[str, str]:
 
 def classify_source_type(experiment: str, method: str) -> str | None:
     for experiment_rule, method_rule, source_type in _FAMILY_RULES:
-        if experiment == experiment_rule and (method_rule is None or method == method_rule):
+        if experiment != experiment_rule:
+            continue
+        if method_rule is None or method == method_rule:
             return source_type
+    if experiment == "Gemma 4 DAIC":
+        if method.startswith("Gemma 4 LogReg raw hidden head") or method.startswith(
+            "Gemma 4 XGBoost raw hidden head"
+        ):
+            return "hidden_classifier"
+        if method.startswith("Gemma 4 teacher-forced head"):
+            return "ordinary_qwen"
     if experiment == "EN translation":
         if method.startswith("Native"):
             return "ordinary_qwen"
@@ -511,7 +532,12 @@ def _folds_of_attempt(
 
 
 def local_evidence_checks(
-    connection: Any, attempt_id: str, fold: int, evaluation_ids: list[str]
+    connection: Any,
+    attempt_id: str,
+    fold: int,
+    evaluation_ids: list[str],
+    *,
+    source_type: str | None = None,
 ) -> dict[str, Any]:
     payload = show_attempt(connection, attempt_id, fold)
     run_dir = Path(payload["folds"][0]["run_dir"]) if payload["folds"] else None
@@ -521,7 +547,12 @@ def local_evidence_checks(
         return checks
     checks["run_dir"] = str(run_dir)
     checks["run_config"] = "ok" if (run_dir / "run_config.yaml").is_file() else "missing run_config.yaml"
-    checks["best_model"] = "ok" if (run_dir / "best_model").is_dir() else "missing best_model dir"
+    if source_type != "hidden_classifier":
+        checks["best_model"] = "ok" if (run_dir / "best_model").is_dir() else "missing best_model dir"
+    else:
+        # Post-hoc hidden-classifier attempts have no best_model of their own;
+        # the parent checkpoint is referenced and hashed in provenance.
+        checks["best_model"] = "ok"
     artifacts = {
         artifact["artifact_id"]: artifact for artifact in payload["artifacts"]
     }
@@ -558,6 +589,8 @@ def _unit_evidence_checks(
     attempt_id: str,
     fold: int,
     required: list[dict[str, Any]],
+    *,
+    source_type: str | None = None,
 ) -> tuple[dict[str, Any], list[str], list[str], bool]:
     reasons: list[str] = []
     payload = show_attempt(connection, attempt_id, fold)
@@ -588,7 +621,9 @@ def _unit_evidence_checks(
             "matched evaluation(s) not reportable: "
             + ", ".join(sorted(set(matched_ids) - set(reportable_ids)))
         )
-    evidence = local_evidence_checks(connection, attempt_id, fold, matched_ids)
+    evidence = local_evidence_checks(
+        connection, attempt_id, fold, matched_ids, source_type=source_type
+    )
     evidence_problems = [
         f"{key}: {value}" for key, value in evidence.items() if key != "run_dir" and value != "ok"
     ]
@@ -700,7 +735,8 @@ def resolve_manifest(
                         )
                     unit = units[unit_key]
                     evidence, evidence_reasons, matched_ids, reportable = _unit_evidence_checks(
-                        connection, attempt_id, fold, entry.get("required_evaluations", [])
+                        connection, attempt_id, fold, entry.get("required_evaluations", []),
+                        source_type=entry["source_type"],
                     )
                     unit["local_evidence"] = evidence
                     unit["evaluation_ids"] = sorted(set(unit["evaluation_ids"]) | set(matched_ids))

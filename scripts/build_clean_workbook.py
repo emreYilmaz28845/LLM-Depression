@@ -391,6 +391,72 @@ GEMMA4_QWEN = {
 }
 GEMMA4_EVIDENCE = "output_model/harmonized_v1_gemma4/<modality>/daic/<run>/fold_0/best_model/standalone_eval/"
 
+# --------------------------------------------------------------------------- Gemma 4 DAIC fixed heads
+# Post-hoc fixed classifiers on the final prompt-token hidden state of each completed Gemma 4 DAIC
+# best_model (docs/GEMMA4_DAIC_FIXED_HEADS_IMPLEMENTATION_RUNBOOK.md). Hidden state: final layer,
+# last-valid-prompt-token pooling, float32, dimension 3840, cache gemma4_hidden_cache.v1. Fit on the
+# saved 107 official training subjects (audio modes: all packed30 chunks, inverse-chunk weights
+# rescaled to mean one; text: one vector per subject, weight one). Test: official 47 subjects,
+# mean depressed probability over chunks, fixed >= 0.5 threshold. LogReg: StandardScaler + balanced
+# LogisticRegression C=1.0 liblinear max_iter=5000 seed 1337; XGBoost: binary:logistic 300 trees
+# lr 0.03 depth 2 min_child_weight 5 subsample 0.8 colsample 0.25 alpha 1.0 lambda 10.0 hist n_jobs=1
+# seed 1337 (scikit-learn 1.7.0, xgboost 2.1.4). Campaign gemma4-daic-fixed-heads-v1-799cc412;
+# implementation merge 799cc41 (PRs #35, #45, #46); parent checkpoints are the three successful
+# Gemma training attempts above; parent adapters hashed in run_config.yaml. Backends:
+# gemma4_hidden_logreg_raw / gemma4_hidden_xgb_raw. One seed — observed differences, not variance.
+# All values recomputed locally by verify-local from predictions_subject_level.csv (match metrics.json).
+GEMMA4_HEADS_CAMPAIGN = {
+    "campaign_id": "gemma4-daic-fixed-heads-v1-799cc412",
+    "group_id": "gemma4-daic-fixed-heads-v1-799cc412",
+    "source_sha": "799cc4125c7db7802a003d63aa2edc02ee7174cf",
+    "github_issue": None,
+    "github_pr": 46,
+    "model": "google/gemma-4-12B-it",
+    "revision": "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
+    "manifest_sha256": "72e2dd204b915ccba3ebf922f030531fe5678b3ea8c9c52b81b41242fe9dda17",
+    "split_sha256": "441333e0c88845eeacba9ea5355a8920cdd1f70e8cf7a7c15b9547b46da51473",
+}
+
+# modality -> (run_name, attempt_id, extract_job, heads_job, supersedes_attempt_id)
+GEMMA4_HEADS_RUNS = {
+    "audio_text": (
+        "gemma4_daic_audio_text_fixed_heads_20260812T155635Z_799cc412",
+        "20260812T155659Z-gemma4_daic_audio_text_fixed_heads_20260812t155635z_799cc412-799cc412-5ad76728",
+        "44538980", "44538981",
+        "20260812T153613Z-gemma4_daic_audio_text_fixed_heads_20260812t153611z_dcfaa142-dcfaa142-a739f168",
+    ),
+    "audio_only": (
+        "gemma4_daic_audio_only_fixed_heads_20260812T155635Z_799cc412",
+        "20260812T155701Z-gemma4_daic_audio_only_fixed_heads_20260812t155635z_799cc412-799cc412-4fafe36d",
+        "44538982", "44538983",
+        "20260812T153615Z-gemma4_daic_audio_only_fixed_heads_20260812t153611z_dcfaa142-dcfaa142-f9cac152",
+    ),
+    "text_only": (
+        "gemma4_daic_text_only_fixed_heads_20260812T155635Z_799cc412",
+        "20260812T155703Z-gemma4_daic_text_only_fixed_heads_20260812t155635z_799cc412-799cc412-735f2c58",
+        "44538984", "44538985",
+        "20260812T153617Z-gemma4_daic_text_only_fixed_heads_20260812t153611z_dcfaa142-dcfaa142-066f6db6",
+    ),
+}
+
+# modality -> variant -> (macro_f1, positive_f1, accuracy, precision, recall, confusion_matrix)
+GEMMA4_HEADS = {
+    "audio_text": {
+        "logreg": (0.7898658718330849, 0.7272727272727273, 0.8085106382978723, 0.631578947368421, 0.8571428571428571, [[26, 7], [2, 12]]),
+        "xgb": (0.7834101382488479, 0.7096774193548386, 0.8085106382978723, 0.6470588235294118, 0.7857142857142857, [[27, 6], [3, 11]]),
+    },
+    "audio_only": {
+        "logreg": (0.6258420085731782, 0.43478260869565216, 0.723404255319149, 0.5555555555555556, 0.35714285714285715, [[29, 4], [9, 5]]),
+        "xgb": (0.4125, 0.0, 0.7021276595744681, 0.0, 0.0, [[33, 0], [14, 0]]),
+    },
+    "text_only": {
+        "logreg": (0.70625, 0.6000000000000001, 0.7446808510638298, 0.5625, 0.6428571428571429, [[26, 7], [5, 9]]),
+        "xgb": (0.6948051948051948, 0.5714285714285714, 0.7446808510638298, 0.5714285714285714, 0.5714285714285714, [[27, 6], [6, 8]]),
+    },
+}
+GEMMA4_HEADS_BACKEND = {"logreg": "gemma4_hidden_logreg_raw", "xgb": "gemma4_hidden_xgb_raw"}
+GEMMA4_HEADS_EVIDENCE = "output_model/harmonized_v1_gemma4_heads/<modality>/daic/<run>/fold_0/hidden_classifiers/<variant>/"
+
 
 def build_gemma4(wb: Workbook) -> None:
     ws = wb.create_sheet("Gemma 4 DAIC")
@@ -421,11 +487,16 @@ def build_gemma4(wb: Workbook) -> None:
         run, attempt, train_job, eval_job, epoch = GEMMA4_RUNS[mod_key]
         g_macro, g_pos, g_acc, g_prec, g_rec, g_cm = GEMMA4_QWEN[mod_key]
         q_macro = STANDALONE_QWEN[("DAIC", mod_label)]
-        ws.cell(row, 1, mod_label).font = BODY_FONT
-        ws.cell(row, 1).fill = BODY
-        ws.cell(row, 1).alignment = LEFT
-        ws.cell(row, 1).border = BORDER
-        _body_cell(ws, row, 2, "Gemma 4")
+        heads_run, heads_attempt, heads_extract_job, heads_job, superseded = GEMMA4_HEADS_RUNS[mod_key]
+
+        def _modality_cell(r: int) -> None:
+            ws.cell(r, 1, mod_label).font = BODY_FONT
+            ws.cell(r, 1).fill = BODY
+            ws.cell(r, 1).alignment = LEFT
+            ws.cell(r, 1).border = BORDER
+
+        _modality_cell(row)
+        _body_cell(ws, row, 2, "Gemma 4 teacher-forced head")
         _body_cell(ws, row, 3, g_macro, fmt="0.0000")
         _body_cell(ws, row, 4, g_pos, fmt="0.0000")
         _body_cell(ws, row, 5, g_acc, fmt="0.0000")
@@ -449,11 +520,31 @@ def build_gemma4(wb: Workbook) -> None:
         cell.alignment = WRAP
         cell.border = BORDER
         row += 1
-        ws.cell(row, 1, mod_label).font = BODY_FONT
-        ws.cell(row, 1).fill = BODY
-        ws.cell(row, 1).alignment = LEFT
-        ws.cell(row, 1).border = BORDER
-        _body_cell(ws, row, 2, "Qwen (harmonized _r1)")
+        for variant, variant_label in (("logreg", "Gemma 4 LogReg raw hidden head"), ("xgb", "Gemma 4 XGBoost raw hidden head")):
+            h_macro, h_pos, h_acc, h_prec, h_rec, h_cm = GEMMA4_HEADS[mod_key][variant]
+            _modality_cell(row)
+            _body_cell(ws, row, 2, variant_label)
+            _body_cell(ws, row, 3, h_macro, fmt="0.0000")
+            _body_cell(ws, row, 4, h_pos, fmt="0.0000")
+            _body_cell(ws, row, 5, h_acc, fmt="0.0000")
+            _body_cell(ws, row, 6, h_prec, fmt="0.0000")
+            _body_cell(ws, row, 7, h_rec, fmt="0.0000")
+            heads_source = (
+                f"run {heads_run}; attempt {heads_attempt}; extract {heads_extract_job} heads "
+                f"{heads_job} (COMPLETED 0:0); backend {GEMMA4_HEADS_BACKEND[variant]}; "
+                f"supersedes {superseded} (extract FAILED 1:0 / heads CANCELLED, wrapper race fixed in PR #45)"
+            )
+            cell = ws.cell(row, 8, heads_source)
+            cell.font = SMALL_FONT
+            cell.alignment = WRAP
+            cell.border = BORDER
+            cell = ws.cell(row, 9, GEMMA4_HEADS_EVIDENCE.replace("<modality>", mod_key).replace("<run>", heads_run).replace("<variant>", variant) + "metrics.json + predictions_subject_level.csv")
+            cell.font = SMALL_FONT
+            cell.alignment = WRAP
+            cell.border = BORDER
+            row += 1
+        _modality_cell(row)
+        _body_cell(ws, row, 2, "Qwen harmonized _r1 reference")
         _body_cell(ws, row, 3, q_macro, fmt="0.0000")
         _body_cell(ws, row, 4, None)
         _body_cell(ws, row, 5, None)
@@ -468,12 +559,14 @@ def build_gemma4(wb: Workbook) -> None:
         cell.alignment = WRAP
         cell.border = BORDER
         row += 2
-    _note(ws, row, "Positive-F1/accuracy/precision/recall are shown for Gemma only; the Qwen "
-                   "harmonized rows in the workbook carry macro-F1 (STANDALONE_QWEN) and the same "
-                   "binary-strict headline semantics (values: DAIC audio+text 0.7353, audio-only "
-                   "0.5392, text-only 0.7353). audio_only Gemma predicted Non-depressed for all 47 "
-                   "subjects (degenerate but valid; run and evidence are sound). No winner is "
-                   "selected from test results.", 7, height=60)
+    _note(ws, row, "Fixed heads: final prompt-token hidden state (float32, 3840) from each Gemma 4 "
+                   "best_model; fit on the saved 107 official training subjects only (audio modes: all "
+                   "packed30 chunks, inverse-chunk weights; text: one vector per subject); test = official "
+                   "47 subjects, mean depressed probability over chunks at >= 0.5. LogReg: StandardScaler + "
+                   "balanced liblinear C=1.0 max_iter=5000; XGBoost: 300 trees lr 0.03 depth 2 "
+                   "min_child_weight 5 subsample 0.8 colsample 0.25 alpha 1.0 lambda 10.0 hist n_jobs=1; "
+                   "both seed 1337, sklearn 1.7.0 / xgboost 2.1.4. One seed each — differences are "
+                   "observations, not variance estimates. No winner is selected from test results.", 7, height=110)
     ws.freeze_panes = "A5"
 
 
@@ -1007,6 +1100,45 @@ def build_gemma4_provenance(ws, put) -> None:
         put("Gemma 4 DAIC", "DAIC", mod_label, "Gemma 4 invalid count", 0, source, agg,
             evidence + "metrics_original_teacher_forced.json",
             "invalid_subjects == 0 in metrics JSON and recomputation")
+        heads_campaign = GEMMA4_HEADS_CAMPAIGN
+        heads_run, heads_attempt, heads_extract_job, heads_job, superseded = GEMMA4_HEADS_RUNS[mod_key]
+        heads_agg = (
+            "official 47-subject test, subject mean probability >= 0.5, binary-strict, "
+            "harmonized_all_windows_full_coverage, daic_official_train_fit_locked_test_evaluation"
+        )
+        heads_base = (
+            f"campaign {heads_campaign['campaign_id']}, run {heads_run}, attempt {heads_attempt}, "
+            f"source {heads_campaign['source_sha'][:8]} (clean main), PR #{heads_campaign['github_pr']}, "
+            f"jobs {heads_extract_job}/{heads_job} (COMPLETED 0:0), parent attempt {attempt}, "
+            f"parent adapter {GEMMA4_CAMPAIGN['manifest_sha256'][:12]}…/… split "
+            f"{heads_campaign['split_sha256'][:12]}…, model {heads_campaign['model']} rev "
+            f"{heads_campaign['revision'][:12]}…; supersedes {superseded} "
+            f"(extract FAILED 1:0, heads CANCELLED, wrapper race fixed in PR #45)"
+        )
+        heads_evidence = GEMMA4_HEADS_EVIDENCE.replace("<modality>", mod_key).replace("<run>", heads_run)
+        for variant, variant_label in (("logreg", "Gemma 4 LogReg raw hidden head"), ("xgb", "Gemma 4 XGBoost raw hidden head")):
+            h_macro, h_pos, h_acc, h_prec, h_rec, h_cm = GEMMA4_HEADS[mod_key][variant]
+            backend = GEMMA4_HEADS_BACKEND[variant]
+            v_source = heads_base + f", backend {backend}"
+            v_evidence = heads_evidence.replace("<variant>", variant)
+            put("Gemma 4 DAIC", "DAIC", mod_label, f"{variant_label} macro-F1", h_macro, v_source, heads_agg,
+                v_evidence + "metrics.json + predictions_subject_level.csv",
+                "recomputed locally by verify-local (matches metrics JSON); REPORTABLE")
+            put("Gemma 4 DAIC", "DAIC", mod_label, f"{variant_label} positive-F1", h_pos, v_source, heads_agg,
+                v_evidence + "metrics.json + predictions_subject_level.csv",
+                "recomputed locally by verify-local (matches metrics JSON)")
+            put("Gemma 4 DAIC", "DAIC", mod_label, f"{variant_label} accuracy", h_acc, v_source, heads_agg,
+                v_evidence + "metrics.json + predictions_subject_level.csv",
+                "recomputed locally by verify-local (matches metrics JSON)")
+            put("Gemma 4 DAIC", "DAIC", mod_label, f"{variant_label} precision", h_prec, v_source, heads_agg,
+                v_evidence + "metrics.json + predictions_subject_level.csv",
+                "recomputed locally by verify-local (matches metrics JSON)")
+            put("Gemma 4 DAIC", "DAIC", mod_label, f"{variant_label} recall", h_rec, v_source, heads_agg,
+                v_evidence + "metrics.json + predictions_subject_level.csv",
+                "recomputed locally by verify-local (matches metrics JSON)")
+            put("Gemma 4 DAIC", "DAIC", mod_label, f"{variant_label} confusion matrix", str(h_cm), v_source, heads_agg,
+                v_evidence + "metrics.json",
+                "recomputed locally by verify-local (matches metrics JSON)")
 
 
 # --------------------------------------------------------------------------- data
@@ -1154,6 +1286,15 @@ def main() -> None:
             ["Audio + Text", "Audio only", "Text only"],
         ):
             cell_values[("Gemma 4 DAIC", mod_label)] = GEMMA4_QWEN[mod_key][0]
+            for variant in ("logreg", "xgb"):
+                variant_label = (
+                    "Gemma 4 LogReg raw hidden head"
+                    if variant == "logreg"
+                    else "Gemma 4 XGBoost raw hidden head"
+                )
+                cell_values[("Gemma 4 DAIC", f"{mod_label} — {variant_label}")] = (
+                    GEMMA4_HEADS[mod_key][variant][0]
+                )
         ok, report = validate_selected_results(Path(args.validate_selected), cell_values)
         print("\n".join(report))
         print(f"checked={sum(1 for s in json.loads(Path(args.validate_selected).read_text())['selections'] if s['status'] == 'selected')} "

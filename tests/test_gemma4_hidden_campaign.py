@@ -103,13 +103,15 @@ def test_create_attempt_writes_full_sidecar_set(tmp_path: Path, _patch_identity)
     ]["adapter_sha256"]
     assert metadata.get("supersedes_attempt_id") is None
     run_config = read_json(attempt_dir / "run_config.yaml")
-    assert run_config["method"] == "gemma4_hidden_fixed_heads"
-    assert run_config["hidden_state"]["dimension"] == 3840
-    assert run_config["hidden_state"]["cache_schema"] == "gemma4_hidden_cache.v1"
-    assert run_config["classifiers"]["variants"] == ["logreg_raw", "xgb_raw"]
-    assert run_config["implementation"]["merged_sha"] == MERGE_SHA
+    assert run_config["config"]["method"] == "gemma4_hidden_fixed_heads"
+    assert run_config["config"]["hidden_state"]["dimension"] == 3840
+    assert run_config["config"]["hidden_state"]["cache_schema"] == "gemma4_hidden_cache.v1"
+    assert run_config["config"]["classifiers"]["variants"] == ["logreg_raw", "xgb_raw"]
+    assert run_config["config"]["implementation"]["merged_sha"] == MERGE_SHA
     assert run_config["tracking"]["attempt_id"] == result["attempt_id"]
-    assert run_config["evaluation"]["support"] == 47
+    assert run_config["config"]["evaluation"]["support"] == 47
+    assert run_config["manifest_sha256"] == campaign.MANIFEST_SHA256
+    assert run_config["split_metadata_hash"] == campaign.SPLIT_SHA256
     status = read_status(attempt_dir / "status.json")
     assert status["state"] == "PLANNED"
     sidecars = campaign._read_sidecars(attempt_dir)
@@ -284,7 +286,8 @@ def test_sidecars_validate_through_completed_on_mn5(tmp_path: Path, _patch_ident
     )
     assert result["state"] == "COMPLETED_ON_MN5"
     artifacts = read_json(attempt_dir / "artifacts.json")
-    assert len(artifacts["artifacts"]) == 5 + 2 * 9 + 2
+    assert len(artifacts["artifacts"]) == 2 + 5 + 2 * 9 + 2
+    assert {a["role"] for a in artifacts["artifacts"]} >= {"run_config", "source_manifest"}
     assert all(
         artifact["exists_on_mn5"] is True
         and artifact["exists_locally"] is False

@@ -1,9 +1,9 @@
 schema_version: audiollm.workbook_wandb_selection.v1
 workbook:
   path: depression_results_clean.xlsx
-  sha256: 1bbd62e78f85405a3a64ed071f2379eb8cbd1ce33802815ccad94be316500359
+  sha256: 347dba9ba7d482343253017ee5eeabd65689f746dc8e67e5246a78a5a8f4941a
   builder_path: scripts/build_clean_workbook.py
-  builder_sha256: 3a9b9f215f05a80deaf3caf8a79556af74ac2443c44cddd172439bc6146ac0ba
+  builder_sha256: e995e0e1e1db748875885bdb274b3c16481a3b059787318225d3f7c5af7a6f7e
   provenance_sheet: Provenance
 entries:
 - selection_id: Standalone|DAIC|Audio + Text|Fine-tuned Qwen
@@ -3560,7 +3560,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
   train_job_id: '44518086'
   eval_job_id: '44518087'
@@ -3587,7 +3589,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
   train_job_id: '44518086'
   eval_job_id: '44518087'
@@ -3614,7 +3618,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
   train_job_id: '44518086'
   eval_job_id: '44518087'
@@ -3641,7 +3647,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
   train_job_id: '44518086'
   eval_job_id: '44518087'
@@ -3668,7 +3676,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
   train_job_id: '44518086'
   eval_job_id: '44518087'
@@ -3695,7 +3705,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
   train_job_id: '44517565'
   eval_job_id: '44517566'
@@ -3722,7 +3734,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
   train_job_id: '44517565'
   eval_job_id: '44517566'
@@ -3749,7 +3763,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
   train_job_id: '44517565'
   eval_job_id: '44517566'
@@ -3776,7 +3792,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
   train_job_id: '44517565'
   eval_job_id: '44517566'
@@ -3803,7 +3821,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
   train_job_id: '44517565'
   eval_job_id: '44517566'
@@ -3830,7 +3850,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
   train_job_id: '44517484'
   eval_job_id: '44517485'
@@ -3857,7 +3879,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
   train_job_id: '44517484'
   eval_job_id: '44517485'
@@ -3884,7 +3908,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
   train_job_id: '44517484'
   eval_job_id: '44517485'
@@ -3911,7 +3937,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
   train_job_id: '44517484'
   eval_job_id: '44517485'
@@ -3938,7 +3966,843 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
   train_job_id: '44517484'
   eval_job_id: '44517485'
+- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head macro-F1
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 LogReg raw hidden head macro-F1
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155659Z-gemma4_daic_audio_text_fixed_heads_20260812t155635z_799cc412-799cc412-5ad76728
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head positive-F1
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 LogReg raw hidden head positive-F1
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155659Z-gemma4_daic_audio_text_fixed_heads_20260812t155635z_799cc412-799cc412-5ad76728
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head accuracy
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 LogReg raw hidden head accuracy
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155659Z-gemma4_daic_audio_text_fixed_heads_20260812t155635z_799cc412-799cc412-5ad76728
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head precision
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 LogReg raw hidden head precision
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155659Z-gemma4_daic_audio_text_fixed_heads_20260812t155635z_799cc412-799cc412-5ad76728
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head recall
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 LogReg raw hidden head recall
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155659Z-gemma4_daic_audio_text_fixed_heads_20260812t155635z_799cc412-799cc412-5ad76728
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head confusion
+    matrix
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 LogReg raw hidden head confusion matrix
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155659Z-gemma4_daic_audio_text_fixed_heads_20260812t155635z_799cc412-799cc412-5ad76728
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head macro-F1
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 XGBoost raw hidden head macro-F1
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155659Z-gemma4_daic_audio_text_fixed_heads_20260812t155635z_799cc412-799cc412-5ad76728
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head positive-F1
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 XGBoost raw hidden head positive-F1
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155659Z-gemma4_daic_audio_text_fixed_heads_20260812t155635z_799cc412-799cc412-5ad76728
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head accuracy
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 XGBoost raw hidden head accuracy
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155659Z-gemma4_daic_audio_text_fixed_heads_20260812t155635z_799cc412-799cc412-5ad76728
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head precision
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 XGBoost raw hidden head precision
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155659Z-gemma4_daic_audio_text_fixed_heads_20260812t155635z_799cc412-799cc412-5ad76728
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head recall
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 XGBoost raw hidden head recall
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155659Z-gemma4_daic_audio_text_fixed_heads_20260812t155635z_799cc412-799cc412-5ad76728
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head confusion
+    matrix
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 XGBoost raw hidden head confusion matrix
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155659Z-gemma4_daic_audio_text_fixed_heads_20260812t155635z_799cc412-799cc412-5ad76728
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 LogReg raw hidden head macro-F1
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 LogReg raw hidden head macro-F1
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155701Z-gemma4_daic_audio_only_fixed_heads_20260812t155635z_799cc412-799cc412-4fafe36d
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 LogReg raw hidden head positive-F1
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 LogReg raw hidden head positive-F1
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155701Z-gemma4_daic_audio_only_fixed_heads_20260812t155635z_799cc412-799cc412-4fafe36d
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 LogReg raw hidden head accuracy
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 LogReg raw hidden head accuracy
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155701Z-gemma4_daic_audio_only_fixed_heads_20260812t155635z_799cc412-799cc412-4fafe36d
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 LogReg raw hidden head precision
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 LogReg raw hidden head precision
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155701Z-gemma4_daic_audio_only_fixed_heads_20260812t155635z_799cc412-799cc412-4fafe36d
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 LogReg raw hidden head recall
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 LogReg raw hidden head recall
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155701Z-gemma4_daic_audio_only_fixed_heads_20260812t155635z_799cc412-799cc412-4fafe36d
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 LogReg raw hidden head confusion
+    matrix
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 LogReg raw hidden head confusion matrix
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155701Z-gemma4_daic_audio_only_fixed_heads_20260812t155635z_799cc412-799cc412-4fafe36d
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 XGBoost raw hidden head macro-F1
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 XGBoost raw hidden head macro-F1
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155701Z-gemma4_daic_audio_only_fixed_heads_20260812t155635z_799cc412-799cc412-4fafe36d
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 XGBoost raw hidden head positive-F1
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 XGBoost raw hidden head positive-F1
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155701Z-gemma4_daic_audio_only_fixed_heads_20260812t155635z_799cc412-799cc412-4fafe36d
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 XGBoost raw hidden head accuracy
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 XGBoost raw hidden head accuracy
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155701Z-gemma4_daic_audio_only_fixed_heads_20260812t155635z_799cc412-799cc412-4fafe36d
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 XGBoost raw hidden head precision
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 XGBoost raw hidden head precision
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155701Z-gemma4_daic_audio_only_fixed_heads_20260812t155635z_799cc412-799cc412-4fafe36d
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 XGBoost raw hidden head recall
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 XGBoost raw hidden head recall
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155701Z-gemma4_daic_audio_only_fixed_heads_20260812t155635z_799cc412-799cc412-4fafe36d
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 XGBoost raw hidden head confusion
+    matrix
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 XGBoost raw hidden head confusion matrix
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155701Z-gemma4_daic_audio_only_fixed_heads_20260812t155635z_799cc412-799cc412-4fafe36d
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 LogReg raw hidden head macro-F1
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 LogReg raw hidden head macro-F1
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155703Z-gemma4_daic_text_only_fixed_heads_20260812t155635z_799cc412-799cc412-735f2c58
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 LogReg raw hidden head positive-F1
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 LogReg raw hidden head positive-F1
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155703Z-gemma4_daic_text_only_fixed_heads_20260812t155635z_799cc412-799cc412-735f2c58
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 LogReg raw hidden head accuracy
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 LogReg raw hidden head accuracy
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155703Z-gemma4_daic_text_only_fixed_heads_20260812t155635z_799cc412-799cc412-735f2c58
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 LogReg raw hidden head precision
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 LogReg raw hidden head precision
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155703Z-gemma4_daic_text_only_fixed_heads_20260812t155635z_799cc412-799cc412-735f2c58
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 LogReg raw hidden head recall
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 LogReg raw hidden head recall
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155703Z-gemma4_daic_text_only_fixed_heads_20260812t155635z_799cc412-799cc412-735f2c58
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 LogReg raw hidden head confusion
+    matrix
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 LogReg raw hidden head confusion matrix
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155703Z-gemma4_daic_text_only_fixed_heads_20260812t155635z_799cc412-799cc412-735f2c58
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 XGBoost raw hidden head macro-F1
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 XGBoost raw hidden head macro-F1
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155703Z-gemma4_daic_text_only_fixed_heads_20260812t155635z_799cc412-799cc412-735f2c58
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 XGBoost raw hidden head positive-F1
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 XGBoost raw hidden head positive-F1
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155703Z-gemma4_daic_text_only_fixed_heads_20260812t155635z_799cc412-799cc412-735f2c58
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 XGBoost raw hidden head accuracy
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 XGBoost raw hidden head accuracy
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155703Z-gemma4_daic_text_only_fixed_heads_20260812t155635z_799cc412-799cc412-735f2c58
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 XGBoost raw hidden head precision
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 XGBoost raw hidden head precision
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155703Z-gemma4_daic_text_only_fixed_heads_20260812t155635z_799cc412-799cc412-735f2c58
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 XGBoost raw hidden head recall
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 XGBoost raw hidden head recall
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155703Z-gemma4_daic_text_only_fixed_heads_20260812t155635z_799cc412-799cc412-735f2c58
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 XGBoost raw hidden head confusion
+    matrix
+  provenance_key:
+    experiment: Gemma 4 DAIC
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 XGBoost raw hidden head confusion matrix
+  source_type: hidden_classifier
+  reason: gemma4_daic_fixed_heads_campaign
+  dependency_policy: single_fold
+  attempt_ids:
+  - 20260812T155703Z-gemma4_daic_text_only_fixed_heads_20260812t155635z_799cc412-799cc412-735f2c58
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma 4 DAIC fixed heads
+  wandb_policy: sync
+  blocking_reasons: []

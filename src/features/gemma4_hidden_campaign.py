@@ -263,8 +263,7 @@ def build_run_config(
     base_model_path = run_config.get("resolved_model_name_or_path") or (
         run_config.get("config", {}) or {}
     ).get("model_name_or_path")
-    run_config_doc = {
-        "schema_version": "audiollm.fixed_head_run.v1",
+    scientific = {
         "dataset": "daic",
         "modality": modality,
         "method": FIXED_HEAD_METHOD,
@@ -350,6 +349,15 @@ def build_run_config(
             "pr": pr_number,
             "deployed_source_sha256": deployed_source_sha256_value,
         },
+    }
+    # Mirror the training-run run_config.yaml shape: the discovery/import
+    # pipeline reads the resolved scientific config from the top-level
+    # ``config`` section and protocol/identity fields from the other keys.
+    run_config_doc = {
+        "schema_version": "audiollm.fixed_head_run.v1",
+        "config": scientific,
+        "manifest_sha256": MANIFEST_SHA256,
+        "split_metadata_hash": SPLIT_SHA256,
         "tracking": {
             "schema_version": "audiollm.tracking.v1",
             "group_id": group_id,
@@ -764,7 +772,24 @@ def materialize_mn5_evidence(
     sidecars = _read_sidecars(attempt_dir)
     attempt_path = Path(attempt_dir)
     fold_dir = attempt_path
-    artifact_records = _hidden_feature_artifacts(attempt_path, fold_dir)
+    artifact_records = []
+    for name, artifact_type, role in (
+        ("run_config.yaml", "run_config", "run_config"),
+        ("source_manifest.json", "source_manifest", "source_manifest"),
+    ):
+        full = attempt_path / name
+        if not full.is_file():
+            raise CampaignError(f"required artifact missing: {full}")
+        artifact_records.append(
+            {
+                "artifact_type": artifact_type,
+                "role": role,
+                "path": name,
+                "sha256": sha256_file(full),
+                "size_bytes": full.stat().st_size,
+            }
+        )
+    artifact_records += _hidden_feature_artifacts(attempt_path, fold_dir)
     artifact_records += _classifier_artifacts(attempt_path, fold_dir)
 
     attempt_id = sidecars.attempt_id
