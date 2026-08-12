@@ -36,6 +36,13 @@ export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export HF_HUB_DISABLE_TELEMETRY=1
 
+# Memory-allocator strategy (same class of runtime env as
+# CUBLAS_WORKSPACE_CONFIG): expandable segments avoid the fragmentation that
+# otherwise OOMs the intended BF16 LoRA audio+text configuration on H100s
+# (verified: 50.4 GiB peak with real 6490-token sequences). This changes no
+# scientific configuration.
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
 export PROJECT_ROOT
 cd "$PROJECT_ROOT"
