@@ -49,7 +49,15 @@ campaign_record() {
     python tools/gemma4_hidden_campaign.py "$1" --attempt-dir "$ATTEMPT_DIR" "${@:2}"
 }
 campaign_transition() {
-    python tools/gemma4_hidden_campaign.py transition --attempt-dir "$ATTEMPT_DIR" --to-state "$1" --reason "$2"
+    local to_state="$1"
+    local reason="$2"
+    if ! python tools/gemma4_hidden_campaign.py transition --attempt-dir "$ATTEMPT_DIR" \
+        --to-state "$to_state" --reason "$reason" > /dev/null 2>&1; then
+        python tools/gemma4_hidden_campaign.py transition --attempt-dir "$ATTEMPT_DIR" \
+            --to-state SUBMITTED --reason "job start implies submission" > /dev/null 2>&1 || true
+        python tools/gemma4_hidden_campaign.py transition --attempt-dir "$ATTEMPT_DIR" \
+            --to-state "$to_state" --reason "$reason" > /dev/null
+    fi
 }
 
 campaign_record record-job \
