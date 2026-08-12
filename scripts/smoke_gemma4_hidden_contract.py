@@ -62,6 +62,20 @@ def _render_prompt(processor, example: dict[str, Any], modality: str) -> str:
     )
 
 
+def _parent_config(adapter_path: Path) -> dict[str, Any]:
+    """Load the parent run_config.yaml beside the adapter so the strict Gemma
+    config validation sees the exact production config."""
+    import yaml
+
+    run_config_path = adapter_path.parent / "run_config.yaml"
+    if not run_config_path.is_file():
+        raise FileNotFoundError(f"parent run_config.yaml not found: {run_config_path}")
+    payload = yaml.safe_load(run_config_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or not isinstance(payload.get("config"), dict):
+        raise ValueError(f"invalid parent run_config.yaml: {run_config_path}")
+    return payload["config"]
+
+
 def run_contract(
     *,
     model_path: str,
@@ -71,20 +85,11 @@ def run_contract(
     device_name: str = "cuda:0",
 ) -> dict[str, Any]:
     torch.cuda.reset_peak_memory_stats()
-    processor = load_processor(model_path, {"model_backend": "gemma4"})
-    use_audio = modality in ("audio_only", "audio_text")
-    use_text = modality in ("text_only", "audio_text")
-    config = {
-        "model_backend": "gemma4",
-        "model_revision": "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
-        "data": {
-            "use_audio": use_audio,
-            "use_text": use_text,
-            "sample_mode": "participant_speech_packed30",
-            "participant_chunk_samples": 480000,
-        },
-    }
-    model = load_model_for_inference(model_path, adapter_path=str(adapter_path), config=config)
+    parent_config = _parent_config(adapter_path)
+    processor = load_processor(model_path, parent_config)
+    model = load_model_for_inference(
+        model_path, adapter_path=str(adapter_path), config=parent_config
+    )
     device = torch.device(device_name)
     model.to(device=device, dtype=torch.bfloat16)
     model.eval()
