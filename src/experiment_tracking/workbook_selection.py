@@ -69,6 +69,7 @@ _FAMILY_RULES: tuple[tuple[str, str | None, str], ...] = (
     ("Harmonized heads", None, "hidden_classifier"),
     ("Harmonized merged final", None, "merged"),
     ("Harmonized merged CV", None, "merged"),
+    ("Gemma 4 DAIC", None, "ordinary_qwen"),
 )
 
 _NOT_RUN_HINTS = ("not run", "optuna not run", "not_run", "never run")
