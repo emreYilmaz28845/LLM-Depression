@@ -258,15 +258,27 @@ def _enforce_complete_chunk_coverage(
     from collections import Counter, defaultdict
 
     by_subject: dict[str, list[int]] = defaultdict(list)
+    declared_by_subject: dict[str, int] = {}
     for row in rows:
         subject_id = str(row["subject_id"])
         chunk_index = row.get("chunk_index")
-        if chunk_index is None:
+        num_chunks = row.get("num_chunks")
+        if chunk_index is None or num_chunks is None:
             raise ValueError(
-                f"Gemma packed30 {partition} rows require chunk_index; "
-                f"sample_id={row.get('sample_id')}."
+                f"Gemma packed30 {partition} rows require chunk_index and "
+                f"num_chunks; sample_id={row.get('sample_id')}."
             )
         by_subject[subject_id].append(int(chunk_index))
+        declared = int(num_chunks)
+        if (
+            subject_id in declared_by_subject
+            and declared_by_subject[subject_id] != declared
+        ):
+            raise ValueError(
+                f"Gemma packed30 {partition} subject {subject_id} has "
+                f"inconsistent num_chunks declarations."
+            )
+        declared_by_subject[subject_id] = declared
     for subject_id, indices in sorted(by_subject.items()):
         counts = Counter(indices)
         duplicates = [index for index, count in counts.items() if count > 1]
@@ -275,9 +287,7 @@ def _enforce_complete_chunk_coverage(
                 f"Gemma packed30 {partition} subject {subject_id} has duplicate "
                 f"chunk indices: {duplicates[:10]}."
             )
-        expected = set(range(int(rows[0].get("num_chunks", 0)) if by_subject else 0))
-        if not expected:
-            continue
+        expected = set(range(declared_by_subject[subject_id]))
         missing = sorted(expected - set(indices))
         if missing:
             raise ValueError(
