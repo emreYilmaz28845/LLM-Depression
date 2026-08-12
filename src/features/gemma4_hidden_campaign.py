@@ -374,12 +374,14 @@ def create_attempt(
     branch: str,
     pr_number: int | None,
     fold: int = 0,
+    supersedes_attempt_id: str | None = None,
 ) -> dict[str, Any]:
     """Create a new post-hoc fixed-head attempt destination.
 
     Refuses a dirty production source and any parent/checkpoint/hash/split
     mismatch. Writes run_config.yaml, metadata.json, status.json, jobs.jsonl,
     artifacts.json, evaluations.json, and source_manifest.json.
+    ``supersedes_attempt_id`` links a retry attempt to a failed/cancelled one.
     """
     if modality not in EXPECTED_ROW_COUNTS:
         raise CampaignError(f"unsupported modality {modality!r}")
@@ -466,6 +468,8 @@ def create_attempt(
                 "sync_status": "NOT_EXPORTED",
             },
         }
+        if supersedes_attempt_id is not None:
+            metadata["supersedes_attempt_id"] = supersedes_attempt_id
         ok, errors = validate_metadata(metadata)
         if not ok:
             raise CampaignError("invalid metadata: " + "; ".join(errors))
