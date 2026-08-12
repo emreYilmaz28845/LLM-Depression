@@ -204,19 +204,23 @@ def _enforce_gemma_daic_contract(
     subject-normalized fit weights, and wrong official train/test subject
     counts. Production must fit on exactly 107 official training subjects and
     evaluate exactly 47 official test subjects; a count mismatch is a hard
-    stop, never a row-drop.
+    stop, never a row-drop. Isolated smokes carry ``subject_selection_sha256``
+    in their cache identity and are exempt from the exact production counts
+    only.
     """
-    if len(train_subjects) != 107:
-        raise ValueError(
-            f"Gemma DAIC fit requires exactly 107 official training subjects, "
-            f"got {len(train_subjects)}. Do not fit on validation subjects."
-        )
-    test_subjects = {str(row["subject_id"]) for row in test_rows}
-    if len(test_subjects) != 47:
-        raise ValueError(
-            f"Gemma DAIC evaluation requires exactly 47 official test subjects, "
-            f"got {len(test_subjects)}."
-        )
+    smoke_cache = bool(metadata.get("cache_config", {}).get("subject_selection_sha256"))
+    if not smoke_cache:
+        if len(train_subjects) != 107:
+            raise ValueError(
+                f"Gemma DAIC fit requires exactly 107 official training subjects, "
+                f"got {len(train_subjects)}. Do not fit on validation subjects."
+            )
+        test_subjects = {str(row["subject_id"]) for row in test_rows}
+        if len(test_subjects) != 47:
+            raise ValueError(
+                f"Gemma DAIC evaluation requires exactly 47 official test subjects, "
+                f"got {len(test_subjects)}."
+            )
     modality = str(metadata.get("input_modality", ""))
     packed30 = modality in {"audio_only", "audio_text"}
     if packed30:
