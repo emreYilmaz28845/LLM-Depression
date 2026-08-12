@@ -7,7 +7,6 @@
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=20
-#SBATCH --mem=64G
 #SBATCH -o /dev/null
 #SBATCH -e /dev/null
 #SBATCH --chdir=/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression
