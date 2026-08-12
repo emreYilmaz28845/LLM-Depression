@@ -375,7 +375,7 @@ GEMMA4_RUNS = {
     "audio_only": (
         "gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only",
         "20260812T020449Z-gemma4_daic_audio_only_seed1337-cca3f4ae-8789edf2",
-        "44517565", "44517566", None,
+        "44517565", "44517566", 1,
     ),
     "text_only": (
         "gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only",
@@ -435,6 +435,11 @@ def build_gemma4(wb: Workbook) -> None:
             f"run {run}; attempt {attempt}; train {train_job} eval {eval_job} "
             f"(COMPLETED 0:0); selected epoch {epoch if epoch is not None else 'n/a'}"
         )
+        if mod_key == "audio_text":
+            source += (
+                "; first attempt 20260812T020449Z-gemma4_daic_audio_text_seed1337-cca3f4ae-5704f1f7 "
+                "FAILED (train 44517567 CUDA OOM / eval 44517568 CANCELLED); superseded by this retry"
+            )
         cell = ws.cell(row, 8, source)
         cell.font = SMALL_FONT
         cell.alignment = WRAP
@@ -980,6 +985,11 @@ def build_gemma4_provenance(ws, put) -> None:
             f"model {campaign['model']} rev {campaign['revision'][:12]}…, "
             f"cfg/manifest/split {campaign['manifest_sha256'][:12]}…/{campaign['split_sha256'][:12]}…"
         )
+        if mod_key == "audio_text":
+            source += (
+                "; first attempt …-cca3f4ae-5704f1f7 FAILED (train 44517567, eval 44517568 "
+                "CANCELLED), superseded by retry …-a6749b05-146c8805"
+            )
         agg = "official 47-subject test, subject mean-score, teacher-forced, binary-strict, harmonized_all_windows_full_coverage"
         evidence = GEMMA4_EVIDENCE.replace("<modality>", mod_key).replace("<run>", run)
         put("Gemma 4 DAIC", "DAIC", mod_label, "Gemma 4 macro-F1", g_macro, source, agg,

@@ -31,6 +31,17 @@ LOGS = "logs"
 
 _FOLD_DIR_PATTERN = re.compile(r"^fold_[0-9]+$")
 
+# Non-canonical trees inside a scan root that carry run_config.yaml files at
+# misleading depths (audit snapshots, experiments layouts). Their modality and
+# dataset cannot be derived by path, so discovery skips them; the legacy
+# adapters remain responsible for documented non-canonical layouts.
+_NON_CANONICAL_ROOTS = ("experiments", "audits")
+
+# Run layouts: output_model/<modality>/<dataset>/<run>/fold_* and the newer
+# output_model/<campaign>/<modality>/<dataset>/<run>/fold_*. Both parse with
+# modality/dataset/run taken from the three parts before fold_*.
+_RUN_GLOBS = ("*/*/*/fold_*/run_config.yaml", "*/*/*/*/fold_*/run_config.yaml")
+
 
 @dataclasses.dataclass(frozen=True)
 class DiscoveredArtifact:
@@ -261,11 +272,19 @@ def discover_runs(scan_root: str | Path) -> list[DiscoveredRun]:
     if not root.is_dir():
         raise ValueError(f"scan root is not a directory: {root}")
     runs: list[DiscoveredRun] = []
-    for run_config_path in sorted(root.glob("*/*/*/fold_*/run_config.yaml")):
-        fold_dir = run_config_path.parent
-        if _FOLD_DIR_PATTERN.fullmatch(fold_dir.name) is None:
-            continue
-        runs.append(_discover_run(root, fold_dir))
+    seen: set[str] = set()
+    for pattern in _RUN_GLOBS:
+        for run_config_path in sorted(root.glob(pattern)):
+            fold_dir = run_config_path.parent
+            if _FOLD_DIR_PATTERN.fullmatch(fold_dir.name) is None:
+                continue
+            relative = fold_dir.relative_to(root)
+            if relative.parts and relative.parts[0] in _NON_CANONICAL_ROOTS:
+                continue
+            if str(fold_dir) in seen:
+                continue
+            seen.add(str(fold_dir))
+            runs.append(_discover_run(root, fold_dir))
     return runs
 
 

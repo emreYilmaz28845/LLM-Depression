@@ -20,6 +20,10 @@
     "group_id": { "type": ["string", "null"] },
     "logical_run_name": { "type": "string", "minLength": 1 },
     "attempt_id": { "type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z-[a-z0-9._-]+-[0-9a-f]{8}-[0-9a-f]{8}$" },
+    "supersedes_attempt_id": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9]{8}T[0-9]{6}Z-[a-z0-9._-]+-[0-9a-f]{8}-[0-9a-f]{8}$"
+    },
     "fold": { "type": "integer" },
     "seed": { "type": ["integer", "null"] },
     "created_at_utc": {

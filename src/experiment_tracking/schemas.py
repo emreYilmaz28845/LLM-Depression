@@ -88,6 +88,8 @@ def validate_metadata(record: Any) -> tuple[bool, list[str]]:
         "logical_run_name must be a non-empty string",
     )
     _check_safe_id(errors, record.get("attempt_id"), "attempt_id", allow_legacy=True)
+    if record.get("supersedes_attempt_id") is not None:
+        _check_safe_id(errors, record["supersedes_attempt_id"], "supersedes_attempt_id")
     errors.require(_is_integer(record.get("fold")), "fold must be an integer")
     errors.require(
         record.get("seed") is None or _is_integer(record["seed"]),
