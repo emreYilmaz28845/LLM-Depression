@@ -72,9 +72,17 @@ def run_contract(
 ) -> dict[str, Any]:
     torch.cuda.reset_peak_memory_stats()
     processor = load_processor(model_path, {"model_backend": "gemma4"})
+    use_audio = modality in ("audio_only", "audio_text")
+    use_text = modality in ("text_only", "audio_text")
     config = {
         "model_backend": "gemma4",
         "model_revision": "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
+        "data": {
+            "use_audio": use_audio,
+            "use_text": use_text,
+            "sample_mode": "participant_speech_packed30",
+            "participant_chunk_samples": 480000,
+        },
     }
     model = load_model_for_inference(model_path, adapter_path=str(adapter_path), config=config)
     device = torch.device(device_name)
