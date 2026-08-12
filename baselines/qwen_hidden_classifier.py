@@ -552,7 +552,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument(
         "--sampling-mode",
-        choices=(SAMPLING_MODE_NONE, SAMPLING_MODE_SUBJECT_OVERSAMPLE),
+        choices=(
+            LEGACY_SAMPLING_MODE,
+            SAMPLING_MODE_NONE,
+            SAMPLING_MODE_SUBJECT_OVERSAMPLE,
+        ),
         default=LEGACY_SAMPLING_MODE,
     )
     parser.add_argument("--oversampling-ratio", type=float)
