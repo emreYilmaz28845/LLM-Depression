@@ -31,10 +31,12 @@ SUPPORTED_INPUT_MODALITIES = (
 MODEL_BACKEND_QWEN2AUDIO = "qwen2audio"
 MODEL_BACKEND_QWEN3OMNI = "qwen3omni"
 MODEL_BACKEND_TEXT = "text"
+MODEL_BACKEND_GEMMA4 = "gemma4"
 SUPPORTED_MODEL_BACKENDS = (
     MODEL_BACKEND_QWEN2AUDIO,
     MODEL_BACKEND_QWEN3OMNI,
     MODEL_BACKEND_TEXT,
+    MODEL_BACKEND_GEMMA4,
 )
 PREDICTION_MODE_LIKELIHOOD = "likelihood"
 PREDICTION_MODE_GENERATION = "generation"
@@ -211,7 +213,7 @@ def resolve_input_modality(config: dict[str, Any]) -> str:
 
 
 def resolve_model_backend(config: dict[str, Any]) -> str | None:
-    """Explicit ``model_backend`` switch (``qwen2audio`` | ``qwen3omni`` | ``text``).
+    """Explicit ``model_backend`` switch (``qwen2audio`` | ``qwen3omni`` | ``text`` | ``gemma4``).
 
     Returns ``None`` when unset so callers fall back to today's modality-based
     default (text-only -> ``text``; otherwise the audio backend). When set, the

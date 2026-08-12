@@ -28,6 +28,14 @@ else
     exit 1
 fi
 
+# MN5 has no outbound internet: force offline everywhere, and hard-fail when a
+# package or model would try to reach the network. Qwen jobs load local GPFS
+# models too, so this is safe for the existing environment as well.
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+export HF_DATASETS_OFFLINE=1
+export HF_HUB_DISABLE_TELEMETRY=1
+
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
 export PROJECT_ROOT
 cd "$PROJECT_ROOT"

@@ -60,12 +60,13 @@ from src.data.split_utils import (
     subject_ids_for_partitions,
 )
 from src.evaluate import _processor_inputs, evaluate_examples
-from src.model.collator import Qwen2AudioSFTCollator
 from src.model.runtime import (
+    build_collator,
     load_model_for_inference,
     load_model_for_training,
     load_processor,
     resolve_processor_sampling_rate,
+    prepare_backend_examples,
     prepare_model_for_evaluation,
     restore_model_for_training,
     resolve_audio_adapter_config,
@@ -671,7 +672,7 @@ def _print_partition_counts(payload: dict[str, Any]) -> None:
         )
 
 
-def _emit_label_mask_debug(dataset: AudioTextDataset, collator: Qwen2AudioSFTCollator, processor, logs_dir: Path) -> None:
+def _emit_label_mask_debug(dataset: AudioTextDataset, collator, processor, logs_dir: Path) -> None:
     preview_examples = [dataset[index] for index in range(min(2, len(dataset)))]
     if not preview_examples:
         return
@@ -924,6 +925,8 @@ def _audit_audio_budget(
         audio_token_id = int(processor.tokenizer.convert_tokens_to_ids(AUDIO_TOKEN))
     except Exception:  # pragma: no cover - tokenizer without the audio token
         audio_token_id = None
+    if audio_token_id is None and getattr(processor, "audio_token_id", None) is not None:
+        audio_token_id = int(processor.audio_token_id)
     total = len(dataset)
     audit_count = total if max_examples is None else min(total, max_examples)
     seconds: list[float] = []
@@ -949,6 +952,9 @@ def _audit_audio_budget(
             audio_id_count = int((input_ids == audio_token_id).sum().item())
             if audio_id_count > len(audio_arrays):
                 example_tokens = audio_id_count
+        if example_tokens == 0 and "input_features_mask" in batch:
+            # Gemma unified: every valid waveform frame is exactly one audio token.
+            example_tokens = int(batch["input_features_mask"].sum().item())
         if example_tokens == 0 and "feature_attention_mask" in batch:
             mel_lengths = batch["feature_attention_mask"].sum(dim=-1).tolist()
             example_tokens = sum(qwen2audio_audio_token_length(int(length)) for length in mel_lengths)
@@ -1711,6 +1717,13 @@ def main() -> None:
             and str(config["data"].get("train_chunk_policy", "random_k")) == "random_k"
         ) else None
     )
+    # Backend example preparation: the Gemma backend re-renders prompt_text and
+    # training_text from the raw system/user fields through its pinned chat
+    # template. Runs after processor loading and after all example mutation
+    # (weights, oversampling, schedules); Qwen keeps its pre-rendered text.
+    train_examples = prepare_backend_examples(train_examples, config, processor)
+    selection_examples = prepare_backend_examples(selection_examples, config, processor)
+    final_eval_examples = prepare_backend_examples(final_eval_examples, config, processor)
     # Train-only waveform acoustic augmentation. Passed ONLY to the train dataset;
     # selection/audit stay clean and eval never touches AudioTextDataset, so the
     # eval-determinism rule (handoff §3) holds.
@@ -1733,7 +1746,7 @@ def main() -> None:
             silence_audio=bool(config["data"].get("silence_audio", False)),
             chunk_sampling="deterministic",
         )
-    collator = Qwen2AudioSFTCollator(processor=processor, debug=args.label_mask_debug)
+    collator = build_collator(config, processor, debug=args.label_mask_debug)
     if args.label_mask_debug:
         _emit_label_mask_debug(train_dataset, collator, processor, logs_dir)
 
@@ -1754,7 +1767,7 @@ def main() -> None:
             batch_size=int(config["training"]["per_device_eval_batch_size"]),
             shuffle=False,
             num_workers=int(config["training"]["dataloader_num_workers"]),
-            collate_fn=Qwen2AudioSFTCollator(processor=processor, debug=False),
+            collate_fn=build_collator(config, processor, debug=False),
         )
     selection_components: list[dict[str, Any]] = []
     if selection_enabled:
@@ -1783,7 +1796,7 @@ def main() -> None:
                 batch_size=int(config["training"]["per_device_eval_batch_size"]),
                 shuffle=False,
                 num_workers=int(config["training"]["dataloader_num_workers"]),
-                collate_fn=Qwen2AudioSFTCollator(processor=processor, debug=False),
+                collate_fn=build_collator(config, processor, debug=False),
             )
             selection_components.append(
                 {
@@ -2029,7 +2042,7 @@ def main() -> None:
         )
         _audit_audio_budget(
             audit_dataset,
-            Qwen2AudioSFTCollator(processor=processor, debug=False),
+            build_collator(config, processor, debug=False),
             processor,
             processor_sampling_rate,
             partition_plan["train_split_name"],
