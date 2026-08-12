@@ -48,28 +48,33 @@ ERR_LOG="$LOG_ROOT/extract-${SLURM_JOB_ID}.err"
 exec > >(tee -a "$OUT_LOG")
 exec 2> >(tee -a "$ERR_LOG" >&2)
 
-CAMPAIGN=(python tools/gemma4_hidden_campaign.py --attempt-dir "$ATTEMPT_DIR")
+campaign_record() {
+    python tools/gemma4_hidden_campaign.py "$1" --attempt-dir "$ATTEMPT_DIR" "${@:2}"
+}
+campaign_transition() {
+    python tools/gemma4_hidden_campaign.py transition --attempt-dir "$ATTEMPT_DIR" --to-state "$1" --reason "$2"
+}
 
-"${CAMPAIGN[@]}" record-job \
+campaign_record record-job \
     --job-key extract --job-type hidden_extraction --event-type STARTED \
     --slurm-job-id "${SLURM_JOB_ID:-}" --status RUNNING \
     --reason "extraction job started on ${SLURMD_NODENAME:-unknown}"
 
-"${CAMPAIGN[@]}" transition --to-state RUNNING --reason "extraction job started"
+campaign_transition RUNNING "extraction job started"
 
 cleanup() {
     local exit_code=$?
     if [ "$exit_code" -eq 0 ]; then
-        "${CAMPAIGN[@]}" record-job \
+        campaign_record record-job \
             --job-key extract --job-type hidden_extraction --event-type COMPLETED \
             --slurm-job-id "${SLURM_JOB_ID:-}" --status COMPLETED \
             --reason "extraction job completed"
     else
-        "${CAMPAIGN[@]}" record-job \
+        campaign_record record-job \
             --job-key extract --job-type hidden_extraction --event-type FAILED \
             --slurm-job-id "${SLURM_JOB_ID:-}" --status FAILED \
             --reason "extraction job failed with exit $exit_code"
-        "${CAMPAIGN[@]}" transition --to-state FAILED --reason "extraction job failed" || true
+        campaign_transition FAILED "extraction job failed" || true
     fi
     exit "$exit_code"
 }

@@ -24,7 +24,9 @@ if [ ! -f "$PROJECT_ROOT/tools/gemma4_hidden_campaign.py" ]; then
     exit 1
 fi
 
-CAMPAIGN=(python "$PROJECT_ROOT/tools/gemma4_hidden_campaign.py" --attempt-dir "$ATTEMPT_DIR")
+campaign() {
+    python "$PROJECT_ROOT/tools/gemma4_hidden_campaign.py" "$1" --attempt-dir "$ATTEMPT_DIR" "${@:2}"
+}
 
 if [ -n "${SUBJECT_SELECTION:-}" ]; then
     echo "refusing production submission with SUBJECT_SELECTION set" >&2
@@ -41,7 +43,7 @@ if [ "$DRY_RUN" = "1" ]; then
     exit 0
 fi
 
-"${CAMPAIGN[@]}" transition --to-state DEPLOYED --reason "source deployed to MN5" > /dev/null
+campaign transition --to-state DEPLOYED --reason "source deployed to MN5" > /dev/null
 
 EXPORT_COMMON="PROJECT_ROOT=$PROJECT_ROOT,ATTEMPT_DIR=$ATTEMPT_DIR,PARENT_FOLD_DIR=$PARENT_FOLD_DIR,MODEL_PATH=$MODEL_PATH"
 
@@ -51,12 +53,12 @@ EXTRACT_JOB_RAW="$(sbatch --parsable \
 EXTRACT_JOB_ID="$(printf '%s' "$EXTRACT_JOB_RAW" | tail -n 1 | tr -d ' ')"
 echo "extraction job: $EXTRACT_JOB_ID"
 
-"${CAMPAIGN[@]}" record-job \
+campaign record-job \
     --job-key extract --job-type hidden_extraction --event-type SUBMITTED \
     --slurm-job-id "$EXTRACT_JOB_ID" --status PENDING \
     --reason "extraction sbatch submitted"
 
-"${CAMPAIGN[@]}" transition --to-state SUBMITTED \
+campaign transition --to-state SUBMITTED \
     --reason "extraction and head jobs submitted" > /dev/null
 
 HEADS_JOB_RAW="$(sbatch --parsable \
@@ -66,7 +68,7 @@ HEADS_JOB_RAW="$(sbatch --parsable \
 HEADS_JOB_ID="$(printf '%s' "$HEADS_JOB_RAW" | tail -n 1 | tr -d ' ')"
 echo "heads job: $HEADS_JOB_ID (afterok:$EXTRACT_JOB_ID)"
 
-"${CAMPAIGN[@]}" record-job \
+campaign record-job \
     --job-key heads --job-type hidden_classifier --event-type SUBMITTED \
     --slurm-job-id "$HEADS_JOB_ID" --status PENDING \
     --dependency-job-ids "$EXTRACT_JOB_ID" \

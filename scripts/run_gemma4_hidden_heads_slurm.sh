@@ -45,9 +45,14 @@ ERR_LOG="$LOG_ROOT/heads-${SLURM_JOB_ID}.err"
 exec > >(tee -a "$OUT_LOG")
 exec 2> >(tee -a "$ERR_LOG" >&2)
 
-CAMPAIGN=(python tools/gemma4_hidden_campaign.py --attempt-dir "$ATTEMPT_DIR")
+campaign_record() {
+    python tools/gemma4_hidden_campaign.py "$1" --attempt-dir "$ATTEMPT_DIR" "${@:2}"
+}
+campaign_transition() {
+    python tools/gemma4_hidden_campaign.py transition --attempt-dir "$ATTEMPT_DIR" --to-state "$1" --reason "$2"
+}
 
-"${CAMPAIGN[@]}" record-job \
+campaign_record record-job \
     --job-key heads --job-type hidden_classifier --event-type STARTED \
     --slurm-job-id "${SLURM_JOB_ID:-}" --status RUNNING \
     --reason "fixed-head job started on ${SLURMD_NODENAME:-unknown}"
@@ -55,18 +60,18 @@ CAMPAIGN=(python tools/gemma4_hidden_campaign.py --attempt-dir "$ATTEMPT_DIR")
 cleanup() {
     local exit_code=$?
     if [ "$exit_code" -eq 0 ]; then
-        "${CAMPAIGN[@]}" record-job \
+        campaign_record record-job \
             --job-key heads --job-type hidden_classifier --event-type COMPLETED \
             --slurm-job-id "${SLURM_JOB_ID:-}" --status COMPLETED \
             --reason "fixed-head job completed"
-        "${CAMPAIGN[@]}" materialize-mn5-evidence \
+        python tools/gemma4_hidden_campaign.py materialize-mn5-evidence \
             --attempt-dir "$ATTEMPT_DIR" --parent-fold-dir "$PARENT_FOLD_DIR"
     else
-        "${CAMPAIGN[@]}" record-job \
+        campaign_record record-job \
             --job-key heads --job-type hidden_classifier --event-type FAILED \
             --slurm-job-id "${SLURM_JOB_ID:-}" --status FAILED \
             --reason "fixed-head job failed with exit $exit_code"
-        "${CAMPAIGN[@]}" transition --to-state FAILED --reason "fixed-head job failed" || true
+        campaign_transition FAILED "fixed-head job failed" || true
     fi
     exit "$exit_code"
 }
