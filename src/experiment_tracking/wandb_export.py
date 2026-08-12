@@ -237,7 +237,14 @@ def _build_plan(
     if not summary_metrics:
         incomplete_reasons.append("no qualified headline metrics")
     if not history_ok:
-        incomplete_reasons.append("training history missing or unreadable")
+        method = ""
+        if isinstance(resolved_config, dict):
+            method = str(resolved_config.get("method") or "")
+        if method != "gemma4_hidden_fixed_heads":
+            # Post-hoc fixed-head attempts never train, so they have no
+            # training history by design; the runbook records their method so
+            # the exporter can distinguish them from incomplete legacy runs.
+            incomplete_reasons.append("training history missing or unreadable")
 
     if str(attempt_id).startswith("legacy-"):
         run_id = legacy_wandb_id(attempt_id, fold, first_evaluation_id or "")

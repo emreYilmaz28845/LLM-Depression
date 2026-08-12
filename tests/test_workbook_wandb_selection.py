@@ -704,7 +704,7 @@ def test_real_selection_yaml_covers_all_real_workbook_rows() -> None:
     from collections import Counter
 
     policies = Counter(entry["wandb_policy"] for entry in selection["entries"])
-    assert policies["sync"] == 31
+    assert policies["sync"] == 67
     assert policies["pending_wandb_reconciliation"] == 15
     assert policies["quarantine_ambiguous"] == 4
     assert policies["pending_importer_support"] == 108

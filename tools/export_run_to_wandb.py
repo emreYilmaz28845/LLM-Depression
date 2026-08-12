@@ -119,7 +119,8 @@ def _build_manifest_plans(
                     f"fold {unit['fold']}"
                 )
             evidence = local_evidence_checks(
-                connection, unit["attempt_id"], unit["fold"], unit.get("evaluation_ids") or []
+                connection, unit["attempt_id"], unit["fold"], unit.get("evaluation_ids") or [],
+                source_type=unit.get("source_type"),
             )
             for key, value in evidence.items():
                 if key != "run_dir" and value != "ok":

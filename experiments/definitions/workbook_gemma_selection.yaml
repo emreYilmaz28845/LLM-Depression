@@ -33,3 +33,57 @@ selections:
     view: harmonized_all_windows_full_coverage
     aggregation: subject_level
     attempt_id: 20260812T020449Z-gemma4_daic_text_only_seed1337-cca3f4ae-ed58a7a3
+  - cell: "Gemma 4 DAIC|Audio + Text — Gemma 4 LogReg raw hidden head"
+    dataset: daic
+    modality: audio_text
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    view: harmonized_all_windows_full_coverage
+    aggregation: subject_level
+    attempt_id: 20260812T155659Z-gemma4_daic_audio_text_fixed_heads_20260812t155635z_799cc412-799cc412-5ad76728
+  - cell: "Gemma 4 DAIC|Audio + Text — Gemma 4 XGBoost raw hidden head"
+    dataset: daic
+    modality: audio_text
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    view: harmonized_all_windows_full_coverage
+    aggregation: subject_level
+    attempt_id: 20260812T155659Z-gemma4_daic_audio_text_fixed_heads_20260812t155635z_799cc412-799cc412-5ad76728
+  - cell: "Gemma 4 DAIC|Audio only — Gemma 4 LogReg raw hidden head"
+    dataset: daic
+    modality: audio_only
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    view: harmonized_all_windows_full_coverage
+    aggregation: subject_level
+    attempt_id: 20260812T155701Z-gemma4_daic_audio_only_fixed_heads_20260812t155635z_799cc412-799cc412-4fafe36d
+  - cell: "Gemma 4 DAIC|Audio only — Gemma 4 XGBoost raw hidden head"
+    dataset: daic
+    modality: audio_only
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    view: harmonized_all_windows_full_coverage
+    aggregation: subject_level
+    attempt_id: 20260812T155701Z-gemma4_daic_audio_only_fixed_heads_20260812t155635z_799cc412-799cc412-4fafe36d
+  - cell: "Gemma 4 DAIC|Text only — Gemma 4 LogReg raw hidden head"
+    dataset: daic
+    modality: text_only
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    view: harmonized_all_windows_full_coverage
+    aggregation: subject_level
+    attempt_id: 20260812T155703Z-gemma4_daic_text_only_fixed_heads_20260812t155635z_799cc412-799cc412-735f2c58
+  - cell: "Gemma 4 DAIC|Text only — Gemma 4 XGBoost raw hidden head"
+    dataset: daic
+    modality: text_only
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    view: harmonized_all_windows_full_coverage
+    aggregation: subject_level
+    attempt_id: 20260812T155703Z-gemma4_daic_text_only_fixed_heads_20260812t155635z_799cc412-799cc412-735f2c58
