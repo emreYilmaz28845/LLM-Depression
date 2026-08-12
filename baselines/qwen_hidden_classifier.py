@@ -225,16 +225,21 @@ def _enforce_gemma_daic_contract(
 
 
 def _enforce_gemma_dependency_versions() -> None:
-    """Require the locked classifier library versions on the Gemma path."""
-    from importlib.metadata import version
+    """Require the locked classifier library versions on the Gemma path.
 
+    Reads the module ``__version__`` attributes: the hidden dependency
+    directory is a ``pip --target`` install whose dist-info metadata is not
+    always visible to ``importlib.metadata``.
+    """
     try:
-        sklearn_version = version("scikit-learn")
-        xgboost_version = version("xgboost")
+        import sklearn
+        import xgboost
     except Exception as error:
         raise RuntimeError(
             "Gemma fixed heads require scikit-learn 1.7.0 and xgboost 2.1.4."
         ) from error
+    sklearn_version = str(getattr(sklearn, "__version__", ""))
+    xgboost_version = str(getattr(xgboost, "__version__", ""))
     if sklearn_version != "1.7.0" or xgboost_version != "2.1.4":
         raise RuntimeError(
             f"Gemma fixed heads require scikit-learn 1.7.0 and xgboost 2.1.4; "
