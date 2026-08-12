@@ -574,6 +574,62 @@ def _fmt(v: float | None) -> str:
     return "" if v is None else f"{v:.4f}"
 
 
+def build_gemma_vs_qwen(wb: Workbook) -> None:
+    """Gemma 4 vs Qwen — DAIC official test comparison across the three
+    backbone/head methods. Qwen reference = harmonized campaign (teacher-forced
+    macro-F1 from STANDALONE_QWEN; hidden heads from STANDALONE_HEADS). Gemma =
+    the Gemma 4 DAIC campaign (teacher-forced from GEMMA4_QWEN; fixed heads
+    from GEMMA4_HEADS). Values are the same cells as the Gemma 4 DAIC sheet and
+    the Summary sheet; this page only compares them side by side.
+    """
+    ws = wb.create_sheet("Gemma vs Qwen")
+    _widths(ws, {"A": 16, "B": 30, "C": 15, "D": 15, "E": 15})
+    _title(ws, "Gemma 4 vs Qwen — DAIC official test, macro-F1 (seed 1337, fold 0)", 5)
+    _note(
+        ws, 2,
+        "Macro-F1, binary-strict, best_model, official 47-subject DAIC test. Qwen: harmonized "
+        "campaign harmonized_v1_prod_20260809T171705Z_d1e8130b (teacher-forced row = Fine-tuned "
+        "Qwen STANDALONE_QWEN; head rows = harmonized hidden-state heads STANDALONE_HEADS, "
+        "pooled subject-level). Gemma: campaign gemma4_v1_prod_20260812T020449Z_cca3f4ae "
+        "(teacher-forced GEMMA4_QWEN, subject mean-score) and fixed-head campaign "
+        "gemma4-daic-fixed-heads-v1-799cc412 (GEMMA4_HEADS, subject mean probability >= 0.5). "
+        "One seed each — differences are observations, not variance estimates. "
+        "Delta = Gemma minus Qwen. Provenance: Provenance sheet.",
+        5, height=110,
+    )
+    _header_row(ws, 4, ["Modality", "Method", "Qwen macro-F1", "Gemma macro-F1", "Δ (Gemma − Qwen)"])
+    mod_keys = ["audio_text", "audio_only", "text_only"]
+    mod_labels = ["Audio + Text", "Audio only", "Text only"]
+    rows: list[tuple[str, str, float, float]] = []
+    for mod_key, mod_label in zip(mod_keys, mod_labels):
+        qwen_tf = STANDALONE_QWEN[("DAIC", mod_label)]
+        gemma_tf = GEMMA4_QWEN[mod_key][0]
+        rows.append((mod_label, "Teacher-forced", qwen_tf, gemma_tf))
+        qwen_logreg, qwen_xgb = STANDALONE_HEADS[("DAIC", mod_label)][0], STANDALONE_HEADS[("DAIC", mod_label)][1]
+        gemma_logreg = GEMMA4_HEADS[mod_key]["logreg"][0]
+        gemma_xgb = GEMMA4_HEADS[mod_key]["xgb"][0]
+        if qwen_logreg is not None:
+            rows.append((mod_label, "LogReg raw hidden head", qwen_logreg, gemma_logreg))
+        if qwen_xgb is not None:
+            rows.append((mod_label, "XGBoost raw hidden head", qwen_xgb, gemma_xgb))
+    row = 5
+    for mod_label, method, qwen_value, gemma_value in rows:
+        ws.cell(row, 1, mod_label).font = BODY_FONT
+        ws.cell(row, 1).fill = BODY
+        ws.cell(row, 1).alignment = LEFT
+        ws.cell(row, 1).border = BORDER
+        _body_cell(ws, row, 2, method)
+        _body_cell(ws, row, 3, qwen_value, fmt="0.0000")
+        _body_cell(ws, row, 4, gemma_value, fmt="0.0000")
+        _delta_cell(ws, row, 5, gemma_value - qwen_value)
+        row += 1
+    _note(ws, row, "Teacher-forced = backbone classification without hidden-state heads. "
+                   "Hidden heads classify the final prompt-token hidden state with the locked "
+                   "LogReg/XGBoost implementations. See the 'Gemma 4 DAIC' and 'Summary' sheets "
+                   "for the full metric sets and per-cell provenance.", 5, height=60)
+    ws.freeze_panes = "A5"
+
+
 # --------------------------------------------------------------------------- sheets
 def build_summary(wb: Workbook, *, detailed: bool) -> None:
     ws = wb.create_sheet("Summary")
@@ -1311,6 +1367,7 @@ def main() -> None:
     build_merged_vs_standalone(wb)
     build_packed30(wb)
     build_gemma4(wb)
+    build_gemma_vs_qwen(wb)
     build_provenance(wb, detailed=detailed)
     out = OUT_DETAILED if detailed else OUT
     out.parent.mkdir(parents=True, exist_ok=True)
