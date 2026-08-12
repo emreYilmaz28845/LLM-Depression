@@ -842,12 +842,22 @@ def materialize_mn5_evidence(
 
 def _recompute_subject_metrics(fold_dir: Path, variant: str) -> dict[str, Any]:
     """Recompute subject predictions from sample probabilities and the six
-    headline metrics from the subject rows."""
+    headline metrics from the subject rows. Derives ``negative_f1`` from the
+    recomputed confusion matrix the same way the fixed-head classifier does."""
     from src.aggregate import aggregate_binary_classifier_predictions
 
     variant_dir = fold_dir / "hidden_classifiers" / variant
     sample_rows = read_jsonl(variant_dir / "predictions_sample_level.jsonl")
     subject_rows, metrics = aggregate_binary_classifier_predictions(sample_rows)
+    tn, fp = metrics["confusion_matrix"][0]
+    fn, tp = metrics["confusion_matrix"][1]
+    precision_neg = tn / (tn + fn) if tn + fn else 0.0
+    recall_neg = tn / (tn + fp) if tn + fp else 0.0
+    metrics["negative_f1"] = (
+        2 * precision_neg * recall_neg / (precision_neg + recall_neg)
+        if precision_neg + recall_neg
+        else 0.0
+    )
     return {
         "subject_rows": subject_rows,
         "metrics": metrics,
