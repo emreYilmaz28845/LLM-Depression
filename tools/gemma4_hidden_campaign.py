@@ -34,6 +34,10 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--branch", default="main")
     create.add_argument("--pr-number", type=int)
     create.add_argument("--fold", type=int, default=0)
+    create.add_argument(
+        "--supersedes-attempt-id",
+        help="Link this retry attempt to a failed/cancelled attempt.",
+    )
 
     deployed = sub.add_parser("mark-deployed", help="Transition PLANNED -> DEPLOYED.")
     deployed.add_argument("--attempt-dir", required=True, type=Path)
@@ -85,6 +89,7 @@ def main() -> None:
             branch=args.branch,
             pr_number=args.pr_number,
             fold=args.fold,
+            supersedes_attempt_id=args.supersedes_attempt_id,
         )
     elif args.command == "mark-deployed":
         result = campaign.mark_deployed(args.attempt_dir, reason=args.reason)
