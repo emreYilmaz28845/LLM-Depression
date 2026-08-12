@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Iterator
 
-from .canonical import canonical_sha256, format_utc_timestamp, utc_now
+from .canonical import canonical_sha256, format_utc_timestamp, sha256_file, utc_now
 from .constants import SCHEMA_VERSION_METADATA
 from .discovery import DiscoveredRun, discover_runs
 from .identity import artifact_id as make_artifact_id
@@ -19,6 +19,15 @@ from .qualification import (
     QualificationResult,
     legacy_identity_payload,
     qualify_run,
+)
+from .sidecars import (
+    METADATA_FILE,
+    STATUS_FILE,
+    ModernSidecars,
+    SidecarValidationError,
+    is_modern_tracked,
+    read_modern_sidecars,
+    reportable_state_issues,
 )
 
 DEFAULT_DB_PATH = "outputs/experiment_registry/experiments.sqlite"
@@ -322,6 +331,463 @@ def _import_attempt_only(
     )
 
 
+# --------------------------------------------------------------------------- modern tracked runs
+
+_LOCALLY_VALIDATED_STATES = ("LOCALLY_VALIDATED", "REPORTABLE")
+
+
+def _insert_modern_logical_run(
+    cursor: sqlite3.Cursor,
+    discovered: DiscoveredRun,
+    sidecars: ModernSidecars,
+) -> str:
+    metadata = sidecars.metadata
+    config = discovered.resolved_config or {}
+    dataset = config.get("dataset") if isinstance(config.get("dataset"), str) else None
+    group_id = metadata.get("group_id")
+    if isinstance(group_id, str) and group_id:
+        cursor.execute(
+            "INSERT OR IGNORE INTO experiment_groups "
+            "(group_id, schema_version, title, research_question, github_issue, github_pr, "
+            "status, source_path, source_sha256) VALUES (?, ?, ?, NULL, ?, ?, NULL, ?, ?)",
+            (
+                group_id,
+                SCHEMA_VERSION_METADATA,
+                group_id,
+                metadata.get("research", {}).get("github_issue")
+                if isinstance(metadata.get("research"), dict)
+                else None,
+                metadata.get("research", {}).get("github_pr")
+                if isinstance(metadata.get("research"), dict)
+                else None,
+                f"{discovered.fold_dir}/metadata.json",
+                sidecars.file_sha256[METADATA_FILE],
+            ),
+        )
+    logical_id = logical_run_id(
+        group_id=group_id,
+        logical_run_name=metadata.get("logical_run_name") or discovered.run_name,
+        dataset=dataset,
+        modality=discovered.modality,
+        method=None,
+        seed=metadata.get("seed"),
+    )
+    cursor.execute(
+        "INSERT OR IGNORE INTO logical_runs "
+        "(logical_run_id, group_id, logical_run_name, dataset, modality, method, seed) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            logical_id,
+            group_id,
+            metadata.get("logical_run_name") or discovered.run_name,
+            dataset,
+            discovered.modality,
+            None,
+            metadata.get("seed"),
+        ),
+    )
+    return logical_id
+
+
+def _insert_modern_attempt_and_fold(
+    cursor: sqlite3.Cursor,
+    logical_run_id_value: str,
+    discovered: DiscoveredRun,
+    sidecars: ModernSidecars,
+) -> int:
+    metadata = sidecars.metadata
+    source = metadata.get("source") if isinstance(metadata.get("source"), dict) else {}
+    research = metadata.get("research") if isinstance(metadata.get("research"), dict) else {}
+    hashes = metadata.get("hashes") if isinstance(metadata.get("hashes"), dict) else {}
+    attempt_id_value = sidecars.attempt_id
+    supersedes = metadata.get("supersedes_attempt_id")
+    cursor.execute(
+        "INSERT OR IGNORE INTO run_attempts "
+        "(attempt_id, logical_run_id, schema_version, legacy_import, created_at_utc, "
+        "git_commit, git_branch, git_dirty, deployed_source_sha256, resolved_config_sha256, "
+        "manifest_sha256, split_sha256, github_issue, github_pr, supersedes_attempt_id, "
+        "metadata_path, current_state) VALUES (?, ?, ?, 0, ?, "
+        "?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+        (
+            attempt_id_value,
+            logical_run_id_value,
+            SCHEMA_VERSION_METADATA,
+            metadata.get("created_at_utc"),
+            source.get("git_commit"),
+            source.get("git_branch"),
+            source.get("git_dirty"),
+            source.get("deployed_source_sha256"),
+            hashes.get("resolved_config_sha256") or discovered.resolved_config_sha256,
+            hashes.get("manifest_sha256"),
+            hashes.get("split_sha256"),
+            research.get("github_issue"),
+            research.get("github_pr"),
+            METADATA_FILE,
+            sidecars.state,
+        ),
+    )
+    if isinstance(supersedes, str):
+        target_exists = cursor.execute(
+            "SELECT 1 FROM run_attempts WHERE attempt_id = ?", (supersedes,)
+        ).fetchone()
+        if target_exists is not None:
+            cursor.execute(
+                "UPDATE run_attempts SET supersedes_attempt_id = ? WHERE attempt_id = ?",
+                (supersedes, attempt_id_value),
+            )
+    locally_verified = (
+        1 if sidecars.state in _LOCALLY_VALIDATED_STATES else 0
+    )
+    cursor.execute(
+        "INSERT OR IGNORE INTO folds (attempt_id, fold, run_dir, run_config_path, status_path, locally_verified) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            attempt_id_value,
+            sidecars.fold,
+            discovered.fold_dir,
+            discovered.run_config_path,
+            STATUS_FILE,
+            locally_verified,
+        ),
+    )
+    row = cursor.execute(
+        "SELECT fold_id FROM folds WHERE attempt_id = ? AND fold = ?",
+        (attempt_id_value, sidecars.fold),
+    ).fetchone()
+    if isinstance(supersedes, str) and not target_exists:
+        cursor.execute(
+            "INSERT OR REPLACE INTO provenance (attempt_id, fold_id, key, value_json, source_artifact_id) "
+            "VALUES (?, ?, ?, ?, NULL)",
+            (attempt_id_value, row[0], "pending_supersedes_attempt_id", json.dumps(supersedes)),
+        )
+    return row[0]
+
+
+def _insert_modern_jobs(
+    cursor: sqlite3.Cursor,
+    sidecars: ModernSidecars,
+    fold_id: int,
+) -> None:
+    for event in sidecars.jobs:
+        cursor.execute(
+            "INSERT OR IGNORE INTO job_events "
+            "(event_id, fold_id, job_key, job_type, event_type, slurm_job_id, "
+            "slurm_array_job_id, slurm_array_task_id, dependency_job_ids_json, status, "
+            "at_utc, reason, resubmission_of_job_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                event["event_id"],
+                fold_id,
+                event["job_key"],
+                event["job_type"],
+                event["event_type"],
+                event.get("slurm_job_id"),
+                event.get("slurm_array_job_id"),
+                event.get("slurm_array_task_id"),
+                json.dumps(list(event.get("dependency_job_ids") or [])),
+                event.get("status"),
+                event["at_utc"],
+                event.get("reason"),
+                event.get("resubmission_of_job_id"),
+            ),
+        )
+
+
+def _insert_modern_artifacts(
+    cursor: sqlite3.Cursor,
+    fold_dir: Path,
+    sidecars: ModernSidecars,
+    fold_id: int,
+) -> dict[str, int]:
+    artifact_ids: dict[str, int] = {}
+    for artifact in sidecars.artifacts:
+        relative_path = artifact["path"]
+        sha256 = artifact.get("sha256")
+        full = fold_dir / relative_path
+        exists_locally = 1 if full.exists() else 0
+        locally_verified = 0
+        if sha256 is not None and full.is_file():
+            locally_verified = 1 if sha256_file(full) == sha256 else 0
+        elif sha256 is None and full.is_dir():
+            locally_verified = 1
+        cursor.execute(
+            "INSERT OR IGNORE INTO artifacts "
+            "(artifact_id, fold_id, artifact_type, role, path, sha256, size_bytes, "
+            "exists_on_mn5, exists_locally, locally_verified) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                artifact["artifact_id"],
+                fold_id,
+                artifact["artifact_type"],
+                artifact["role"],
+                relative_path,
+                sha256,
+                artifact.get("size_bytes"),
+                artifact.get("exists_on_mn5"),
+                exists_locally,
+                locally_verified,
+            ),
+        )
+        artifact_ids[relative_path] = artifact["artifact_id"]
+    return artifact_ids
+
+
+def _insert_modern_evaluations(
+    cursor: sqlite3.Cursor,
+    sidecars: ModernSidecars,
+    fold_id: int,
+    artifact_ids: dict[str, int],
+) -> None:
+    for evaluation in sidecars.evaluations:
+        metrics_artifact_id = artifact_ids.get(evaluation.get("metrics_artifact_path") or "")
+        predictions_artifact_id = artifact_ids.get(evaluation.get("predictions_artifact_path") or "")
+        cursor.execute(
+            "INSERT OR IGNORE INTO evaluations "
+            "(evaluation_id, fold_id, dataset, split_name, split_protocol, checkpoint_role, "
+            "checkpoint_path, backend, evaluation_view, aggregation, metric_namespace, "
+            "metrics_artifact_id, predictions_artifact_id, locally_verified, reportable, "
+            "warnings_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                evaluation["evaluation_id"],
+                fold_id,
+                evaluation.get("dataset"),
+                evaluation.get("split_name"),
+                evaluation.get("split_protocol"),
+                evaluation.get("checkpoint_role"),
+                evaluation.get("checkpoint_path"),
+                evaluation.get("backend"),
+                evaluation.get("evaluation_view"),
+                evaluation.get("aggregation"),
+                evaluation.get("metric_namespace"),
+                metrics_artifact_id,
+                predictions_artifact_id,
+                1 if evaluation.get("locally_verified") else 0,
+                1 if evaluation.get("reportable") else 0,
+                json.dumps(list(evaluation.get("warnings") or []), ensure_ascii=False),
+            ),
+        )
+        for metric in evaluation.get("metrics") or []:
+            cursor.execute(
+                "INSERT OR IGNORE INTO metrics "
+                "(evaluation_id, namespace, metric_name, metric_value, support, aggregation, "
+                "backend, evaluation_view, split_name, checkpoint_role, evidence_artifact_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    evaluation["evaluation_id"],
+                    evaluation.get("metric_namespace"),
+                    metric["name"],
+                    metric.get("value"),
+                    metric.get("support"),
+                    evaluation.get("aggregation"),
+                    evaluation.get("backend"),
+                    evaluation.get("evaluation_view"),
+                    evaluation.get("split_name"),
+                    evaluation.get("checkpoint_role"),
+                    metrics_artifact_id,
+                ),
+            )
+
+
+def _insert_modern_provenance(
+    cursor: sqlite3.Cursor,
+    discovered: DiscoveredRun,
+    sidecars: ModernSidecars,
+    fold_id: int,
+    source_sha256: str,
+) -> None:
+    try:
+        relative_run_dir = str(Path(discovered.fold_dir).relative_to(discovered.scan_root))
+    except ValueError:
+        relative_run_dir = discovered.fold_dir
+    rows = [
+        ("relative_run_dir", relative_run_dir),
+        ("evidence_manifest_sha256", _evidence_manifest_hash(discovered)),
+        ("modern_sidecar_sha256", source_sha256),
+    ]
+    for key, value in rows:
+        cursor.execute(
+            "INSERT OR REPLACE INTO provenance (attempt_id, fold_id, key, value_json, source_artifact_id) "
+            "VALUES (?, ?, ?, ?, NULL)",
+            (sidecars.attempt_id, fold_id, key, json.dumps(value, ensure_ascii=False)),
+        )
+
+
+def _backfill_pending_supersedes(connection: sqlite3.Connection) -> None:
+    """Resolve supersede links that were deferred because the superseded
+    attempt had not been imported yet (incremental single-run imports)."""
+    pending = connection.execute(
+        "SELECT p.attempt_id, p.fold_id, p.value_json FROM provenance p "
+        "WHERE p.key = 'pending_supersedes_attempt_id'"
+    ).fetchall()
+    for row in pending:
+        try:
+            supersedes = json.loads(row["value_json"])
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(supersedes, str):
+            continue
+        target = connection.execute(
+            "SELECT 1 FROM run_attempts WHERE attempt_id = ?", (supersedes,)
+        ).fetchone()
+        if target is None:
+            continue
+        connection.execute(
+            "UPDATE run_attempts SET supersedes_attempt_id = ? WHERE attempt_id = ?",
+            (supersedes, row["attempt_id"]),
+        )
+        connection.execute(
+            "DELETE FROM provenance WHERE attempt_id = ? AND fold_id = ? AND key = "
+            "'pending_supersedes_attempt_id'",
+            (row["attempt_id"], row["fold_id"]),
+        )
+
+
+def _modern_import_outcome(
+    connection: sqlite3.Connection,
+    discovered: DiscoveredRun,
+    sidecars: ModernSidecars,
+    *,
+    dry_run: bool,
+) -> dict[str, Any]:
+    source_sha256 = sidecars.evidence_sha256(discovered.run_config_file_sha256)
+    if dry_run:
+        return {
+            "status": "DRY_RUN",
+            "fold_dir": discovered.fold_dir,
+            "attempt_id": sidecars.attempt_id,
+            "state": sidecars.state,
+            "evaluations": len(sidecars.evaluations),
+            "import_manifest_sha256": source_sha256,
+        }
+    cursor = connection.cursor()
+    existing = cursor.execute(
+        "SELECT status FROM registry_imports WHERE source_path = ? AND source_sha256 = ? "
+        "AND importer_version = ?",
+        (discovered.run_config_path, source_sha256, IMPORTER_VERSION),
+    ).fetchone()
+    if existing is not None:
+        return {
+            "status": "SKIPPED_DUPLICATE",
+            "fold_dir": discovered.fold_dir,
+            "attempt_id": sidecars.attempt_id,
+            "attempts": 0,
+            "evaluations": 0,
+        }
+    try:
+        with connection:
+            logical_id = _insert_modern_logical_run(cursor, discovered, sidecars)
+            fold_id = _insert_modern_attempt_and_fold(
+                cursor, logical_id, discovered, sidecars
+            )
+            _insert_modern_jobs(cursor, sidecars, fold_id)
+            artifact_ids = _insert_modern_artifacts(
+                cursor, Path(discovered.fold_dir), sidecars, fold_id
+            )
+            _insert_modern_evaluations(cursor, sidecars, fold_id, artifact_ids)
+            _insert_modern_provenance(cursor, discovered, sidecars, fold_id, source_sha256)
+            cursor.execute(
+                "INSERT INTO registry_imports "
+                "(source_path, source_sha256, importer_version, imported_at_utc, status, details_json) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    discovered.run_config_path,
+                    source_sha256,
+                    IMPORTER_VERSION,
+                    format_utc_timestamp(utc_now()),
+                    "IMPORTED",
+                    json.dumps(
+                        {
+                            "kind": "modern",
+                            "attempt_id": sidecars.attempt_id,
+                            "state": sidecars.state,
+                            "evaluations": len(sidecars.evaluations),
+                            "warnings": [],
+                        },
+                        sort_keys=True,
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
+    except sqlite3.IntegrityError as error:
+        raise RegistryError(
+            f"integrity violation while importing {discovered.fold_dir}: {error}"
+        ) from error
+    return {
+        "status": "IMPORTED",
+        "fold_dir": discovered.fold_dir,
+        "attempt_id": sidecars.attempt_id,
+        "attempts": 1,
+        "evaluations": len(sidecars.evaluations),
+    }
+
+
+def _rejected_modern_outcome(
+    connection: sqlite3.Connection,
+    discovered: DiscoveredRun,
+    reasons: list[str],
+    *,
+    dry_run: bool,
+) -> dict[str, Any]:
+    if dry_run:
+        return {
+            "status": "REJECTED",
+            "fold_dir": discovered.fold_dir,
+            "attempts": 0,
+            "evaluations": 0,
+            "reasons": reasons,
+        }
+    cursor = connection.cursor()
+    source_sha256 = canonical_sha256(
+        {
+            "run_dir": discovered.fold_dir,
+            "reasons": sorted(reasons),
+        }
+    )
+    existing = cursor.execute(
+        "SELECT status FROM registry_imports WHERE source_path = ? AND source_sha256 = ? "
+        "AND importer_version = ?",
+        (discovered.run_config_path, source_sha256, IMPORTER_VERSION),
+    ).fetchone()
+    if existing is not None:
+        return {
+            "status": "REJECTED",
+            "fold_dir": discovered.fold_dir,
+            "attempts": 0,
+            "evaluations": 0,
+            "reasons": reasons,
+        }
+    try:
+        with connection:
+            cursor.execute(
+                "INSERT INTO registry_imports "
+                "(source_path, source_sha256, importer_version, imported_at_utc, status, details_json) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    discovered.run_config_path,
+                    source_sha256,
+                    IMPORTER_VERSION,
+                    format_utc_timestamp(utc_now()),
+                    "REJECTED",
+                    json.dumps(
+                        {"kind": "modern", "reasons": sorted(reasons)},
+                        sort_keys=True,
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
+    except sqlite3.IntegrityError as error:
+        raise RegistryError(
+            f"integrity violation while rejecting {discovered.fold_dir}: {error}"
+        ) from error
+    return {
+        "status": "REJECTED",
+        "fold_dir": discovered.fold_dir,
+        "attempts": 0,
+        "evaluations": 0,
+        "reasons": reasons,
+    }
+
+
 def import_run(
     connection: sqlite3.Connection,
     discovered: DiscoveredRun,
@@ -333,6 +799,29 @@ def import_run(
         raise RegistryError(
             f"cannot import {discovered.fold_dir}: run_config file hash unavailable"
         )
+    if is_modern_tracked(discovered.fold_dir):
+        try:
+            sidecars = read_modern_sidecars(discovered.fold_dir)
+        except SidecarValidationError as error:
+            return _rejected_modern_outcome(
+                connection,
+                discovered,
+                [str(error)],
+                dry_run=dry_run,
+            )
+        if sidecars is None:
+            raise RegistryError(
+                f"cannot import {discovered.fold_dir}: modern sidecars disappeared during import"
+            )
+        reportable_issues = reportable_state_issues(sidecars)
+        if reportable_issues:
+            return _rejected_modern_outcome(
+                connection,
+                discovered,
+                reportable_issues,
+                dry_run=dry_run,
+            )
+        return _modern_import_outcome(connection, discovered, sidecars, dry_run=dry_run)
     manifest_hash = _evidence_manifest_hash(discovered)
     if dry_run:
         return {
@@ -444,12 +933,16 @@ def rebuild_registry(
         initialize(connection)
         imported = 0
         skipped = 0
+        modern_rejected = 0
         for run, result in zip(runs, results):
             outcome = import_run(connection, run, result)
             if outcome["status"] == "SKIPPED_DUPLICATE":
                 skipped += 1
+            elif outcome["status"] == "REJECTED":
+                modern_rejected += 1
             else:
                 imported += 1
+        _backfill_pending_supersedes(connection)
         violations = connection.execute("PRAGMA foreign_key_check").fetchall()
         connection.close()
         if violations:
@@ -463,6 +956,7 @@ def rebuild_registry(
         raise
     summary["imported_runs"] = imported
     summary["skipped_duplicates"] = skipped
+    summary["modern_rejected_runs"] = modern_rejected
     return summary
 
 

@@ -1158,13 +1158,17 @@ def _load_experiment_context(args: argparse.Namespace) -> dict[str, Any] | None:
 def _attach_tracking_block(
     run_config: dict[str, Any], context: dict[str, Any], fold: int
 ) -> None:
-    run_config["tracking"] = {
+    tracking = {
         "schema_version": "audiollm.tracking.v1",
         "group_id": context.get("group_id"),
         "logical_run_name": context.get("logical_run_name"),
         "attempt_id": context["attempt_id"],
         "fold": fold,
     }
+    supersedes = context.get("supersedes_attempt_id")
+    if isinstance(supersedes, str) and supersedes:
+        tracking["supersedes_attempt_id"] = supersedes
+    run_config["tracking"] = tracking
 
 
 def _initialize_tracking_sidecars(
@@ -1176,6 +1180,7 @@ def _initialize_tracking_sidecars(
     fold = int(args.fold)
     attempt_id = str(context["attempt_id"])
     now = format_utc_timestamp(utc_now())
+    supersedes = context.get("supersedes_attempt_id")
     metadata = {
         "schema_version": SCHEMA_VERSION_METADATA,
         "group_id": context.get("group_id"),
@@ -1214,6 +1219,8 @@ def _initialize_tracking_sidecars(
             "sync_status": "NOT_EXPORTED",
         },
     }
+    if isinstance(supersedes, str) and supersedes:
+        metadata["supersedes_attempt_id"] = supersedes
     write_json_atomic(run_root / "metadata.json", metadata)
     status = StatusRecord(attempt_id, fold, state="SUBMITTED")
     status.transition("RUNNING", reason="training job started")
