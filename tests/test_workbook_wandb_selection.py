@@ -311,6 +311,26 @@ def test_hidden_and_merged_rows_stay_pending_without_importer(tmp_path: Path) ->
     assert manifest["entries"][0]["status"] == "pending_importer_support"
 
 
+def test_pending_wandb_reconciliation_rows_produce_no_export_units(tmp_path: Path) -> None:
+    db_path = _import_multi_fold(tmp_path, folds=1)
+    entry = _sync_entry()
+    entry["wandb_policy"] = "pending_wandb_reconciliation"
+    entry["blocking_reasons"] = [
+        "existing cloud run is keyed to a synthetic legacy attempt; "
+        "exporting the real attempt would create a duplicate until the "
+        "researcher selects a reconciliation strategy"
+    ]
+    selection = {"db": str(db_path), "entries": [entry]}
+    manifest = _resolved_units(tmp_path, selection, [_base_row()])
+    assert manifest["summary"]["sync_units"] == 0
+    assert manifest["export_units"] == []
+    assert manifest["summary"]["blocked_units"] == 0
+    assert manifest["entries"][0]["status"] == "pending_wandb_reconciliation"
+    assert manifest["entries"][0]["reasons"] == entry["blocking_reasons"]
+    assert manifest["entries"][0]["unit_run_ids"] == []
+    assert manifest["summary"]["unresolved_rows"] == 0
+
+
 def test_mn5_only_rows_stay_pending(tmp_path: Path) -> None:
     db_path = _import_multi_fold(tmp_path, folds=1)
     entry = _sync_entry()
@@ -684,7 +704,8 @@ def test_real_selection_yaml_covers_all_real_workbook_rows() -> None:
     from collections import Counter
 
     policies = Counter(entry["wandb_policy"] for entry in selection["entries"])
-    assert policies["sync"] == 46
+    assert policies["sync"] == 31
+    assert policies["pending_wandb_reconciliation"] == 15
     assert policies["quarantine_ambiguous"] == 4
     assert policies["pending_importer_support"] == 108
     assert policies["pending_local_evidence"] == 0
