@@ -3558,8 +3558,9 @@ entries:
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
   group: Gemma 4 DAIC
-  wandb_policy: sync
-  blocking_reasons: []
+  wandb_policy: pending_wandb_reconciliation
+  blocking_reasons:
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
   train_job_id: '44518086'
   eval_job_id: '44518087'
@@ -3584,8 +3585,9 @@ entries:
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
   group: Gemma 4 DAIC
-  wandb_policy: sync
-  blocking_reasons: []
+  wandb_policy: pending_wandb_reconciliation
+  blocking_reasons:
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
   train_job_id: '44518086'
   eval_job_id: '44518087'
@@ -3610,8 +3612,9 @@ entries:
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
   group: Gemma 4 DAIC
-  wandb_policy: sync
-  blocking_reasons: []
+  wandb_policy: pending_wandb_reconciliation
+  blocking_reasons:
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
   train_job_id: '44518086'
   eval_job_id: '44518087'
@@ -3636,8 +3639,9 @@ entries:
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
   group: Gemma 4 DAIC
-  wandb_policy: sync
-  blocking_reasons: []
+  wandb_policy: pending_wandb_reconciliation
+  blocking_reasons:
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
   train_job_id: '44518086'
   eval_job_id: '44518087'
@@ -3662,8 +3666,9 @@ entries:
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
   group: Gemma 4 DAIC
-  wandb_policy: sync
-  blocking_reasons: []
+  wandb_policy: pending_wandb_reconciliation
+  blocking_reasons:
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
   train_job_id: '44518086'
   eval_job_id: '44518087'
@@ -3688,8 +3693,9 @@ entries:
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
   group: Gemma 4 DAIC
-  wandb_policy: sync
-  blocking_reasons: []
+  wandb_policy: pending_wandb_reconciliation
+  blocking_reasons:
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
   train_job_id: '44517565'
   eval_job_id: '44517566'
@@ -3714,8 +3720,9 @@ entries:
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
   group: Gemma 4 DAIC
-  wandb_policy: sync
-  blocking_reasons: []
+  wandb_policy: pending_wandb_reconciliation
+  blocking_reasons:
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
   train_job_id: '44517565'
   eval_job_id: '44517566'
@@ -3740,8 +3747,9 @@ entries:
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
   group: Gemma 4 DAIC
-  wandb_policy: sync
-  blocking_reasons: []
+  wandb_policy: pending_wandb_reconciliation
+  blocking_reasons:
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
   train_job_id: '44517565'
   eval_job_id: '44517566'
@@ -3766,8 +3774,9 @@ entries:
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
   group: Gemma 4 DAIC
-  wandb_policy: sync
-  blocking_reasons: []
+  wandb_policy: pending_wandb_reconciliation
+  blocking_reasons:
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
   train_job_id: '44517565'
   eval_job_id: '44517566'
@@ -3792,8 +3801,9 @@ entries:
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
   group: Gemma 4 DAIC
-  wandb_policy: sync
-  blocking_reasons: []
+  wandb_policy: pending_wandb_reconciliation
+  blocking_reasons:
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
   train_job_id: '44517565'
   eval_job_id: '44517566'
@@ -3818,8 +3828,9 @@ entries:
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
   group: Gemma 4 DAIC
-  wandb_policy: sync
-  blocking_reasons: []
+  wandb_policy: pending_wandb_reconciliation
+  blocking_reasons:
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
   train_job_id: '44517484'
   eval_job_id: '44517485'
@@ -3844,8 +3855,9 @@ entries:
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
   group: Gemma 4 DAIC
-  wandb_policy: sync
-  blocking_reasons: []
+  wandb_policy: pending_wandb_reconciliation
+  blocking_reasons:
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
   train_job_id: '44517484'
   eval_job_id: '44517485'
@@ -3870,8 +3882,9 @@ entries:
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
   group: Gemma 4 DAIC
-  wandb_policy: sync
-  blocking_reasons: []
+  wandb_policy: pending_wandb_reconciliation
+  blocking_reasons:
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
   train_job_id: '44517484'
   eval_job_id: '44517485'
@@ -3896,8 +3909,9 @@ entries:
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
   group: Gemma 4 DAIC
-  wandb_policy: sync
-  blocking_reasons: []
+  wandb_policy: pending_wandb_reconciliation
+  blocking_reasons:
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
   train_job_id: '44517484'
   eval_job_id: '44517485'
@@ -3922,8 +3936,9 @@ entries:
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
   group: Gemma 4 DAIC
-  wandb_policy: sync
-  blocking_reasons: []
+  wandb_policy: pending_wandb_reconciliation
+  blocking_reasons:
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
   train_job_id: '44517484'
   eval_job_id: '44517485'

@@ -554,3 +554,179 @@ def test_failed_modern_run_imports_without_evaluations(tmp_path: Path) -> None:
         assert connection.execute("SELECT COUNT(*) FROM job_events").fetchone()[0] == 6
     finally:
         connection.close()
+
+
+def test_tampered_predictions_after_verification_reject_reportable_run(tmp_path: Path) -> None:
+    fold_dir = build_modern_run(tmp_path, state="REPORTABLE")
+    verify_artifacts_locally(fold_dir)
+    verify_evaluations_locally(fold_dir)
+    write_status(fold_dir, state="REPORTABLE")
+    predictions = fold_dir / "best_model/standalone_eval/predictions_subject_level.csv"
+    predictions.write_text("subject_id,prediction\ntampered\n", encoding="utf-8")
+    db_path = tmp_path / "registry.sqlite"
+    summary = registry.rebuild_registry(tmp_path, db_path)
+    assert summary["modern_rejected_runs"] == 1
+    assert summary["imported_runs"] == 0
+    connection = registry.connect(db_path)
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM run_attempts").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM folds").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM evaluations").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM metrics").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM job_events").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM run_attempts WHERE attempt_id LIKE 'legacy-%'"
+        ).fetchone()[0] == 0
+        rejection = connection.execute(
+            "SELECT details_json FROM registry_imports WHERE status = 'REJECTED'"
+        ).fetchone()
+        assert rejection is not None
+        details = json.loads(rejection["details_json"])
+        joined = "\n".join(details["reasons"])
+        assert "predictions_subject_level.csv" in joined
+        assert "SHA-256" in joined
+        assert "differs" in joined
+    finally:
+        connection.close()
+
+
+def test_tampered_metrics_after_verification_reject_reportable_run(tmp_path: Path) -> None:
+    fold_dir = build_modern_run(tmp_path, state="REPORTABLE")
+    verify_artifacts_locally(fold_dir)
+    verify_evaluations_locally(fold_dir)
+    write_status(fold_dir, state="REPORTABLE")
+    metrics = fold_dir / "best_model/standalone_eval/metrics_original_teacher_forced.json"
+    metrics.write_text('{"binary_strict_macro_f1": 0.999}', encoding="utf-8")
+    db_path = tmp_path / "registry.sqlite"
+    outcome = _import(tmp_path, db_path)
+    assert outcome["status"] == "REJECTED"
+    assert any(
+        "metrics_original_teacher_forced.json" in reason and "SHA-256" in reason
+        for reason in outcome["reasons"]
+    )
+    connection = registry.connect(db_path)
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM run_attempts").fetchone()[0] == 0
+    finally:
+        connection.close()
+
+
+def test_deleted_evaluation_artifact_rejects_reportable_run(tmp_path: Path) -> None:
+    for index, missing in enumerate(
+        (
+            "best_model/standalone_eval/metrics_original_teacher_forced.json",
+            "best_model/standalone_eval/predictions_subject_level.csv",
+        )
+    ):
+        root = tmp_path / f"case_{index}"
+        fold_dir = build_modern_run(root, state="REPORTABLE")
+        verify_artifacts_locally(fold_dir)
+        verify_evaluations_locally(fold_dir)
+        write_status(fold_dir, state="REPORTABLE")
+        (fold_dir / missing).unlink()
+        db_path = root / "registry.sqlite"
+        outcome = _import(root, db_path)
+        assert outcome["status"] == "REJECTED"
+        assert any(missing in reason for reason in outcome["reasons"])
+        connection = registry.connect(db_path)
+        try:
+            assert connection.execute("SELECT COUNT(*) FROM run_attempts").fetchone()[0] == 0
+        finally:
+            connection.close()
+
+
+def test_evaluation_artifact_absent_from_artifacts_json_rejects_run(tmp_path: Path) -> None:
+    fold_dir = build_modern_run(tmp_path, state="REPORTABLE")
+    verify_artifacts_locally(fold_dir)
+    verify_evaluations_locally(fold_dir)
+    write_status(fold_dir, state="REPORTABLE")
+    record = json.loads((fold_dir / "artifacts.json").read_text(encoding="utf-8"))
+    record["artifacts"] = [
+        artifact
+        for artifact in record["artifacts"]
+        if artifact["path"] != "best_model/standalone_eval/predictions_subject_level.csv"
+    ]
+    write_json_atomic(fold_dir / "artifacts.json", record)
+    db_path = tmp_path / "registry.sqlite"
+    outcome = _import(tmp_path, db_path)
+    assert outcome["status"] == "REJECTED"
+    assert any(
+        "predictions_subject_level.csv" in reason and "artifacts.json record" in reason
+        for reason in outcome["reasons"]
+    )
+    connection = registry.connect(db_path)
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM run_attempts").fetchone()[0] == 0
+    finally:
+        connection.close()
+
+
+def test_reportable_evaluation_without_local_verification_rejects_run(tmp_path: Path) -> None:
+    fold_dir = build_modern_run(tmp_path, state="REPORTABLE")
+    verify_artifacts_locally(fold_dir)
+    write_status(fold_dir, state="REPORTABLE")
+    db_path = tmp_path / "registry.sqlite"
+    outcome = _import(tmp_path, db_path)
+    assert outcome["status"] == "REJECTED"
+    assert any("not locally verified" in reason for reason in outcome["reasons"])
+    connection = registry.connect(db_path)
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM run_attempts").fetchone()[0] == 0
+    finally:
+        connection.close()
+
+
+def test_reportable_evaluation_with_warnings_rejects_run(tmp_path: Path) -> None:
+    fold_dir = build_modern_run(tmp_path, state="REPORTABLE")
+    verify_artifacts_locally(fold_dir)
+    verify_evaluations_locally(fold_dir)
+    record = json.loads((fold_dir / "evaluations.json").read_text(encoding="utf-8"))
+    record["evaluations"][0]["warnings"] = ["legacy ambiguity"]
+    write_json_atomic(fold_dir / "evaluations.json", record)
+    write_status(fold_dir, state="REPORTABLE")
+    db_path = tmp_path / "registry.sqlite"
+    outcome = _import(tmp_path, db_path)
+    assert outcome["status"] == "REJECTED"
+    assert any("warnings" in reason for reason in outcome["reasons"])
+    connection = registry.connect(db_path)
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM run_attempts").fetchone()[0] == 0
+    finally:
+        connection.close()
+
+
+def test_reportable_attempt_without_evaluations_rejects_run(tmp_path: Path) -> None:
+    fold_dir = build_modern_run(tmp_path, state="REPORTABLE")
+    verify_artifacts_locally(fold_dir)
+    write_evaluations(fold_dir, reportable=True)
+    (fold_dir / "evaluations.json").unlink()
+    write_status(fold_dir, state="REPORTABLE")
+    db_path = tmp_path / "registry.sqlite"
+    outcome = _import(tmp_path, db_path)
+    assert outcome["status"] == "REJECTED"
+    assert any("no evaluations" in reason for reason in outcome["reasons"])
+    connection = registry.connect(db_path)
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM run_attempts").fetchone()[0] == 0
+    finally:
+        connection.close()
+
+
+def test_missing_last_model_does_not_reject_reportable_run(tmp_path: Path) -> None:
+    fold_dir = build_modern_run(tmp_path, state="REPORTABLE")
+    verify_artifacts_locally(fold_dir)
+    verify_evaluations_locally(fold_dir)
+    write_status(fold_dir, state="REPORTABLE")
+    last_model = fold_dir / "last_model"
+    assert last_model.is_dir()
+    last_model.rmdir()
+    db_path = tmp_path / "registry.sqlite"
+    summary = registry.rebuild_registry(tmp_path, db_path)
+    assert summary["imported_runs"] == 1
+    assert summary["modern_rejected_runs"] == 0
+    connection = registry.connect(db_path)
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM run_attempts").fetchone()[0] == 1
+    finally:
+        connection.close()

@@ -538,9 +538,35 @@ def _insert_modern_evaluations(
     fold_id: int,
     artifact_ids: dict[str, int],
 ) -> None:
+    def _artifact_locally_verified(artifact_id: str | None) -> bool:
+        if artifact_id is None:
+            return False
+        row = cursor.execute(
+            "SELECT locally_verified FROM artifacts WHERE artifact_id = ?",
+            (artifact_id,),
+        ).fetchone()
+        return row is not None and row["locally_verified"] == 1
+
     for evaluation in sidecars.evaluations:
         metrics_artifact_id = artifact_ids.get(evaluation.get("metrics_artifact_path") or "")
         predictions_artifact_id = artifact_ids.get(evaluation.get("predictions_artifact_path") or "")
+        required_verified = all(
+            _artifact_locally_verified(artifact_id)
+            for artifact_id in (
+                metrics_artifact_id,
+                predictions_artifact_id,
+            )
+            if artifact_id is not None
+        )
+        locally_verified = 1 if required_verified else 0
+        reportable = (
+            1
+            if required_verified
+            and evaluation.get("locally_verified") is True
+            and evaluation.get("reportable") is True
+            and not evaluation.get("warnings")
+            else 0
+        )
         cursor.execute(
             "INSERT OR IGNORE INTO evaluations "
             "(evaluation_id, fold_id, dataset, split_name, split_protocol, checkpoint_role, "
@@ -561,8 +587,8 @@ def _insert_modern_evaluations(
                 evaluation.get("metric_namespace"),
                 metrics_artifact_id,
                 predictions_artifact_id,
-                1 if evaluation.get("locally_verified") else 0,
-                1 if evaluation.get("reportable") else 0,
+                locally_verified,
+                reportable,
                 json.dumps(list(evaluation.get("warnings") or []), ensure_ascii=False),
             ),
         )

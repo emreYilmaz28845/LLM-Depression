@@ -42,6 +42,7 @@ WANDB_POLICIES = (
     "sync",
     "pending_local_evidence",
     "pending_importer_support",
+    "pending_wandb_reconciliation",
     "quarantine_ambiguous",
     "skip_not_run",
     "skip_derived_only",

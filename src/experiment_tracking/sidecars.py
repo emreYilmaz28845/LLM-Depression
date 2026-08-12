@@ -163,19 +163,87 @@ def read_modern_sidecars(fold_dir: str | Path) -> ModernSidecars | None:
     )
 
 
+def verify_modern_evidence_locally(sidecars: ModernSidecars) -> list[str]:
+    """Return issues when the actual local filesystem contradicts the recorded
+    sidecar hashes and verification flags.
+
+    Checks every hashed artifact marked locally_verified and every evaluation
+    artifact path against the local disk. Un-hashed optional checkpoints such
+    as last_model are deliberately not required. The reportability gate and
+    the registry insertion path both use this helper so they cannot derive
+    contradictory answers from the same files.
+    """
+    fold_dir = Path(sidecars.fold_dir)
+    issues: list[str] = []
+    artifacts_by_path = {
+        artifact.get("path"): artifact for artifact in sidecars.artifacts
+    }
+    for index, artifact in enumerate(sidecars.artifacts):
+        path = artifact.get("path")
+        sha256 = artifact.get("sha256")
+        if not isinstance(path, str) or not path:
+            continue
+        if artifact.get("locally_verified") is not True:
+            continue
+        if sha256 is None:
+            continue
+        full = fold_dir / path
+        if not full.is_file():
+            issues.append(
+                f"artifacts.json[{index}] {path!r} is marked locally_verified "
+                "but is missing locally"
+            )
+            continue
+        actual = sha256_file(full)
+        if actual != sha256:
+            issues.append(
+                f"artifacts.json[{index}] {path!r} actual SHA-256 {actual} "
+                f"differs from recorded SHA-256 {sha256}"
+            )
+    for index, evaluation in enumerate(sidecars.evaluations):
+        for field in ("metrics_artifact_path", "predictions_artifact_path"):
+            path = evaluation.get(field)
+            if not isinstance(path, str) or not path:
+                continue
+            artifact = artifacts_by_path.get(path)
+            if artifact is None:
+                issues.append(
+                    f"evaluations.json[{index}] {field} {path!r} "
+                    "has no artifacts.json record"
+                )
+                continue
+            sha256 = artifact.get("sha256")
+            if sha256 is None:
+                issues.append(
+                    f"evaluations.json[{index}] {field} {path!r} "
+                    "has no recorded SHA-256"
+                )
+                continue
+            full = fold_dir / path
+            if not full.is_file():
+                issues.append(
+                    f"evaluations.json[{index}] {field} {path!r} is missing locally"
+                )
+                continue
+            actual = sha256_file(full)
+            if actual != sha256:
+                issues.append(
+                    f"evaluations.json[{index}] {field} {path!r} actual SHA-256 "
+                    f"{actual} differs from recorded SHA-256 {sha256}"
+                )
+    return issues
+
+
 def reportable_state_issues(sidecars: ModernSidecars) -> list[str]:
     """Fail-closed gate: a sidecar state of REPORTABLE is only consistent when
-    every evaluation and every hashed artifact is locally verified. Returns the
+    every evaluation and every hashed artifact is locally verified and the
+    local filesystem still matches the recorded hashes. Returns the
     contradictions, or an empty list when the state is consistent."""
     if sidecars.state != "REPORTABLE":
         return []
     issues: list[str] = []
-    for index, artifact in enumerate(sidecars.artifacts):
-        if artifact.get("sha256") is not None and artifact.get("locally_verified") is not True:
-            issues.append(
-                f"artifacts.json[{index}] hashed artifact not locally verified: "
-                f"{artifact.get('path')!r}"
-            )
+    if not sidecars.evaluations:
+        issues.append("REPORTABLE attempt has no evaluations")
     for index, evaluation in enumerate(sidecars.evaluations):
         if evaluation.get("locally_verified") is not True:
             issues.append(f"evaluations.json[{index}] not locally verified")
@@ -183,4 +251,5 @@ def reportable_state_issues(sidecars: ModernSidecars) -> list[str]:
             issues.append(f"evaluations.json[{index}] not reportable")
         if evaluation.get("warnings"):
             issues.append(f"evaluations.json[{index}] has warnings: {evaluation['warnings']}")
+    issues.extend(verify_modern_evidence_locally(sidecars))
     return issues
