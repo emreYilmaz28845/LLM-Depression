@@ -255,9 +255,15 @@ PY
                 fi
                 if [ -f "$old_child_dir/status.json" ] && [ -f "$old_child_dir/metadata.json" ]; then
                     OLD_CHILD_ATTEMPT="$(python -c "import json,sys; print(json.load(open('$old_child_dir/metadata.json'))['attempt_id'])")"
-                    python tools/gemma4_hidden_campaign.py transition \
-                        --attempt-dir "$old_child_dir" --to-state FAILED \
-                        --reason "retry launcher closed the failed child attempt" > /dev/null 2>&1 || true
+                    # Close the partial child attempt through the legal
+                    # lifecycle path: DEPLOYED -> SUBMITTED -> FAILED ->
+                    # SUPERSEDED. Intermediate transitions are tolerated
+                    # because the child may already be further along.
+                    for st in DEPLOYED SUBMITTED FAILED; do
+                        python tools/gemma4_hidden_campaign.py transition \
+                            --attempt-dir "$old_child_dir" --to-state "$st" \
+                            --reason "retry launcher closed the failed child attempt" > /dev/null 2>&1 || true
+                    done
                     python tools/gemma4_hidden_campaign.py transition \
                         --attempt-dir "$old_child_dir" --to-state SUPERSEDED \
                         --reason "replaced by retry attempt" > /dev/null 2>&1 || true
