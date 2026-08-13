@@ -541,21 +541,26 @@ def _validate_saved_split(
                 raise ValueError(
                     "Inner-split checkpoint has no saved train_inner_subject_ids."
                 )
-            if saved_train_inner | saved_val_inner != official_train_set:
-                raise ValueError(
-                    "Inner-split checkpoint does not partition the official "
-                    "train partition exactly."
-                )
-            if saved_val_inner != saved_selection:
-                raise ValueError(
-                    "Inner-split checkpoint val_inner set differs from its "
-                    "saved selection set."
-                )
-            if not saved_train_inner.isdisjoint(official_heldout_set):
-                raise ValueError(
-                    "Inner-split checkpoint training subjects overlap the "
-                    "official development partition."
-                )
+            smoke_limit = int(config.get("split", {}).get("smoke_subject_limit", 0) or 0)
+            if smoke_limit <= 0:
+                # The exact official-origins proof applies to production
+                # checkpoints only. Smoke checkpoints are limited subsets and
+                # are validated as subsets below.
+                if saved_train_inner | saved_val_inner != official_train_set:
+                    raise ValueError(
+                        "Inner-split checkpoint does not partition the official "
+                        "train partition exactly."
+                    )
+                if saved_val_inner != saved_selection:
+                    raise ValueError(
+                        "Inner-split checkpoint val_inner set differs from its "
+                        "saved selection set."
+                    )
+                if not saved_train_inner.isdisjoint(official_heldout_set):
+                    raise ValueError(
+                        "Inner-split checkpoint training subjects overlap the "
+                        "official development partition."
+                    )
         else:
             dev_partitions = (
                 {str(config["split"]["train_partition"])}
@@ -827,15 +832,47 @@ def load_subject_selection(path: Path | None) -> dict[str, Any] | None:
 def _apply_subject_selection(
     partition_subject_ids: dict[str, list[str]],
     selection: dict[str, Any] | None,
+    *,
+    config: dict[str, Any] | None = None,
+    split_payload: dict[str, Any] | None = None,
 ) -> dict[str, list[str]]:
-    """Restrict saved partition subjects to the explicit smoke selection."""
+    """Restrict saved partition subjects to the explicit smoke selection.
+
+    Production smokes for the official-test protocol restrict both partitions
+    to subsets of the saved split. Official-development smokes draw their
+    fit subjects from the saved training partition and their eval subjects
+    from the official training pool (train plus selection of the saved split)
+    so that no official-development or official-test subject can enter a
+    smoke; the fit and eval smoke sets must stay disjoint.
+    """
     if selection is None:
         return partition_subject_ids
+    officialdev = (
+        config is not None
+        and str(config.get("split", {}).get("final_eval_partition", "")) == "val"
+        and not str(config.get("split", {}).get("selection_partition", "")).strip()
+    )
     restricted: dict[str, list[str]] = {}
     for partition in ("outer_train", "final_eval"):
         saved = set(partition_subject_ids[partition])
         chosen = set(selection[partition])
-        if not chosen.issubset(saved):
+        if partition == "final_eval" and officialdev:
+            # Official-development smokes must draw their eval subjects from
+            # the official training pool, never from the saved official
+            # development partition or the official test partition.
+            pool = set(partition_subject_ids["outer_train"]) | set(
+                str(item) for item in (split_payload or {}).get("selection_subject_ids", [])
+            )
+            if not chosen.issubset(pool):
+                raise ValueError(
+                    f"Subject-selection final_eval subjects not in the official "
+                    f"training pool: {sorted(chosen - pool)[:10]}"
+                )
+            if chosen & set(selection.get("outer_train", [])):
+                raise ValueError(
+                    "Smoke fit and eval subject sets must stay disjoint."
+                )
+        elif not chosen.issubset(saved):
             raise ValueError(
                 f"Subject-selection {partition} subjects not in the saved split: "
                 f"{sorted(chosen - saved)[:10]}"
@@ -982,7 +1019,7 @@ def main() -> None:
     )
     if subject_selection is not None:
         partition_subject_ids = _apply_subject_selection(
-            partition_subject_ids, subject_selection
+            partition_subject_ids, subject_selection, config=config, split_payload=split_payload
         )
     examples, joint_head_fit_provenance = _partition_examples(
         manifest_rows, config, partition_subject_ids, fold, checkpoint_dir=checkpoint_dir

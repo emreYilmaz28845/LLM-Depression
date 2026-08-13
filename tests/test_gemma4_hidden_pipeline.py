@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +19,7 @@ from src.features.extract_qwen_hidden import (
     _backend_cache_schema,
     _decoder_hidden_size,
     _parent_attempt_id,
+    _validate_saved_split,
     load_subject_selection,
 )
 from src.features.gemma4_hidden_collator import (
@@ -325,3 +327,90 @@ class TestSubjectSelection:
         bad = {"outer_train": ["zzz"], "final_eval": ["y"], "sha256": "0" * 64}
         with pytest.raises(ValueError, match="not in the saved split"):
             _apply_subject_selection(saved, bad)
+
+    def test_officialdev_smoke_selection_draws_eval_from_training_pool(self):
+        # Official-development smokes draw both fit and eval subjects from the
+        # official training pool; official val/test subjects must be refused.
+        saved = {
+            "outer_train": [f"t{i:02d}" for i in range(86)],
+            "final_eval": [f"v{i:02d}" for i in range(35)],
+        }
+        split_payload = {
+            "selection_subject_ids": [f"t{i:03d}" for i in range(86, 107)],
+        }
+        config = {
+            "split": {
+                "final_eval_partition": "val",
+                "selection_partition": "",
+            }
+        }
+        selection = {
+            "outer_train": ["t00", "t01"],
+            "final_eval": ["t086", "t087"],
+            "sha256": "0" * 64,
+        }
+        restricted = _apply_subject_selection(
+            saved, selection, config=config, split_payload=split_payload
+        )
+        assert restricted["outer_train"] == ["t00", "t01"]
+        assert restricted["final_eval"] == ["t086", "t087"]
+        # A val subject or a test subject can never enter a smoke eval set.
+        bad_val = dict(selection, final_eval=["v00"])
+        with pytest.raises(ValueError, match="official training pool"):
+            _apply_subject_selection(saved, bad_val, config=config, split_payload=split_payload)
+        bad_test = dict(selection, final_eval=["e00"])
+        with pytest.raises(ValueError, match="official training pool"):
+            _apply_subject_selection(saved, bad_test, config=config, split_payload=split_payload)
+        # Fit/eval overlap is refused.
+        overlap = dict(selection, final_eval=["t00"])
+        with pytest.raises(ValueError, match="disjoint"):
+            _apply_subject_selection(saved, overlap, config=config, split_payload=split_payload)
+        # Non-officialdev protocol keeps the strict saved-split restriction.
+        plain_config = {"split": {"final_eval_partition": "test", "selection_partition": "val"}}
+        with pytest.raises(ValueError, match="not in the saved split"):
+            _apply_subject_selection(
+                saved, {"outer_train": ["t00"], "final_eval": ["t086"], "sha256": "0" * 64},
+                config=plain_config, split_payload=split_payload,
+            )
+
+    def test_officialdev_smoke_parent_validation_skips_exact_origins_proof(self):
+        # A smoke-trained parent (smoke_subject_limit) carries a limited inner
+        # split; validation must accept it as a subset instead of demanding
+        # the exact 86/21 partition proof.
+        from src.utils import save_json
+
+        with tempfile.TemporaryDirectory() as directory:
+            metadata = Path(directory) / "partitions.json"
+            rows = [
+                *({"subject_id": f"t{i:03d}", "partition": "train"} for i in range(107)),
+                *({"subject_id": f"v{i:02d}", "partition": "val"} for i in range(35)),
+                *({"subject_id": f"e{i:02d}", "partition": "test"} for i in range(47)),
+            ]
+            save_json(rows, metadata)
+            split_payload = {
+                "train_subject_ids": ["t000", "t001"],
+                "selection_subject_ids": ["t086", "t087"],
+                "final_eval_subject_ids": ["v00", "v01"],
+                "train_inner_subject_ids": ["t000", "t001"],
+                "val_inner_subject_ids": ["t086", "t087"],
+                "split_names": {"train": "train_inner", "selection": "val_inner", "final_eval": "final_eval"},
+            }
+            saved = {"split_metadata_path": str(metadata), "split_mode": "fixed"}
+            config = {
+                "dataset": "daic",
+                "split": {
+                    "train_partition": "train",
+                    "final_eval_partition": "val",
+                    "dev_pool_partitions": ["train"],
+                    "smoke_subject_limit": 6,
+                },
+                "evaluation": {"subject_score_aggregation": "mean_score"},
+            }
+            partitions = {
+                "outer_train": ["t000", "t001"],
+                "final_eval": ["v00", "v01"],
+            }
+            assert (
+                _validate_saved_split(saved, config, partitions, 0, 1, split_payload=split_payload)
+                == metadata
+            )
