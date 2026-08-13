@@ -119,6 +119,21 @@ def legacy_wandb_id(attempt_id: str, fold: int, evaluation_id: str) -> str:
     return f"wandb-{canonical_sha256(payload)[:24]}"
 
 
+def wandb_run_id_for_attempt(attempt_id: str, fold: int) -> str:
+    """Deterministic W&B run id for a modern attempt.
+
+    W&B rejects run ids longer than 128 characters. Overlong modern ids are
+    shortened deterministically with a hash suffix so the mapping stays
+    injective and reruns resume the same id.
+    """
+    full = f"{attempt_id}-fold{fold}"
+    if len(full) <= 128:
+        return full
+    suffix = canonical_sha256(full)[:12]
+    keep = max(1, 128 - len(suffix) - len("-fold0") - 1)
+    return f"{full[:keep]}-{suffix}-fold{fold}"
+
+
 def _run_display_name(
     attempt_id: str, fold: int, logical_run_name: str | None, evaluation_id: str | None
 ) -> str:
@@ -256,7 +271,7 @@ def _build_plan(
     if str(attempt_id).startswith("legacy-"):
         run_id = legacy_wandb_id(attempt_id, fold, first_evaluation_id or "")
     else:
-        run_id = f"{attempt_id}-fold{fold}"
+        run_id = wandb_run_id_for_attempt(attempt_id, fold)
 
     slurm_ids = sorted(
         {job["slurm_job_id"] for job in jobs if job.get("slurm_job_id")}
