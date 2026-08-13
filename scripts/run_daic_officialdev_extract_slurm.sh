@@ -34,6 +34,7 @@ BRANCH="${BRANCH:-main}"
 PR_NUMBER="${PR_NUMBER:-}"
 CONDITION="${CONDITION:-}"
 SUBJECT_SELECTION="${SUBJECT_SELECTION:-}"
+SUPERSEDES_ATTEMPT_ID="${SUPERSEDES_ATTEMPT_ID:-}"
 
 if [ ! -f "$ENV_ACTIVATE" ]; then
     echo "Environment activate script not found: $ENV_ACTIVATE" >&2
@@ -81,6 +82,10 @@ PR_ARGS=()
 if [ -n "$PR_NUMBER" ]; then
     PR_ARGS+=(--pr-number "$PR_NUMBER")
 fi
+SUPERSEDES_ARGS=()
+if [ -n "$SUPERSEDES_ATTEMPT_ID" ]; then
+    SUPERSEDES_ARGS+=(--supersedes-attempt-id "$SUPERSEDES_ATTEMPT_ID")
+fi
 if [ -z "$PARENT_ATTEMPT_ID" ]; then
     # The parent attempt ID is minted when the training job starts; read it
     # from the completed parent fold's metadata.json.
@@ -97,6 +102,16 @@ print(attempt_id)
 PY
 )"
 fi
+# Map the launcher's backbone name to the campaign backbone identity:
+# qwen audio modalities run on qwen2audio, qwen text-only on qwen_text.
+CAMPAIGN_BACKBONE="$BACKBONE"
+if [ "$BACKBONE" = "qwen" ]; then
+    if [ "$MODALITY" = "text_only" ]; then
+        CAMPAIGN_BACKBONE="qwen_text"
+    else
+        CAMPAIGN_BACKBONE="qwen2audio"
+    fi
+fi
 python tools/gemma4_hidden_campaign.py create-attempt \
     --repo-root "$PROJECT_ROOT" \
     --attempt-dir "$ATTEMPT_DIR" \
@@ -107,13 +122,15 @@ python tools/gemma4_hidden_campaign.py create-attempt \
     --parent-attempt-id "$PARENT_ATTEMPT_ID" \
     --merged-sha "$MERGED_SHA" \
     --branch "$BRANCH" \
-    --backbone "$BACKBONE" \
-    "${PR_ARGS[@]}"
+    --backbone "$CAMPAIGN_BACKBONE" \
+    "${PR_ARGS[@]}" \
+    "${SUPERSEDES_ARGS[@]}"
 
 campaign_record record-job \
     --job-key extract --job-type hidden_extraction --event-type SUBMITTED \
     --slurm-job-id "${SLURM_JOB_ID:-}" --status PENDING \
     --reason "extraction job submitted by campaign launcher"
+campaign_transition DEPLOYED "attempt deployed with source"
 campaign_transition SUBMITTED "extraction job submitted"
 campaign_record record-job \
     --job-key extract --job-type hidden_extraction --event-type STARTED \
