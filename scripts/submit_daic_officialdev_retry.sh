@@ -180,6 +180,7 @@ PY
     old_fold_dir="$run_root/$old_run_name/fold_0"
 
     new_tag="${RETRY_TAG}"
+    SUPERSEDES_ATTEMPT_ID=""
     new_run_name="daic_officialdev_${backbone}_${modality}_seed1337_${RUN_ID}_${MERGE_SHA:0:8}_${new_tag}"
     new_fold_dir="$run_root/$new_run_name/fold_0"
     child_root="$PROJECT_ROOT/output_model/harmonized_v1_officialdev_heads"
@@ -232,6 +233,38 @@ print(json.dumps([{
 }]))
 PY
 )"
+        # For extract/heads failures, close out the partial child attempt:
+        # append its terminal event and move it to SUPERSEDED so the new
+        # child attempt can link it via supersedes_attempt_id.
+        if [ "$kind" = "extract" ] || [ "$kind" = "heads" ]; then
+            old_child_run_name="$(awk -F'\t' -v b="$backbone" -v m="$modality" '$1==b && $2==m && $3=="extract" {print $6; exit}' "$orig_registry")"
+            if [ -n "$old_child_run_name" ]; then
+                old_child_dir="$child_root/$modality/daic/$old_child_run_name/fold_0"
+                if [ -f "$old_child_dir/jobs.jsonl" ]; then
+                    append_events "$PROJECT_ROOT" "$old_attempt_id" "$fold_0" "$old_child_dir" "$(python - "$terminal" "$kind" "$failed_job" <<'PY'
+import json, sys
+terminal, kind, failed_job = sys.argv[1:4]
+job_type = {"extract": "hidden_extraction", "heads": "hidden_classifier"}[kind]
+print(json.dumps([{
+    "job_key": kind, "job_type": job_type, "event_type": terminal,
+    "slurm_job_id": failed_job, "status": terminal,
+    "reason": "recorded by retry launcher",
+}]))
+PY
+)"
+                fi
+                if [ -f "$old_child_dir/status.json" ] && [ -f "$old_child_dir/metadata.json" ]; then
+                    OLD_CHILD_ATTEMPT="$(python -c "import json,sys; print(json.load(open('$old_child_dir/metadata.json'))['attempt_id'])")"
+                    python tools/gemma4_hidden_campaign.py transition \
+                        --attempt-dir "$old_child_dir" --to-state FAILED \
+                        --reason "retry launcher closed the failed child attempt" > /dev/null 2>&1 || true
+                    python tools/gemma4_hidden_campaign.py transition \
+                        --attempt-dir "$old_child_dir" --to-state SUPERSEDED \
+                        --reason "replaced by retry attempt" > /dev/null 2>&1 || true
+                    SUPERSEDES_ATTEMPT_ID="$OLD_CHILD_ATTEMPT"
+                fi
+            fi
+        fi
     fi
 
     # Submit the affected jobs. For a train failure: all four with the new
@@ -303,7 +336,7 @@ PY
         aux_lane=$((aux_index % MAX_CONCURRENT_AUX))
         aux_throttle="${aux_lanes[$aux_lane]:-}"
         extract_dep="$(dependency_arg "$chain_job" "$aux_throttle")"
-        extract_cmd=(sbatch --parsable --job-name="od-${backbone:0:3}-${modality:0:2}-ex-${RETRY_TAG}" "$extract_dep" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV_ACTIVATE,ATTEMPT_DIR=$child_attempt_dir,PARENT_FOLD_DIR=$parent_dir_for_child,MODEL_PATH=$MODEL_PATH,MODALITY=$modality,BACKBONE=$backbone,RUN_NAME=$child_run_name,GROUP_ID=$GROUP_ID,MERGED_SHA=$MERGE_SHA,BRANCH=$MERGE_BRANCH,PR_NUMBER=$GITHUB_PR,CONDITION=daic_officialdev" "$EXTRACT_WORKER")
+        extract_cmd=(sbatch --parsable --job-name="od-${backbone:0:3}-${modality:0:2}-ex-${RETRY_TAG}" "$extract_dep" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV_ACTIVATE,ATTEMPT_DIR=$child_attempt_dir,PARENT_FOLD_DIR=$parent_dir_for_child,MODEL_PATH=$MODEL_PATH,MODALITY=$modality,BACKBONE=$backbone,RUN_NAME=$child_run_name,GROUP_ID=$GROUP_ID,MERGED_SHA=$MERGE_SHA,BRANCH=$MERGE_BRANCH,PR_NUMBER=$GITHUB_PR,CONDITION=daic_officialdev,SUPERSEDES_ATTEMPT_ID=$SUPERSEDES_ATTEMPT_ID" "$EXTRACT_WORKER")
         extract_raw="$(submit "${extract_cmd[@]}")"
         extract_job="$(job_id "$extract_raw")"
         chain_job="$extract_job"
