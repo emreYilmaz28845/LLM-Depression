@@ -55,9 +55,11 @@ exec 2> >(tee -a "$LOG_ROOT/smoke-train-${SLURM_JOB_ID}.err" >&2)
 # both classes), inner validation only, final development eval disabled by
 # the officialdev config. The run root is isolated so smoke checkpoints can
 # never collide with production. class_balance stays "none": the locked
-# subject-normalized weighting requires it.
+# subject-normalized weighting requires it. The master port is derived from
+# the job id so concurrent torchrun jobs on a shared node cannot collide.
+MASTER_PORT="${MASTER_PORT:-$(( 29000 + (${SLURM_JOB_ID:-0} % 1000) ))}"
 CMD=(
-  torchrun --nproc_per_node=1
+  torchrun --nproc_per_node=1 --master_port="$MASTER_PORT"
   "$PROJECT_ROOT/src/train.py"
   --config "$CONFIG"
   --fold 0
