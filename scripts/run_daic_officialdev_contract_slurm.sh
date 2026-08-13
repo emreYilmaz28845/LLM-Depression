@@ -46,11 +46,14 @@ exec 2> >(tee -a "$LOG_ROOT/contract-${SLURM_JOB_ID}.err" >&2)
 
 if [ "$BACKBONE" = "gemma4" ]; then
     CONTRACT_SCRIPT="$PROJECT_ROOT/scripts/smoke_gemma4_hidden_contract.py"
+    CONTRACT_OUTPUT="$OUTPUT/contract_result.json"
 else
     CONTRACT_SCRIPT="$PROJECT_ROOT/scripts/smoke_qwen_hidden_contract.py"
+    CONTRACT_OUTPUT="$OUTPUT"
 fi
+mkdir -p "$(dirname "$CONTRACT_OUTPUT")"
 python "$CONTRACT_SCRIPT" \
     --model-path "$MODEL_PATH" \
     --adapter-path "$ADAPTER_PATH" \
     --modality "$MODALITY" \
-    --output "$OUTPUT"
+    --output "$CONTRACT_OUTPUT"
