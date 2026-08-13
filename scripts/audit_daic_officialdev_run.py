@@ -94,6 +94,7 @@ def audit_run(
     contexts_root: Path,
     output_model_root: Path,
     sacct_states: dict[str, dict[str, str]],
+    retry_registry_dir: Path | None = None,
 ) -> dict[str, Any]:
     registry = submissions_root / run_id / "jobs.tsv"
     _require(registry.is_file(), f"missing submission registry: {registry}")
@@ -108,14 +109,41 @@ def audit_run(
     _require(len(cells) == 6, f"expected six campaign cells, found {len(cells)}")
     _require(len(job_rows) == 24, f"expected 24 principal jobs, found {len(job_rows)}")
 
-    job_states: dict[str, dict[str, str]] = {}
+    # Merge the bounded retry chains: a failed principal job may have been
+    # replaced by one or more retry jobs recorded in the retry registries.
+    retry_rows: list[dict[str, str]] = []
+    if retry_registry_dir is not None and retry_registry_dir.is_dir():
+        for path in sorted(retry_registry_dir.glob(f"{run_id}/retry_*_jobs.tsv")):
+            with path.open(newline="", encoding="utf-8") as handle:
+                for row in csv.DictReader(handle, delimiter="\t"):
+                    retry_rows.append(row)
+    jobs_by_cell_kind: dict[tuple[str, str, str], list[dict[str, str]]] = {}
     for row in job_rows:
-        job_id = row["job_id"]
-        state = sacct_states.get(job_id)
-        _require(state is not None, f"job {job_id} has no terminal sacct record")
-        job_states[job_id] = state
-        _require(state["state"] == "COMPLETED", f"job {job_id} state is {state['state']}")
-        _require(state["exit_code"] == "0:0", f"job {job_id} exit code is {state['exit_code']}")
+        jobs_by_cell_kind.setdefault((row["backbone"], row["modality"], row["kind"]), []).append(row)
+    for row in retry_rows:
+        jobs_by_cell_kind.setdefault((row["backbone"], row["modality"], row["kind"]), []).append(row)
+
+    job_states: dict[str, dict[str, str]] = {}
+    for cell_key, rows in sorted(jobs_by_cell_kind.items()):
+        for row in rows:
+            job_id = row["job_id"]
+            state = sacct_states.get(job_id)
+            _require(state is not None, f"job {job_id} has no terminal sacct record")
+            job_states[job_id] = state
+        # The cell's job kind is successful only if at least one of its jobs
+        # (principal or retry) completed and every other one is terminal.
+        completed = [r for r in rows if job_states[r["job_id"]]["state"] == "COMPLETED"]
+        non_terminal = [
+            r for r in rows
+            if job_states[r["job_id"]]["state"] not in {"COMPLETED", "FAILED", "CANCELLED"}
+        ]
+        _require(len(completed) == 1, f"cell {cell_key} must have exactly one COMPLETED job, got {len(completed)}")
+        _require(not non_terminal, f"cell {cell_key} has non-terminal jobs: {[r['job_id'] for r in non_terminal]}")
+        completed_row = completed[0]
+        _require(
+            job_states[completed_row["job_id"]]["exit_code"] == "0:0",
+            f"job {completed_row['job_id']} exit code is {job_states[completed_row['job_id']]['exit_code']}",
+        )
 
     attempts: dict[str, Any] = {}
     for (backbone, modality), jobs in sorted(cells.items()):
@@ -153,21 +181,30 @@ def audit_run(
         predictions = list((eval_dir / "predictions_subject_level.csv").read_text(encoding="utf-8").splitlines())
         _require(len(predictions) >= 36, "subject predictions missing (expected header + 35)")
 
-        # Fixed-head child attempt.
-        child_run_name = cells[(backbone, modality)].get("extract")
-        _require(child_run_name, f"child run name missing for {backbone}/{modality}")
-        child_registry_row = next(
-            row for row in job_rows
-            if row["backbone"] == backbone and row["modality"] == modality and row["kind"] == "extract"
-        )
-        child_run_name = child_registry_row["run_name"]
+        # Fixed-head child attempt: with retries there may be several child
+        # dirs per cell; the final one is the only one that reached
+        # COMPLETED_ON_MN5 (older children are FAILED/SUPERSEDED).
         child_root = (
             output_model_root / "harmonized_v1_officialdev_heads"
             if backbone == "qwen"
             else output_model_root / "harmonized_v1_gemma4_officialdev_heads"
         )
-        child_fold = child_root / modality / "daic" / child_run_name / "fold_0"
-        _require(child_fold.is_dir(), f"child fold dir missing: {child_fold}")
+        candidates = sorted(
+            (child_root / modality / "daic").glob(
+                f"daic_officialdev_{backbone}_{modality}_fixed_heads_seed1337_*/fold_0"
+            )
+        )
+        _require(bool(candidates), f"no fixed-head child dirs for {backbone}/{modality}")
+        child_fold = None
+        for candidate in candidates:
+            if not (candidate / "status.json").is_file():
+                continue
+            state = read_status(candidate / "status.json")["state"]
+            if state in {"COMPLETED_ON_MN5", "SYNCED_LOCALLY", "LOCALLY_VALIDATED", "REPORTABLE"}:
+                if child_fold is not None:
+                    raise AuditFailure(f"multiple completed child attempts for {backbone}/{modality}")
+                child_fold = candidate
+        _require(child_fold is not None, f"no completed child attempt for {backbone}/{modality}")
         child_status = read_status(child_fold / "status.json")
         _require(
             child_status["state"] in {"COMPLETED_ON_MN5", "SYNCED_LOCALLY", "LOCALLY_VALIDATED", "REPORTABLE"},
@@ -252,6 +289,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--submissions-root", type=Path, default=PROJECT_ROOT / "outputs/daic_officialdev_submissions")
     parser.add_argument("--contexts-root", type=Path, default=PROJECT_ROOT / "outputs/daic_officialdev_experiment_contexts")
     parser.add_argument("--output-model-root", type=Path, default=PROJECT_ROOT / "output_model")
+    parser.add_argument(
+        "--retry-registry-dir", type=Path, default=None,
+        help="Directory containing the campaign retry registries (default: submissions-root).",
+    )
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args(argv)
     if not args.sacct_file and not args.use_live_sacct:
@@ -273,6 +314,7 @@ def main(argv: list[str] | None = None) -> int:
             contexts_root=args.contexts_root,
             output_model_root=args.output_model_root,
             sacct_states=states,
+            retry_registry_dir=args.retry_registry_dir,
         )
     except AuditFailure as error:
         print(f"AUDIT FAILED: {error}", file=sys.stderr)
