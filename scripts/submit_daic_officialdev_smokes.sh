@@ -150,8 +150,15 @@ for backbone in qwen gemma4; do
         SELECTION="$SMOKE_RUN_ROOT/selections/${backbone}_${modality}.json"
         ATTEMPT_DIR="$SMOKE_RUN_ROOT/attempts/${backbone}_${modality}"
         SMOKE_NAME="smoke_${backbone}_${modality}_${SMOKE_ID}"
-        TRAIN_JOB="$(awk -F'\t' -v b="$backbone" '$2==b && $1=="train" {print $4; exit}' "$SMOKE_RUN_ROOT/jobs.tsv")"
-        [ -n "$TRAIN_JOB" ] || { echo "Missing smoke train job for $backbone" >&2; exit 3; }
+        TRAIN_JOB=""
+        if [ -f "$SMOKE_RUN_ROOT/jobs.tsv" ]; then
+            TRAIN_JOB="$(awk -F'\t' -v b="$backbone" '$1=="train" && $2==b {print $4; exit}' "$SMOKE_RUN_ROOT/jobs.tsv")"
+        fi
+        if [ "$DRY_RUN" = 1 ]; then
+            TRAIN_JOB="dry_train_${backbone}"
+        else
+            [ -n "$TRAIN_JOB" ] || { echo "Missing smoke train job for $backbone" >&2; exit 3; }
+        fi
         EXTRACT_RAW="$(submit sbatch --parsable --job-name="od-smk-ex-${backbone:0:3}-${modality:0:2}" \
             --dependency="afterok:$TRAIN_JOB" \
             --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV,ATTEMPT_DIR=$ATTEMPT_DIR,PARENT_FOLD_DIR=$PARENT_FOLD_DIR,MODEL_PATH=$MODEL,CONDITION=daic_officialdev_smoke,SELECTION=$SELECTION" \
