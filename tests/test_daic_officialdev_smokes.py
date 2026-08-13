@@ -211,9 +211,9 @@ def test_smoke_submitter_dry_run_has_20_jobs_and_no_mutation() -> None:
     result = _run(["bash", str(SMOKE_SUBMITTER)], env=env)
     assert result.returncode == 0, result.stderr
     dry_lines = [line for line in result.stderr.splitlines() if line.startswith("DRY_RUN")]
-    assert len(dry_lines) == 20, f"expected 20 smoke jobs, got {len(dry_lines)}"
+    assert len(dry_lines) == 22, f"expected 22 smoke jobs, got {len(dry_lines)}"
     assert "contracts=6" in result.stdout
-    assert "trains=2" in result.stdout
+    assert "trains=4" in result.stdout
     assert "extract=6" in result.stdout
     assert "heads=6" in result.stdout
     assert not smoke_root.exists(), "dry run must not create the smoke root"
