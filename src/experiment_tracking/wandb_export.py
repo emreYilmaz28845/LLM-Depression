@@ -124,7 +124,14 @@ def _run_display_name(
 ) -> str:
     if logical_run_name is None:
         return f"attempt-{attempt_id[-8:]}-fold{fold}"
-    return f"{logical_run_name}-attempt{attempt_id[-8:]}-fold{fold}"
+    suffix = f"-attempt{attempt_id[-8:]}-fold{fold}"
+    name = f"{logical_run_name}{suffix}"
+    # W&B rejects run names longer than its limit; the run id stays the
+    # deterministic identity, the name is display-only, so truncate.
+    if len(name) > 100:
+        keep = max(1, 100 - len(suffix) - 3)
+        name = f"{logical_run_name[:keep]}...{suffix}"
+    return name
 
 
 def _history_curves(training_history: Any) -> tuple[dict[str, list[dict[str, Any]]], bool]:
