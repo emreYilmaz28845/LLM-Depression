@@ -114,6 +114,7 @@ def audit_run(
     output_model_root: Path,
     sacct_states: dict[str, dict[str, str]],
     retry_registry_dir: Path | None = None,
+    transition_completed: bool = False,
 ) -> dict[str, Any]:
     registry = submissions_root / run_id / "jobs.tsv"
     _require(registry.is_file(), f"missing submission registry: {registry}")
@@ -185,6 +186,19 @@ def audit_run(
         fold_dir = Path(run_root) / run_name / f"fold_{context['fold']}"
         _require(fold_dir.is_dir(), f"training fold dir missing: {fold_dir}")
         status = read_status(fold_dir / "status.json")
+        if transition_completed and status["state"] == "RUNNING":
+            # The training job completed but the training path never leaves
+            # RUNNING; the audit performs the official COMPLETED_ON_MN5
+            # transition through the lifecycle API.
+            train_job_state = job_states.get(jobs["train"], {}).get("state")
+            eval_job_state = job_states.get(jobs["eval"], {}).get("state")
+            if train_job_state == "COMPLETED" and eval_job_state == "COMPLETED":
+                from src.experiment_tracking.lifecycle import StatusRecord, write_status
+
+                record = StatusRecord.from_dict(read_json(fold_dir / "status.json"))
+                record.transition("COMPLETED_ON_MN5", reason="campaign run audit confirmed terminal jobs")
+                write_status(fold_dir / "status.json", record)
+                status = read_status(fold_dir / "status.json")
         _require(
             status["state"] in {"COMPLETED_ON_MN5", "SYNCED_LOCALLY", "LOCALLY_VALIDATED", "REPORTABLE"},
             f"training attempt {training_attempt} state is {status['state']}",
@@ -276,7 +290,6 @@ def audit_run(
             "training_attempt": training_attempt,
             "training_state": status["state"],
             "training_fold_dir": str(fold_dir),
-            "child_run_name": child_run_name,
             "child_state": child_status["state"],
             "child_fold_dir": str(child_fold),
             "jobs": {kind: jobs[kind] for kind in ("train", "eval", "extract", "heads")},
@@ -315,6 +328,8 @@ def main(argv: list[str] | None = None) -> int:
         "--retry-registry-dir", type=Path, default=None,
         help="Directory containing the campaign retry registries (default: submissions-root).",
     )
+    parser.add_argument("--transition-completed", action="store_true",
+                        help="Transition RUNNING training attempts to COMPLETED_ON_MN5 when their jobs completed.")
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args(argv)
     if not args.sacct_file and not args.use_live_sacct:
@@ -337,6 +352,7 @@ def main(argv: list[str] | None = None) -> int:
             output_model_root=args.output_model_root,
             sacct_states=states,
             retry_registry_dir=args.retry_registry_dir,
+            transition_completed=args.transition_completed,
         )
     except AuditFailure as error:
         print(f"AUDIT FAILED: {error}", file=sys.stderr)
