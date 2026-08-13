@@ -577,66 +577,346 @@ def _fmt(v: float | None) -> str:
 # ---------------------------------------------------------------------------
 # DAIC official-development comparison block (Qwen + Gemma 4, teacher-forced)
 # and head ablation block (all eighteen backbone/modality/head cells).
-# Placeholders only: no invented values. Tables are filled and sheets are
-# populated when the local evidence is verified (Phase 11 of
-# docs/DAIC_OFFICIAL_DEV_QWEN_GEMMA_RUNBOOK.md). Official-test rows elsewhere
-# in this workbook are untouched.
+# DAIC official-development campaign (runbook
+# docs/DAIC_OFFICIAL_DEV_QWEN_GEMMA_RUNBOOK.md). Every value was recomputed
+# locally from synced predictions and cross-checked against the registry
+# (tools/exp.py provenance). Official-test rows elsewhere in this workbook
+# are untouched.
 DAIC_OFFICIALDEV_CAMPAIGN = {
-    "campaign_id": None,
-    "group_id": None,
-    "source_sha": None,
-    "manifest_sha256": None,
-    "split_sha256": None,
+    "campaign_id": "prod_20260813T150000Z_22f85e6e",
+    "group_id": "daic-officialdev-qwen-gemma-v1-22f85e6e473b",
+    "source_sha": "22f85e6e473bf8f4e2d0d71cc9ed0ea1098877d7",
+    "github_issue": 60,
+    "github_pr": 52,
+    "manifest_sha256": "72e2dd204b915ccba3ebf922f030531fe5678b3ea8c9c52b81b41242fe9dda17",
+    "split_sha256": "441333e0c88845eeacba9ea5355a8920cdd1f70e8cf7a7c15b9547b46da51473",
 }
-# (modality, backbone) -> macro-F1 for the six teacher-forced rows.
-DAIC_OFFICIALDEV_TEACHER_FORCED: dict[tuple[str, str], float | None] = {}
-# (modality, backbone, head) -> (macro_f1, positive_f1, accuracy, precision, recall)
-DAIC_OFFICIALDEV_HEADS: dict[tuple[str, str, str], tuple[float | None, ...]] = {}
+# Literature values on the official DAIC development partition, treated as
+# Macro-F1 per the researcher decision; citations preserved.
+DAIC_OFFICIALDEV_LITERATURE = [
+    ("DepresInstruct (Li et al., 2025)", "Qwen2-Audio-7B", "Audio only", 0.6667, 0.7714,
+     "DAIC development", "C — reported as F1; shown as Macro-F1 per researcher decision",
+     "https://doi.org/10.1016/j.inffus.2025.104077"),
+    ("DepresInstruct (Li et al., 2025)", "Qwen2-7B", "Text only", 0.7273, 0.7429,
+     "DAIC development", "C — reported as F1; shown as Macro-F1 per researcher decision",
+     "https://doi.org/10.1016/j.inffus.2025.104077"),
+    ("DepresInstruct (Li et al., 2025)", "Qwen2-Audio-7B", "Audio + Text", 0.7619, 0.8571,
+     "DAIC development", "C — reported as F1; shown as Macro-F1 per researcher decision",
+     "https://doi.org/10.1016/j.inffus.2025.104077"),
+    ("IT HEARS — Qwen2-7B baseline", "Qwen2-7B", "Text only", 0.564, None,
+     "DAIC development", "C — paper reports F1; baseline; no validation/accuracy reported",
+     "https://arxiv.org/abs/2511.19877"),
+    ("IT HEARS — Qwen2-Audio-7B", "Qwen2-Audio-7B", "Audio + Text", 0.72, None,
+     "DAIC development", "C — paper reports F1; no validation/accuracy reported",
+     "https://arxiv.org/abs/2511.19877"),
+]
+
+DAIC_OFFICIALDEV_TEACHER_FORCED: dict[tuple[str, str], dict[str, Any]] = {
+    ("audio_only", "qwen"): {
+        "macro_f1": 0.3859649122807018,
+        "positive_f1": 0.0,
+        "accuracy": 0.6285714285714286,
+        "precision": 0.0,
+        "recall": 0.0,
+        "selected_epoch": 7,
+        "attempt_id": "20260813T142847Z-daic_officialdev_qwen_audio_only_seed1337-22f85e6e-9c326e1d",
+        "evaluation_id": "eval-7c1ef60108d44e8081fa66cd",
+    },
+    ("audio_text", "qwen"): {
+        "macro_f1": 0.6258503401360545,
+        "positive_f1": 0.4761904761904762,
+        "accuracy": 0.6857142857142857,
+        "precision": 0.5555555555555556,
+        "recall": 0.4166666666666667,
+        "selected_epoch": 2,
+        "attempt_id": "20260813T142848Z-daic_officialdev_qwen_audio_text_seed1337-22f85e6e-16e99f52",
+        "evaluation_id": "eval-c4dd0ff1892bd0e3a39cc9bb",
+    },
+    ("text_only", "qwen"): {
+        "macro_f1": 0.7086031452358927,
+        "positive_f1": 0.6086956521739131,
+        "accuracy": 0.7428571428571429,
+        "precision": 0.6363636363636364,
+        "recall": 0.5833333333333334,
+        "selected_epoch": 1,
+        "attempt_id": "20260813T142848Z-daic_officialdev_qwen_text_only_seed1337-22f85e6e-713b6d93",
+        "evaluation_id": "eval-6a466b499f152ea1b9c3c489",
+    },
+    ("audio_only", "gemma4"): {
+        "macro_f1": 0.39655172413793105,
+        "positive_f1": 0.0,
+        "accuracy": 0.6571428571428571,
+        "precision": 0.0,
+        "recall": 0.0,
+        "selected_epoch": 1,
+        "attempt_id": "20260813T142848Z-daic_officialdev_gemma4_audio_only_seed1337-22f85e6e-bb8bbbed",
+        "evaluation_id": "eval-6df29e41d91c3bd14a35b17a",
+    },
+    ("audio_text", "gemma4"): {
+        "macro_f1": 0.7552447552447553,
+        "positive_f1": 0.6923076923076924,
+        "accuracy": 0.7714285714285715,
+        "precision": 0.6428571428571429,
+        "recall": 0.75,
+        "selected_epoch": 2,
+        "attempt_id": "20260813T142848Z-daic_officialdev_gemma4_audio_text_seed1337-22f85e6e-df9dad6b",
+        "evaluation_id": "eval-0eb033332e85c3a84b70b52e",
+    },
+    ("text_only", "gemma4"): {
+        "macro_f1": 0.7822222222222222,
+        "positive_f1": 0.7199999999999999,
+        "accuracy": 0.8,
+        "precision": 0.6923076923076923,
+        "recall": 0.75,
+        "selected_epoch": 4,
+        "attempt_id": "20260813T142849Z-daic_officialdev_gemma4_text_only_seed1337-22f85e6e-75450bbe",
+        "evaluation_id": "eval-8a5d52df50d78e5dbeae4008",
+    },
+}
+
+DAIC_OFFICIALDEV_HEADS: dict[tuple[str, str, str], dict[str, Any]] = {
+    ("audio_only", "qwen", "logreg"): {
+        "macro_f1": 0.5716783216783217,
+        "positive_f1": 0.4615384615384615,
+        "accuracy": 0.6,
+        "precision": 0.42857142857142855,
+        "recall": 0.5,
+        "run_name": "daic_officialdev_qwen_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r4",
+        "attempt_id": "20260813T154455Z-daic_officialdev_qwen_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r4-90c6cc39-269b5f37",
+        "evaluation_id": "eval-e84ce4e0072e72d7eff086bb",
+        "backend": "qwen_hidden_logreg_raw",
+    },
+    ("audio_only", "qwen", "xgb"): {
+        "macro_f1": 0.4484848484848484,
+        "positive_f1": 0.13333333333333333,
+        "accuracy": 0.6285714285714286,
+        "precision": 0.3333333333333333,
+        "recall": 0.08333333333333333,
+        "run_name": "daic_officialdev_qwen_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r4",
+        "attempt_id": "20260813T154455Z-daic_officialdev_qwen_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r4-90c6cc39-269b5f37",
+        "evaluation_id": "eval-125e3b8f5bcc860eb4369ceb",
+        "backend": "qwen_hidden_xgb_raw",
+    },
+    ("audio_text", "qwen", "logreg"): {
+        "macro_f1": 0.6577777777777778,
+        "positive_f1": 0.5599999999999999,
+        "accuracy": 0.6857142857142857,
+        "precision": 0.5384615384615384,
+        "recall": 0.5833333333333334,
+        "run_name": "daic_officialdev_qwen_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5",
+        "attempt_id": "20260813T163105Z-daic_officialdev_qwen_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-b7d64c2f",
+        "evaluation_id": "eval-536fc321c7611b917b42fdf6",
+        "backend": "qwen_hidden_logreg_raw",
+    },
+    ("audio_text", "qwen", "xgb"): {
+        "macro_f1": 0.5304437564499485,
+        "positive_f1": 0.3157894736842105,
+        "accuracy": 0.6285714285714286,
+        "precision": 0.42857142857142855,
+        "recall": 0.25,
+        "run_name": "daic_officialdev_qwen_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5",
+        "attempt_id": "20260813T163105Z-daic_officialdev_qwen_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-b7d64c2f",
+        "evaluation_id": "eval-c9a4f95ffa07bebb8aa2c104",
+        "backend": "qwen_hidden_xgb_raw",
+    },
+    ("text_only", "qwen", "logreg"): {
+        "macro_f1": 0.6938775510204083,
+        "positive_f1": 0.5714285714285715,
+        "accuracy": 0.7428571428571429,
+        "precision": 0.6666666666666666,
+        "recall": 0.5,
+        "run_name": "daic_officialdev_qwen_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r3",
+        "attempt_id": "20260813T153611Z-daic_officialdev_qwen_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r3-90c6cc39-df721ed6",
+        "evaluation_id": "eval-225153901c0e8896c9900e4a",
+        "backend": "qwen_hidden_logreg_raw",
+    },
+    ("text_only", "qwen", "xgb"): {
+        "macro_f1": 0.6026831785345718,
+        "positive_f1": 0.4210526315789474,
+        "accuracy": 0.6857142857142857,
+        "precision": 0.5714285714285714,
+        "recall": 0.3333333333333333,
+        "run_name": "daic_officialdev_qwen_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r3",
+        "attempt_id": "20260813T153611Z-daic_officialdev_qwen_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r3-90c6cc39-df721ed6",
+        "evaluation_id": "eval-28be66b87b3641742e847e9d",
+        "backend": "qwen_hidden_xgb_raw",
+    },
+    ("audio_only", "gemma4", "logreg"): {
+        "macro_f1": 0.6499999999999999,
+        "positive_f1": 0.5,
+        "accuracy": 0.7142857142857143,
+        "precision": 0.625,
+        "recall": 0.4166666666666667,
+        "run_name": "daic_officialdev_gemma4_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_1327849b_r2",
+        "attempt_id": "20260813T151846Z-daic_officialdev_gemma4_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_1327849b_r2-1327849b-640f4031",
+        "evaluation_id": "eval-3e3a37d62c53729cf5db69b5",
+        "backend": "gemma4_hidden_logreg_raw",
+    },
+    ("audio_only", "gemma4", "xgb"): {
+        "macro_f1": 0.39655172413793105,
+        "positive_f1": 0.0,
+        "accuracy": 0.6571428571428571,
+        "precision": 0.0,
+        "recall": 0.0,
+        "run_name": "daic_officialdev_gemma4_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_1327849b_r2",
+        "attempt_id": "20260813T151846Z-daic_officialdev_gemma4_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_1327849b_r2-1327849b-640f4031",
+        "evaluation_id": "eval-ad6e2a2ce408aed6f96f39d3",
+        "backend": "gemma4_hidden_xgb_raw",
+    },
+    ("audio_text", "gemma4", "logreg"): {
+        "macro_f1": 0.6829710144927537,
+        "positive_f1": 0.5833333333333334,
+        "accuracy": 0.7142857142857143,
+        "precision": 0.5833333333333334,
+        "recall": 0.5833333333333334,
+        "run_name": "daic_officialdev_gemma4_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r6",
+        "attempt_id": "20260813T175117Z-daic_officialdev_gemma4_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r6-90c6cc39-438b3be6",
+        "evaluation_id": "eval-70d39c1caadc8712d02ae7fb",
+        "backend": "gemma4_hidden_logreg_raw",
+    },
+    ("audio_text", "gemma4", "xgb"): {
+        "macro_f1": 0.6829710144927537,
+        "positive_f1": 0.5833333333333334,
+        "accuracy": 0.7142857142857143,
+        "precision": 0.5833333333333334,
+        "recall": 0.5833333333333334,
+        "run_name": "daic_officialdev_gemma4_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r6",
+        "attempt_id": "20260813T175117Z-daic_officialdev_gemma4_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r6-90c6cc39-438b3be6",
+        "evaluation_id": "eval-e480a1844b709554d1d22b7c",
+        "backend": "gemma4_hidden_xgb_raw",
+    },
+    ("text_only", "gemma4", "logreg"): {
+        "macro_f1": 0.7619047619047619,
+        "positive_f1": 0.6666666666666666,
+        "accuracy": 0.8,
+        "precision": 0.7777777777777778,
+        "recall": 0.5833333333333334,
+        "run_name": "daic_officialdev_gemma4_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5",
+        "attempt_id": "20260813T163105Z-daic_officialdev_gemma4_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-bee30555",
+        "evaluation_id": "eval-846a6445ccd968563f454777",
+        "backend": "gemma4_hidden_logreg_raw",
+    },
+    ("text_only", "gemma4", "xgb"): {
+        "macro_f1": 0.6685606060606061,
+        "positive_f1": 0.5454545454545454,
+        "accuracy": 0.7142857142857143,
+        "precision": 0.6,
+        "recall": 0.5,
+        "run_name": "daic_officialdev_gemma4_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5",
+        "attempt_id": "20260813T163105Z-daic_officialdev_gemma4_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-bee30555",
+        "evaluation_id": "eval-f5173eec4fb4b8a5fb612e04",
+        "backend": "gemma4_hidden_xgb_raw",
+    },
+}
+
+
+TF_EVIDENCE = {
+    ("audio_only", "qwen"): "output_model/harmonized_v1_officialdev/audio_only/daic/daic_officialdev_qwen_audio_only_seed1337_prod_20260813T150000Z_22f85e6e_22f85e6e/fold_0/best_model/standalone_eval/",
+    ("audio_text", "qwen"): "output_model/harmonized_v1_officialdev/audio_text/daic/daic_officialdev_qwen_audio_text_seed1337_prod_20260813T150000Z_22f85e6e_22f85e6e/fold_0/best_model/standalone_eval/",
+    ("text_only", "qwen"): "output_model/harmonized_v1_officialdev/text_only/daic/daic_officialdev_qwen_text_only_seed1337_prod_20260813T150000Z_22f85e6e_22f85e6e/fold_0/best_model/standalone_eval/",
+    ("audio_only", "gemma4"): "output_model/harmonized_v1_gemma4_officialdev/audio_only/daic/daic_officialdev_gemma4_audio_only_seed1337_prod_20260813T150000Z_22f85e6e_22f85e6e/fold_0/best_model/standalone_eval/",
+    ("audio_text", "gemma4"): "output_model/harmonized_v1_gemma4_officialdev/audio_text/daic/daic_officialdev_gemma4_audio_text_seed1337_prod_20260813T150000Z_22f85e6e_22f85e6e/fold_0/best_model/standalone_eval/",
+    ("text_only", "gemma4"): "output_model/harmonized_v1_gemma4_officialdev/text_only/daic/daic_officialdev_gemma4_text_only_seed1337_prod_20260813T150000Z_22f85e6e_22f85e6e/fold_0/best_model/standalone_eval/",
+}
+HEAD_EVIDENCE = {
+    ("audio_only", "qwen"): "output_model/harmonized_v1_officialdev_heads/audio_only/daic/",
+    ("audio_text", "qwen"): "output_model/harmonized_v1_officialdev_heads/audio_text/daic/",
+    ("text_only", "qwen"): "output_model/harmonized_v1_officialdev_heads/text_only/daic/",
+    ("audio_only", "gemma4"): "output_model/harmonized_v1_gemma4_officialdev_heads/audio_only/daic/",
+    ("audio_text", "gemma4"): "output_model/harmonized_v1_gemma4_officialdev_heads/audio_text/daic/",
+    ("text_only", "gemma4"): "output_model/harmonized_v1_gemma4_officialdev_heads/text_only/daic/",
+}
+BACKBONE_LABELS = {"qwen": "Qwen", "gemma4": "Gemma 4 12B IT"}
+MODALITY_SHORT = {"audio_only": "A", "audio_text": "A+T", "text_only": "T"}
+HEAD_LABELS = {"logreg": "LogReg raw", "xgb": "XGBoost raw"}
 
 
 def build_daic_officialdev_comparison(wb: Workbook, *, detailed: bool) -> None:
-    """DAIC LLM Comparison — the six official-development teacher-forced rows
-    plus the cited literature Macro-F1 column. Populated only from verified
-    local evidence; placeholders stay blank until Phase 11."""
+    """DAIC LLM Comparison — literature and the six official-development
+    teacher-forced rows (35-subject official development partition)."""
     ws = wb.create_sheet("DAIC LLM Comparison")
-    _widths(ws, {"A": 24, "B": 14, "C": 14, "D": 14, "E": 14, "F": 40})
-    _title(ws, "DAIC LLM Comparison — official development partition (35 subjects)", 6)
+    _widths(ws, {"A": 30, "B": 18, "C": 13, "D": 13, "E": 13, "F": 13, "G": 22, "H": 46, "I": 46})
+    _title(ws, "DAIC-WOZ LLM literature comparison — official development partition (35 subjects)", 9)
+    _section(ws, 2, "Cited literature (DAIC official development partition)", 9)
     _header_row(
-        ws, 2,
-        ["Backbone", "Modality", "Macro-F1", "Positive-F1", "Selected epoch", "Evidence"],
+        ws, 3,
+        ["Study", "Backbone", "Modality", "Macro-F1", "Accuracy", "Partition", "Comparability", "Source", "Note"],
     )
-    row = 3
-    for (modality, backbone), macro_f1 in sorted(DAIC_OFFICIALDEV_TEACHER_FORCED.items()):
-        if macro_f1 is None:
-            continue
-        ws.cell(row, 1, backbone)
-        ws.cell(row, 2, modality)
-        for col, value in ((3, macro_f1), (4, None), (5, None), (6, None)):
-            ws.cell(row, col, value)
+    row = 4
+    for study, backbone, modality, macro, acc, partition, comparability, source in DAIC_OFFICIALDEV_LITERATURE:
+        ws.cell(row, 1, study)
+        ws.cell(row, 2, backbone)
+        ws.cell(row, 3, modality)
+        ws.cell(row, 4, macro)
+        ws.cell(row, 5, acc)
+        ws.cell(row, 6, partition)
+        ws.cell(row, 7, comparability)
+        ws.cell(row, 8, source)
+        row += 1
+    _section(ws, row, "Ours — official development (35 subjects, seed 1337, fold 0, best_model)", 9)
+    row += 1
+    _header_row(
+        ws, row,
+        ["Backbone", "Modality", "Macro-F1", "Positive-F1", "Accuracy", "Selected epoch", "Support", "Evidence", "Verification"],
+    )
+    row += 1
+    for (modality, backbone) in sorted(DAIC_OFFICIALDEV_TEACHER_FORCED):
+        value = DAIC_OFFICIALDEV_TEACHER_FORCED[(modality, backbone)]
+        evidence = TF_EVIDENCE[(modality, backbone)]
+        ws.cell(row, 1, BACKBONE_LABELS[backbone])
+        ws.cell(row, 2, MODALITY_LABELS[modality])
+        ws.cell(row, 3, value["macro_f1"])
+        ws.cell(row, 4, value["positive_f1"])
+        ws.cell(row, 5, value["accuracy"])
+        ws.cell(row, 6, value["selected_epoch"])
+        ws.cell(row, 7, 35)
+        ws.cell(row, 8, evidence + "metrics_original_teacher_forced.json + predictions_subject_level.csv")
+        ws.cell(row, 9, "recomputed locally from predictions; attempt " + value["attempt_id"][:20] + "…")
+        for col in (3, 4, 5):
+            ws.cell(row, col).number_format = "0.0000"
         row += 1
 
 
 def build_daic_officialdev_heads(wb: Workbook, *, detailed: bool) -> None:
     """DAIC Head Ablation — all eighteen official-development
-    backbone/modality/head cells. Populated only from verified local evidence;
-    placeholders stay blank until Phase 11."""
+    backbone/modality/head cells (teacher-forced, LogReg, XGBoost)."""
     ws = wb.create_sheet("DAIC Head Ablation")
-    _widths(ws, {"A": 24, "B": 14, "C": 14, "D": 14, "E": 14, "F": 14, "G": 14, "H": 40})
-    _title(ws, "DAIC Head Ablation — official development partition (35 subjects)", 8)
+    _widths(ws, {"A": 16, "B": 14, "C": 14, "D": 13, "E": 13, "F": 13, "G": 13, "H": 13, "I": 10, "J": 50, "K": 40})
+    _title(ws, "DAIC-WOZ downstream-head ablation — official development partition (35 subjects)", 11)
     _header_row(
         ws, 2,
-        ["Backbone", "Modality", "Head", "Macro-F1", "Positive-F1", "Accuracy", "Precision", "Evidence"],
+        ["Backbone", "Modality", "Head", "Macro-F1", "Positive-F1", "Accuracy", "Precision", "Recall", "Support", "Evidence", "Verification"],
     )
     row = 3
-    for (modality, backbone, head), values in sorted(DAIC_OFFICIALDEV_HEADS.items()):
-        if not values or values[0] is None:
-            continue
-        ws.cell(row, 1, backbone)
-        ws.cell(row, 2, modality)
-        ws.cell(row, 3, head)
-        for col, value in zip((4, 5, 6, 7), values[:4]):
-            ws.cell(row, col, value)
-        row += 1
+    for modality in ("audio_only", "audio_text", "text_only"):
+        for backbone in ("qwen", "gemma4"):
+            tf = DAIC_OFFICIALDEV_TEACHER_FORCED[(modality, backbone)]
+            tf_evidence = TF_EVIDENCE[(modality, backbone)]
+            ws.cell(row, 1, BACKBONE_LABELS[backbone])
+            ws.cell(row, 2, MODALITY_LABELS[modality])
+            ws.cell(row, 3, "Teacher-forced")
+            for col, key in ((4, "macro_f1"), (5, "positive_f1"), (6, "accuracy"), (7, "precision"), (8, "recall")):
+                ws.cell(row, col, tf[key])
+            ws.cell(row, 9, 35)
+            ws.cell(row, 10, tf_evidence + "metrics_original_teacher_forced.json + predictions_subject_level.csv")
+            ws.cell(row, 11, "recomputed locally; attempt " + tf["attempt_id"][:20] + "…, epoch " + str(tf["selected_epoch"]))
+            for col in (4, 5, 6, 7, 8):
+                ws.cell(row, col).number_format = "0.0000"
+            row += 1
+            for variant in ("logreg", "xgb"):
+                head = DAIC_OFFICIALDEV_HEADS[(modality, backbone, variant)]
+                head_evidence = HEAD_EVIDENCE[(modality, backbone)] + head["run_name"] + "/fold_0/hidden_classifiers/" + variant + "/"
+                ws.cell(row, 1, BACKBONE_LABELS[backbone])
+                ws.cell(row, 2, MODALITY_LABELS[modality])
+                ws.cell(row, 3, HEAD_LABELS[variant])
+                for col, key in ((4, "macro_f1"), (5, "positive_f1"), (6, "accuracy"), (7, "precision"), (8, "recall")):
+                    ws.cell(row, col, head[key])
+                ws.cell(row, 9, 35)
+                ws.cell(row, 10, head_evidence + "metrics.json + predictions_subject_level.csv")
+                ws.cell(row, 11, "recomputed locally by verify-local; backend " + head["backend"])
+                for col in (4, 5, 6, 7, 8):
+                    ws.cell(row, col).number_format = "0.0000"
+                row += 1
 
 
 def build_gemma_vs_qwen(wb: Workbook) -> None:
@@ -1180,8 +1460,77 @@ def build_provenance(wb: Workbook, *, detailed: bool) -> None:
             artifact, "recomputed from predictions_subject_level.jsonl (metrics match)")
 
     build_gemma4_provenance(ws, put)
+    build_daic_officialdev_provenance(ws, put)
 
     ws.freeze_panes = "A3"
+
+
+def build_daic_officialdev_provenance(ws, put) -> None:
+    """Provenance rows for the DAIC official-development campaign: six
+    teacher-forced evaluations and twelve fixed-head evaluations on the 35
+    official development subjects."""
+    campaign = DAIC_OFFICIALDEV_CAMPAIGN
+    base_source = (
+        f"campaign {campaign['campaign_id']}, group {campaign['group_id']}, "
+        f"source {campaign['source_sha'][:8]} (clean main), Issue #{campaign['github_issue']} "
+        f"/ PR #{campaign['github_pr']}, manifest {campaign['manifest_sha256'][:12]}… "
+        f"/ split {campaign['split_sha256'][:12]}…"
+    )
+    tf_agg = (
+        "official development partition (35 subjects), subject mean-score, "
+        "teacher-forced, binary-strict, harmonized_all_windows_full_coverage, "
+        "daic_official_train_inner_split_dev_evaluation"
+    )
+    for modality in ("audio_only", "audio_text", "text_only"):
+        for backbone in ("qwen", "gemma4"):
+            value = DAIC_OFFICIALDEV_TEACHER_FORCED[(modality, backbone)]
+            evidence = TF_EVIDENCE[(modality, backbone)]
+            method = "Qwen teacher-forced" if backbone == "qwen" else "Gemma 4 teacher-forced"
+            source = (
+                f"{base_source}, attempt {value['attempt_id']}, eval {value['evaluation_id']}, "
+                f"selected epoch {value['selected_epoch']}, best_model"
+            )
+            put("DAIC official development", "DAIC", MODALITY_LABELS[modality], method + " macro-F1",
+                value["macro_f1"], source, tf_agg,
+                evidence + "metrics_original_teacher_forced.json + predictions_subject_level.csv",
+                "recomputed locally from synced predictions; REPORTABLE")
+            put("DAIC official development", "DAIC", MODALITY_LABELS[modality], method + " positive-F1",
+                value["positive_f1"], source, tf_agg,
+                evidence + "metrics_original_teacher_forced.json + predictions_subject_level.csv",
+                "recomputed locally from synced predictions; REPORTABLE")
+            put("DAIC official development", "DAIC", MODALITY_LABELS[modality], method + " accuracy",
+                value["accuracy"], source, tf_agg,
+                evidence + "metrics_original_teacher_forced.json + predictions_subject_level.csv",
+                "recomputed locally from synced predictions; REPORTABLE")
+    heads_agg = (
+        "official development partition (35 subjects), subject mean probability >= 0.5, "
+        "binary-strict, harmonized_all_windows_full_coverage, "
+        "daic_official_train_inner_split_dev_evaluation"
+    )
+    for modality in ("audio_only", "audio_text", "text_only"):
+        for backbone in ("qwen", "gemma4"):
+            for variant, variant_label in (
+                ("logreg", "LogReg raw hidden head"),
+                ("xgb", "XGBoost raw hidden head"),
+            ):
+                head = DAIC_OFFICIALDEV_HEADS[(modality, backbone, variant)]
+                method = ("Qwen " if backbone == "qwen" else "Gemma 4 ") + variant_label
+                head_evidence = HEAD_EVIDENCE[(modality, backbone)] + head["run_name"] + "/fold_0/hidden_classifiers/" + variant + "/"
+                source = (
+                    f"{base_source}, attempt {head['attempt_id']}, eval {head['evaluation_id']}, "
+                    f"backend {head['backend']}, parent best_model"
+                )
+                for metric_key, metric_label in (
+                    ("macro_f1", "macro-F1"),
+                    ("positive_f1", "positive-F1"),
+                    ("accuracy", "accuracy"),
+                    ("precision", "precision"),
+                    ("recall", "recall"),
+                ):
+                    put("DAIC Head Ablation", "DAIC", MODALITY_LABELS[modality],
+                        f"{method} {metric_label}", head[metric_key], source, heads_agg,
+                        head_evidence + "metrics.json + predictions_subject_level.csv",
+                        "recomputed locally by verify-local; REPORTABLE")
 
 
 def build_gemma4_provenance(ws, put) -> None:
@@ -1416,6 +1765,26 @@ def main() -> None:
                 cell_values[("Gemma 4 DAIC", f"{mod_label} — {variant_label}")] = (
                     GEMMA4_HEADS[mod_key][variant][0]
                 )
+        # DAIC official-development cells (DAIC LLM Comparison and DAIC Head
+        # Ablation sheets): six teacher-forced and twelve fixed-head macro-F1.
+        for modality in ("audio_only", "audio_text", "text_only"):
+            for backbone in ("qwen", "gemma4"):
+                cell_values[
+                    ("DAIC official development", f"{MODALITY_LABELS[modality]} — {BACKBONE_LABELS[backbone]}")
+                ] = DAIC_OFFICIALDEV_TEACHER_FORCED[(modality, backbone)]["macro_f1"]
+                for variant in ("logreg", "xgb"):
+                    variant_label = (
+                        "Qwen LogReg raw hidden head"
+                        if backbone == "qwen" and variant == "logreg"
+                        else "Qwen XGBoost raw hidden head"
+                        if backbone == "qwen"
+                        else "Gemma 4 LogReg raw hidden head"
+                        if variant == "logreg"
+                        else "Gemma 4 XGBoost raw hidden head"
+                    )
+                    cell_values[("DAIC Head Ablation", f"{MODALITY_LABELS[modality]} — {variant_label}")] = (
+                        DAIC_OFFICIALDEV_HEADS[(modality, backbone, variant)]["macro_f1"]
+                    )
         ok, report = validate_selected_results(Path(args.validate_selected), cell_values)
         print("\n".join(report))
         print(f"checked={sum(1 for s in json.loads(Path(args.validate_selected).read_text())['selections'] if s['status'] == 'selected')} "
@@ -1433,11 +1802,8 @@ def main() -> None:
     build_packed30(wb)
     build_gemma4(wb)
     build_gemma_vs_qwen(wb)
-    # The DAIC official-development comparison and head-ablation sheets are
-    # implemented (build_daic_officialdev_comparison / build_daic_officialdev_heads)
-    # but stay unregistered while their data tables are empty placeholders.
-    # Phase 11 of docs/DAIC_OFFICIAL_DEV_QWEN_GEMMA_RUNBOOK.md registers them
-    # with verified evidence; no invented values are emitted before then.
+    build_daic_officialdev_comparison(wb, detailed=detailed)
+    build_daic_officialdev_heads(wb, detailed=detailed)
     build_provenance(wb, detailed=detailed)
     out = OUT_DETAILED if detailed else OUT
     out.parent.mkdir(parents=True, exist_ok=True)

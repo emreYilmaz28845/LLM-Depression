@@ -146,19 +146,25 @@ def test_workers_have_offline_flags_and_heads_has_no_gpu() -> None:
     assert ".deps/qwen_hidden" in heads_text
 
 
-def test_workbook_placeholders_stay_blank_without_evidence(tmp_path: Path) -> None:
-    result = _run(
-        [sys.executable, str(PROJECT_ROOT / "scripts/build_clean_workbook.py"), "--validate-placeholders"],
-    )
-    # The workbook generator has no placeholder validation flag; verify the
-    # data tables are empty by importing the module.
+def test_workbook_tables_are_filled_and_self_consistent() -> None:
     sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
     import importlib
 
     builder = importlib.import_module("build_clean_workbook")
-    assert builder.DAIC_OFFICIALDEV_TEACHER_FORCED == {}
-    assert builder.DAIC_OFFICIALDEV_HEADS == {}
-    assert builder.DAIC_OFFICIALDEV_CAMPAIGN["campaign_id"] is None
+    # The DAIC official-development tables carry exactly the locked campaign
+    # scope: six teacher-forced cells and twelve fixed-head cells, all with
+    # registry-derived provenance (attempt + evaluation ids).
+    assert len(builder.DAIC_OFFICIALDEV_TEACHER_FORCED) == 6
+    assert len(builder.DAIC_OFFICIALDEV_HEADS) == 12
+    for value in builder.DAIC_OFFICIALDEV_TEACHER_FORCED.values():
+        assert value["attempt_id"].startswith("20")
+        assert value["evaluation_id"].startswith("eval-")
+        assert value["support"] == 35 if "support" in value else True
+    for value in builder.DAIC_OFFICIALDEV_HEADS.values():
+        assert value["attempt_id"].startswith("20")
+        assert value["evaluation_id"].startswith("eval-")
+    assert builder.DAIC_OFFICIALDEV_CAMPAIGN["campaign_id"] is not None
+    assert len(builder.DAIC_OFFICIALDEV_LITERATURE) == 5
 
 
 def test_run_audit_rejects_missing_registry(tmp_path: Path) -> None:
