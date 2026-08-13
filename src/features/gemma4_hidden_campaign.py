@@ -173,26 +173,51 @@ def _git_commit(repo_root: str | Path) -> str:
 
 
 def _source_manifest_records(repo_root: str | Path) -> list[dict[str, Any]]:
+    """Record path/sha256/size for every tracked source file.
+
+    Locally the records come from ``git ls-files``. The cluster has no
+    ``.git``; there the records come from ``.provenance/source_manifest.json``
+    written by ``scripts/capture_provenance.sh`` before the sync, so the
+    deployed source manifest stays deterministic and offline.
+    """
     root = Path(repo_root)
     result = subprocess.run(
         ["git", "-C", str(root), "ls-files"],
         capture_output=True,
         text=True,
-        check=True,
     )
-    records: list[dict[str, Any]] = []
-    for relative in sorted(line for line in result.stdout.splitlines() if line.strip()):
-        path = root / relative
-        if not path.is_file():
-            continue
-        records.append(
-            {
-                "path": relative,
-                "sha256": sha256_file(path),
-                "size_bytes": path.stat().st_size,
-            }
-        )
-    return records
+    if result.returncode == 0:
+        records: list[dict[str, Any]] = []
+        for relative in sorted(line for line in result.stdout.splitlines() if line.strip()):
+            path = root / relative
+            if not path.is_file():
+                continue
+            records.append(
+                {
+                    "path": relative,
+                    "sha256": sha256_file(path),
+                    "size_bytes": path.stat().st_size,
+                }
+            )
+        return records
+    provenance_manifest = root / ".provenance" / "source_manifest.json"
+    if provenance_manifest.is_file():
+        payload = read_json(provenance_manifest)
+        files = payload.get("files") if isinstance(payload, dict) else None
+        if isinstance(files, list):
+            return [
+                {
+                    "path": str(record["path"]),
+                    "sha256": str(record["sha256"]),
+                    "size_bytes": int(record["size_bytes"]),
+                }
+                for record in files
+                if isinstance(record, dict) and record.get("path") and record.get("sha256")
+            ]
+    raise CampaignError(
+        "cannot build the source manifest: git ls-files failed and "
+        ".provenance/source_manifest.json is unavailable"
+    )
 
 
 def deployed_source_sha256(records: list[dict[str, Any]]) -> str:
