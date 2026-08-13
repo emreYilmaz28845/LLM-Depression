@@ -768,6 +768,42 @@ def test_attempt_evidence_contains_no_sensitive_fields(tmp_path: Path, _patch_id
         assert field not in metadata_text, f"metadata must not contain {field!r}"
 
 
+def test_source_manifest_falls_back_to_provenance_file(tmp_path: Path, monkeypatch) -> None:
+    """The cluster has no .git; the source manifest must come from the
+    .provenance/source_manifest.json captured during the sync."""
+    root = tmp_path / "repo"
+    (root / ".provenance").mkdir(parents=True)
+    (root / "src").mkdir()
+    (root / "src" / "x.py").write_text("x = 1\n", encoding="utf-8")
+    import hashlib
+
+    from src.experiment_tracking.canonical import write_json_atomic
+
+    record = {
+        "schema_version": "audiollm.source_manifest.v1",
+        "file_count": 1,
+        "files": [
+            {
+                "path": "src/x.py",
+                "sha256": hashlib.sha256(b"x = 1\n").hexdigest(),
+                "size_bytes": 6,
+            }
+        ],
+    }
+    write_json_atomic(root / ".provenance" / "source_manifest.json", record)
+
+    def _no_git(*args, **kwargs):
+        return subprocess.CompletedProcess(args, returncode=128, stdout="", stderr="not a git repository")
+
+    monkeypatch.setattr(campaign.subprocess, "run", _no_git)
+    records = campaign._source_manifest_records(root)
+    assert records == [{"path": "src/x.py", "sha256": record["files"][0]["sha256"], "size_bytes": 6}]
+    # Without the provenance file the campaign refuses instead of guessing.
+    (root / ".provenance" / "source_manifest.json").unlink()
+    with pytest.raises(campaign.CampaignError, match="source manifest"):
+        campaign._source_manifest_records(root)
+
+
 def test_officialdev_materialize_and_verify_local(tmp_path: Path, _patch_identity) -> None:
     attempt_dir = _create_officialdev_attempt(tmp_path, _patch_identity)
     campaign.mark_deployed(attempt_dir, reason="deployed")

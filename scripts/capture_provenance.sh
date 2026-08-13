@@ -25,6 +25,44 @@ git -C "$PROJECT_ROOT" status --porcelain             > "$PROV_DIR/git_dirty.txt
 git -C "$PROJECT_ROOT" diff HEAD                       > "$PROV_DIR/uncommitted.patch"
 date -Iseconds                                        > "$PROV_DIR/captured_at.txt"
 
+# Deterministic source manifest (path, sha256, size) for every tracked file.
+# The cluster has no .git; the campaign's source_manifest.json is rebuilt from
+# this file after deployment instead of running git there.
+python3 - "$PROJECT_ROOT" "$PROV_DIR/source_manifest.json" <<'PY'
+import hashlib
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+output = Path(sys.argv[2])
+result = subprocess.run(
+    ["git", "-C", str(root), "ls-files"],
+    capture_output=True,
+    text=True,
+    check=True,
+)
+records = []
+for relative in sorted(line for line in result.stdout.splitlines() if line.strip()):
+    path = root / relative
+    if not path.is_file():
+        continue
+    records.append(
+        {
+            "path": relative,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "size_bytes": path.stat().st_size,
+        }
+    )
+payload = {
+    "schema_version": "audiollm.source_manifest.v1",
+    "file_count": len(records),
+    "files": records,
+}
+output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+
 if [ -s "$PROV_DIR/git_dirty.txt" ]; then
     DIRTY="dirty (see uncommitted.patch)"
 else
