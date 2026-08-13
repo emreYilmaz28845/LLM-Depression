@@ -51,10 +51,11 @@ mkdir -p "$LOG_ROOT"
 exec > >(tee -a "$LOG_ROOT/smoke-train-${SLURM_JOB_ID}.out")
 exec 2> >(tee -a "$LOG_ROOT/smoke-train-${SLURM_JOB_ID}.err" >&2)
 
-# Smoke training: one epoch, official-train subjects only (smoke cap with
-# class-preserving selection), inner validation only, final development eval
-# disabled by the officialdev config. The run root is isolated so smoke
-# checkpoints can never collide with production.
+# Smoke training: one epoch, official-train subjects only (smoke cap keeps
+# both classes), inner validation only, final development eval disabled by
+# the officialdev config. The run root is isolated so smoke checkpoints can
+# never collide with production. class_balance stays "none": the locked
+# subject-normalized weighting requires it.
 CMD=(
   torchrun --nproc_per_node=1
   "$PROJECT_ROOT/src/train.py"
@@ -63,7 +64,6 @@ CMD=(
   --run_name "$RUN_NAME"
   --set "training.num_train_epochs=1"
   --set "split.smoke_subject_limit=$SMOKE_SUBJECT_LIMIT"
-  --set "training.class_balance=subject_oversample"
   --set "output_dirs.run_root=$SMOKE_RUN_ROOT"
 )
 echo "== officialdev smoke training (1 GPU, 1 epoch, cap $SMOKE_SUBJECT_LIMIT) =="
