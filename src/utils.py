@@ -692,6 +692,10 @@ def resolve_aggregation_level(config: dict[str, Any], override: str | None = Non
     return normalize_aggregation_level(evaluation_cfg.get("aggregation_level"))
 
 
+DAIC_OFFICIALDEV_RECIPE_SUFFIX = "_officialdev_v1"
+DAIC_OFFICIALDEV_SPLIT_PROTOCOL = "daic_official_train_inner_split_dev_evaluation"
+
+
 def evaluation_protocol_name(mode: str) -> str:
     normalized = normalize_prediction_mode(mode)
     return PREDICTION_MODE_PROTOCOLS[normalized]
