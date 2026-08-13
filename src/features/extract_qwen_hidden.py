@@ -489,15 +489,7 @@ def _validate_saved_split(
         expected_train = set(fold_payload["outer_train_subject_ids"])
         expected_heldout = set(fold_payload["final_eval_subject_ids"])
     else:
-        is_daic_chunking = (
-            str(config.get("dataset", "")).lower() == "daic"
-            and str(
-                config.get("evaluation", {}).get(
-                    "subject_score_aggregation", ""
-                )
-            ).lower()
-            == "mean_score"
-        )
+        is_daic_chunking = _is_daic_chunking(config)
         split_payload = split_payload or {}
         split_names = split_payload.get("split_names") or {}
         inner_split_mode = str(split_names.get("train", "")) == "train_inner"
