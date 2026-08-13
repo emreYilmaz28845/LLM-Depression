@@ -1,0 +1,1802 @@
+schema_version: audiollm.workbook_wandb_selection.v1
+workbook:
+  path: depression_results_clean.xlsx
+  sha256: bbd94547c58ed5c9a103a590c74839999bd59c41e6daa21d24e871d9c3feb96a
+  builder_path: scripts/build_clean_workbook.py
+  builder_sha256: 2571818983a4efcacaa223cd7bc0f1b0d3cf53f642e0a6c1d5f9618b05d2a36f
+  provenance_sheet: Provenance
+entries:
+- selection_id: DAIC official development|DAIC|Audio only|Qwen teacher-forced macro-F1
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC
+    modality: Audio only
+    method: Qwen teacher-forced macro-F1
+  source_type: ordinary_qwen
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T142847Z-daic_officialdev_qwen_audio_only_seed1337-22f85e6e-9c326e1d
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC official development|DAIC|Audio only|Qwen teacher-forced positive-F1
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC
+    modality: Audio only
+    method: Qwen teacher-forced positive-F1
+  source_type: ordinary_qwen
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T142847Z-daic_officialdev_qwen_audio_only_seed1337-22f85e6e-9c326e1d
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC official development|DAIC|Audio only|Qwen teacher-forced accuracy
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC
+    modality: Audio only
+    method: Qwen teacher-forced accuracy
+  source_type: ordinary_qwen
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T142847Z-daic_officialdev_qwen_audio_only_seed1337-22f85e6e-9c326e1d
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC official development|DAIC|Audio only|Gemma 4 teacher-forced macro-F1
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 teacher-forced macro-F1
+  source_type: ordinary_qwen
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T142848Z-daic_officialdev_gemma4_audio_only_seed1337-22f85e6e-bb8bbbed
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC official development|DAIC|Audio only|Gemma 4 teacher-forced positive-F1
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 teacher-forced positive-F1
+  source_type: ordinary_qwen
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T142848Z-daic_officialdev_gemma4_audio_only_seed1337-22f85e6e-bb8bbbed
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC official development|DAIC|Audio only|Gemma 4 teacher-forced accuracy
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 teacher-forced accuracy
+  source_type: ordinary_qwen
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T142848Z-daic_officialdev_gemma4_audio_only_seed1337-22f85e6e-bb8bbbed
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC official development|DAIC|Audio + Text|Qwen teacher-forced macro-F1
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC
+    modality: Audio + Text
+    method: Qwen teacher-forced macro-F1
+  source_type: ordinary_qwen
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T142848Z-daic_officialdev_qwen_audio_text_seed1337-22f85e6e-16e99f52
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC official development|DAIC|Audio + Text|Qwen teacher-forced positive-F1
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC
+    modality: Audio + Text
+    method: Qwen teacher-forced positive-F1
+  source_type: ordinary_qwen
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T142848Z-daic_officialdev_qwen_audio_text_seed1337-22f85e6e-16e99f52
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC official development|DAIC|Audio + Text|Qwen teacher-forced accuracy
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC
+    modality: Audio + Text
+    method: Qwen teacher-forced accuracy
+  source_type: ordinary_qwen
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T142848Z-daic_officialdev_qwen_audio_text_seed1337-22f85e6e-16e99f52
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC official development|DAIC|Audio + Text|Gemma 4 teacher-forced macro-F1
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 teacher-forced macro-F1
+  source_type: ordinary_qwen
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T142848Z-daic_officialdev_gemma4_audio_text_seed1337-22f85e6e-df9dad6b
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC official development|DAIC|Audio + Text|Gemma 4 teacher-forced positive-F1
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 teacher-forced positive-F1
+  source_type: ordinary_qwen
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T142848Z-daic_officialdev_gemma4_audio_text_seed1337-22f85e6e-df9dad6b
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC official development|DAIC|Audio + Text|Gemma 4 teacher-forced accuracy
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 teacher-forced accuracy
+  source_type: ordinary_qwen
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T142848Z-daic_officialdev_gemma4_audio_text_seed1337-22f85e6e-df9dad6b
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC official development|DAIC|Text only|Qwen teacher-forced macro-F1
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC
+    modality: Text only
+    method: Qwen teacher-forced macro-F1
+  source_type: ordinary_qwen
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T142848Z-daic_officialdev_qwen_text_only_seed1337-22f85e6e-713b6d93
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC official development|DAIC|Text only|Qwen teacher-forced positive-F1
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC
+    modality: Text only
+    method: Qwen teacher-forced positive-F1
+  source_type: ordinary_qwen
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T142848Z-daic_officialdev_qwen_text_only_seed1337-22f85e6e-713b6d93
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC official development|DAIC|Text only|Qwen teacher-forced accuracy
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC
+    modality: Text only
+    method: Qwen teacher-forced accuracy
+  source_type: ordinary_qwen
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T142848Z-daic_officialdev_qwen_text_only_seed1337-22f85e6e-713b6d93
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC official development|DAIC|Text only|Gemma 4 teacher-forced macro-F1
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 teacher-forced macro-F1
+  source_type: ordinary_qwen
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T142849Z-daic_officialdev_gemma4_text_only_seed1337-22f85e6e-75450bbe
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC official development|DAIC|Text only|Gemma 4 teacher-forced positive-F1
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 teacher-forced positive-F1
+  source_type: ordinary_qwen
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T142849Z-daic_officialdev_gemma4_text_only_seed1337-22f85e6e-75450bbe
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC official development|DAIC|Text only|Gemma 4 teacher-forced accuracy
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 teacher-forced accuracy
+  source_type: ordinary_qwen
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T142849Z-daic_officialdev_gemma4_text_only_seed1337-22f85e6e-75450bbe
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Qwen LogReg raw hidden head macro-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Qwen LogReg raw hidden head macro-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T154455Z-daic_officialdev_qwen_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r4-90c6cc39-269b5f37
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Qwen LogReg raw hidden head positive-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Qwen LogReg raw hidden head positive-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T154455Z-daic_officialdev_qwen_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r4-90c6cc39-269b5f37
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Qwen LogReg raw hidden head accuracy
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Qwen LogReg raw hidden head accuracy
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T154455Z-daic_officialdev_qwen_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r4-90c6cc39-269b5f37
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Qwen LogReg raw hidden head precision
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Qwen LogReg raw hidden head precision
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T154455Z-daic_officialdev_qwen_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r4-90c6cc39-269b5f37
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Qwen LogReg raw hidden head recall
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Qwen LogReg raw hidden head recall
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T154455Z-daic_officialdev_qwen_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r4-90c6cc39-269b5f37
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Qwen XGBoost raw hidden head macro-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Qwen XGBoost raw hidden head macro-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T154455Z-daic_officialdev_qwen_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r4-90c6cc39-269b5f37
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Qwen XGBoost raw hidden head positive-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Qwen XGBoost raw hidden head positive-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T154455Z-daic_officialdev_qwen_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r4-90c6cc39-269b5f37
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Qwen XGBoost raw hidden head accuracy
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Qwen XGBoost raw hidden head accuracy
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T154455Z-daic_officialdev_qwen_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r4-90c6cc39-269b5f37
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Qwen XGBoost raw hidden head precision
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Qwen XGBoost raw hidden head precision
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T154455Z-daic_officialdev_qwen_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r4-90c6cc39-269b5f37
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Qwen XGBoost raw hidden head recall
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Qwen XGBoost raw hidden head recall
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T154455Z-daic_officialdev_qwen_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r4-90c6cc39-269b5f37
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 LogReg raw hidden head macro-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 LogReg raw hidden head macro-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T151846Z-daic_officialdev_gemma4_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_1327849b_r2-1327849b-640f4031
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 LogReg raw hidden head positive-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 LogReg raw hidden head positive-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T151846Z-daic_officialdev_gemma4_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_1327849b_r2-1327849b-640f4031
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 LogReg raw hidden head accuracy
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 LogReg raw hidden head accuracy
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T151846Z-daic_officialdev_gemma4_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_1327849b_r2-1327849b-640f4031
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 LogReg raw hidden head precision
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 LogReg raw hidden head precision
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T151846Z-daic_officialdev_gemma4_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_1327849b_r2-1327849b-640f4031
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 LogReg raw hidden head recall
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 LogReg raw hidden head recall
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T151846Z-daic_officialdev_gemma4_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_1327849b_r2-1327849b-640f4031
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 XGBoost raw hidden head macro-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 XGBoost raw hidden head macro-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T151846Z-daic_officialdev_gemma4_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_1327849b_r2-1327849b-640f4031
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 XGBoost raw hidden head positive-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 XGBoost raw hidden head positive-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T151846Z-daic_officialdev_gemma4_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_1327849b_r2-1327849b-640f4031
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 XGBoost raw hidden head accuracy
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 XGBoost raw hidden head accuracy
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T151846Z-daic_officialdev_gemma4_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_1327849b_r2-1327849b-640f4031
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 XGBoost raw hidden head precision
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 XGBoost raw hidden head precision
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T151846Z-daic_officialdev_gemma4_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_1327849b_r2-1327849b-640f4031
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 XGBoost raw hidden head recall
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio only
+    method: Gemma 4 XGBoost raw hidden head recall
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T151846Z-daic_officialdev_gemma4_audio_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_1327849b_r2-1327849b-640f4031
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen LogReg raw hidden head macro-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Qwen LogReg raw hidden head macro-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_qwen_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-b7d64c2f
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen LogReg raw hidden head positive-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Qwen LogReg raw hidden head positive-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_qwen_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-b7d64c2f
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen LogReg raw hidden head accuracy
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Qwen LogReg raw hidden head accuracy
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_qwen_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-b7d64c2f
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen LogReg raw hidden head precision
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Qwen LogReg raw hidden head precision
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_qwen_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-b7d64c2f
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen LogReg raw hidden head recall
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Qwen LogReg raw hidden head recall
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_qwen_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-b7d64c2f
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen XGBoost raw hidden head macro-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Qwen XGBoost raw hidden head macro-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_qwen_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-b7d64c2f
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen XGBoost raw hidden head positive-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Qwen XGBoost raw hidden head positive-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_qwen_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-b7d64c2f
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen XGBoost raw hidden head accuracy
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Qwen XGBoost raw hidden head accuracy
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_qwen_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-b7d64c2f
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen XGBoost raw hidden head precision
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Qwen XGBoost raw hidden head precision
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_qwen_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-b7d64c2f
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen XGBoost raw hidden head recall
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Qwen XGBoost raw hidden head recall
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_qwen_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-b7d64c2f
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head macro-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 LogReg raw hidden head macro-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T175117Z-daic_officialdev_gemma4_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r6-90c6cc39-438b3be6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head positive-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 LogReg raw hidden head positive-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T175117Z-daic_officialdev_gemma4_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r6-90c6cc39-438b3be6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head accuracy
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 LogReg raw hidden head accuracy
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T175117Z-daic_officialdev_gemma4_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r6-90c6cc39-438b3be6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head precision
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 LogReg raw hidden head precision
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T175117Z-daic_officialdev_gemma4_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r6-90c6cc39-438b3be6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head recall
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 LogReg raw hidden head recall
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T175117Z-daic_officialdev_gemma4_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r6-90c6cc39-438b3be6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head macro-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 XGBoost raw hidden head macro-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T175117Z-daic_officialdev_gemma4_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r6-90c6cc39-438b3be6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head positive-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 XGBoost raw hidden head positive-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T175117Z-daic_officialdev_gemma4_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r6-90c6cc39-438b3be6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head accuracy
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 XGBoost raw hidden head accuracy
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T175117Z-daic_officialdev_gemma4_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r6-90c6cc39-438b3be6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head precision
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 XGBoost raw hidden head precision
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T175117Z-daic_officialdev_gemma4_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r6-90c6cc39-438b3be6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head recall
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Audio + Text
+    method: Gemma 4 XGBoost raw hidden head recall
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T175117Z-daic_officialdev_gemma4_audio_text_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r6-90c6cc39-438b3be6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Qwen LogReg raw hidden head macro-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Qwen LogReg raw hidden head macro-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T153611Z-daic_officialdev_qwen_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r3-90c6cc39-df721ed6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Qwen LogReg raw hidden head positive-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Qwen LogReg raw hidden head positive-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T153611Z-daic_officialdev_qwen_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r3-90c6cc39-df721ed6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Qwen LogReg raw hidden head accuracy
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Qwen LogReg raw hidden head accuracy
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T153611Z-daic_officialdev_qwen_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r3-90c6cc39-df721ed6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Qwen LogReg raw hidden head precision
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Qwen LogReg raw hidden head precision
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T153611Z-daic_officialdev_qwen_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r3-90c6cc39-df721ed6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Qwen LogReg raw hidden head recall
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Qwen LogReg raw hidden head recall
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T153611Z-daic_officialdev_qwen_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r3-90c6cc39-df721ed6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Qwen XGBoost raw hidden head macro-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Qwen XGBoost raw hidden head macro-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T153611Z-daic_officialdev_qwen_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r3-90c6cc39-df721ed6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Qwen XGBoost raw hidden head positive-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Qwen XGBoost raw hidden head positive-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T153611Z-daic_officialdev_qwen_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r3-90c6cc39-df721ed6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Qwen XGBoost raw hidden head accuracy
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Qwen XGBoost raw hidden head accuracy
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T153611Z-daic_officialdev_qwen_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r3-90c6cc39-df721ed6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Qwen XGBoost raw hidden head precision
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Qwen XGBoost raw hidden head precision
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T153611Z-daic_officialdev_qwen_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r3-90c6cc39-df721ed6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Qwen XGBoost raw hidden head recall
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Qwen XGBoost raw hidden head recall
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T153611Z-daic_officialdev_qwen_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r3-90c6cc39-df721ed6
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 LogReg raw hidden head macro-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 LogReg raw hidden head macro-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_gemma4_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-bee30555
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 LogReg raw hidden head positive-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 LogReg raw hidden head positive-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_gemma4_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-bee30555
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 LogReg raw hidden head accuracy
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 LogReg raw hidden head accuracy
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_gemma4_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-bee30555
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 LogReg raw hidden head precision
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 LogReg raw hidden head precision
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_gemma4_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-bee30555
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 LogReg raw hidden head recall
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 LogReg raw hidden head recall
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_gemma4_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-bee30555
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 XGBoost raw hidden head macro-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 XGBoost raw hidden head macro-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_gemma4_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-bee30555
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 XGBoost raw hidden head positive-F1
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 XGBoost raw hidden head positive-F1
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_gemma4_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-bee30555
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 XGBoost raw hidden head accuracy
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 XGBoost raw hidden head accuracy
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_gemma4_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-bee30555
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 XGBoost raw hidden head precision
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 XGBoost raw hidden head precision
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_gemma4_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-bee30555
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 XGBoost raw hidden head recall
+  provenance_key:
+    experiment: DAIC Head Ablation
+    dataset: DAIC
+    modality: Text only
+    method: Gemma 4 XGBoost raw hidden head recall
+  source_type: hidden_classifier
+  reason: daic_officialdev_campaign
+  dependency_policy: all_contributing_folds
+  attempt_ids:
+  - 20260813T163105Z-daic_officialdev_gemma4_text_only_fixed_heads_seed1337_prod_20260813t150000z_22f85e6e_90c6cc39_r5-90c6cc39-bee30555
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development heads
+  wandb_policy: sync
+  blocking_reasons: []
