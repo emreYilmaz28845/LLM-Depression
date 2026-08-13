@@ -73,10 +73,18 @@ def _collect_sacct(job_ids: list[str], user: str | None) -> dict[str, dict[str, 
 
 
 def _load_sacct_file(path: Path) -> dict[str, dict[str, str]]:
+    """Read a sacct capture. Supports both the --parsable2 pipe format (with
+    or without a header) and a TSV with a header row."""
     states: dict[str, dict[str, str]] = {}
-    with path.open(newline="", encoding="utf-8") as handle:
-        for row in csv.DictReader(handle, delimiter="\t"):
-            if not row or "." in (row.get("JobIDRaw") or ""):
+    raw = path.read_text(encoding="utf-8")
+    lines = [line for line in raw.splitlines() if line.strip()]
+    if not lines:
+        return states
+    first = lines[0]
+    if "\t" in first and first.lstrip().startswith("JobIDRaw"):
+        rows = list(csv.DictReader(lines, delimiter="\t"))
+        for row in rows:
+            if "." in (row.get("JobIDRaw") or ""):
                 continue
             states[str(row["JobIDRaw"]).strip()] = {
                 "state": str(row.get("State", "")).strip(),
@@ -84,6 +92,17 @@ def _load_sacct_file(path: Path) -> dict[str, dict[str, str]]:
                 "elapsed": str(row.get("Elapsed", "")).strip(),
                 "nodes": str(row.get("NodeList", "")).strip(),
             }
+        return states
+    for line in lines:
+        fields = [field.strip() for field in line.rstrip("|").split("|")]
+        if len(fields) < 4 or "." in fields[0]:
+            continue
+        states[fields[0]] = {
+            "state": fields[1],
+            "exit_code": fields[2],
+            "elapsed": fields[3],
+            "nodes": fields[4] if len(fields) > 4 else "",
+        }
     return states
 
 
