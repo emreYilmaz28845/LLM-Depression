@@ -98,9 +98,9 @@ from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 from src.experiment_tracking import lifecycle
 
-root = Path(sys.argv[2])
-attempt_id, fold, fold_dir = sys.argv[3:6]
-events = json.loads(sys.argv[6])
+root = Path(sys.argv[1])
+attempt_id, fold, fold_dir = sys.argv[2:5]
+events = json.loads(sys.argv[5])
 for event in events:
     payload = lifecycle.new_job_event(
         job_key=event["job_key"], job_type=event["job_type"], event_type=event["event_type"],
@@ -282,6 +282,7 @@ PY
         train_cmd=(sbatch --parsable --job-name="od-${backbone:0:3}-${modality:0:2}-tr-${RETRY_TAG}" --export="$export_spec")
         [ -n "$train_dep" ] && train_cmd+=("$train_dep")
         train_cmd+=("$TRAIN_WORKER")
+        # (already guarded above)
         train_raw="$(submit "${train_cmd[@]}")"
         train_job="$(job_id "$train_raw")"
         train_lanes[$train_lane]="$train_job"
@@ -296,7 +297,7 @@ PY
     if [ "$resubmit_all" = "1" ] || [ "$kind" = "eval" ]; then
         aux_lane=$((aux_index % MAX_CONCURRENT_AUX))
         aux_throttle="${aux_lanes[$aux_lane]:-}"
-        eval_dep="$(dependency_arg "$chain_job" "$aux_throttle")"
+        eval_dep="$(dependency_arg "$chain_job" "$aux_throttle" || true)"
         eval_export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$config,FOLD=$fold_0,SKIP_MANIFEST_BUILD=1,ENV_ACTIVATE=$ENV_ACTIVATE"
         if [ "$resubmit_all" = "1" ]; then
             eval_export="$eval_export,EXPERIMENT_CONTEXT=$new_context_path"
@@ -305,7 +306,8 @@ PY
             eval_export="$eval_export,EXPERIMENT_CONTEXT=$context_path"
             eval_checkpoint_dir="$old_fold_dir/best_model"
         fi
-        eval_cmd=(sbatch --parsable --job-name="od-${backbone:0:3}-${modality:0:2}-ev-${RETRY_TAG}" "$eval_dep" --export="$eval_export,CHECKPOINT_DIR=$eval_checkpoint_dir,OUTPUT_DIR=$eval_checkpoint_dir/standalone_eval" "$EVAL_WORKER")
+        eval_cmd=(sbatch --parsable --job-name="od-${backbone:0:3}-${modality:0:2}-ev-${RETRY_TAG}" --export="$eval_export,CHECKPOINT_DIR=$eval_checkpoint_dir,OUTPUT_DIR=$eval_checkpoint_dir/standalone_eval" "$EVAL_WORKER")
+        [ -n "$eval_dep" ] && eval_cmd=("${eval_cmd[@]:0:3}" "$eval_dep" "${eval_cmd[@]:3}")
         eval_raw="$(submit "${eval_cmd[@]}")"
         eval_job="$(job_id "$eval_raw")"
         chain_job="$eval_job"
@@ -335,8 +337,9 @@ PY
     if [ "$resubmit_all" = "1" ] || [ "$kind" = "eval" ] || [ "$kind" = "extract" ]; then
         aux_lane=$((aux_index % MAX_CONCURRENT_AUX))
         aux_throttle="${aux_lanes[$aux_lane]:-}"
-        extract_dep="$(dependency_arg "$chain_job" "$aux_throttle")"
-        extract_cmd=(sbatch --parsable --job-name="od-${backbone:0:3}-${modality:0:2}-ex-${RETRY_TAG}" "$extract_dep" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV_ACTIVATE,ATTEMPT_DIR=$child_attempt_dir,PARENT_FOLD_DIR=$parent_dir_for_child,MODEL_PATH=$MODEL_PATH,MODALITY=$modality,BACKBONE=$backbone,RUN_NAME=$child_run_name,GROUP_ID=$GROUP_ID,MERGED_SHA=$MERGE_SHA,BRANCH=$MERGE_BRANCH,PR_NUMBER=$GITHUB_PR,CONDITION=daic_officialdev,SUPERSEDES_ATTEMPT_ID=$SUPERSEDES_ATTEMPT_ID" "$EXTRACT_WORKER")
+        extract_dep="$(dependency_arg "$chain_job" "$aux_throttle" || true)"
+        extract_cmd=(sbatch --parsable --job-name="od-${backbone:0:3}-${modality:0:2}-ex-${RETRY_TAG}" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV_ACTIVATE,ATTEMPT_DIR=$child_attempt_dir,PARENT_FOLD_DIR=$parent_dir_for_child,MODEL_PATH=$MODEL_PATH,MODALITY=$modality,BACKBONE=$backbone,RUN_NAME=$child_run_name,GROUP_ID=$GROUP_ID,MERGED_SHA=$MERGE_SHA,BRANCH=$MERGE_BRANCH,PR_NUMBER=$GITHUB_PR,CONDITION=daic_officialdev,SUPERSEDES_ATTEMPT_ID=$SUPERSEDES_ATTEMPT_ID" "$EXTRACT_WORKER")
+        [ -n "$extract_dep" ] && extract_cmd=("${extract_cmd[@]:0:3}" "$extract_dep" "${extract_cmd[@]:3}")
         extract_raw="$(submit "${extract_cmd[@]}")"
         extract_job="$(job_id "$extract_raw")"
         chain_job="$extract_job"
@@ -351,8 +354,9 @@ PY
     if [ "$resubmit_all" = "1" ] || [ "$kind" = "eval" ] || [ "$kind" = "extract" ] || [ "$kind" = "heads" ]; then
         aux_lane=$((aux_index % MAX_CONCURRENT_AUX))
         aux_throttle="${aux_lanes[$aux_lane]:-}"
-        heads_dep="$(dependency_arg "$chain_job" "$aux_throttle")"
-        heads_cmd=(sbatch --parsable --job-name="od-${backbone:0:3}-${modality:0:2}-hd-${RETRY_TAG}" "$heads_dep" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,ATTEMPT_DIR=$child_attempt_dir,PARENT_FOLD_DIR=$parent_dir_for_child" "$HEADS_WORKER")
+        heads_dep="$(dependency_arg "$chain_job" "$aux_throttle" || true)"
+        heads_cmd=(sbatch --parsable --job-name="od-${backbone:0:3}-${modality:0:2}-hd-${RETRY_TAG}" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,ATTEMPT_DIR=$child_attempt_dir,PARENT_FOLD_DIR=$parent_dir_for_child" "$HEADS_WORKER")
+        [ -n "$heads_dep" ] && heads_cmd=("${heads_cmd[@]:0:3}" "$heads_dep" "${heads_cmd[@]:3}")
         heads_raw="$(submit "${heads_cmd[@]}")"
         heads_job="$(job_id "$heads_raw")"
         aux_lanes[$aux_lane]="$heads_job"
