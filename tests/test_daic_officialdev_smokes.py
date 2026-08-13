@@ -245,4 +245,4 @@ def test_smoke_workers_offline_and_no_gpu_for_heads() -> None:
     assert "--gres=gpu" not in heads
     extract = (PROJECT_ROOT / "scripts/run_daic_officialdev_smoke_extract_slurm.sh").read_text(encoding="utf-8")
     assert "--gres=gpu:1" in extract
-    assert "SUBJECT_SELECTION" in extract
+    assert "--subject-selection" in extract
