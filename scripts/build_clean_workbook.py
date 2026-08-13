@@ -574,6 +574,71 @@ def _fmt(v: float | None) -> str:
     return "" if v is None else f"{v:.4f}"
 
 
+# ---------------------------------------------------------------------------
+# DAIC official-development comparison block (Qwen + Gemma 4, teacher-forced)
+# and head ablation block (all eighteen backbone/modality/head cells).
+# Placeholders only: no invented values. Tables are filled and sheets are
+# populated when the local evidence is verified (Phase 11 of
+# docs/DAIC_OFFICIAL_DEV_QWEN_GEMMA_RUNBOOK.md). Official-test rows elsewhere
+# in this workbook are untouched.
+DAIC_OFFICIALDEV_CAMPAIGN = {
+    "campaign_id": None,
+    "group_id": None,
+    "source_sha": None,
+    "manifest_sha256": None,
+    "split_sha256": None,
+}
+# (modality, backbone) -> macro-F1 for the six teacher-forced rows.
+DAIC_OFFICIALDEV_TEACHER_FORCED: dict[tuple[str, str], float | None] = {}
+# (modality, backbone, head) -> (macro_f1, positive_f1, accuracy, precision, recall)
+DAIC_OFFICIALDEV_HEADS: dict[tuple[str, str, str], tuple[float | None, ...]] = {}
+
+
+def build_daic_officialdev_comparison(wb: Workbook, *, detailed: bool) -> None:
+    """DAIC LLM Comparison — the six official-development teacher-forced rows
+    plus the cited literature Macro-F1 column. Populated only from verified
+    local evidence; placeholders stay blank until Phase 11."""
+    ws = wb.create_sheet("DAIC LLM Comparison")
+    _widths(ws, {"A": 24, "B": 14, "C": 14, "D": 14, "E": 14, "F": 40})
+    _title(ws, "DAIC LLM Comparison — official development partition (35 subjects)", 6)
+    _header_row(
+        ws, 2,
+        ["Backbone", "Modality", "Macro-F1", "Positive-F1", "Selected epoch", "Evidence"],
+    )
+    row = 3
+    for (modality, backbone), macro_f1 in sorted(DAIC_OFFICIALDEV_TEACHER_FORCED.items()):
+        if macro_f1 is None:
+            continue
+        ws.cell(row, 1, backbone)
+        ws.cell(row, 2, modality)
+        for col, value in ((3, macro_f1), (4, None), (5, None), (6, None)):
+            ws.cell(row, col, value)
+        row += 1
+
+
+def build_daic_officialdev_heads(wb: Workbook, *, detailed: bool) -> None:
+    """DAIC Head Ablation — all eighteen official-development
+    backbone/modality/head cells. Populated only from verified local evidence;
+    placeholders stay blank until Phase 11."""
+    ws = wb.create_sheet("DAIC Head Ablation")
+    _widths(ws, {"A": 24, "B": 14, "C": 14, "D": 14, "E": 14, "F": 14, "G": 14, "H": 40})
+    _title(ws, "DAIC Head Ablation — official development partition (35 subjects)", 8)
+    _header_row(
+        ws, 2,
+        ["Backbone", "Modality", "Head", "Macro-F1", "Positive-F1", "Accuracy", "Precision", "Evidence"],
+    )
+    row = 3
+    for (modality, backbone, head), values in sorted(DAIC_OFFICIALDEV_HEADS.items()):
+        if not values or values[0] is None:
+            continue
+        ws.cell(row, 1, backbone)
+        ws.cell(row, 2, modality)
+        ws.cell(row, 3, head)
+        for col, value in zip((4, 5, 6, 7), values[:4]):
+            ws.cell(row, col, value)
+        row += 1
+
+
 def build_gemma_vs_qwen(wb: Workbook) -> None:
     """Gemma 4 vs Qwen — DAIC official test comparison across the three
     backbone/head methods. Qwen reference = harmonized campaign (teacher-forced
@@ -1368,6 +1433,11 @@ def main() -> None:
     build_packed30(wb)
     build_gemma4(wb)
     build_gemma_vs_qwen(wb)
+    # The DAIC official-development comparison and head-ablation sheets are
+    # implemented (build_daic_officialdev_comparison / build_daic_officialdev_heads)
+    # but stay unregistered while their data tables are empty placeholders.
+    # Phase 11 of docs/DAIC_OFFICIAL_DEV_QWEN_GEMMA_RUNBOOK.md registers them
+    # with verified evidence; no invented values are emitted before then.
     build_provenance(wb, detailed=detailed)
     out = OUT_DETAILED if detailed else OUT
     out.parent.mkdir(parents=True, exist_ok=True)

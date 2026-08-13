@@ -13,7 +13,9 @@ def harmonized_configs():
     return sorted(
         path
         for path in MAIN.glob("*harmonized_selmacrof1_tf*.yaml")
-        if not path.name.endswith("_en.yaml") and "_gemma4_12b" not in path.name
+        if not path.name.endswith("_en.yaml")
+        and "_gemma4_12b" not in path.name
+        and "_officialdev" not in path.name
     )
 
 

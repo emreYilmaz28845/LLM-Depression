@@ -42,10 +42,14 @@ from src.experiment_tracking.sidecars import (
 )
 
 FIXED_HEAD_METHOD = "gemma4_hidden_fixed_heads"
+QWEN_FIXED_HEAD_METHOD = "qwen_hidden_fixed_heads"
 GEMMA4_BASE_MODEL_ID = "google/gemma-4-12B-it"
 GEMMA4_BASE_MODEL_REVISION = "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7"
 GEMMA4_HIDDEN_DIMENSION = 3840
+QWEN2AUDIO_HIDDEN_DIMENSION = 4096
+QWEN_TEXT_HIDDEN_DIMENSION = 3584
 GEMMA4_CACHE_SCHEMA = "gemma4_hidden_cache.v1"
+QWEN_CACHE_SCHEMA = "qwen_hidden_cache.v2"
 HIDDEN_LAYER = "final"
 POOLING = "last_valid_prompt_token"
 FIT_WEIGHT_POLICY = "inverse_chunks_per_subject_rescaled_to_mean_one"
@@ -55,6 +59,31 @@ SEED = 1337
 VARIANTS = ("logreg_raw", "xgb_raw")
 LOGGREG_PREDICTION_BACKEND = "gemma4_hidden_logreg_raw"
 XGB_PREDICTION_BACKEND = "gemma4_hidden_xgb_raw"
+QWEN_LOGGREG_PREDICTION_BACKEND = "qwen_hidden_logreg_raw"
+QWEN_XGB_PREDICTION_BACKEND = "qwen_hidden_xgb_raw"
+
+BACKBONE_GEMMA4 = "gemma4"
+BACKBONE_QWEN2AUDIO = "qwen2audio"
+BACKBONE_QWEN_TEXT = "qwen_text"
+
+CAMPAIGN_PROTOCOL_OFFICIALTEST = "officialtest"
+CAMPAIGN_PROTOCOL_OFFICIALDEV = "officialdev"
+CAMPAIGN_PROTOCOLS = (CAMPAIGN_PROTOCOL_OFFICIALTEST, CAMPAIGN_PROTOCOL_OFFICIALDEV)
+
+# Evaluation qualifiers per campaign protocol. The official-test protocol is
+# the historical locked contract; the official-development protocol evaluates
+# the 35 official development subjects after training and selection on the 86
+# inner-training subjects.
+PROTOCOL_QUALIFIERS: dict[str, dict[str, str]] = {
+    CAMPAIGN_PROTOCOL_OFFICIALTEST: {
+        "split_name": "test",
+        "split_protocol": "daic_official_train_fit_locked_test_evaluation",
+    },
+    CAMPAIGN_PROTOCOL_OFFICIALDEV: {
+        "split_name": "val",
+        "split_protocol": "daic_official_train_inner_split_dev_evaluation",
+    },
+}
 
 MANIFEST_SHA256 = "72e2dd204b915ccba3ebf922f030531fe5678b3ea8c9c52b81b41242fe9dda17"
 SPLIT_SHA256 = "441333e0c88845eeacba9ea5355a8920cdd1f70e8cf7a7c15b9547b46da51473"
@@ -180,8 +209,187 @@ def _read_run_config(fold_dir: str | Path) -> dict[str, Any]:
     return payload
 
 
-def _verify_parent_identity(modality: str, parent_fold_dir: str | Path) -> dict[str, Any]:
-    expected = EXPECTED_ADAPTER_HASHES[modality]
+def _saved_run_path(value: str | Path) -> Path:
+    """Resolve a path recorded in a run_config, tolerating the GPFS→local
+    project relocation used by evidence syncs."""
+    path = Path(value)
+    if path.exists():
+        return path
+    marker = "LLM-Depression/"
+    text = str(path)
+    if marker in text:
+        candidate = Path(__file__).resolve().parents[2] / text.split(marker, 1)[1]
+        if candidate.exists():
+            return candidate
+    return path
+
+
+def _parent_scientific_config(parent_fold_dir: str | Path) -> dict[str, Any]:
+    run_config = _read_run_config(parent_fold_dir)
+    config = run_config.get("config")
+    if not isinstance(config, dict):
+        raise CampaignError(
+            f"parent run_config.yaml has no resolved scientific config block: {parent_fold_dir}"
+        )
+    return config
+
+
+def resolve_campaign_protocol(parent_fold_dir: str | Path) -> str:
+    """Derive the campaign protocol from the parent's saved config.
+
+    The official-test protocol is the historical locked contract
+    (``final_eval_partition: test`` with a selection partition). The
+    official-development protocol is recognized by the officialdev recipe,
+    ``final_eval_partition: val``, no selection partition, and a ``[train]``
+    development pool. Anything else is refused.
+    """
+    config = _parent_scientific_config(parent_fold_dir)
+    split = config.get("split") or {}
+    recipe_id = str(config.get("recipe_id", ""))
+    final_partition = str(split.get("final_eval_partition", ""))
+    has_selection = bool(str(split.get("selection_partition", "")).strip())
+    dev_pool = [str(item) for item in (split.get("dev_pool_partitions") or [])]
+    if (
+        recipe_id.endswith("_officialdev_v1")
+        and final_partition == "val"
+        and not has_selection
+        and dev_pool == ["train"]
+    ):
+        return CAMPAIGN_PROTOCOL_OFFICIALDEV
+    if final_partition == "test":
+        return CAMPAIGN_PROTOCOL_OFFICIALTEST
+    raise CampaignError(
+        f"unsupported parent campaign protocol: recipe_id={recipe_id!r} "
+        f"final_eval_partition={final_partition!r} selection_partition_present={has_selection}"
+    )
+
+
+def resolve_backbone_from_parent(parent_fold_dir: str | Path) -> str:
+    config = _parent_scientific_config(parent_fold_dir)
+    backend = str(config.get("model_backend", "")).strip().lower()
+    if backend == "gemma4":
+        return BACKBONE_GEMMA4
+    run_config = _read_run_config(parent_fold_dir)
+    modality = str(run_config.get("input_modality") or config.get("data", {}).get("use_audio", False))
+    if modality == "text_only":
+        return BACKBONE_QWEN_TEXT
+    return BACKBONE_QWEN2AUDIO
+
+
+def _backbone_identity(backbone: str) -> dict[str, Any]:
+    if backbone == BACKBONE_GEMMA4:
+        return {
+            "method": FIXED_HEAD_METHOD,
+            "logreg_backend": LOGGREG_PREDICTION_BACKEND,
+            "xgb_backend": XGB_PREDICTION_BACKEND,
+            "cache_schema": GEMMA4_CACHE_SCHEMA,
+            "dimension": GEMMA4_HIDDEN_DIMENSION,
+        }
+    if backbone in {BACKBONE_QWEN2AUDIO, BACKBONE_QWEN_TEXT}:
+        return {
+            "method": QWEN_FIXED_HEAD_METHOD,
+            "logreg_backend": QWEN_LOGGREG_PREDICTION_BACKEND,
+            "xgb_backend": QWEN_XGB_PREDICTION_BACKEND,
+            "cache_schema": QWEN_CACHE_SCHEMA,
+            "dimension": (
+                QWEN2AUDIO_HIDDEN_DIMENSION
+                if backbone == BACKBONE_QWEN2AUDIO
+                else QWEN_TEXT_HIDDEN_DIMENSION
+            ),
+        }
+    raise CampaignError(f"unsupported backbone {backbone!r}")
+
+
+def _backbone_identity_choices() -> set[str]:
+    return {BACKBONE_GEMMA4, BACKBONE_QWEN2AUDIO, BACKBONE_QWEN_TEXT}
+
+
+def _saved_split_payload(parent_fold_dir: str | Path) -> dict[str, Any]:
+    split_path = Path(parent_fold_dir) / "logs" / "split_used.json"
+    if not split_path.is_file():
+        raise CampaignError(f"parent saved split is unavailable: {split_path}")
+    return read_json(split_path)
+
+
+def _expected_support(parent_fold_dir: str | Path) -> int:
+    payload = _saved_split_payload(parent_fold_dir)
+    eval_ids = payload.get("final_eval_subject_ids")
+    if not isinstance(eval_ids, list) or not eval_ids:
+        raise CampaignError("parent saved split has no final_eval_subject_ids")
+    return len({str(item) for item in eval_ids})
+
+
+def _derive_expected_counts(
+    parent_fold_dir: str | Path,
+    protocol: str,
+    modality: str,
+) -> dict[str, int]:
+    """Derive the locked expected row counts from the hashed manifest and the
+    parent's saved split. A manifest hash mismatch or unexpected counts are
+    hard stops; rows are never dropped or duplicated to force a count."""
+    run_config = _read_run_config(parent_fold_dir)
+    manifest_path = _saved_run_path(run_config.get("manifest_path") or "")
+    if not manifest_path.is_file():
+        raise CampaignError(f"parent saved manifest is unavailable: {manifest_path}")
+    from src.utils import read_jsonl, sha256_jsonl_rows
+
+    manifest_rows = read_jsonl(manifest_path)
+    recorded_hash = run_config.get("manifest_hash")
+    if recorded_hash and sha256_jsonl_rows(manifest_rows) != recorded_hash:
+        raise CampaignError(
+            "parent manifest hash does not match its run_config.yaml record"
+        )
+    payload = _saved_split_payload(parent_fold_dir)
+    if protocol == CAMPAIGN_PROTOCOL_OFFICIALDEV:
+        fit_ids = payload.get("train_inner_subject_ids")
+    else:
+        fit_ids = payload.get("train_subject_ids")
+    eval_ids = payload.get("final_eval_subject_ids")
+    for name, values in (("fit", fit_ids), ("eval", eval_ids)):
+        if not isinstance(values, list) or not values:
+            raise CampaignError(f"parent saved split has no {name} subject ids")
+    fit_subjects = {str(item) for item in fit_ids}
+    eval_subjects = {str(item) for item in eval_ids}
+    if fit_subjects & eval_subjects:
+        raise CampaignError("parent saved split fit/eval subject sets overlap")
+    if modality == "text_only":
+        fit_rows = len(fit_subjects)
+        eval_rows = len(eval_subjects)
+    else:
+        from collections import Counter
+
+        rows_by_subject = Counter(str(row["subject_id"]) for row in manifest_rows)
+        fit_rows = sum(rows_by_subject[subject_id] for subject_id in fit_subjects)
+        eval_rows = sum(rows_by_subject[subject_id] for subject_id in eval_subjects)
+    return {
+        "fit_rows": fit_rows,
+        "fit_subjects": len(fit_subjects),
+        "test_rows": eval_rows,
+        "test_subjects": len(eval_subjects),
+    }
+
+
+def _resolve_expected_counts(parent_fold_dir: str | Path, protocol: str, modality: str) -> dict[str, int]:
+    if protocol == CAMPAIGN_PROTOCOL_OFFICIALTEST:
+        try:
+            return EXPECTED_ROW_COUNTS[modality]
+        except KeyError:
+            pass
+    return _derive_expected_counts(parent_fold_dir, protocol, modality)
+
+
+def _verify_parent_identity(
+    modality: str,
+    parent_fold_dir: str | Path,
+    protocol: str | None = None,
+) -> dict[str, Any]:
+    """Verify the parent best_model adapter files and record their hashes.
+
+    The historical official-test protocol additionally requires the locked
+    adapter hashes. The official-development protocol derives and records the
+    actual adapter hashes of the new parent checkpoints instead of matching
+    historical adapters.
+    """
     parent_dir = Path(parent_fold_dir)
     for name in ("adapter_config.json", "adapter_model.safetensors"):
         if not (parent_dir / "best_model" / name).is_file():
@@ -190,28 +398,50 @@ def _verify_parent_identity(modality: str, parent_fold_dir: str | Path) -> dict[
             )
     actual_config = sha256_file(parent_dir / "best_model" / "adapter_config.json")
     actual_adapter = sha256_file(parent_dir / "best_model" / "adapter_model.safetensors")
-    if actual_config != expected["adapter_config_sha256"]:
-        raise CampaignError(
-            f"parent adapter_config.json hash mismatch for {modality}: "
-            f"{actual_config} != {expected['adapter_config_sha256']}"
-        )
-    if actual_adapter != expected["adapter_sha256"]:
-        raise CampaignError(
-            f"parent adapter_model.safetensors hash mismatch for {modality}: "
-            f"{actual_adapter} != {expected['adapter_sha256']}"
-        )
+    if protocol == CAMPAIGN_PROTOCOL_OFFICIALTEST:
+        try:
+            expected = EXPECTED_ADAPTER_HASHES[modality]
+        except KeyError:
+            raise CampaignError(
+                f"official-test contract has no adapter hashes for modality {modality!r}"
+            )
+        if actual_config != expected["adapter_config_sha256"]:
+            raise CampaignError(
+                f"parent adapter_config.json hash mismatch for {modality}: "
+                f"{actual_config} != {expected['adapter_config_sha256']}"
+            )
+        if actual_adapter != expected["adapter_sha256"]:
+            raise CampaignError(
+                f"parent adapter_model.safetensors hash mismatch for {modality}: "
+                f"{actual_adapter} != {expected['adapter_sha256']}"
+            )
     return {"adapter_config_sha256": actual_config, "adapter_sha256": actual_adapter}
 
 
-def _verify_parent_config_hashes(parent_fold_dir: str | Path) -> dict[str, Any]:
+def _verify_parent_config_hashes(
+    parent_fold_dir: str | Path,
+    protocol: str | None = None,
+) -> dict[str, Any]:
     run_config = _read_run_config(parent_fold_dir)
     manifest_hash = run_config.get("manifest_hash")
     split_hash = run_config.get("split_metadata_hash")
-    if manifest_hash != MANIFEST_SHA256 or split_hash != SPLIT_SHA256:
-        raise CampaignError(
-            "parent run_config hashes do not match the fixed contract: "
-            f"manifest={manifest_hash} split={split_hash}"
-        )
+    if protocol == CAMPAIGN_PROTOCOL_OFFICIALTEST:
+        if manifest_hash != MANIFEST_SHA256 or split_hash != SPLIT_SHA256:
+            raise CampaignError(
+                "parent run_config hashes do not match the fixed contract: "
+                f"manifest={manifest_hash} split={split_hash}"
+            )
+    else:
+        if not isinstance(manifest_hash, str) or len(manifest_hash) != 64:
+            raise CampaignError(f"parent manifest_hash is not a sha256 hex digest: {manifest_hash!r}")
+        if not isinstance(split_hash, str) or len(split_hash) != 64:
+            raise CampaignError(f"parent split_metadata_hash is not a sha256 hex digest: {split_hash!r}")
+        split_metadata_path = _saved_run_path(run_config.get("split_metadata_path") or "")
+        if split_metadata_path.is_file() and sha256_file(split_metadata_path) != split_hash:
+            raise CampaignError(
+                "parent split metadata file hash does not match its "
+                "run_config.yaml record"
+            )
     return {"manifest_sha256": manifest_hash, "split_sha256": split_hash}
 
 
@@ -219,11 +449,13 @@ def _evaluation_qualifiers(
     parent_fold_dir: str | Path,
     backend: str,
     metrics_artifact_sha256: str,
+    protocol: str,
 ) -> dict[str, Any]:
+    qualifiers = PROTOCOL_QUALIFIERS[protocol]
     return {
         "dataset": "daic",
-        "split_name": "test",
-        "split_protocol": "daic_official_train_fit_locked_test_evaluation",
+        "split_name": qualifiers["split_name"],
+        "split_protocol": qualifiers["split_protocol"],
         "checkpoint_role": "best_model",
         "checkpoint_path": str(Path(parent_fold_dir) / "best_model"),
         "backend": backend,
@@ -256,17 +488,40 @@ def build_run_config(
     deployed_source_sha256_value: str,
     group_id: str,
     fold: int = 0,
+    backbone: str = BACKBONE_GEMMA4,
+    protocol: str | None = None,
 ) -> dict[str, Any]:
     if modality not in EXPECTED_ROW_COUNTS:
         raise CampaignError(f"unsupported modality {modality!r}")
+    protocol = protocol or resolve_campaign_protocol(parent_fold_dir)
+    if protocol not in CAMPAIGN_PROTOCOLS:
+        raise CampaignError(f"unsupported campaign protocol {protocol!r}")
+    qualifiers = PROTOCOL_QUALIFIERS[protocol]
+    expected_counts = _resolve_expected_counts(parent_fold_dir, protocol, modality)
+    support = _expected_support(parent_fold_dir)
     run_config = _read_run_config(parent_fold_dir)
+    parent_config = run_config.get("config") or {}
     base_model_path = run_config.get("resolved_model_name_or_path") or (
-        run_config.get("config", {}) or {}
-    ).get("model_name_or_path")
+        parent_config.get("model_name_or_path")
+    )
+    identity = _backbone_identity(backbone)
+    if backbone == BACKBONE_GEMMA4:
+        base_model = {
+            "id": GEMMA4_BASE_MODEL_ID,
+            "revision": str(parent_config.get("model_revision") or GEMMA4_BASE_MODEL_REVISION),
+            "path": str(base_model_path or ""),
+        }
+    else:
+        base_model = {
+            "id": str(base_model_path or ""),
+            "revision": None,
+            "path": str(base_model_path or ""),
+        }
+    parent_hashes = _verify_parent_config_hashes(parent_fold_dir, protocol)
     scientific = {
         "dataset": "daic",
         "modality": modality,
-        "method": FIXED_HEAD_METHOD,
+        "method": identity["method"],
         "fold": fold,
         "seed": SEED,
         "parent": {
@@ -278,21 +533,17 @@ def build_run_config(
             "adapter_sha256": adapter_hashes["adapter_sha256"],
         },
         "hashes": {
-            "manifest_sha256": MANIFEST_SHA256,
-            "split_sha256": SPLIT_SHA256,
+            "manifest_sha256": parent_hashes["manifest_sha256"],
+            "split_sha256": parent_hashes["split_sha256"],
             "parent_run_config_sha256": sha256_file(Path(parent_fold_dir) / "run_config.yaml"),
         },
-        "base_model": {
-            "id": GEMMA4_BASE_MODEL_ID,
-            "revision": GEMMA4_BASE_MODEL_REVISION,
-            "path": str(base_model_path or ""),
-        },
+        "base_model": base_model,
         "hidden_state": {
             "layer": HIDDEN_LAYER,
             "pooling": POOLING,
-            "dimension": GEMMA4_HIDDEN_DIMENSION,
+            "dimension": identity["dimension"],
             "dtype": "float32",
-            "cache_schema": GEMMA4_CACHE_SCHEMA,
+            "cache_schema": identity["cache_schema"],
         },
         "classifiers": {
             "variants": list(VARIANTS),
@@ -303,7 +554,7 @@ def build_run_config(
             "threshold": THRESHOLD,
             "library_versions": {"scikit_learn": "1.7.0", "xgboost": "2.1.4"},
             "logreg": {
-                "backend": LOGGREG_PREDICTION_BACKEND,
+                "backend": identity["logreg_backend"],
                 "params": {
                     "scaler": "StandardScaler",
                     "class_weight": "balanced",
@@ -314,7 +565,7 @@ def build_run_config(
                 },
             },
             "xgb": {
-                "backend": XGB_PREDICTION_BACKEND,
+                "backend": identity["xgb_backend"],
                 "params": {
                     "objective": "binary:logistic",
                     "n_estimators": 300,
@@ -333,16 +584,17 @@ def build_run_config(
         },
         "evaluation": {
             "dataset": "daic",
-            "split_name": "test",
-            "split_protocol": "daic_official_train_fit_locked_test_evaluation",
+            "split_name": qualifiers["split_name"],
+            "split_protocol": qualifiers["split_protocol"],
             "checkpoint_role": "best_model",
             "evaluation_view": "harmonized_all_windows_full_coverage",
             "aggregation": "subject_level",
             "metric_namespace": "headline/binary_strict",
-            "support": 47,
+            "support": support,
             "metric_names": list(EVALUATION_METRIC_NAMES),
         },
-        "expected_counts": EXPECTED_ROW_COUNTS[modality],
+        "expected_counts": expected_counts,
+        "campaign_protocol": protocol,
         "implementation": {
             "branch": branch,
             "merged_sha": merged_sha,
@@ -356,8 +608,8 @@ def build_run_config(
     run_config_doc = {
         "schema_version": "audiollm.fixed_head_run.v1",
         "config": scientific,
-        "manifest_sha256": MANIFEST_SHA256,
-        "split_metadata_hash": SPLIT_SHA256,
+        "manifest_sha256": parent_hashes["manifest_sha256"],
+        "split_metadata_hash": parent_hashes["split_sha256"],
         "tracking": {
             "schema_version": "audiollm.tracking.v1",
             "group_id": group_id,
@@ -383,6 +635,7 @@ def create_attempt(
     pr_number: int | None,
     fold: int = 0,
     supersedes_attempt_id: str | None = None,
+    backbone: str = BACKBONE_GEMMA4,
 ) -> dict[str, Any]:
     """Create a new post-hoc fixed-head attempt destination.
 
@@ -390,12 +643,17 @@ def create_attempt(
     mismatch. Writes run_config.yaml, metadata.json, status.json, jobs.jsonl,
     artifacts.json, evaluations.json, and source_manifest.json.
     ``supersedes_attempt_id`` links a retry attempt to a failed/cancelled one.
+    The campaign protocol (official test or official development) and the
+    backbone are derived from the parent run config.
     """
     if modality not in EXPECTED_ROW_COUNTS:
         raise CampaignError(f"unsupported modality {modality!r}")
+    protocol = resolve_campaign_protocol(parent_fold_dir)
+    if backbone not in _backbone_identity_choices():
+        raise CampaignError(f"unsupported backbone {backbone!r}")
     _require_clean_production_source(repo_root)
-    adapter_hashes = _verify_parent_identity(modality, parent_fold_dir)
-    _verify_parent_config_hashes(parent_fold_dir)
+    adapter_hashes = _verify_parent_identity(modality, parent_fold_dir, protocol)
+    parent_hashes = _verify_parent_config_hashes(parent_fold_dir, protocol)
     attempt_path = Path(attempt_dir)
     attempt_path.mkdir(parents=True, exist_ok=False)
 
@@ -433,6 +691,8 @@ def create_attempt(
             deployed_source_sha256_value=source_sha,
             group_id=group_id,
             fold=fold,
+            backbone=backbone,
+            protocol=protocol,
         )
         write_json_atomic(attempt_path / "run_config.yaml", run_config_doc, indent=2)
 
@@ -453,8 +713,8 @@ def create_attempt(
             "research": {"github_issue": None, "github_pr": pr_number},
             "hashes": {
                 "resolved_config_sha256": canonical_sha256(run_config_doc),
-                "manifest_sha256": MANIFEST_SHA256,
-                "split_sha256": SPLIT_SHA256,
+                "manifest_sha256": parent_hashes["manifest_sha256"],
+                "split_sha256": parent_hashes["split_sha256"],
             },
             "paths": {
                 "run_config": "run_config.yaml",
@@ -717,6 +977,31 @@ def _classifier_artifacts(attempt_dir: Path, fold_dir: Path) -> list[dict[str, A
     return records
 
 
+def _attempt_protocol_and_support(attempt_dir: Path) -> tuple[str, int, str, str]:
+    run_config = _read_run_config(attempt_dir)
+    config = run_config.get("config") or {}
+    evaluation = config.get("evaluation") or {}
+    protocol = str(config.get("campaign_protocol") or "")
+    if protocol not in CAMPAIGN_PROTOCOLS:
+        raise CampaignError(f"attempt run_config has unsupported campaign_protocol {protocol!r}")
+    support = int(evaluation.get("support") or 0)
+    if support <= 0:
+        raise CampaignError(f"attempt run_config has invalid evaluation support {support}")
+    return protocol, support, str(evaluation.get("split_name") or ""), str(evaluation.get("split_protocol") or "")
+
+
+def _backbone_from_attempt(attempt_dir: Path) -> str:
+    run_config = _read_run_config(attempt_dir)
+    config = run_config.get("config") or {}
+    method = str(config.get("method") or "")
+    if method == FIXED_HEAD_METHOD:
+        return BACKBONE_GEMMA4
+    if method == QWEN_FIXED_HEAD_METHOD:
+        modality = str(config.get("modality") or "")
+        return BACKBONE_QWEN_TEXT if modality == "text_only" else BACKBONE_QWEN2AUDIO
+    raise CampaignError(f"attempt run_config has unsupported method {method!r}")
+
+
 def _materialize_evaluations(
     attempt_dir: Path,
     fold_dir: Path,
@@ -724,12 +1009,15 @@ def _materialize_evaluations(
 ) -> list[dict[str, Any]]:
     evaluations: list[dict[str, Any]] = []
     attempt_id = str(read_json(attempt_dir / METADATA_FILE)["attempt_id"])
-    for variant, backend in zip(VARIANTS, (LOGGREG_PREDICTION_BACKEND, XGB_PREDICTION_BACKEND)):
+    protocol, support, split_name, split_protocol = _attempt_protocol_and_support(attempt_dir)
+    identity = _backbone_identity(_backbone_from_attempt(attempt_dir))
+    backends = (identity["logreg_backend"], identity["xgb_backend"])
+    for variant, backend in zip(VARIANTS, backends):
         metrics_path = fold_dir / "hidden_classifiers" / variant / "metrics.json"
         predictions_path = fold_dir / "hidden_classifiers" / variant / "predictions_subject_level.csv"
         metrics = read_json(metrics_path)
         metrics_sha = sha256_file(metrics_path)
-        qualifiers = _evaluation_qualifiers(parent_fold_dir, backend, metrics_sha)
+        qualifiers = _evaluation_qualifiers(parent_fold_dir, backend, metrics_sha, protocol)
         eval_id = evaluation_id(
             attempt_id=attempt_id,
             fold=0,
@@ -739,8 +1027,8 @@ def _materialize_evaluations(
             {
                 "evaluation_id": eval_id,
                 "dataset": "daic",
-                "split_name": "test",
-                "split_protocol": "daic_official_train_fit_locked_test_evaluation",
+                "split_name": split_name,
+                "split_protocol": split_protocol,
                 "checkpoint_role": "best_model",
                 "checkpoint_path": str(parent_fold_dir / "best_model"),
                 "backend": backend,
@@ -750,7 +1038,7 @@ def _materialize_evaluations(
                 "metrics_artifact_path": f"hidden_classifiers/{variant}/metrics.json",
                 "predictions_artifact_path": f"hidden_classifiers/{variant}/predictions_subject_level.csv",
                 "metrics": [
-                    {"name": name, "value": metrics.get(name), "support": 47}
+                    {"name": name, "value": metrics.get(name), "support": support}
                     for name in EVALUATION_METRIC_NAMES
                 ],
                 "locally_verified": False,
@@ -922,6 +1210,7 @@ def verify_local(attempt_dir: str | Path) -> dict[str, Any]:
             )
 
     # 3. Recompute subject predictions and metrics per variant.
+    protocol, support, _, _ = _attempt_protocol_and_support(attempt_path)
     for variant in VARIANTS:
         recomputed = _recompute_subject_metrics(fold_dir, variant)
         variant_dir = fold_dir / "hidden_classifiers" / variant
@@ -939,9 +1228,9 @@ def verify_local(attempt_dir: str | Path) -> dict[str, Any]:
                     f"match metrics.json {saved_value}"
                 )
         subject_rows = recomputed["subject_rows"]
-        if len(subject_rows) != 47:
+        if len(subject_rows) != support:
             raise CampaignError(
-                f"{variant} recomputed subject rows {len(subject_rows)} != 47"
+                f"{variant} recomputed subject rows {len(subject_rows)} != {support}"
             )
         saved_subject_rows = read_jsonl(variant_dir / "predictions_subject_level.jsonl")
         if len(saved_subject_rows) != len(subject_rows):

@@ -83,6 +83,10 @@ _FAMILY_RULES: tuple[tuple[str, str | None, str], ...] = (
     ("Gemma 4 DAIC", "Gemma 4 teacher-forced head confusion matrix", "ordinary_qwen"),
     ("Gemma 4 DAIC", "Gemma 4 LogReg raw hidden head", "hidden_classifier"),
     ("Gemma 4 DAIC", "Gemma 4 XGBoost raw hidden head", "hidden_classifier"),
+    ("DAIC official development", "Qwen teacher-forced", "ordinary_qwen"),
+    ("DAIC official development", "Gemma 4 teacher-forced", "ordinary_qwen"),
+    ("DAIC official development heads", None, "hidden_classifier"),
+    ("DAIC Head Ablation", None, "hidden_classifier"),
 )
 
 _NOT_RUN_HINTS = ("not run", "optuna not run", "not_run", "never run")

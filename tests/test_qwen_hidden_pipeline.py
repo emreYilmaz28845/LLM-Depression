@@ -15,6 +15,7 @@ from src.features.qwen_hidden_collator import PromptOnlyExtractionCollator
 from src.features.extract_qwen_hidden import (
     _decoder_hidden_size,
     _emotion_provenance,
+    _existing_cache_decision,
     _resolve_subject_partitions,
     _validate_saved_split,
     resolve_condition,
@@ -188,6 +189,190 @@ class PoolingTests(unittest.TestCase):
                 "final_eval": [row["subject_id"] for row in rows if row["partition"] == "test"],
             }
             self.assertEqual(_validate_saved_split(saved, config, partitions, 0, 2), metadata)
+
+    def test_officialdev_partition_resolution_uses_train_inner_and_dev_protocol(self):
+        split = {
+            "train_subject_ids": [f"ti{i:02d}" for i in range(86)],
+            "selection_subject_ids": [f"vi{i:02d}" for i in range(21)],
+            "final_eval_subject_ids": [f"dv{i:02d}" for i in range(35)],
+            "train_inner_subject_ids": [f"ti{i:02d}" for i in range(86)],
+            "val_inner_subject_ids": [f"vi{i:02d}" for i in range(21)],
+            "split_names": {
+                "train": "train_inner",
+                "selection": "val_inner",
+                "final_eval": "final_eval",
+            },
+        }
+        config = {
+            "dataset": "daic",
+            "protocol_id": "daic_participant_speech_packed30_v1",
+            "split": {
+                "mode": "fixed",
+                "train_partition": "train",
+                "final_eval_partition": "val",
+                "dev_pool_partitions": ["train"],
+            },
+        }
+        partitions, provenance = _resolve_subject_partitions({}, config, split)
+        self.assertEqual(partitions["outer_train"], [f"ti{i:02d}" for i in range(86)])
+        self.assertEqual(partitions["final_eval"], [f"dv{i:02d}" for i in range(35)])
+        self.assertEqual(
+            provenance["evaluation_protocol"],
+            "daic_official_train_inner_split_dev_evaluation",
+        )
+        self.assertEqual(provenance["split_name"], "val")
+
+    def test_officialtest_partition_resolution_keeps_locked_protocol(self):
+        split = {
+            "train_subject_ids": [f"t{i:03d}" for i in range(107)],
+            "selection_subject_ids": [f"s{i:02d}" for i in range(35)],
+            "final_eval_subject_ids": [f"e{i:02d}" for i in range(47)],
+            "split_names": {
+                "train": "train",
+                "selection": "val",
+                "final_eval": "test",
+            },
+        }
+        config = {
+            "dataset": "daic",
+            "protocol_id": "daic_participant_speech_packed30_v1",
+            "split": {
+                "mode": "fixed",
+                "train_partition": "train",
+                "selection_partition": "val",
+                "final_eval_partition": "test",
+                "dev_pool_partitions": ["train"],
+            },
+        }
+        partitions, provenance = _resolve_subject_partitions({}, config, split)
+        self.assertEqual(partitions["outer_train"], [f"t{i:03d}" for i in range(107)])
+        self.assertEqual(partitions["final_eval"], [f"e{i:02d}" for i in range(47)])
+        self.assertEqual(
+            provenance["evaluation_protocol"],
+            "daic_official_train_fit_locked_test_evaluation",
+        )
+        self.assertEqual(provenance["split_name"], "test")
+
+    def test_officialdev_saved_split_validation_proves_official_origins(self):
+        from src.utils import save_json
+
+        with tempfile.TemporaryDirectory() as directory:
+            metadata = Path(directory) / "partitions.json"
+            rows = [
+                *({"subject_id": f"t{i:03d}", "partition": "train"} for i in range(107)),
+                *({"subject_id": f"v{i:02d}", "partition": "val"} for i in range(35)),
+                *({"subject_id": f"e{i:02d}", "partition": "test"} for i in range(47)),
+            ]
+            save_json(rows, metadata)
+            split_payload = {
+                "train_subject_ids": [f"t{i:03d}" for i in range(86)],
+                "selection_subject_ids": [f"t{i:03d}" for i in range(86, 107)],
+                "final_eval_subject_ids": [f"v{i:02d}" for i in range(35)],
+                "train_inner_subject_ids": [f"t{i:03d}" for i in range(86)],
+                "val_inner_subject_ids": [f"t{i:03d}" for i in range(86, 107)],
+                "split_names": {"train": "train_inner", "selection": "val_inner", "final_eval": "final_eval"},
+            }
+            saved = {"split_metadata_path": str(metadata), "split_mode": "fixed"}
+            config = {
+                "dataset": "daic",
+                "split": {
+                    "train_partition": "train",
+                    "final_eval_partition": "val",
+                    "dev_pool_partitions": ["train"],
+                },
+                "evaluation": {"subject_score_aggregation": "mean_score"},
+            }
+            partitions = {
+                "outer_train": [f"t{i:03d}" for i in range(86)],
+                "final_eval": [f"v{i:02d}" for i in range(35)],
+            }
+            self.assertEqual(
+                _validate_saved_split(saved, config, partitions, 0, 1, split_payload=split_payload),
+                metadata,
+            )
+
+    def test_officialdev_saved_split_validation_refuses_inner_mismatch(self):
+        from src.utils import save_json
+
+        with tempfile.TemporaryDirectory() as directory:
+            metadata = Path(directory) / "partitions.json"
+            rows = [
+                *({"subject_id": f"t{i}", "partition": "train"} for i in range(107)),
+                *({"subject_id": f"v{i}", "partition": "val"} for i in range(35)),
+                *({"subject_id": f"e{i}", "partition": "test"} for i in range(47)),
+            ]
+            save_json(rows, metadata)
+            split_payload = {
+                "train_subject_ids": [f"t{i:02d}" for i in range(86)],
+                "selection_subject_ids": [f"t{i:03d}" for i in range(86, 107)],
+                "final_eval_subject_ids": [f"v{i:02d}" for i in range(35)],
+                "train_inner_subject_ids": [f"t{i}" for i in range(85)],  # wrong size
+                "val_inner_subject_ids": [f"t{i:03d}" for i in range(86, 107)],
+                "split_names": {"train": "train_inner", "selection": "val_inner", "final_eval": "final_eval"},
+            }
+            saved = {"split_metadata_path": str(metadata), "split_mode": "fixed"}
+            config = {
+                "dataset": "daic",
+                "split": {
+                    "train_partition": "train",
+                    "final_eval_partition": "val",
+                    "dev_pool_partitions": ["train"],
+                },
+                "evaluation": {"subject_score_aggregation": "mean_score"},
+            }
+            partitions = {
+                "outer_train": [f"t{i:02d}" for i in range(86)],
+                "final_eval": [f"v{i:02d}" for i in range(35)],
+            }
+            with self.assertRaisesRegex(ValueError, "partition the official"):
+                _validate_saved_split(saved, config, partitions, 0, 1, split_payload=split_payload)
+
+    def test_existing_cache_decision_skip_compatible_refuse_partial_and_incompatible(self):
+        from src.utils import save_json
+
+        cache_config = {"schema_version": "qwen_hidden_cache.v2", "identity": "x"}
+        config_sha = "a" * 64
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            # Empty/absent dir -> write.
+            self.assertEqual(
+                _existing_cache_decision(output / "missing", cache_config, config_sha),
+                "write",
+            )
+            # Complete compatible cache -> skip.
+            (output / "cache_ok").mkdir()
+            save_json(
+                {"cache_config": cache_config, "cache_config_sha256": config_sha},
+                output / "cache_ok" / "extraction_metadata.json",
+            )
+            for name in (
+                "outer_train.npz",
+                "outer_train_rows.jsonl",
+                "final_eval.npz",
+                "final_eval_rows.jsonl",
+            ):
+                (output / "cache_ok" / name).write_text("x", encoding="utf-8")
+            self.assertEqual(
+                _existing_cache_decision(output / "cache_ok", cache_config, config_sha),
+                "skipped_compatible_complete_cache",
+            )
+            # Partial cache with matching identity -> refused.
+            (output / "cache_partial").mkdir()
+            save_json(
+                {"cache_config": cache_config, "cache_config_sha256": config_sha},
+                output / "cache_partial" / "extraction_metadata.json",
+            )
+            (output / "cache_partial" / "outer_train.npz").write_text("x", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "partial"):
+                _existing_cache_decision(output / "cache_partial", cache_config, config_sha)
+            # Identity mismatch -> refused, never overwritten.
+            (output / "cache_mismatch").mkdir()
+            save_json(
+                {"cache_config": {"schema_version": "other"}, "cache_config_sha256": "b" * 64},
+                output / "cache_mismatch" / "extraction_metadata.json",
+            )
+            with self.assertRaisesRegex(ValueError, "incompatible"):
+                _existing_cache_decision(output / "cache_mismatch", cache_config, config_sha)
 
     def test_audio_expansion_uses_aligned_all_valid_mask(self):
         hidden = torch.zeros((1, 5, 2))
