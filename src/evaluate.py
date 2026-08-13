@@ -52,6 +52,8 @@ from src.model.runtime import (
 )
 from src.model.lora_common import resolve_lora_layer_selection
 from src.utils import (
+    DAIC_OFFICIALDEV_RECIPE_SUFFIX,
+    DAIC_OFFICIALDEV_SPLIT_PROTOCOL,
     AGGREGATION_LEVEL_SUBJECT,
     AGGREGATION_LEVEL_RESPONSE_SUBJECT,
     PREDICTION_MODE_GENERATION,
@@ -1170,6 +1172,16 @@ def _record_evaluation_sidecars(
     split_protocol = (
         str(cv_protocol) if cv_protocol else ("fixed_train_val_test" if split_mode == "fixed" else None)
     )
+    # The DAIC official-development protocol is derived from the saved config:
+    # officialdev recipe, final eval on the official val partition, no
+    # selection partition.
+    if (
+        str(config.get("dataset", "")).lower() == "daic"
+        and str(config.get("recipe_id", "")).endswith(DAIC_OFFICIALDEV_RECIPE_SUFFIX)
+        and str(config.get("split", {}).get("final_eval_partition", "")) == "val"
+        and not str(config.get("split", {}).get("selection_partition", "")).strip()
+    ):
+        split_protocol = DAIC_OFFICIALDEV_SPLIT_PROTOCOL
     dataset = str(config["dataset"])
     namespace = "headline/binary_strict"
     evaluation_config = config.get("evaluation") if isinstance(config.get("evaluation"), dict) else {}

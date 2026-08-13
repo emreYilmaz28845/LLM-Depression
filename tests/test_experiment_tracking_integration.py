@@ -212,6 +212,50 @@ def test_evaluation_records_sidecars_idempotently(tmp_path: Path) -> None:
     assert len(artifacts["artifacts"]) == 5
 
 
+def test_evaluation_records_officialdev_split_protocol(tmp_path: Path) -> None:
+    """The DAIC official-development protocol must be derived from the saved
+    config and recorded as the campaign split protocol."""
+    context_path, context = _eval_context(tmp_path)
+    fold_dir = tmp_path / "run" / "fold_0"
+    checkpoint_dir = fold_dir / "best_model"
+    output_dir = checkpoint_dir / "standalone_eval"
+    output_dir.mkdir(parents=True)
+    base = {
+        "prediction_backend": "original_teacher_forced",
+        "aggregation_level": "subject",
+        "num_units": 35,
+        "backend_results": {
+            "original_teacher_forced": {
+                "headline_metrics": {
+                    "accuracy": 0.7,
+                    "precision": 0.5,
+                    "recall": 0.5,
+                    "positive_f1": 0.5,
+                    "macro_f1": 0.6,
+                }
+            }
+        },
+    }
+    (output_dir / "metrics_original_teacher_forced.json").write_text(json.dumps(base), encoding="utf-8")
+    (output_dir / "predictions_subject_level.csv").write_text("subject_id,prediction\n", encoding="utf-8")
+    config = {
+        "dataset": "daic",
+        "recipe_id": "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_officialdev_v1",
+        "split": {"final_eval_partition": "val"},
+    }
+    metrics = {"active_backend": "original_teacher_forced", "backend_results": base["backend_results"]}
+    args = SimpleNamespace(
+        experiment_context=str(context_path),
+        checkpoint_dir=str(checkpoint_dir),
+        fold=0,
+    )
+    _record_evaluation_sidecars(args, config, metrics, output_dir, aggregation_level="subject", split_mode="fixed", cv_protocol=None)
+    evaluations = json.loads((fold_dir / "evaluations.json").read_text(encoding="utf-8"))
+    record = evaluations["evaluations"][0]
+    assert record["split_name"] == "val"
+    assert record["split_protocol"] == "daic_official_train_inner_split_dev_evaluation"
+
+
 def test_evaluation_different_evidence_creates_new_evaluation_id(tmp_path: Path) -> None:
     context_path, context = _eval_context(tmp_path)
     fold_dir = tmp_path / "run" / "fold_0"
