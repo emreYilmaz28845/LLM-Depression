@@ -24,13 +24,18 @@ from src.experiment_tracking.canonical import read_json, sha256_file
 
 
 def build_selection(parent_fold_dir: Path, *, per_class: int = 2) -> dict[str, object]:
+    import yaml
+
     split_payload = read_json(parent_fold_dir / "logs" / "split_used.json")
     labels: dict[str, int] = {}
     train_ids = [str(item) for item in split_payload.get("train_subject_ids") or []]
     selection_ids = [str(item) for item in split_payload.get("selection_subject_ids") or []]
     if not train_ids or not selection_ids:
         raise ValueError("smoke parent saved split is empty")
-    run_config = read_json(parent_fold_dir / "run_config.yaml")
+    run_config_path = parent_fold_dir / "run_config.yaml"
+    if not run_config_path.is_file():
+        raise ValueError("smoke parent has no run_config.yaml")
+    run_config = yaml.safe_load(run_config_path.read_text(encoding="utf-8"))
     partition_path = Path(run_config["split_metadata_path"])
     if not partition_path.is_file():
         raise ValueError("smoke parent run_config has no resolvable partition file")
