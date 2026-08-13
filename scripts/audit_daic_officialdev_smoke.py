@@ -52,7 +52,11 @@ def audit_smoke(
     selection_sha = cache_config["subject_selection_sha256"]
     _require(len(str(selection_sha)) == 64, "subject_selection_sha256 is not a sha256 hex digest")
 
-    run_config = read_json(parent_fold_dir / "run_config.yaml")
+    import yaml
+
+    run_config_path = parent_fold_dir / "run_config.yaml"
+    _require(run_config_path.is_file(), "parent run_config.yaml missing")
+    run_config = yaml.safe_load(run_config_path.read_text(encoding="utf-8"))
     split_payload = read_json(parent_fold_dir / "logs" / "split_used.json")
     partition_rows = read_json(run_config["split_metadata_path"])
     official_train = {
