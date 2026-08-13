@@ -95,12 +95,12 @@ def _load_sacct_file(path: Path) -> dict[str, dict[str, str]]:
         return states
     for line in lines:
         fields = [field.strip() for field in line.rstrip("|").split("|")]
-        if len(fields) < 4 or "." in fields[0]:
+        if len(fields) < 2 or "." in fields[0]:
             continue
         states[fields[0]] = {
             "state": fields[1],
-            "exit_code": fields[2],
-            "elapsed": fields[3],
+            "exit_code": fields[2] if len(fields) > 2 else "",
+            "elapsed": fields[3] if len(fields) > 3 else "",
             "nodes": fields[4] if len(fields) > 4 else "",
         }
     return states
