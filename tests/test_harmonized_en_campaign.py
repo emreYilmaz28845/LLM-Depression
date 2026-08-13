@@ -164,10 +164,31 @@ def test_english_launcher_dry_run_has_exactly_100_jobs() -> None:
     assert sum("run_train_slurm.sh" in line for line in commands) == 40
     assert sum("run_eval_slurm.sh" in line for line in commands) == 20
     assert sum("run_qwen_hidden_extract_slurm.sh" in line for line in commands) == 40
-    assert "max_gpus=32" in result.stdout
+    assert "max_gpus=64" in result.stdout
     assert "xgb_optuna" not in result.stdout + result.stderr
     assert "github_issue=20 github_pr=99" in result.stdout
     assert "audio_only" not in result.stdout + result.stderr
+
+
+def test_english_launcher_refuses_more_than_64_gpus() -> None:
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/submit_harmonized_en_standalone.sh")],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PROJECT_ROOT": str(ROOT),
+            "RUN_ID": "unit",
+            "DRY_RUN": "1",
+            "GITHUB_ISSUE": "20",
+            "GITHUB_PR": "99",
+            "MAX_CONCURRENT_TRAINS": "16",
+            "MAX_CONCURRENT_AUX": "1",
+        },
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 2
+    assert "64-GPU project ceiling" in result.stderr
 
 
 def test_english_launcher_requires_campaign_provenance() -> None:

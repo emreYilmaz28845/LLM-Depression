@@ -142,7 +142,7 @@ RUN_ID=<same-id> DRY_RUN=1 bash scripts/submit_harmonized_standalone.sh
 RUN_ID=<same-id> STAGE=smoke DRY_RUN=1 bash scripts/submit_harmonized_merged.sh
 ```
 
-After the real preflight finishes successfully, reuse its `RUN_ID` for the standalone launcher and each merged stage. The default standalone schedule uses seven four-GPU training lanes plus one shared four-job auxiliary pool, so at most 32 H100s can be allocated at once. The merged launcher uses the same 28-GPU training ceiling and at most four one-GPU postprocessing jobs. Hidden-state postprocessing runs fixed Logistic Regression and fixed XGBoost only; XGBoost Optuna is disabled. The merged smoke, cross-validation, and final stages remain separate so later stages cannot start before their acceptance checks.
+After the real preflight finishes successfully, reuse its `RUN_ID` for the standalone launcher and each merged stage. The default standalone schedule uses fifteen four-GPU training lanes plus one shared four-job auxiliary pool, so at most 64 H100s can be allocated at once. This is the combined project ceiling across all active campaigns, not a separate allowance for each launcher. The merged launcher uses the same 60-GPU training ceiling and at most four one-GPU postprocessing jobs. Hidden-state postprocessing runs fixed Logistic Regression and fixed XGBoost only; XGBoost Optuna is disabled. The merged smoke, cross-validation, and final stages remain separate so later stages cannot start before their acceptance checks.
 
 ## Experiment tracking and reporting
 
