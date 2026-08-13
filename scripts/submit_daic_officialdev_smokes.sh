@@ -56,17 +56,30 @@ job_id() { printf '%s' "${1%%;*}"; }
 
 if [ "$DRY_RUN" = 0 ]; then
     mkdir -p "$SMOKE_RUN_ROOT"
-    [ ! -e "$SMOKE_RUN_ROOT/jobs.tsv" ] || { echo "Refusing existing smoke registry: $SMOKE_RUN_ROOT/jobs.tsv" >&2; exit 4; }
-    printf 'kind\tbackbone\tmodality\tjob_id\tdependency\n' > "$SMOKE_RUN_ROOT/jobs.tsv"
+    if [ -e "$SMOKE_RUN_ROOT/jobs.tsv" ]; then
+        # Resume mode: jobs already recorded for a (kind, backbone, modality)
+        # are skipped; Tier C reads the train job ids from the registry.
+        echo "Resuming smoke registry: $SMOKE_RUN_ROOT/jobs.tsv"
+    else
+        printf 'kind\tbackbone\tmodality\tjob_id\tdependency\n' > "$SMOKE_RUN_ROOT/jobs.tsv"
+    fi
 fi
 record_job() {
     [ "$DRY_RUN" = 1 ] || printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" >> "$SMOKE_RUN_ROOT/jobs.tsv"
+}
+already_submitted() {
+    [ "$DRY_RUN" = 1 ] && return 1
+    awk -F'\t' -v k="$1" -v b="$2" -v m="$3" '$1==k && $2==b && $3==m {found=1} END {exit !found}' "$SMOKE_RUN_ROOT/jobs.tsv"
 }
 
 # ---- Tier A: six forward contracts -----------------------------------------
 contract_jobs=()
 for backbone in qwen gemma4; do
     for modality in audio_only audio_text text_only; do
+        if already_submitted contract "$backbone" "$modality"; then
+            echo "skip contract $backbone/$modality (already recorded)"
+            continue
+        fi
         case "$backbone:$modality" in
             qwen:audio_only) MODEL="$MODEL_PATH_QWEN"; ADAPTER="$QWEN_PARENT_AUDIO/best_model";;
             qwen:audio_text) MODEL="$MODEL_PATH_QWEN"; ADAPTER="$QWEN_PARENT_AUDIO_TEXT/best_model";;
@@ -90,6 +103,10 @@ done
 # ---- Tier B: two training smokes -------------------------------------------
 train_jobs=()
 for backbone in qwen gemma4; do
+    if already_submitted train "$backbone" "audio_text"; then
+        echo "skip train $backbone (already recorded)"
+        continue
+    fi
     case "$backbone" in
         qwen)
             CONFIG="$PROJECT_ROOT/configs/main/daic_audio_text_harmonized_selmacrof1_tf_officialdev.yaml"
@@ -113,6 +130,10 @@ done
 # ---- Tier C: six extraction/head smoke chains ------------------------------
 for backbone in qwen gemma4; do
     for modality in audio_only audio_text text_only; do
+        if already_submitted extract "$backbone" "$modality"; then
+            echo "skip extract/heads $backbone/$modality (already recorded)"
+            continue
+        fi
         case "$backbone:$modality" in
             qwen:audio_only) MODEL="$MODEL_PATH_QWEN";;
             qwen:audio_text) MODEL="$MODEL_PATH_QWEN";;
@@ -122,21 +143,18 @@ for backbone in qwen gemma4; do
         if [ "$backbone" = "gemma4" ]; then ENV="$GEMMA_ENV_ACTIVATE"; else ENV="$QWEN_ENV_ACTIVATE"; fi
         # The smoke parent is the smoke training run of this backbone. Its
         # saved split carries limited official-train subjects with both
-        # classes; the selection file is built from it deterministically.
+        # classes; the selection file is built by the extract worker at job
+        # start (the extract job depends afterok on the train job).
         TRAIN_ROOT="$SMOKE_RUN_ROOT/train/$backbone"
         PARENT_FOLD_DIR="$TRAIN_ROOT/daic_officialdev_smoke_train_${backbone}_audio_text_${SMOKE_ID}/fold_0"
         SELECTION="$SMOKE_RUN_ROOT/selections/${backbone}_${modality}.json"
         ATTEMPT_DIR="$SMOKE_RUN_ROOT/attempts/${backbone}_${modality}"
         SMOKE_NAME="smoke_${backbone}_${modality}_${SMOKE_ID}"
-        if [ "$DRY_RUN" = 0 ]; then
-            [ -d "$PARENT_FOLD_DIR" ] || { echo "Smoke train parent missing: $PARENT_FOLD_DIR" >&2; exit 3; }
-            [ -d "$PARENT_FOLD_DIR/best_model" ] || { echo "Smoke train parent has no best_model: $PARENT_FOLD_DIR" >&2; exit 3; }
-            python "$PROJECT_ROOT/scripts/build_daic_officialdev_smoke_selection.py" \
-                --parent-fold-dir "$PARENT_FOLD_DIR" \
-                --output "$SELECTION"
-        fi
+        TRAIN_JOB="$(awk -F'\t' -v b="$backbone" '$2==b && $1=="train" {print $4; exit}' "$SMOKE_RUN_ROOT/jobs.tsv")"
+        [ -n "$TRAIN_JOB" ] || { echo "Missing smoke train job for $backbone" >&2; exit 3; }
         EXTRACT_RAW="$(submit sbatch --parsable --job-name="od-smk-ex-${backbone:0:3}-${modality:0:2}" \
-            --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV,ATTEMPT_DIR=$ATTEMPT_DIR,PARENT_FOLD_DIR=$PARENT_FOLD_DIR,MODEL_PATH=$MODEL,CONDITION=daic_officialdev_smoke,SUBJECT_SELECTION=$SELECTION" \
+            --dependency="afterok:$TRAIN_JOB" \
+            --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,ENV_ACTIVATE=$ENV,ATTEMPT_DIR=$ATTEMPT_DIR,PARENT_FOLD_DIR=$PARENT_FOLD_DIR,MODEL_PATH=$MODEL,CONDITION=daic_officialdev_smoke,SELECTION=$SELECTION" \
             "$EXTRACT_WORKER")"
         EXTRACT_JOB="$(job_id "$EXTRACT_RAW")"
         record_job extract "$backbone" "$modality" "$EXTRACT_JOB" ""

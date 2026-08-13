@@ -23,7 +23,7 @@ ATTEMPT_DIR="${ATTEMPT_DIR:?ATTEMPT_DIR is required}"
 PARENT_FOLD_DIR="${PARENT_FOLD_DIR:?PARENT_FOLD_DIR is required}"
 MODEL_PATH="${MODEL_PATH:?MODEL_PATH is required}"
 CONDITION="${CONDITION:-daic_officialdev_smoke}"
-SUBJECT_SELECTION="${SUBJECT_SELECTION:?SUBJECT_SELECTION is required for smoke extraction}"
+SELECTION="${SELECTION:?SELECTION is required for smoke extraction}"
 
 if [ ! -f "$ENV_ACTIVATE" ]; then
     echo "Environment activate script not found: $ENV_ACTIVATE" >&2
@@ -46,9 +46,16 @@ exec > >(tee -a "$LOG_ROOT/smoke-extract-${SLURM_JOB_ID}.out")
 exec 2> >(tee -a "$LOG_ROOT/smoke-extract-${SLURM_JOB_ID}.err" >&2)
 
 mkdir -p "$ATTEMPT_DIR"
+mkdir -p "$(dirname "$SELECTION")"
+# The extract job depends on its smoke training parent (afterok), so the
+# parent's saved split exists here. The deterministic selection file draws
+# both fit and eval subjects from the official training partition.
+python scripts/build_daic_officialdev_smoke_selection.py \
+    --parent-fold-dir "$PARENT_FOLD_DIR" \
+    --output "$SELECTION"
 python src/features/extract_qwen_hidden.py \
     --checkpoint-dir "$PARENT_FOLD_DIR/best_model" \
     --output-dir "$ATTEMPT_DIR/hidden_features" \
     --model-name-or-path "$MODEL_PATH" \
     --condition "$CONDITION" \
-    --subject-selection "$SUBJECT_SELECTION"
+    --subject-selection "$SELECTION"
