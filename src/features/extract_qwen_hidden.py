@@ -414,7 +414,18 @@ def _resolve_subject_partitions(
     if is_daic_chunking:
         train_sources = ("train_subject_ids",)
         heldout_source = "final_eval_subject_ids"
-        evaluation_protocol = "daic_official_train_fit_locked_test_evaluation"
+        final_partition = str(config.get("split", {}).get("final_eval_partition", "test"))
+        has_selection_partition = bool(
+            str(config.get("split", {}).get("selection_partition", "")).strip()
+        )
+        if final_partition == "val" and not has_selection_partition:
+            # Official-development protocol: the saved train_subject_ids are the
+            # 86 inner-training subjects and the saved final_eval_subject_ids
+            # are the 35 official development subjects. Derived from the saved
+            # config, never from hard-coded test strings.
+            evaluation_protocol = "daic_official_train_inner_split_dev_evaluation"
+        else:
+            evaluation_protocol = "daic_official_train_fit_locked_test_evaluation"
     elif cv_protocol == "train_val":
         train_sources = ("train_subject_ids",)
         heldout_source = "selection_subject_ids"
@@ -442,6 +453,7 @@ def _resolve_subject_partitions(
     partitions = {"outer_train": train_ids, "final_eval": heldout_ids}
     provenance = {
         "evaluation_protocol": evaluation_protocol,
+        "split_name": str(config.get("split", {}).get("final_eval_partition", "test")),
         "saved_cv_protocol": cv_protocol or None,
         "partition_sources": {
             "outer_train": list(train_sources),
@@ -462,6 +474,7 @@ def _validate_saved_split(
     partition_subject_ids: dict[str, list[str]],
     fold: int,
     train_source_count: int,
+    split_payload: dict[str, Any] | None = None,
 ) -> Path:
     split_metadata_path = _saved_path(saved["split_metadata_path"])
     if not split_metadata_path.exists():
@@ -485,21 +498,80 @@ def _validate_saved_split(
             ).lower()
             == "mean_score"
         )
-        dev_partitions = (
-            {str(config["split"]["train_partition"])}
-            if is_daic_chunking
-            else set(config["split"].get("dev_pool_partitions") or [
-                config["split"]["train_partition"],
-                config["split"]["selection_partition"],
-            ])
-        )
-        final_partition = str(config["split"]["final_eval_partition"])
-        expected_train = {
-            str(row["subject_id"]) for row in split_metadata if str(row["partition"]) in dev_partitions
-        }
-        expected_heldout = {
-            str(row["subject_id"]) for row in split_metadata if str(row["partition"]) == final_partition
-        }
+        split_payload = split_payload or {}
+        split_names = split_payload.get("split_names") or {}
+        inner_split_mode = str(split_names.get("train", "")) == "train_inner"
+        official_train_set: set[str] | None = None
+        official_heldout_set: set[str] | None = None
+        if is_daic_chunking and inner_split_mode:
+            # Official-development inner-split protocol: the saved
+            # train_subject_ids are the inner-training subjects and the saved
+            # final_eval_subject_ids are the official development partition.
+            # The saved split must prove its official origins: train_inner and
+            # val_inner partition the official train partition exactly, the
+            # val_inner set equals the saved selection set, and the official
+            # development partition stays disjoint.
+            train_partition = str(config["split"]["train_partition"])
+            final_partition = str(config["split"]["final_eval_partition"])
+            official_train_set = {
+                str(row["subject_id"])
+                for row in split_metadata
+                if str(row["partition"]) == train_partition
+            }
+            official_heldout_set = {
+                str(row["subject_id"])
+                for row in split_metadata
+                if str(row["partition"]) == final_partition
+            }
+            saved_train_inner = {
+                str(subject_id)
+                for subject_id in split_payload.get("train_inner_subject_ids", [])
+            }
+            saved_val_inner = {
+                str(subject_id)
+                for subject_id in split_payload.get("val_inner_subject_ids", [])
+            }
+            saved_selection = {
+                str(subject_id)
+                for subject_id in split_payload.get("selection_subject_ids", [])
+            }
+            expected_train = saved_train_inner
+            expected_heldout = official_heldout_set
+            if not saved_train_inner:
+                raise ValueError(
+                    "Inner-split checkpoint has no saved train_inner_subject_ids."
+                )
+            if saved_train_inner | saved_val_inner != official_train_set:
+                raise ValueError(
+                    "Inner-split checkpoint does not partition the official "
+                    "train partition exactly."
+                )
+            if saved_val_inner != saved_selection:
+                raise ValueError(
+                    "Inner-split checkpoint val_inner set differs from its "
+                    "saved selection set."
+                )
+            if not saved_train_inner.isdisjoint(official_heldout_set):
+                raise ValueError(
+                    "Inner-split checkpoint training subjects overlap the "
+                    "official development partition."
+                )
+        else:
+            dev_partitions = (
+                {str(config["split"]["train_partition"])}
+                if is_daic_chunking
+                else set(config["split"].get("dev_pool_partitions") or [
+                    config["split"]["train_partition"],
+                    config["split"]["selection_partition"],
+                ])
+            )
+            final_partition = str(config["split"]["final_eval_partition"])
+            expected_train = {
+                str(row["subject_id"]) for row in split_metadata if str(row["partition"]) in dev_partitions
+            }
+            expected_heldout = {
+                str(row["subject_id"]) for row in split_metadata if str(row["partition"]) == final_partition
+            }
     smoke_limit = int(config.get("split", {}).get("smoke_subject_limit", 0) or 0)
     if smoke_limit > 0:
         if not train_ids.issubset(expected_train) or not heldout_ids.issubset(
@@ -774,6 +846,37 @@ def _apply_subject_selection(
     return restricted
 
 
+def _existing_cache_decision(
+    output_dir: Path,
+    cache_config: dict[str, Any],
+    cache_config_sha256: str,
+) -> str:
+    """Decide whether an existing cache output may be reused.
+
+    Returns ``"write"`` for an absent or empty output dir,
+    ``"skipped_compatible_complete_cache"`` for a complete cache whose identity
+    matches exactly, and raises on a partial or identity-mismatched cache.
+    Never overwrites evidence.
+    """
+    if not output_dir.exists() or not any(output_dir.iterdir()):
+        return "write"
+    metadata_path = output_dir / "extraction_metadata.json"
+    if not metadata_path.is_file():
+        raise ValueError(
+            f"Non-empty hidden cache has no extraction_metadata.json: {output_dir}. "
+            "Refusing to overwrite a partial cache."
+        )
+    existing = read_json(metadata_path)
+    if (
+        existing.get("cache_config") != cache_config
+        or existing.get("cache_config_sha256") != cache_config_sha256
+    ):
+        raise ValueError(f"Existing hidden cache is incompatible: {output_dir}.")
+    if not all((output_dir / name).is_file() for name in CACHE_ARTIFACT_NAMES):
+        raise ValueError(f"Existing hidden cache is partial: {output_dir}.")
+    return "skipped_compatible_complete_cache"
+
+
 def main() -> None:
     args = parse_args()
     checkpoint_dir = args.checkpoint_dir.resolve()
@@ -803,7 +906,7 @@ def main() -> None:
     )
     train_source_count = 1 if (cv_protocol == "train_val" or _is_daic_chunking(config)) else 2
     split_metadata_path = _validate_saved_split(
-        saved, config, partition_subject_ids, fold, train_source_count
+        saved, config, partition_subject_ids, fold, train_source_count, split_payload=split_payload
     )
     manifest_path = args.manifest_path.resolve() if args.manifest_path else _saved_path(saved["manifest_path"])
     if not manifest_path.exists():
@@ -855,25 +958,12 @@ def main() -> None:
     cache_config_sha256 = sha256_text(
         json.dumps(cache_config, sort_keys=True, separators=(",", ":"))
     )
-    if output_dir.exists() and any(output_dir.iterdir()):
-        metadata_path = output_dir / "extraction_metadata.json"
-        if not metadata_path.is_file():
-            raise ValueError(
-                f"Non-empty hidden cache has no extraction_metadata.json: {output_dir}. "
-                "Refusing to overwrite a partial cache."
-            )
-        existing = read_json(metadata_path)
-        if (
-            existing.get("cache_config") != cache_config
-            or existing.get("cache_config_sha256") != cache_config_sha256
-        ):
-            raise ValueError(f"Existing hidden cache is incompatible: {output_dir}.")
-        if not all((output_dir / name).is_file() for name in CACHE_ARTIFACT_NAMES):
-            raise ValueError(f"Existing hidden cache is partial: {output_dir}.")
+    cache_decision = _existing_cache_decision(output_dir, cache_config, cache_config_sha256)
+    if cache_decision == "skipped_compatible_complete_cache":
         print(
             json.dumps(
                 {
-                    "status": "skipped_compatible_complete_cache",
+                    "status": cache_decision,
                     "output_dir": str(output_dir),
                     "cache_config_sha256": cache_config_sha256,
                 },

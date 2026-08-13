@@ -349,3 +349,155 @@ def test_gemma_fixed_head_identity_and_backends(tmp_path: Path) -> None:
         )
         assert result_config["model_backend"] == "gemma4"
         assert result_config["prediction_backend"] == expected_backend
+
+
+def test_officialdev_contract_refuses_wrong_subject_counts(tmp_path: Path) -> None:
+    from baselines.qwen_hidden_classifier import _enforce_officialdev_contract
+
+    metadata = {"input_modality": "text_only"}
+    too_few_train = [
+        {"subject_id": str(index), "label": index % 2} for index in range(85)
+    ]
+    with pytest.raises(ValueError, match="86 inner-training"):
+        _enforce_officialdev_contract(
+            metadata,
+            too_few_train,
+            [{"subject_id": str(index)} for index in range(35)],
+            {str(index) for index in range(85)},
+        )
+    train = [
+        {"subject_id": str(index), "label": index % 2} for index in range(86)
+    ]
+    with pytest.raises(ValueError, match="35 official development"):
+        _enforce_officialdev_contract(
+            metadata,
+            train,
+            [{"subject_id": str(index)} for index in range(20)],
+            {str(index) for index in range(86)},
+        )
+    # Both classes in fit and eval sets are still required by run_variant.
+    from baselines.qwen_hidden_classifier import (
+        _enforce_complete_chunk_coverage,
+    )
+
+    audio_metadata = {"input_modality": "audio_only"}
+    audio_train = []
+    for subject in range(86):
+        for chunk in range(2):
+            audio_train.append(
+                {
+                    "subject_id": str(subject),
+                    "label": subject % 2,
+                    "chunk_index": chunk,
+                    "num_chunks": 2,
+                }
+            )
+    audio_test = [
+        {"subject_id": str(index), "label": index % 2, "chunk_index": 0, "num_chunks": 1}
+        for index in range(35)
+    ]
+    _enforce_officialdev_contract(
+        audio_metadata, audio_train, audio_test, {str(s) for s in range(86)}
+    )
+    dropped = audio_train[:-1]
+    with pytest.raises(ValueError, match="missing"):
+        _enforce_complete_chunk_coverage(dropped, "outer_train")
+
+
+def test_officialdev_qwen_backend_identity_and_run(tmp_path: Path) -> None:
+    from src.utils import save_json, write_jsonl
+
+    from baselines.qwen_hidden_classifier import (
+        QWEN_LOGREG_PREDICTION_BACKEND,
+        QWEN_PREDICTION_BACKEND,
+        QWEN_XGB_PREDICTION_BACKEND,
+        resolve_prediction_backend,
+        run_variant,
+    )
+
+    officialdev_metadata = {
+        "model_backend": "qwen2audio",
+        "input_modality": "text_only",
+        "evaluation_provenance": {
+            "evaluation_protocol": "daic_official_train_inner_split_dev_evaluation"
+        },
+    }
+    assert (
+        resolve_prediction_backend(officialdev_metadata, "logreg_raw")
+        == QWEN_LOGREG_PREDICTION_BACKEND
+    )
+    assert (
+        resolve_prediction_backend(officialdev_metadata, "xgb_raw")
+        == QWEN_XGB_PREDICTION_BACKEND
+    )
+    with pytest.raises(ValueError, match="only"):
+        resolve_prediction_backend(officialdev_metadata, "xgb_pca32")
+    # The locked default remains for Qwen caches outside the campaign.
+    plain_metadata = {"model_backend": "qwen2audio", "input_modality": "text_only"}
+    assert (
+        resolve_prediction_backend(plain_metadata, "logreg_raw")
+        == QWEN_PREDICTION_BACKEND
+    )
+
+    cache = tmp_path / "cache"
+    output = tmp_path / "output"
+    cache.mkdir()
+    rng = np.random.default_rng(11)
+    train_x = rng.normal(size=(86, 8)).astype(np.float32)
+    test_x = rng.normal(size=(35, 8)).astype(np.float32) + 50.0
+    np.savez_compressed(cache / "outer_train.npz", vectors=train_x)
+    np.savez_compressed(cache / "final_eval.npz", vectors=test_x)
+    train_rows = [
+        {"sample_id": f"tr{i}", "subject_id": f"tr{i}", "label": i % 2}
+        for i in range(86)
+    ]
+    test_rows = [
+        {"sample_id": f"te{i}", "subject_id": f"te{i}", "label": i % 2}
+        for i in range(35)
+    ]
+    write_jsonl(train_rows, cache / "outer_train_rows.jsonl")
+    write_jsonl(test_rows, cache / "final_eval_rows.jsonl")
+    save_json(
+        {
+            "dataset": "daic",
+            "input_modality": "text_only",
+            "condition": "text_only",
+            "fold": 0,
+            "model_backend": "qwen2audio",
+            "checkpoint_dir": "synthetic/best_model",
+            "protocol_id": PACKED30_PROTOCOL_ID,
+            "evaluation_provenance": {
+                "evaluation_protocol": "daic_official_train_inner_split_dev_evaluation"
+            },
+        },
+        cache / "extraction_metadata.json",
+    )
+    summaries = [
+        run_variant(cache, output, variant, seed=1337)
+        for variant in ("logreg_raw", "xgb_raw")
+    ]
+    for variant, summary in zip(("logreg_raw", "xgb_raw"), summaries):
+        variant_dir = output / variant
+        metadata = __import__("json").loads(
+            (variant_dir / "classifier_metadata.json").read_text()
+        )
+        expected_backend = (
+            QWEN_LOGREG_PREDICTION_BACKEND
+            if variant == "logreg_raw"
+            else QWEN_XGB_PREDICTION_BACKEND
+        )
+        assert metadata["prediction_backend"] == expected_backend
+        assert metadata["aggregation_policy"] == PACKED30_AGGREGATION_POLICY
+        assert metadata["threshold"] == 0.5
+        subject_rows = [
+            __import__("json").loads(line)
+            for line in (variant_dir / "predictions_subject_level.jsonl")
+            .read_text()
+            .splitlines()
+        ]
+        assert len(subject_rows) == 35
+        assert all(row["prediction_backend"] == expected_backend for row in subject_rows)
+        metrics = __import__("json").loads(
+            (variant_dir / "metrics.json").read_text()
+        )
+        assert metrics["prediction_backend"] == expected_backend

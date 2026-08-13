@@ -1,0 +1,104 @@
+#!/bin/bash
+#SBATCH -J daic-odv-heads
+#SBATCH -A etur92
+#SBATCH -q acc_ehpc
+#SBATCH -t 12:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=20
+#SBATCH -o /dev/null
+#SBATCH -e /dev/null
+#SBATCH --chdir=/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression
+
+set -euo pipefail
+module purge
+module load bsc/1.0
+module load miniforge/24.3.0-0
+
+PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
+# CPU-only head job: always the Qwen environment plus the project-local
+# hidden dependencies (scikit-learn 1.7.0, XGBoost 2.1.4).
+ENV_ACTIVATE="${ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate}"
+ATTEMPT_DIR="${ATTEMPT_DIR:?ATTEMPT_DIR is required}"
+PARENT_FOLD_DIR="${PARENT_FOLD_DIR:?PARENT_FOLD_DIR is required}"
+MATERIALIZE_EVIDENCE="${MATERIALIZE_EVIDENCE:-1}"
+
+if [ ! -f "$ENV_ACTIVATE" ]; then
+    echo "Qwen environment activate script not found: $ENV_ACTIVATE" >&2
+    exit 1
+fi
+# shellcheck disable=SC1090
+source "$ENV_ACTIVATE"
+cd "$PROJECT_ROOT"
+export PROJECT_ROOT
+export PYTHONPATH="$PROJECT_ROOT/.deps/qwen_hidden:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+
+# CPU-only classifier job. No GPU is requested and XGBoost stays on one
+# thread (n_jobs=1 in the locked implementation).
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+export HF_DATASETS_OFFLINE=1
+export TOKENIZERS_PARALLELISM=false
+
+LOG_ROOT="$PROJECT_ROOT/logs/daic_officialdev"
+mkdir -p "$LOG_ROOT"
+OUT_LOG="$LOG_ROOT/heads-${SLURM_JOB_ID}.out"
+ERR_LOG="$LOG_ROOT/heads-${SLURM_JOB_ID}.err"
+exec > >(tee -a "$OUT_LOG")
+exec 2> >(tee -a "$ERR_LOG" >&2)
+
+campaign_record() {
+    python tools/gemma4_hidden_campaign.py "$1" --attempt-dir "$ATTEMPT_DIR" "${@:2}"
+}
+campaign_transition() {
+    local to_state="$1"
+    local reason="$2"
+    if ! python tools/gemma4_hidden_campaign.py transition --attempt-dir "$ATTEMPT_DIR" \
+        --to-state "$to_state" --reason "$reason" > /dev/null 2>&1; then
+        python tools/gemma4_hidden_campaign.py transition --attempt-dir "$ATTEMPT_DIR" \
+            --to-state SUBMITTED --reason "job start implies submission" > /dev/null 2>&1 || true
+        python tools/gemma4_hidden_campaign.py transition --attempt-dir "$ATTEMPT_DIR" \
+            --to-state "$to_state" --reason "$reason" > /dev/null
+    fi
+}
+
+campaign_record record-job \
+    --job-key heads --job-type hidden_classifier --event-type SUBMITTED \
+    --slurm-job-id "${SLURM_JOB_ID:-}" --status PENDING \
+    --reason "fixed-head job submitted by campaign launcher"
+# The attempt is already RUNNING (extraction ran in this chain); only the
+# events are appended here, no state transition is needed.
+campaign_record record-job \
+    --job-key heads --job-type hidden_classifier --event-type STARTED \
+    --slurm-job-id "${SLURM_JOB_ID:-}" --status RUNNING \
+    --reason "fixed-head job started on ${SLURMD_NODENAME:-unknown}"
+
+cleanup() {
+    local exit_code=$?
+    if [ "$exit_code" -eq 0 ]; then
+        campaign_record record-job \
+            --job-key heads --job-type hidden_classifier --event-type COMPLETED \
+            --slurm-job-id "${SLURM_JOB_ID:-}" --status COMPLETED \
+            --reason "fixed-head job completed"
+        if [ "$MATERIALIZE_EVIDENCE" = "1" ]; then
+            python tools/gemma4_hidden_campaign.py materialize-mn5-evidence \
+                --attempt-dir "$ATTEMPT_DIR" --parent-fold-dir "$PARENT_FOLD_DIR"
+        fi
+    else
+        campaign_record record-job \
+            --job-key heads --job-type hidden_classifier --event-type FAILED \
+            --slurm-job-id "${SLURM_JOB_ID:-}" --status FAILED \
+            --reason "fixed-head job failed with exit $exit_code"
+        campaign_transition FAILED "fixed-head job failed" || true
+    fi
+    exit "$exit_code"
+}
+trap cleanup EXIT
+
+python baselines/qwen_hidden_classifier.py \
+    --cache-dir "$ATTEMPT_DIR/hidden_features" \
+    --output-dir "$ATTEMPT_DIR/hidden_classifiers" \
+    --variants logreg_raw xgb_raw \
+    --seed 1337 \
+    --sampling-mode legacy

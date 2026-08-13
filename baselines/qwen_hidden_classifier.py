@@ -40,9 +40,12 @@ LEGACY_SAMPLING_MODE = "legacy"
 FIXED_RESULT_SCHEMA_VERSION = "qwen_hidden_fixed_classifier.v2"
 
 QWEN_PREDICTION_BACKEND = "qwen_hidden_classifier"
+QWEN_LOGREG_PREDICTION_BACKEND = "qwen_hidden_logreg_raw"
+QWEN_XGB_PREDICTION_BACKEND = "qwen_hidden_xgb_raw"
 GEMMA4_LOGREG_PREDICTION_BACKEND = "gemma4_hidden_logreg_raw"
 GEMMA4_XGB_PREDICTION_BACKEND = "gemma4_hidden_xgb_raw"
 GEMMA4_VARIANTS = ("logreg_raw", "xgb_raw")
+OFFICIALDEV_PROTOCOL = "daic_official_train_inner_split_dev_evaluation"
 
 
 def resolve_prediction_backend(metadata: dict[str, Any], variant: str) -> str:
@@ -50,6 +53,18 @@ def resolve_prediction_backend(metadata: dict[str, Any], variant: str) -> str:
     prediction-backend identity written into every prediction, metric, and
     evaluation record."""
     if str(metadata.get("model_backend", "")).strip().lower() != "gemma4":
+        if (
+            str(metadata.get("evaluation_provenance", {}).get("evaluation_protocol", ""))
+            == OFFICIALDEV_PROTOCOL
+        ):
+            if variant not in GEMMA4_VARIANTS:
+                raise ValueError(
+                    f"Official-development DAIC campaign accepts only "
+                    f"{sorted(GEMMA4_VARIANTS)}, got {variant!r}."
+                )
+            if variant == "logreg_raw":
+                return QWEN_LOGREG_PREDICTION_BACKEND
+            return QWEN_XGB_PREDICTION_BACKEND
         return QWEN_PREDICTION_BACKEND
     if variant not in GEMMA4_VARIANTS:
         raise ValueError(
@@ -228,6 +243,39 @@ def _enforce_gemma_daic_contract(
         _enforce_complete_chunk_coverage(test_rows, "final_eval")
 
 
+def _enforce_officialdev_contract(
+    metadata: dict[str, Any],
+    train_rows: list[dict[str, Any]],
+    test_rows: list[dict[str, Any]],
+    train_subjects: set[str],
+) -> None:
+    """Enforce the DAIC official-development fixed-head contract.
+
+    The fit set must be exactly the 86 inner-training subjects and the
+    evaluation set exactly the 35 official development subjects, for either
+    backbone. Count mismatches are hard stops, never row-drops. Isolated
+    smokes are exempt from the exact production counts only.
+    """
+    smoke_cache = bool(metadata.get("cache_config", {}).get("subject_selection_sha256"))
+    if not smoke_cache:
+        if len(train_subjects) != 86:
+            raise ValueError(
+                "Official-development DAIC fit requires exactly 86 inner-training "
+                f"subjects, got {len(train_subjects)}. Do not fit on selection or "
+                "development subjects."
+            )
+        test_subjects = {str(row["subject_id"]) for row in test_rows}
+        if len(test_subjects) != 35:
+            raise ValueError(
+                "Official-development DAIC evaluation requires exactly 35 "
+                f"official development subjects, got {len(test_subjects)}."
+            )
+    modality = str(metadata.get("input_modality", ""))
+    if modality in {"audio_only", "audio_text"}:
+        _enforce_complete_chunk_coverage(train_rows, "outer_train")
+        _enforce_complete_chunk_coverage(test_rows, "final_eval")
+
+
 def _enforce_gemma_dependency_versions() -> None:
     """Require the locked classifier library versions on the Gemma path.
 
@@ -318,7 +366,14 @@ def run_variant(
         raise ValueError("Training cache must contain both classes.")
     metadata = read_json(cache_dir / "extraction_metadata.json")
     prediction_backend = resolve_prediction_backend(metadata, variant)
-    if str(metadata.get("model_backend", "")).strip().lower() == "gemma4":
+    evaluation_protocol = str(
+        metadata.get("evaluation_provenance", {}).get("evaluation_protocol", "")
+    )
+    if evaluation_protocol == OFFICIALDEV_PROTOCOL:
+        if str(metadata.get("model_backend", "")).strip().lower() == "gemma4":
+            _enforce_gemma_dependency_versions()
+        _enforce_officialdev_contract(metadata, train_rows, test_rows, train_subjects)
+    elif str(metadata.get("model_backend", "")).strip().lower() == "gemma4":
         _enforce_gemma_dependency_versions()
         _enforce_gemma_daic_contract(metadata, train_rows, test_rows, train_subjects)
     result_identity = {

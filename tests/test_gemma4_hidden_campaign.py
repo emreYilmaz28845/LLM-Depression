@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import yaml
 
 from src.experiment_tracking.canonical import read_json, sha256_file
 from src.experiment_tracking.identity import evaluation_id
@@ -31,10 +32,37 @@ def _make_parent(tmp_path: Path, modality: str = "audio_text") -> Path:
     fold_dir = tmp_path / "parent" / "fold_0"
     (fold_dir / "best_model").mkdir(parents=True)
     (fold_dir / "logs").mkdir()
-    (fold_dir / "run_config.yaml").write_text(
-        "manifest_hash: " + campaign.MANIFEST_SHA256 + "\n"
-        "split_metadata_hash: " + campaign.SPLIT_SHA256 + "\n"
-        "resolved_model_name_or_path: /gpfs/models/gemma-4-12B-it/rev\n",
+    run_config = {
+        "manifest_hash": campaign.MANIFEST_SHA256,
+        "split_metadata_hash": campaign.SPLIT_SHA256,
+        "resolved_model_name_or_path": "/gpfs/models/gemma-4-12B-it/rev",
+        "input_modality": modality,
+        "config": {
+            "dataset": "daic",
+            "model_backend": "gemma4",
+            "model_revision": campaign.GEMMA4_BASE_MODEL_REVISION,
+            "recipe_id": "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1",
+            "split": {
+                "mode": "fixed",
+                "train_partition": "train",
+                "selection_partition": "val",
+                "dev_pool_partitions": ["train"],
+                "outer_folds": 5,
+                "final_eval_partition": "test",
+                "inner_val_ratio": 0.2,
+                "seed": 1337,
+            },
+        },
+    }
+    (fold_dir / "run_config.yaml").write_text(yaml.safe_dump(run_config), encoding="utf-8")
+    (fold_dir / "logs" / "split_used.json").write_text(
+        json.dumps(
+            {
+                "train_subject_ids": [f"{300 + i}" for i in range(107)],
+                "selection_subject_ids": [f"{400 + i}" for i in range(35)],
+                "final_eval_subject_ids": [f"{500 + i}" for i in range(47)],
+            }
+        ),
         encoding="utf-8",
     )
     (fold_dir / "metadata.json").write_text(
@@ -65,7 +93,9 @@ def _patch_identity(monkeypatch) -> None:
     monkeypatch.setattr(
         campaign,
         "_verify_parent_identity",
-        lambda modality, parent_fold_dir: dict(_expected_adapter_hashes(modality)),
+        lambda modality, parent_fold_dir, protocol=None: dict(
+            _expected_adapter_hashes(modality)
+        ),
     )
 
 
@@ -144,7 +174,7 @@ def test_create_attempt_refuses_dirty_source(tmp_path: Path, _patch_identity) ->
 def test_create_attempt_refuses_parent_hash_mismatch(tmp_path: Path, _patch_identity) -> None:
     parent = _make_parent(tmp_path)
 
-    def _bad_identity(modality, parent_fold_dir):
+    def _bad_identity(modality, parent_fold_dir, protocol=None):
         raise campaign.CampaignError(
             f"parent adapter_model.safetensors hash mismatch for {modality}"
         )
@@ -169,8 +199,10 @@ def test_create_attempt_refuses_parent_config_hash_mismatch(
     tmp_path: Path, _patch_identity
 ) -> None:
     parent = _make_parent(tmp_path)
+    run_config = yaml.safe_load((parent / "run_config.yaml").read_text(encoding="utf-8"))
+    run_config["manifest_hash"] = "1" * 64
     (parent / "run_config.yaml").write_text(
-        "manifest_hash: " + "1" * 64 + "\n", encoding="utf-8"
+        yaml.safe_dump(run_config), encoding="utf-8"
     )
     with pytest.raises(campaign.CampaignError, match="hashes do not match"):
         campaign.create_attempt(
@@ -520,3 +552,309 @@ def test_campaign_cli_help_has_all_subcommands(tmp_path: Path) -> None:
         "verify-local",
     ):
         assert command in result.stdout
+
+
+def _make_officialdev_parent(
+    tmp_path: Path,
+    modality: str = "audio_text",
+    *,
+    backbone: str = "gemma4",
+    corrupt_manifest: bool = False,
+) -> Path:
+    """Build a realistic official-development parent fold: recipe
+    ``*_officialdev_v1``, ``final_eval_partition: val``, no selection
+    partition, a hashed manifest, and a saved inner split (86 train / 21
+    selection / 35 final)."""
+    fold_dir = tmp_path / "officialdev_parent" / "fold_0"
+    (fold_dir / "best_model").mkdir(parents=True)
+    (fold_dir / "logs").mkdir()
+    manifest_rows = []
+    for index in range(86):
+        manifest_rows.append(
+            {"subject_id": f"tr{index}", "sample_id": f"tr{index}", "label": index % 2}
+        )
+    for index in range(35):
+        manifest_rows.append(
+            {"subject_id": f"te{index}", "sample_id": f"te{index}", "label": index % 2}
+        )
+    from src.utils import sha256_jsonl_rows, write_jsonl
+
+    manifest_path = tmp_path / "manifest.jsonl"
+    write_jsonl(manifest_rows, manifest_path)
+    manifest_hash = sha256_jsonl_rows(manifest_rows)
+    partitions = []
+    for index in range(107):
+        partitions.append({"subject_id": f"tr{index}", "partition": "train"})
+    for index in range(35):
+        partitions.append({"subject_id": f"te{index}", "partition": "val"})
+    for index in range(47):
+        partitions.append({"subject_id": f"to{index}", "partition": "test"})
+    partitions_path = tmp_path / "partitions.json"
+    partitions_path.write_text(json.dumps(partitions), encoding="utf-8")
+    split_metadata_hash = sha256_file(partitions_path)
+    model_backend = "gemma4" if backbone == "gemma4" else None
+    model_revision = campaign.GEMMA4_BASE_MODEL_REVISION if backbone == "gemma4" else None
+    run_config = {
+        "manifest_path": str(manifest_path),
+        "manifest_hash": ("0" * 64 if corrupt_manifest else manifest_hash),
+        "split_metadata_path": str(partitions_path),
+        "split_metadata_hash": split_metadata_hash,
+        "resolved_model_name_or_path": (
+            "/gpfs/models/gemma-4-12B-it/rev" if backbone == "gemma4" else "/gpfs/models/qwen"
+        ),
+        "input_modality": modality,
+        "config": {
+            "dataset": "daic",
+            "model_backend": model_backend,
+            "model_revision": model_revision,
+            "recipe_id": "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_officialdev_v1",
+            "split": {
+                "mode": "fixed",
+                "train_partition": "train",
+                "dev_pool_partitions": ["train"],
+                "outer_folds": 5,
+                "final_eval_partition": "val",
+                "inner_val_ratio": 0.2,
+                "seed": 1337,
+            },
+        },
+    }
+    (fold_dir / "run_config.yaml").write_text(yaml.safe_dump(run_config), encoding="utf-8")
+    (fold_dir / "logs" / "split_used.json").write_text(
+        json.dumps(
+            {
+                "train_subject_ids": [f"tr{i}" for i in range(86)],
+                "selection_subject_ids": [f"tr{i}" for i in range(86, 107)],
+                "final_eval_subject_ids": [f"te{i}" for i in range(35)],
+                "train_inner_subject_ids": [f"tr{i}" for i in range(86)],
+                "val_inner_subject_ids": [f"tr{i}" for i in range(86, 107)],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (fold_dir / "metadata.json").write_text(
+        json.dumps({"attempt_id": f"20260812T031624Z-daic_officialdev_{backbone}_{modality}_seed1337-aaaaaaaa-bbbbbbbb"}), encoding="utf-8"
+    )
+    (fold_dir / "best_model" / "adapter_config.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    (fold_dir / "best_model" / "adapter_model.safetensors").write_text(
+        "adapter", encoding="utf-8"
+    )
+    return fold_dir
+
+
+def _create_officialdev_attempt(
+    tmp_path: Path,
+    _patch_identity,
+    modality: str = "audio_text",
+    *,
+    backbone: str = "gemma4",
+) -> Path:
+    parent = _make_officialdev_parent(tmp_path, modality, backbone=backbone)
+    attempt_dir = tmp_path / f"officialdev_attempt_{backbone}_{modality}" / "fold_0"
+    campaign.create_attempt(
+        repo_root=tmp_path,
+        attempt_dir=attempt_dir,
+        modality=modality,
+        run_name=f"daic_officialdev_{backbone}_{modality}_fixed_heads_seed1337",
+        group_id="daic-officialdev-qwen-gemma-v1-aaaaaaaa",
+        parent_fold_dir=parent,
+        parent_attempt_id=f"20260812T031624Z-daic_officialdev_{backbone}_{modality}_seed1337-aaaaaaaa-bbbbbbbb",
+        merged_sha=MERGE_SHA,
+        branch="main",
+        pr_number=88,
+        backbone=backbone,
+    )
+    return attempt_dir
+
+
+def test_officialdev_create_attempt_derives_qualifiers_and_counts(
+    tmp_path: Path, _patch_identity
+) -> None:
+    attempt_dir = _create_officialdev_attempt(tmp_path, _patch_identity)
+    run_config = read_json(attempt_dir / "run_config.yaml")
+    config = run_config["config"]
+    assert config["campaign_protocol"] == "officialdev"
+    assert config["method"] == "gemma4_hidden_fixed_heads"
+    assert config["evaluation"]["split_name"] == "val"
+    assert (
+        config["evaluation"]["split_protocol"]
+        == "daic_official_train_inner_split_dev_evaluation"
+    )
+    assert config["evaluation"]["support"] == 35
+    assert config["expected_counts"] == {
+        "fit_rows": 86,
+        "fit_subjects": 86,
+        "test_rows": 35,
+        "test_subjects": 35,
+    }
+    assert config["hidden_state"]["dimension"] == 3840
+    assert config["hidden_state"]["cache_schema"] == "gemma4_hidden_cache.v1"
+    assert config["classifiers"]["logreg"]["backend"] == "gemma4_hidden_logreg_raw"
+    assert config["classifiers"]["xgb"]["backend"] == "gemma4_hidden_xgb_raw"
+    metadata = read_json(attempt_dir / "metadata.json")
+    assert metadata["parent"]["parent_attempt_id"] == "20260812T031624Z-daic_officialdev_gemma4_audio_text_seed1337-aaaaaaaa-bbbbbbbb"
+    assert metadata["hashes"]["manifest_sha256"] == run_config["manifest_sha256"]
+
+
+def test_officialdev_qwen_backbone_create_attempt(tmp_path: Path, _patch_identity) -> None:
+    attempt_dir = _create_officialdev_attempt(
+        tmp_path, _patch_identity, modality="text_only", backbone="qwen_text"
+    )
+    run_config = read_json(attempt_dir / "run_config.yaml")
+    config = run_config["config"]
+    assert config["method"] == "qwen_hidden_fixed_heads"
+    assert config["hidden_state"]["dimension"] == 3584
+    assert config["hidden_state"]["cache_schema"] == "qwen_hidden_cache.v2"
+    assert config["classifiers"]["logreg"]["backend"] == "qwen_hidden_logreg_raw"
+    assert config["classifiers"]["xgb"]["backend"] == "qwen_hidden_xgb_raw"
+    assert config["evaluation"]["support"] == 35
+    assert config["expected_counts"] == {
+        "fit_rows": 86,
+        "fit_subjects": 86,
+        "test_rows": 35,
+        "test_subjects": 35,
+    }
+
+
+def test_officialdev_refuses_unknown_parent_protocol(tmp_path: Path, _patch_identity) -> None:
+    parent = _make_officialdev_parent(tmp_path)
+    run_config = yaml.safe_load((parent / "run_config.yaml").read_text(encoding="utf-8"))
+    run_config["config"]["recipe_id"] = "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1"
+    run_config["config"]["split"]["final_eval_partition"] = "dev"
+    (parent / "run_config.yaml").write_text(yaml.safe_dump(run_config), encoding="utf-8")
+    with pytest.raises(campaign.CampaignError, match="unsupported parent campaign protocol"):
+        campaign.create_attempt(
+            repo_root=tmp_path,
+            attempt_dir=tmp_path / "bad" / "fold_0",
+            modality="audio_text",
+            run_name="bad",
+            group_id="g",
+            parent_fold_dir=parent,
+            parent_attempt_id="20260812T031624Z-daic_officialdev_gemma4_audio_text_seed1337-aaaaaaaa-bbbbbbbb",
+            merged_sha=MERGE_SHA,
+            branch="main",
+            pr_number=None,
+        )
+
+
+def test_officialdev_refuses_manifest_identity_mismatch(tmp_path: Path, _patch_identity) -> None:
+    parent = _make_officialdev_parent(tmp_path, corrupt_manifest=True)
+    with pytest.raises(campaign.CampaignError, match="manifest hash does not match"):
+        campaign.create_attempt(
+            repo_root=tmp_path,
+            attempt_dir=tmp_path / "bad" / "fold_0",
+            modality="audio_text",
+            run_name="bad",
+            group_id="g",
+            parent_fold_dir=parent,
+            parent_attempt_id="20260812T031624Z-daic_officialdev_gemma4_audio_text_seed1337-aaaaaaaa-bbbbbbbb",
+            merged_sha=MERGE_SHA,
+            branch="main",
+            pr_number=None,
+        )
+
+
+def test_attempt_evidence_contains_no_sensitive_fields(tmp_path: Path, _patch_identity) -> None:
+    attempt_dir = _create_officialdev_attempt(tmp_path, _patch_identity)
+    run_config = json.loads((attempt_dir / "run_config.yaml").read_text(encoding="utf-8"))
+    serialized = json.dumps(run_config).lower()
+    for field in ("transcript", "prompt_text", "subject_id", "participant_id", "patient_id"):
+        assert field not in serialized, f"run_config must not contain {field!r}"
+    metadata = json.loads((attempt_dir / "metadata.json").read_text(encoding="utf-8"))
+    metadata_text = json.dumps(metadata).lower()
+    for field in ("transcript", "prompt", "subject_id", "participant_id"):
+        assert field not in metadata_text, f"metadata must not contain {field!r}"
+
+
+def test_officialdev_materialize_and_verify_local(tmp_path: Path, _patch_identity) -> None:
+    attempt_dir = _create_officialdev_attempt(tmp_path, _patch_identity)
+    campaign.mark_deployed(attempt_dir, reason="deployed")
+    campaign.transition(attempt_dir, "SUBMITTED", reason="submitted")
+    campaign.transition(attempt_dir, "RUNNING", reason="started")
+    features = attempt_dir / "hidden_features"
+    features.mkdir()
+    for name in (
+        "outer_train.npz",
+        "outer_train_rows.jsonl",
+        "final_eval.npz",
+        "final_eval_rows.jsonl",
+        "extraction_metadata.json",
+    ):
+        (features / name).write_text("x", encoding="utf-8")
+    classifiers = attempt_dir / "hidden_classifiers"
+    classifiers.mkdir()
+    for variant in ("logreg_raw", "xgb_raw"):
+        vdir = classifiers / variant
+        vdir.mkdir(parents=True)
+        sample_rows = [
+            {
+                "subject_id": f"te{i:02d}",
+                "label": i % 2,
+                "probability": 0.9 if i % 2 else 0.1,
+                "predicted_class": i % 2,
+                "classifier_aggregation": "mean_depressed_probability_threshold_0_5",
+                "protocol_id": "daic_participant_speech_packed30_v1",
+            }
+            for i in range(35)
+        ]
+        subject_rows = [
+            {
+                "subject_id": f"te{i:02d}",
+                "label": i % 2,
+                "prediction": i % 2,
+                "probability": 0.9 if i % 2 else 0.1,
+            }
+            for i in range(35)
+        ]
+        (vdir / "predictions_sample_level.jsonl").write_text(
+            "\n".join(json.dumps(row) for row in sample_rows) + "\n", encoding="utf-8"
+        )
+        (vdir / "predictions_sample_level.csv").write_text("x\n", encoding="utf-8")
+        (vdir / "predictions_subject_level.jsonl").write_text(
+            "\n".join(json.dumps(row) for row in subject_rows) + "\n", encoding="utf-8"
+        )
+        (vdir / "predictions_subject_level.csv").write_text("x\n", encoding="utf-8")
+        metrics = {
+            "accuracy": 1.0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "positive_f1": 1.0,
+            "negative_f1": 1.0,
+            "macro_f1": 1.0,
+            "confusion_matrix": [[18, 0], [0, 17]],
+        }
+        (vdir / "metrics.json").write_text(json.dumps(metrics), encoding="utf-8")
+        for name in (
+            "result_config.json",
+            "classifier_metadata.json",
+            "sampling_audit.json",
+        ):
+            (vdir / name).write_text("{}", encoding="utf-8")
+        (vdir / "pipeline.joblib").write_text("p", encoding="utf-8")
+    (classifiers / "variant_summary.json").write_text("[]", encoding="utf-8")
+    (classifiers / "variant_summary.csv").write_text("x\n", encoding="utf-8")
+
+    parent = tmp_path / "officialdev_parent" / "fold_0"
+    result = campaign.materialize_mn5_evidence(attempt_dir, parent)
+    assert result["state"] == "COMPLETED_ON_MN5"
+    evaluations = read_json(attempt_dir / "evaluations.json")["evaluations"]
+    assert len(evaluations) == 2
+    for entry in evaluations:
+        assert entry["split_name"] == "val"
+        assert (
+            entry["split_protocol"]
+            == "daic_official_train_inner_split_dev_evaluation"
+        )
+        assert all(metric["support"] == 35 for metric in entry["metrics"])
+        assert entry["backend"] in {
+            "gemma4_hidden_logreg_raw",
+            "gemma4_hidden_xgb_raw",
+        }
+
+    # Local verification recomputes from the 35 subject rows and goes reportable.
+    verified = campaign.verify_local(attempt_dir)
+    assert verified["state"] == "REPORTABLE"
+    evaluations = read_json(attempt_dir / "evaluations.json")["evaluations"]
+    assert all(entry["locally_verified"] and entry["reportable"] for entry in evaluations)

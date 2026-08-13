@@ -1,0 +1,31 @@
+# DAIC official-development Qwen + Gemma 4 campaign matrix.
+# Secondary DAIC family: trains and selects only on the 107 official training
+# subjects (86 train_inner / 21 val_inner, seed 1337), evaluates once on the
+# 35-subject official development partition. Official test is excluded.
+# This matrix is standalone; it is not part of the 63-task harmonized matrix.
+name: daic_officialdev_qwen_gemma_v1
+recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_tf_officialdev_v1
+seed: 1337
+folds: [0]
+max_epochs: 20
+checkpoint_selection: inner_val_macro_f1
+checkpoint_selection_mode: max
+fixed_heads: [logreg_raw, xgb_raw]
+separate_final_eval: true
+run_final_eval_in_train: false
+evaluation_view: harmonized_all_windows_full_coverage
+backends: [original_teacher_forced, qwen_hidden_logreg_raw, qwen_hidden_xgb_raw, gemma4_hidden_logreg_raw, gemma4_hidden_xgb_raw]
+principal_jobs: 24
+max_train_lanes: 6
+max_aux_lanes: 6
+expected_counts:
+  audio: {fit_rows: 1312, fit_subjects: 86, dev_rows: 603, dev_subjects: 35}
+  text: {fit_rows: 86, fit_subjects: 86, dev_rows: 35, dev_subjects: 35}
+group_id_prefix: daic-officialdev-qwen-gemma-v1
+experiments:
+  - {backbone: qwen, modality: audio_only, config: configs/main/daic_audio_only_harmonized_selmacrof1_tf_officialdev.yaml, env: qwen_mn5_rebuilt}
+  - {backbone: qwen, modality: audio_text, config: configs/main/daic_audio_text_harmonized_selmacrof1_tf_officialdev.yaml, env: qwen_mn5_rebuilt}
+  - {backbone: qwen, modality: text_only, config: configs/main/daic_text_only_harmonized_selmacrof1_tf_officialdev.yaml, env: qwen_mn5_rebuilt}
+  - {backbone: gemma4, modality: audio_only, config: configs/main/daic_audio_only_harmonized_selmacrof1_tf_gemma4_12b_officialdev.yaml, env: gemma4_12b_tf5_14_1}
+  - {backbone: gemma4, modality: audio_text, config: configs/main/daic_audio_text_harmonized_selmacrof1_tf_gemma4_12b_officialdev.yaml, env: gemma4_12b_tf5_14_1}
+  - {backbone: gemma4, modality: text_only, config: configs/main/daic_text_only_harmonized_selmacrof1_tf_gemma4_12b_officialdev.yaml, env: gemma4_12b_tf5_14_1}

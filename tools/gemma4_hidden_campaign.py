@@ -35,6 +35,12 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--pr-number", type=int)
     create.add_argument("--fold", type=int, default=0)
     create.add_argument(
+        "--backbone",
+        choices=("gemma4", "qwen2audio", "qwen_text"),
+        default="gemma4",
+        help="Backbone family of the parent checkpoint (default: gemma4).",
+    )
+    create.add_argument(
         "--supersedes-attempt-id",
         help="Link this retry attempt to a failed/cancelled attempt.",
     )
@@ -90,6 +96,7 @@ def main() -> None:
             pr_number=args.pr_number,
             fold=args.fold,
             supersedes_attempt_id=args.supersedes_attempt_id,
+            backbone=args.backbone,
         )
     elif args.command == "mark-deployed":
         result = campaign.mark_deployed(args.attempt_dir, reason=args.reason)
