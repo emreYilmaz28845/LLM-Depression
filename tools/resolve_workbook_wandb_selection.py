@@ -55,6 +55,17 @@ def main() -> int:
         help="Output path for the resolved manifest JSON",
     )
     parser.add_argument(
+        "--filter-attempts",
+        type=Path,
+        default=None,
+        help=(
+            "Optional task-owned JSON/TSV filter: when given, only export units "
+            "whose attempt id is listed are kept in the manifest. Used for "
+            "task-filtered dry runs so unrelated approved units cannot be "
+            "exported accidentally."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Validate and print the resolution summary without writing the manifest",
@@ -81,6 +92,8 @@ def main() -> int:
             db_path=args.db,
             selection_path=args.selection,
         )
+        if args.filter_attempts is not None:
+            manifest = _filter_manifest_units(manifest, args.filter_attempts)
     except WorkbookSelectionError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
@@ -104,6 +117,42 @@ def main() -> int:
     write_json_atomic(args.output, manifest)
     print(f"wrote {args.output}")
     return 0
+
+
+def _filter_manifest_units(manifest: dict, filter_path: Path) -> dict:
+    """Keep only export units whose attempt id is listed in the filter file.
+
+    The filter file is task-owned JSON (list of attempt ids) or one attempt id
+    per line. Unresolved/stale entries are kept untouched so the summary stays
+    honest about full-coverage state.
+    """
+    import json as _json
+
+    raw = filter_path.read_text(encoding="utf-8")
+    if filter_path.suffix.lower() == ".json":
+        payload = _json.loads(raw)
+        if not isinstance(payload, list):
+            raise WorkbookSelectionError("filter-attempts JSON must be a list of attempt ids")
+        allowed = {str(item) for item in payload}
+    else:
+        allowed = {line.strip() for line in raw.splitlines() if line.strip()}
+    if not allowed:
+        raise WorkbookSelectionError("filter-attempts resolved to an empty set")
+    units = manifest.get("export_units") or []
+    kept = [unit for unit in units if str(unit.get("attempt_id")) in allowed]
+    dropped = [unit for unit in units if str(unit.get("attempt_id")) not in allowed]
+    if not kept:
+        raise WorkbookSelectionError("filter-attempts matched no export units")
+    manifest = dict(manifest)
+    manifest["export_units"] = kept
+    manifest["filtered_out_units"] = [
+        {"attempt_id": unit.get("attempt_id"), "group": unit.get("group")} for unit in dropped
+    ]
+    summary = dict(manifest.get("summary") or {})
+    summary["sync_units"] = len(kept)
+    manifest["summary"] = summary
+    print(f"task filter: kept {len(kept)} unit(s), excluded {len(dropped)} unrelated unit(s)")
+    return manifest
 
 
 if __name__ == "__main__":

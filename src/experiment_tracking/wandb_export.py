@@ -240,7 +240,7 @@ def _build_plan(
         method = ""
         if isinstance(resolved_config, dict):
             method = str(resolved_config.get("method") or "")
-        if method != "gemma4_hidden_fixed_heads":
+        if method not in {"gemma4_hidden_fixed_heads", "qwen_hidden_fixed_heads"}:
             # Post-hoc fixed-head attempts never train, so they have no
             # training history by design; the runbook records their method so
             # the exporter can distinguish them from incomplete legacy runs.
