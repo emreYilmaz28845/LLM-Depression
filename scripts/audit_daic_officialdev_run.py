@@ -148,6 +148,9 @@ def audit_run(
             job_id = row["job_id"]
             state = sacct_states.get(job_id)
             _require(state is not None, f"job {job_id} has no terminal sacct record")
+            state = dict(state)
+            # Slurm appends a reason to some states (e.g. "CANCELLED by 53836").
+            state["state"] = str(state["state"]).split()[0]
             job_states[job_id] = state
         # The cell's job kind is successful only if at least one of its jobs
         # (principal or retry) completed and every other one is terminal.
