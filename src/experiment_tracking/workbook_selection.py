@@ -9,7 +9,7 @@ import yaml
 
 from .canonical import canonical_sha256, sha256_file
 from .registry import RegistryError, connect, show_attempt
-from .wandb_export import legacy_wandb_id
+from .wandb_export import legacy_wandb_id, wandb_run_id_for_attempt
 
 SELECTION_SCHEMA_VERSION = "audiollm.workbook_wandb_selection.v1"
 DEPENDENCY_INVENTORY_SCHEMA_VERSION = "audiollm.workbook_dependency_inventory.v1"
@@ -460,7 +460,7 @@ def wandb_run_id_for(connection: Any, attempt_id: str, fold: int) -> str:
             first_evaluation_id = entry["evaluation"]["evaluation_id"]
     if str(attempt_id).startswith("legacy-"):
         return legacy_wandb_id(attempt_id, fold, first_evaluation_id or "")
-    return f"{attempt_id}-fold{fold}"
+    return wandb_run_id_for_attempt(attempt_id, fold)
 
 
 def _evaluation_matches(evaluation: dict[str, Any], spec: dict[str, Any]) -> bool:
