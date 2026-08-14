@@ -36,8 +36,10 @@ MATRICES = {
     "native": "configs/experiments/optuna100/native_matrix.yaml",
     "english": "configs/experiments/optuna100/english_matrix.yaml",
     "officialdev": "configs/experiments/optuna100/officialdev_matrix.yaml",
+    "merged": "configs/experiments/optuna100/merged_matrix.yaml",
 }
-EXPECTED_COUNTS = {"native": 126, "english": 80, "officialdev": 6}
+EXPECTED_COUNTS = {"native": 126, "english": 80, "officialdev": 6, "merged": 36}
+MERGED_STAGES = ("cv", "final")
 
 QWEN_FEATURES_ROOTS = {
     "native": PROJECT_ROOT / "outputs/hidden_features/harmonized_v1",
@@ -63,6 +65,8 @@ RUN_NAME_PREFIXES = {
     ("english", "gemma4"): "gemma4_harmonized_v1_en_optuna100",
     ("officialdev", "qwen"): "harmonized_v1_officialdev_optuna100",
     ("officialdev", "gemma4"): "gemma4_harmonized_v1_officialdev_optuna100",
+    ("merged", "qwen"): "harmonized_v1_merged_optuna100",
+    ("merged", "gemma4"): "gemma4_harmonized_v1_merged_optuna100",
 }
 ATTEMPT_ROOTS = {
     ("native", "qwen"): "output_model/harmonized_v1_optuna100",
@@ -71,6 +75,22 @@ ATTEMPT_ROOTS = {
     ("english", "gemma4"): "output_model/harmonized_v1_en_gemma4_optuna100",
     ("officialdev", "qwen"): "output_model/harmonized_v1_officialdev_optuna100",
     ("officialdev", "gemma4"): "output_model/harmonized_v1_gemma4_officialdev_optuna100",
+    ("merged", "qwen"): "output_model/harmonized_v1_merged_optuna100",
+    ("merged", "gemma4"): "output_model/harmonized_v1_gemma4_merged_optuna100",
+}
+MERGED_FEATURES_ROOTS = {
+    "qwen": PROJECT_ROOT / "outputs/symmetric_merged/harmonized_v1",
+    "gemma4": PROJECT_ROOT / "outputs/symmetric_merged/gemma4/harmonized_v1",
+}
+MERGED_CONFIGS = {
+    "audio_text": "configs/experiments/merged/symmetric_merged_harmonized_audio_text.yaml",
+    "audio_only": "configs/experiments/merged/symmetric_merged_harmonized_audio_only.yaml",
+    "text_only": "configs/experiments/merged/symmetric_merged_harmonized_text_only.yaml",
+}
+MERGED_GEMMA_CONFIGS = {
+    "audio_text": "configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_text.yaml",
+    "audio_only": "configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_only.yaml",
+    "text_only": "configs/experiments/merged/symmetric_merged_harmonized_gemma4_text_only.yaml",
 }
 
 
@@ -215,6 +235,138 @@ def _discover_heads_cache(
             + ", ".join(str(path) for path, _ in candidates)
         )
     return candidates[0]
+
+
+def _discover_merged_features(
+    root: Path, modality: str, stage: str, fold: int, backend: str
+) -> tuple[Path, dict[str, Any]] | None:
+    modality_root = root / modality
+    if not modality_root.is_dir():
+        return None
+    candidates: list[tuple[Path, dict[str, Any]]] = []
+    for run_dir in sorted(modality_root.iterdir()):
+        if not run_dir.is_dir() or "smoke" in run_dir.name:
+            continue
+        features_dir = run_dir / stage / f"fold_{fold}" / "features"
+        metadata_path = features_dir / "feature_metadata.json"
+        if not metadata_path.is_file():
+            continue
+        metadata = read_json(metadata_path)
+        if str(metadata.get("stage")) != stage or int(metadata.get("fold", -1)) != fold:
+            continue
+        if str(metadata.get("modality")) != modality:
+            continue
+        candidates.append((features_dir, metadata))
+    if not candidates:
+        return None
+    if len(candidates) > 1:
+        raise ValueError(
+            f"ambiguous merged features for {modality}/{stage}/fold {fold} "
+            f"backend {backend}: " + ", ".join(str(path) for path, _ in candidates)
+        )
+    return candidates[0]
+
+
+def _resolve_merged_study(
+    *,
+    backend: str,
+    modality: str,
+    stage: str,
+    fold: int,
+    run_id: str,
+    merged_sha: str,
+    branch: str,
+    github_issue: int | None,
+    pr: int | None,
+    require_caches: bool,
+) -> dict[str, Any]:
+    root = MERGED_FEATURES_ROOTS[backend]
+    discovered = _discover_merged_features(root, modality, stage, fold, backend)
+    merged_config = (
+        MERGED_GEMMA_CONFIGS[modality] if backend == "gemma4" else MERGED_CONFIGS[modality]
+    )
+    common = {
+        "schema_version": "audiollm.posthoc_head_task.v1",
+        "dataset": "merged",
+        "modality": modality,
+        "condition": modality,
+        "fold": fold,
+        "seed": 1337,
+        "family": "merged",
+        "backend": backend,
+        "stage": stage,
+        "merged_config": merged_config,
+        "experiment_id": EXPERIMENT_ID,
+        "objective": policy.OBJECTIVE_MERGED,
+        "target_trials": policy.PRODUCTION_TARGET_TRIALS,
+        "group_id": f"merged-optuna100-{run_id}",
+        "logical_run_name": (
+            f"{RUN_NAME_PREFIXES[('merged', backend)]}_{modality}_{stage}_seed1337"
+        ),
+        "run_name": (
+            f"{RUN_NAME_PREFIXES[('merged', backend)]}_{run_id}_{modality}_{stage}"
+        ),
+        "branch": branch,
+        "merged_sha": merged_sha,
+        "github_issue": github_issue,
+        "pr": pr,
+    }
+    if discovered is None:
+        if require_caches:
+            raise FileNotFoundError(
+                f"missing qualified merged features for {backend}/{modality}/{stage}/fold {fold}"
+            )
+        return {**common, "cache_dir": None, "cache_missing": True, "attempt_dir": None}
+    features_dir, metadata = discovered
+    checkpoint = str(metadata.get("checkpoint_dir") or "")
+    marker = "LLM-Depression/"
+    if marker in checkpoint:
+        checkpoint = str(PROJECT_ROOT / checkpoint.split(marker, 1)[1])
+    parent = {
+        "parent_attempt_id": None,
+        "parent_fold_dir": str(Path(checkpoint).parent) if checkpoint else None,
+        "parent_checkpoint_path": checkpoint or None,
+        "adapter_config_sha256": (metadata.get("checkpoint_hashes") or {}).get("adapter_config_sha256"),
+        "adapter_sha256": (metadata.get("checkpoint_hashes") or {}).get("adapter_model_sha256"),
+    }
+    if stage == "final":
+        qualifiers = {
+            "dataset": "daic",
+            "split_name": "test",
+            "split_protocol": "daic_official_train_fit_locked_test_evaluation",
+            "evaluation_view": "harmonized_all_windows_full_coverage",
+            "aggregation": "subject_level",
+            "metric_namespace": "headline/binary_strict",
+            "support": 47,
+        }
+    else:
+        qualifiers = {
+            "dataset": "merged",
+            "split_name": "outer_holdout",
+            "split_protocol": "symmetric_merged_cv_outer_holdout",
+            "evaluation_view": "harmonized_all_windows_full_coverage",
+            "aggregation": "subject_level",
+            "metric_namespace": "headline/binary_strict",
+            "support": None,
+        }
+    return {
+        **common,
+        "cache_dir": _rel(features_dir),
+        "cache_identity_sha256": canonical_sha256(metadata),
+        "cache_missing": False,
+        "parent": parent,
+        "evaluation_qualifiers": qualifiers,
+        "attempt_dir": _rel(
+            PROJECT_ROOT
+            / ATTEMPT_ROOTS[("merged", backend)]
+            / modality
+            / f"{RUN_NAME_PREFIXES[('merged', backend)]}_{run_id}_{modality}_{stage}"
+            / f"fold_{fold}"
+            / EXPERIMENT_ID
+        ),
+        "checkpoint_hashes": metadata.get("checkpoint_hashes") or {},
+        "feature_metadata_sha256": canonical_sha256(metadata),
+    }
 
 
 def resolve_study(
@@ -362,6 +514,26 @@ def resolve(
     matrix = load_yaml_with_overrides(matrix_path, [])
     studies: list[dict[str, Any]] = []
     for backend in ("qwen", "gemma4"):
+        if family == "merged":
+            for cell in matrix["studies"]:
+                for stage in MERGED_STAGES:
+                    folds = list(range(5)) if stage == "cv" else [0]
+                    for fold in folds:
+                        studies.append(
+                            _resolve_merged_study(
+                                backend=backend,
+                                modality=cell["modality"],
+                                stage=stage,
+                                fold=int(fold),
+                                run_id=run_id,
+                                merged_sha=merged_sha,
+                                branch=branch,
+                                github_issue=github_issue,
+                                pr=pr,
+                                require_caches=require_caches,
+                            )
+                        )
+            continue
         for cell in matrix["studies"]:
             for fold in cell["folds"]:
                 studies.append(
@@ -418,7 +590,7 @@ def resolve(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--family", choices=("native", "english", "officialdev"), required=True)
+    parser.add_argument("--family", choices=("native", "english", "officialdev", "merged"), required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--merged-sha", required=True)
     parser.add_argument("--branch", required=True)

@@ -464,7 +464,9 @@ def test_merged_postprocess_preflight_does_not_self_create_an_incomplete_run() -
     source = Path("src/merged/postprocess.py").read_text(encoding="utf-8")
     assert "from src.evaluate import evaluate_examples" in source
     assert 'features_dir = output_root / "features"' in source
-    assert 'qwen_dir = output_root / "qwen"' in source
+    # The teacher-forced eval subdir is backend-qualified: qwen/ for Qwen,
+    # gemma4/ for Gemma. Historical Qwen outputs stay under qwen/.
+    assert 'eval_subdir = "gemma4" if gemma_backend else "qwen"' in source
     assert 'features_dir = ensure_dir(output_root / "features")' not in source
     assert 'qwen_dir = ensure_dir(output_root / "qwen")' not in source
     assert source.index("if output_root.exists() and any(output_root.iterdir())") < source.index(

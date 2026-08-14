@@ -101,6 +101,37 @@ PY
         dep="--dependency=afterany:$throttle"
     fi
     export_spec="ALL,PROJECT_ROOT=$PROJECT_ROOT,ATTEMPT_DIR=$attempt_dir,CACHE_DIR=$cache_dir,EXPERIMENT_ID=xgb_optuna100_harmonized_v1,OBJECTIVE=macro_f1,TARGET_TRIALS=100,XGB_THREADS=20"
+    if [ "$(python - "$MANIFEST" "$backend" "$dataset" "$modality" "$fold" <<'PY'
+import json, sys
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+for study in manifest["studies"]:
+    if (study["backend"], study["dataset"], study["modality"], str(study["fold"])) == (sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]):
+        print("1" if study.get("family") == "merged" else "0")
+        break
+else:
+    print("0")
+PY
+)" = "1" ]; then
+        merged_config="$(python - "$MANIFEST" "$backend" "$modality" "$fold" <<'PY'
+import json, sys
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+for study in manifest["studies"]:
+    if (study["backend"], study["modality"], str(study["fold"])) == (sys.argv[2], sys.argv[3], sys.argv[4]):
+        print(study["merged_config"])
+        break
+PY
+)"
+        stage="$(python - "$MANIFEST" "$backend" "$modality" "$fold" <<'PY'
+import json, sys
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+for study in manifest["studies"]:
+    if (study["backend"], study["modality"], str(study["fold"])) == (sys.argv[2], sys.argv[3], sys.argv[4]):
+        print(study["stage"])
+        break
+PY
+)"
+        export_spec="$export_spec,MERGED=1,MERGED_CONFIG=$merged_config,STAGE=$stage,FOLD=$fold,RUN_ID=$RUN_ID"
+    fi
     study_cmd=(sbatch --parsable --job-name="o100-${dataset:0:4}-${modality:0:2}-f$fold")
     [ -n "$dep" ] && study_cmd+=("$dep")
     study_cmd+=(--export="$export_spec" "$STUDY_WORKER")
