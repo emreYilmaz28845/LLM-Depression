@@ -357,19 +357,25 @@ def validate_gemma4_config(config: dict[str, Any]) -> None:
         if not ok:
             errors.append(message)
 
+    merged = bool(config.get("merged", False))
     dataset = str(config.get("dataset", "")).lower()
-    _require(
-        dataset in GEMMA4_SUPPORTED_DATASETS,
-        "dataset must be one of "
-        + ", ".join(sorted(GEMMA4_SUPPORTED_DATASETS)),
-    )
+    if not merged:
+        _require(
+            dataset in GEMMA4_SUPPORTED_DATASETS,
+            "dataset must be one of "
+            + ", ".join(sorted(GEMMA4_SUPPORTED_DATASETS)),
+        )
     modality = resolve_input_modality(config)
     _require(
         modality in {INPUT_MODALITY_TEXT_ONLY, INPUT_MODALITY_AUDIO_ONLY, INPUT_MODALITY_AUDIO_TEXT},
         "modality must be text-only, audio-only, or audio+text",
     )
     data_cfg = config.get("data", {})
-    if dataset == "daic":
+    if merged:
+        # The symmetric-merged resolved config mixes components; only the
+        # backend-level invariants apply.
+        pass
+    elif dataset == "daic":
         _require(
             str(data_cfg.get("sample_mode", "")).lower() == GEMMA4_DAIC_SAMPLE_MODE,
             f"data.sample_mode must be {GEMMA4_DAIC_SAMPLE_MODE} for daic",
@@ -421,14 +427,15 @@ def validate_gemma4_config(config: dict[str, Any]) -> None:
         bool(training_cfg.get("gradient_checkpointing", False)),
         "training.gradient_checkpointing must be true",
     )
-    _require(
-        str(training_cfg.get("selection_metric", "")) == "inner_val_macro_f1",
-        "training.selection_metric must be inner_val_macro_f1",
-    )
-    _require(
-        str(training_cfg.get("selection_metric_mode", "")).lower() == "max",
-        "training.selection_metric_mode must be max",
-    )
+    if not merged:
+        _require(
+            str(training_cfg.get("selection_metric", "")) == "inner_val_macro_f1",
+            "training.selection_metric must be inner_val_macro_f1",
+        )
+        _require(
+            str(training_cfg.get("selection_metric_mode", "")).lower() == "max",
+            "training.selection_metric_mode must be max",
+        )
     evaluation_cfg = config.get("evaluation", {})
     _require(
         str(evaluation_cfg.get("sample_prediction_mode", "")) == "original_teacher_forced",

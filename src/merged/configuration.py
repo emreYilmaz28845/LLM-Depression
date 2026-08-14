@@ -61,6 +61,10 @@ def model_config(merged_config: dict[str, Any], records: list[dict[str, Any]]) -
     config["training"] = copy.deepcopy(merged_config.get("training", {}))
     config["training"]["selection_metric"] = "mean_dataset_macro_f1"
     config["training"]["selection_metric_mode"] = "max"
+    # Marks the resolved config as the symmetric-merged context so the Gemma
+    # validator applies only backend-level invariants (the per-dataset and
+    # standalone selection-metric checks do not apply to a merged mix).
+    config["merged"] = True
     config["evaluation"] = copy.deepcopy(records[0]["config"].get("evaluation", {}))
     config["evaluation"]["sample_prediction_mode"] = "original_teacher_forced"
     config["evaluation"]["headline_mode"] = "original_teacher_forced"
