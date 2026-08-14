@@ -185,6 +185,36 @@ def _fold0_subjects(split_metadata: dict[str, Any]) -> dict[str, list[str]]:
     }
 
 
+def _reference_qwen_cache(dataset: str, english: bool) -> dict[str, Any] | None:
+    """Find one production Qwen cache for the dataset and return its
+    extraction metadata as the paired-cell split/manifest identity
+    reference. Smoke runs are excluded."""
+    import glob
+
+    roots = (
+        ["outputs/hidden_features/harmonized_v1_en", "outputs/hidden_features/harmonized_v1"]
+        if english
+        else ["outputs/hidden_features/harmonized_v1"]
+    )
+    for root in roots:
+        root_path = resolve_project_path(root)
+        if not root_path.is_dir():
+            continue
+        for cache_dir in sorted(glob.glob(str(root_path / dataset / "*" / "fold_0"))):
+            if "smoke" in cache_dir:
+                continue
+            metadata_path = Path(cache_dir) / "extraction_metadata.json"
+            if not metadata_path.is_file():
+                continue
+            metadata = read_json(metadata_path)
+            if str(metadata.get("dataset", "")).lower() != dataset.lower():
+                continue
+            if str(metadata.get("model_backend") or "").lower() == "gemma4":
+                continue
+            return metadata
+    return None
+
+
 def check_gemma_config(
     config_path: Path,
     *,
@@ -196,6 +226,7 @@ def check_gemma_config(
     context_limit: int,
     required_path_prefix: Path | None,
     english: bool,
+    reference: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     config = load_yaml_with_overrides(config_path, [])
     validate_gemma4_config(config)
@@ -224,14 +255,17 @@ def check_gemma_config(
     split_metadata_path = resolve_project_path(
         metadata.get("split_metadata_path") or metadata.get("folds_path")
     )
-    split_metadata_hash = metadata.get("split_metadata_sha256") or metadata.get("fold_hash")
+    reference_split_sha256 = reference.get("split_metadata_sha256")
     if not split_metadata_path.is_file():
         failures.append(f"missing split metadata: {split_metadata_path}")
         split_metadata: dict[str, Any] = {}
     else:
         split_metadata = read_json(split_metadata_path)
-        if split_metadata_hash and sha256_file(split_metadata_path) != str(split_metadata_hash):
-            failures.append("split metadata hash mismatch")
+        if reference_split_sha256 and sha256_file(split_metadata_path) != str(reference_split_sha256):
+            failures.append(
+                f"split metadata hash mismatch: GPFS file {sha256_file(split_metadata_path)} "
+                f"!= Qwen campaign reference {reference_split_sha256}"
+            )
 
     split_dir = resolve_project_path(config["output_dirs"]["split_dir"])
     dataset_meta_path = split_dir / f"{dataset}_manifest_metadata.json"
@@ -468,6 +502,10 @@ def prepare(
             failures.extend(gemma_checks[-1]["failures"])
             continue
         native_meta = native_rows = None
+        reference = _reference_qwen_cache(dataset, english)
+        if reference is not None:
+            if str(reference.get("dataset", "")).lower() != dataset.lower():
+                failures.append(f"reference Qwen cache dataset mismatch for {dataset}")
         if english:
             try:
                 native_config_path = None
@@ -492,6 +530,7 @@ def prepare(
                 context_limit=context_limit,
                 required_path_prefix=required_path_prefix,
                 english=english,
+                reference=reference,
             )
         )
         failures.extend(gemma_checks[-1]["failures"])
