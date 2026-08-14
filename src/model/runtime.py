@@ -43,12 +43,24 @@ def _backend(config: dict[str, Any]):
     return qwen2audio_lora
 
 
-def build_collator(config: dict[str, Any], processor, debug: bool = False):
-    """Backend-dispatched collator factory for train/selection/final DataLoaders."""
+def build_collator(
+    config: dict[str, Any], processor, debug: bool = False, require_unit_range: bool | None = None
+):
+    """Backend-dispatched collator factory for train/selection/final DataLoaders.
+
+    The Gemma unit-range check belongs to the DAIC packed30 contract; the
+    harmonized non-DAIC path (and merged training, which mixes components)
+    passes ``require_unit_range=False``. ``None`` derives the value from the
+    config dataset.
+    """
     if resolve_model_backend(config) == MODEL_BACKEND_GEMMA4:
         from src.model.gemma4_io import Gemma4SFTCollator  # noqa: PLC0415
 
-        return Gemma4SFTCollator(processor=processor, debug=debug)
+        if require_unit_range is None:
+            require_unit_range = str(config.get("dataset", "")).lower() == "daic"
+        return Gemma4SFTCollator(
+            processor=processor, debug=debug, require_unit_range=require_unit_range
+        )
     from src.model.collator import Qwen2AudioSFTCollator  # noqa: PLC0415
 
     return Qwen2AudioSFTCollator(processor=processor, debug=debug)

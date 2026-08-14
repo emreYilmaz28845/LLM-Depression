@@ -37,10 +37,18 @@ GEMMA4_HARMONIZED_SAMPLE_MODE = "harmonized_response_windows"
 AUDIO_TOLERANCE = 1e-6
 
 
-def validate_gemma4_audio(waveform: Any, sampling_rate: int) -> np.ndarray:
+def validate_gemma4_audio(
+    waveform: Any, sampling_rate: int, require_unit_range: bool = True
+) -> np.ndarray:
     """Validate one waveform before the Gemma processor touches it.
 
     Raises ``ValueError`` with the exact violated invariant. Never truncates.
+
+    The ``[-1, 1]`` range check is part of the DAIC packed30 contract only.
+    The harmonized non-DAIC contract (runbook Section 9.1) requires finite
+    mono float32 16 kHz audio of at most 480,000 samples; real-world CMDC
+    sources can exceed the unit range by a few percent, so callers with
+    ``require_unit_range=False`` skip only that check.
     """
     if not isinstance(waveform, np.ndarray):
         raise ValueError(
@@ -69,10 +77,11 @@ def validate_gemma4_audio(waveform: Any, sampling_rate: int) -> np.ndarray:
             "than one packed30 window. Do not truncate here."
         )
     if float(waveform.min()) < -1.0 - AUDIO_TOLERANCE or float(waveform.max()) > 1.0 + AUDIO_TOLERANCE:
-        raise ValueError(
-            f"Gemma audio must lie within [-1, 1] (small tolerance allowed), "
-            f"got min={float(waveform.min()):.6f} max={float(waveform.max()):.6f}."
-        )
+        if require_unit_range:
+            raise ValueError(
+                f"Gemma audio must lie within [-1, 1] (small tolerance allowed), "
+                f"got min={float(waveform.min()):.6f} max={float(waveform.max()):.6f}."
+            )
     return waveform
 
 
@@ -182,9 +191,10 @@ class Gemma4SFTCollator:
     - ``loss_weight`` is retained per example for the existing weighted loss.
     """
 
-    def __init__(self, processor, debug: bool = False):
+    def __init__(self, processor, debug: bool = False, require_unit_range: bool = True):
         self.processor = processor
         self.debug = debug
+        self.require_unit_range = require_unit_range
         self.last_debug_example: dict[str, Any] | None = None
 
     def _processor_kwargs(
@@ -211,7 +221,10 @@ class Gemma4SFTCollator:
                     f"sample_id={example.get('sample_id', '')} has {len(audio_arrays)}."
                 )
             for array in audio_arrays:
-                validate_gemma4_audio(array, GEMMA4_AUDIO_SAMPLING_RATE)
+                validate_gemma4_audio(
+                    array, GEMMA4_AUDIO_SAMPLING_RATE,
+                    require_unit_range=self.require_unit_range,
+                )
             audio: list[np.ndarray] | None = audio_arrays
         else:
             audio = None
