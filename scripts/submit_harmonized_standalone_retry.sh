@@ -30,14 +30,9 @@ HIDDEN_WORKER="${HIDDEN_WORKER:-$PROJECT_ROOT/scripts/run_qwen_hidden_extract_sl
 GITHUB_ISSUE="${GITHUB_ISSUE:?Set the harmonized campaign GITHUB_ISSUE}"
 GITHUB_PR="${GITHUB_PR:?Set the primary harmonized methodology GITHUB_PR}"
 MATRIX="${MATRIX:-$PROJECT_ROOT/configs/experiments/harmonized/standalone_matrix.yaml}"
-SUBMISSIONS_ROOT="${SUBMISSIONS_ROOT:-$PROJECT_ROOT/outputs/harmonized_submissions}"
-CONTEXTS_ROOT="${CONTEXTS_ROOT:-$PROJECT_ROOT/outputs/harmonized_experiment_contexts}"
-FEATURES_ROOT="${FEATURES_ROOT:-$PROJECT_ROOT/outputs/hidden_features/harmonized_v1}"
-CLASSIFIERS_ROOT="${CLASSIFIERS_ROOT:-$PROJECT_ROOT/outputs/hidden_classifiers/harmonized_v1}"
-RUN_PREFIX="${RUN_PREFIX:-harmonized_v1}"
-GROUP_PREFIX="${GROUP_PREFIX:-harmonized-v1}"
-LOGICAL_PREFIX="${LOGICAL_PREFIX:-harmonized_v1}"
-# Campaign-family defaults: a Gemma matrix selects Gemma roots and naming.
+# Campaign-family defaults. A Gemma matrix selects the Gemma roots and
+# naming; the Qwen matrix keeps today's values. The case must run before the
+# defaults are applied so ${VAR:-default} cannot lock the Qwen value first.
 case "$MATRIX" in
   *gemma4*)
     SUBMISSIONS_ROOT="${SUBMISSIONS_ROOT:-$PROJECT_ROOT/outputs/gemma4_harmonized_submissions}"
@@ -47,6 +42,15 @@ case "$MATRIX" in
     RUN_PREFIX="${RUN_PREFIX:-gemma4_harmonized_v1}"
     GROUP_PREFIX="${GROUP_PREFIX:-gemma4-harmonized-v1}"
     LOGICAL_PREFIX="${LOGICAL_PREFIX:-gemma4_harmonized_v1}"
+    ;;
+  *)
+    SUBMISSIONS_ROOT="${SUBMISSIONS_ROOT:-$PROJECT_ROOT/outputs/harmonized_submissions}"
+    CONTEXTS_ROOT="${CONTEXTS_ROOT:-$PROJECT_ROOT/outputs/harmonized_experiment_contexts}"
+    FEATURES_ROOT="${FEATURES_ROOT:-$PROJECT_ROOT/outputs/hidden_features/harmonized_v1}"
+    CLASSIFIERS_ROOT="${CLASSIFIERS_ROOT:-$PROJECT_ROOT/outputs/hidden_classifiers/harmonized_v1}"
+    RUN_PREFIX="${RUN_PREFIX:-harmonized_v1}"
+    GROUP_PREFIX="${GROUP_PREFIX:-harmonized-v1}"
+    LOGICAL_PREFIX="${LOGICAL_PREFIX:-harmonized_v1}"
     ;;
 esac
 
