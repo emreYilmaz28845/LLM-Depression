@@ -46,6 +46,23 @@ args=(
     --github-issue "$GITHUB_ISSUE"
     --github-pr "$GITHUB_PR"
 )
+# A Gemma merged stage selects the Gemma merged configs; backend routing
+# (Gemma environment and pinned model path) happens per job in the planner.
+if [ "${GEMMA:-0}" = "1" ]; then
+    args=(
+        python "$PROJECT_ROOT/scripts/submit_symmetric_merged.py"
+        --stage "$STAGE"
+        --run-id "$RUN_ID"
+        --config "$PROJECT_ROOT/configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_text.yaml"
+        --config "$PROJECT_ROOT/configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_only.yaml"
+        --config "$PROJECT_ROOT/configs/experiments/merged/symmetric_merged_harmonized_gemma4_text_only.yaml"
+        --smoke-trials 0
+        --max-concurrent-trains "$MAX_CONCURRENT_TRAINS"
+        --max-concurrent-postprocess "$MAX_CONCURRENT_POSTPROCESS"
+        --github-issue "$GITHUB_ISSUE"
+        --github-pr "$GITHUB_PR"
+    )
+fi
 [ -n "$REGISTRY" ] && args+=(--registry "$REGISTRY")
 [ "$DRY_RUN" = 1 ] && args+=(--dry-run)
 "${args[@]}"

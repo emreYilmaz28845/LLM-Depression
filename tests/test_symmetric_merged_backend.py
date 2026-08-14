@@ -371,3 +371,60 @@ class TestMergedResolver:
         assert len(qwen_ready) == 18
         stages = {s["stage"] for s in manifest["studies"] if not s["cache_missing"]}
         assert stages == {"cv", "final"}
+
+
+class TestMergedLauncherBackend:
+    def test_gemma_merged_planner_routes_backend_env(self) -> None:
+        from scripts.submit_symmetric_merged import build_job_specs
+
+        configs = [
+            ROOT / "configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_text.yaml",
+            ROOT / "configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_only.yaml",
+            ROOT / "configs/experiments/merged/symmetric_merged_harmonized_gemma4_text_only.yaml",
+        ]
+        registry = build_job_specs(
+            configs,
+            stage="smoke",
+            run_id="t7_gemma_smoke",
+            dry_run=True,
+            smoke_subjects=2,
+            smoke_epochs=1,
+            smoke_trials=0,
+            max_concurrent_trains=3,
+            max_concurrent_postprocess=3,
+            github_issue=60,
+            github_pr=52,
+        )
+        jobs = registry["jobs"]
+        # 3 modalities x (train + postprocess + head) smoke jobs.
+        assert len(jobs) == 9
+        assert {job["kind"] for job in jobs} == {"train", "postprocess", "head"}
+        assert {job["modality"] for job in jobs} == {"audio_text", "audio_only", "text_only"}
+        for job in jobs:
+            assert job["model_backend"] == "gemma4"
+
+    def test_qwen_merged_smoke_still_single_modality_and_backend(self) -> None:
+        from scripts.submit_symmetric_merged import build_job_specs
+
+        configs = [
+            ROOT / "configs/experiments/merged/symmetric_merged_harmonized_audio_text.yaml",
+            ROOT / "configs/experiments/merged/symmetric_merged_harmonized_audio_only.yaml",
+            ROOT / "configs/experiments/merged/symmetric_merged_harmonized_text_only.yaml",
+        ]
+        registry = build_job_specs(
+            configs,
+            stage="smoke",
+            run_id="t7_qwen_smoke",
+            dry_run=True,
+            smoke_subjects=2,
+            smoke_epochs=1,
+            smoke_trials=0,
+            max_concurrent_trains=3,
+            max_concurrent_postprocess=3,
+            github_issue=12,
+            github_pr=10,
+        )
+        jobs = registry["jobs"]
+        assert len(jobs) == 9
+        for job in jobs:
+            assert job["model_backend"] == ""
