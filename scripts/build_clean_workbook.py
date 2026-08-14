@@ -1075,6 +1075,67 @@ def build_merged_summary(wb: Workbook, *, detailed: bool) -> None:
     ws.freeze_panes = "A5"
 
 
+def build_optuna100_summary(wb: Workbook) -> None:
+    """Standardized Optuna-100 XGBoost comparison sheet.
+
+    Cells stay blank until qualified Optuna-100 evidence exists (runbook
+    Tasks 9-12). The fixed XGBoost rows in the historical sheets remain
+    available and labelled; this sheet is the new standardized comparison
+    and never mixes the two.
+    """
+    ws = wb.create_sheet("Optuna-100 XGB")
+    _widths(ws, {"A": 26, "B": 18, "C": 18, "D": 16, "E": 14, "F": 14, "G": 60})
+    _title(ws, "Standardized Optuna-100 XGBoost — macro-F1 (not run yet)", 7)
+    _note(
+        ws, 2,
+        "Protocol harmonized_optuna100_v1: exactly 100 TPE trials, seeds 1337/1337/1337, "
+        "3 subject-grouped inner folds, threshold 0.5, sampling none, pooled inner subject-level "
+        "macro-F1 objective (merged: unweighted mean of five per-dataset inner macro-F1). "
+        "Prediction backends qwen_hidden_xgb_optuna100 / gemma4_hidden_xgb_optuna100 "
+        "(+ _symmetric_merged for merged). Qwen and Gemma paired cells share manifests, splits, "
+        "weights, view (original_teacher_forced, harmonized_all_windows_full_coverage), namespace "
+        "headline/binary_strict, and seeds. Fixed historical XGB rows remain in their original "
+        "sheets, labelled, and are not replaced. All cells blank until evidence exists; "
+        "not-run fields stay blank.",
+        7, height=90,
+    )
+    _header_row(ws, 4, ["Family / Dataset", "Modality", "Backend", "Aggregation", "Macro-F1", "Positive-F1", "Evidence"])
+    families = [
+        ("Native", ("D3TEC", "Androids Interview", "CMDC", "Turkish t17", "DAIC-WOZ")),
+        ("English", ("D3TEC", "Androids Interview", "CMDC", "Turkish t17")),
+        ("Symmetric merged", ("CV (5-fold)", "Final (DAIC official test)")),
+        ("DAIC official development", ("Official dev",)),
+    ]
+    row = 5
+    for family, datasets in families:
+        _section(ws, row, family, 7)
+        row += 1
+        for dataset in datasets:
+            modalities = (
+                ("Audio + Text", "Audio only", "Text only")
+                if family == "Native"
+                else ("Audio + Text", "Text only")
+                if family == "English"
+                else ("Audio + Text", "Audio only", "Text only")
+                if family == "Symmetric merged"
+                else ("Audio + Text", "Audio only", "Text only")
+            )
+            for modality in modalities:
+                for backend in ("Qwen", "Gemma 4"):
+                    ws.cell(row, 1, f"{family} — {dataset}").font = BODY_FONT
+                    ws.cell(row, 1).fill = BODY
+                    ws.cell(row, 1).alignment = LEFT
+                    ws.cell(row, 1).border = BORDER
+                    _body_cell(ws, row, 2, modality)
+                    _body_cell(ws, row, 3, backend)
+                    _body_cell(ws, row, 4, "pooled / fold-mean")
+                    _body_cell(ws, row, 5, None, fmt="0.0000")
+                    _body_cell(ws, row, 6, None, fmt="0.0000")
+                    _body_cell(ws, row, 7, "not run yet")
+                    row += 1
+    ws.freeze_panes = "A5"
+
+
 def build_harmonized_en(wb: Workbook) -> None:
     ws = wb.create_sheet("EN Translation")
     _widths(ws, {c: 18 for c in "ABCDEFGHIJKLMN"})
@@ -1802,6 +1863,7 @@ def main() -> None:
     build_packed30(wb)
     build_gemma4(wb)
     build_gemma_vs_qwen(wb)
+    build_optuna100_summary(wb)
     build_daic_officialdev_comparison(wb, detailed=detailed)
     build_daic_officialdev_heads(wb, detailed=detailed)
     build_provenance(wb, detailed=detailed)

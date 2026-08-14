@@ -1,9 +1,9 @@
 schema_version: audiollm.workbook_wandb_selection.v1
 workbook:
   path: depression_results_clean.xlsx
-  sha256: bbd94547c58ed5c9a103a590c74839999bd59c41e6daa21d24e871d9c3feb96a
+  sha256: 85e71957862ef9e694a1a4bb11dd71f2804f3a4b2741098767071ea208122f26
   builder_path: scripts/build_clean_workbook.py
-  builder_sha256: 2571818983a4efcacaa223cd7bc0f1b0d3cf53f642e0a6c1d5f9618b05d2a36f
+  builder_sha256: d6bee5ab040a7129addc94c494f8795d1c32513eeddd290228fac66d9c952400
   provenance_sheet: Provenance
 entries:
 - selection_id: Standalone|DAIC|Audio + Text|Fine-tuned Qwen
@@ -935,7 +935,8 @@ entries:
   group: Merged DAIC official
   wandb_policy: pending_importer_support
   blocking_reasons: &id007
-  - harmonized merged runs are not imported into the registry (inventory-oriented layout only)
+  - harmonized merged runs are not imported into the registry (inventory-oriented
+    layout only)
 - selection_id: Merged DAIC official|DAIC|Audio + Text|LogReg head
   provenance_key:
     experiment: Merged DAIC official
@@ -1980,7 +1981,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
+    yet
 - selection_id: DAIC packed30 family|DAIC|Canonical Audio + Text|XGBoost raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -1997,7 +1999,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
+    yet
 - selection_id: DAIC packed30 family|DAIC|Canonical Audio only|LogReg raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -2014,7 +2017,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
+    yet
 - selection_id: DAIC packed30 family|DAIC|Canonical Audio only|XGBoost raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -2031,7 +2035,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
+    yet
 - selection_id: DAIC packed30 family|DAIC|Joint-K4 Audio + Text|LogReg raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -2048,7 +2053,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
+    yet
 - selection_id: DAIC packed30 family|DAIC|Joint-K4 Audio + Text|Qwen TF
   provenance_key:
     experiment: DAIC packed30 family
@@ -2066,7 +2072,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: quarantine_ambiguous
   blocking_reasons:
-  - runs under output_model/experiments non-canonical layout; not importable by current discovery
+  - runs under output_model/experiments non-canonical layout; not importable by current
+    discovery
 - selection_id: DAIC packed30 family|DAIC|Joint-K4 Audio + Text|XGBoost raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -2083,7 +2090,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
+    yet
 - selection_id: DAIC packed30 family|DAIC|Joint-K4 Audio only|LogReg raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -2100,7 +2108,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
+    yet
 - selection_id: DAIC packed30 family|DAIC|Joint-K4 Audio only|Qwen TF
   provenance_key:
     experiment: DAIC packed30 family
@@ -2118,7 +2127,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: quarantine_ambiguous
   blocking_reasons:
-  - runs under output_model/experiments non-canonical layout; not importable by current discovery
+  - runs under output_model/experiments non-canonical layout; not importable by current
+    discovery
 - selection_id: DAIC packed30 family|DAIC|Joint-K4 Audio only|XGBoost raw
   provenance_key:
     experiment: DAIC packed30 family
@@ -2135,7 +2145,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: pending_importer_support
   blocking_reasons:
-  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer yet
+  - hidden-classifier adapter inventories only; no qualified SQLite evaluation importer
+    yet
 - selection_id: DAIC packed30 family|DAIC|Packed30 v1 Audio + Text|Qwen TF
   provenance_key:
     experiment: DAIC packed30 family
@@ -2153,7 +2164,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: quarantine_ambiguous
   blocking_reasons:
-  - runs under output_model/experiments non-canonical layout; not importable by current discovery
+  - runs under output_model/experiments non-canonical layout; not importable by current
+    discovery
 - selection_id: DAIC packed30 family|DAIC|Packed30 v1 Audio only|Qwen TF
   provenance_key:
     experiment: DAIC packed30 family
@@ -2171,7 +2183,8 @@ entries:
   group: DAIC packed30 family
   wandb_policy: quarantine_ambiguous
   blocking_reasons:
-  - runs under output_model/experiments non-canonical layout; not importable by current discovery
+  - runs under output_model/experiments non-canonical layout; not importable by current
+    discovery
 - selection_id: EN Translation|Androids Interview|Audio + Text|Fine-tuned Qwen
   provenance_key:
     experiment: EN Translation
@@ -3547,7 +3560,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
   train_job_id: '44518086'
   eval_job_id: '44518087'
@@ -3574,7 +3589,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
   train_job_id: '44518086'
   eval_job_id: '44518087'
@@ -3601,7 +3618,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
   train_job_id: '44518086'
   eval_job_id: '44518087'
@@ -3628,7 +3647,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
   train_job_id: '44518086'
   eval_job_id: '44518087'
@@ -3655,7 +3676,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_text_r2
   train_job_id: '44518086'
   eval_job_id: '44518087'
@@ -3682,7 +3705,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
   train_job_id: '44517565'
   eval_job_id: '44517566'
@@ -3709,7 +3734,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
   train_job_id: '44517565'
   eval_job_id: '44517566'
@@ -3736,7 +3763,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
   train_job_id: '44517565'
   eval_job_id: '44517566'
@@ -3763,7 +3792,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
   train_job_id: '44517565'
   eval_job_id: '44517566'
@@ -3790,7 +3821,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_audio_only
   train_job_id: '44517565'
   eval_job_id: '44517566'
@@ -3817,7 +3850,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
   train_job_id: '44517484'
   eval_job_id: '44517485'
@@ -3844,7 +3879,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
   train_job_id: '44517484'
   eval_job_id: '44517485'
@@ -3871,7 +3908,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
   train_job_id: '44517484'
   eval_job_id: '44517485'
@@ -3898,7 +3937,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
   train_job_id: '44517484'
   eval_job_id: '44517485'
@@ -3925,7 +3966,9 @@ entries:
   group: Gemma 4 DAIC
   wandb_policy: pending_wandb_reconciliation
   blocking_reasons:
-  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real attempt would create a duplicate until the researcher selects a reconciliation strategy
+  - existing cloud run is keyed to a synthetic legacy attempt; exporting the real
+    attempt would create a duplicate until the researcher selects a reconciliation
+    strategy
   run_name: gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
   train_job_id: '44517484'
   eval_job_id: '44517485'
@@ -4044,7 +4087,8 @@ entries:
   group: Gemma 4 DAIC fixed heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head confusion matrix
+- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head confusion
+    matrix
   provenance_key:
     experiment: Gemma 4 DAIC
     dataset: DAIC
@@ -4182,7 +4226,8 @@ entries:
   group: Gemma 4 DAIC fixed heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head confusion matrix
+- selection_id: Gemma 4 DAIC|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head confusion
+    matrix
   provenance_key:
     experiment: Gemma 4 DAIC
     dataset: DAIC
@@ -4320,7 +4365,8 @@ entries:
   group: Gemma 4 DAIC fixed heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 LogReg raw hidden head confusion matrix
+- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 LogReg raw hidden head confusion
+    matrix
   provenance_key:
     experiment: Gemma 4 DAIC
     dataset: DAIC
@@ -4458,7 +4504,8 @@ entries:
   group: Gemma 4 DAIC fixed heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 XGBoost raw hidden head confusion matrix
+- selection_id: Gemma 4 DAIC|DAIC|Audio only|Gemma 4 XGBoost raw hidden head confusion
+    matrix
   provenance_key:
     experiment: Gemma 4 DAIC
     dataset: DAIC
@@ -4596,7 +4643,8 @@ entries:
   group: Gemma 4 DAIC fixed heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 LogReg raw hidden head confusion matrix
+- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 LogReg raw hidden head confusion
+    matrix
   provenance_key:
     experiment: Gemma 4 DAIC
     dataset: DAIC
@@ -4734,7 +4782,8 @@ entries:
   group: Gemma 4 DAIC fixed heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 XGBoost raw hidden head confusion matrix
+- selection_id: Gemma 4 DAIC|DAIC|Text only|Gemma 4 XGBoost raw hidden head confusion
+    matrix
   provenance_key:
     experiment: Gemma 4 DAIC
     dataset: DAIC
@@ -4964,7 +5013,8 @@ entries:
   group: DAIC official development
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC official development|DAIC|Audio + Text|Gemma 4 teacher-forced macro-F1
+- selection_id: DAIC official development|DAIC|Audio + Text|Gemma 4 teacher-forced
+    macro-F1
   provenance_key:
     experiment: DAIC official development
     dataset: DAIC
@@ -4987,7 +5037,8 @@ entries:
   group: DAIC official development
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC official development|DAIC|Audio + Text|Gemma 4 teacher-forced positive-F1
+- selection_id: DAIC official development|DAIC|Audio + Text|Gemma 4 teacher-forced
+    positive-F1
   provenance_key:
     experiment: DAIC official development
     dataset: DAIC
@@ -5010,7 +5061,8 @@ entries:
   group: DAIC official development
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC official development|DAIC|Audio + Text|Gemma 4 teacher-forced accuracy
+- selection_id: DAIC official development|DAIC|Audio + Text|Gemma 4 teacher-forced
+    accuracy
   provenance_key:
     experiment: DAIC official development
     dataset: DAIC
@@ -5401,7 +5453,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 LogReg raw hidden head macro-F1
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 LogReg raw hidden head
+    macro-F1
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5424,7 +5477,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 LogReg raw hidden head positive-F1
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 LogReg raw hidden head
+    positive-F1
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5447,7 +5501,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 LogReg raw hidden head accuracy
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 LogReg raw hidden head
+    accuracy
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5470,7 +5525,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 LogReg raw hidden head precision
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 LogReg raw hidden head
+    precision
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5493,7 +5549,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 LogReg raw hidden head recall
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 LogReg raw hidden head
+    recall
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5516,7 +5573,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 XGBoost raw hidden head macro-F1
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 XGBoost raw hidden head
+    macro-F1
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5539,7 +5597,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 XGBoost raw hidden head positive-F1
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 XGBoost raw hidden head
+    positive-F1
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5562,7 +5621,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 XGBoost raw hidden head accuracy
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 XGBoost raw hidden head
+    accuracy
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5585,7 +5645,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 XGBoost raw hidden head precision
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 XGBoost raw hidden head
+    precision
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5608,7 +5669,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 XGBoost raw hidden head recall
+- selection_id: DAIC Head Ablation|DAIC|Audio only|Gemma 4 XGBoost raw hidden head
+    recall
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5746,7 +5808,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen XGBoost raw hidden head macro-F1
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen XGBoost raw hidden head
+    macro-F1
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5769,7 +5832,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen XGBoost raw hidden head positive-F1
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen XGBoost raw hidden head
+    positive-F1
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5792,7 +5856,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen XGBoost raw hidden head accuracy
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen XGBoost raw hidden head
+    accuracy
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5815,7 +5880,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen XGBoost raw hidden head precision
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen XGBoost raw hidden head
+    precision
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5838,7 +5904,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen XGBoost raw hidden head recall
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Qwen XGBoost raw hidden head
+    recall
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5861,7 +5928,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head macro-F1
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head
+    macro-F1
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5884,7 +5952,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head positive-F1
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head
+    positive-F1
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5907,7 +5976,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head accuracy
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head
+    accuracy
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5930,7 +6000,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head precision
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head
+    precision
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5953,7 +6024,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head recall
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 LogReg raw hidden head
+    recall
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5976,7 +6048,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head macro-F1
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head
+    macro-F1
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -5999,7 +6072,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head positive-F1
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head
+    positive-F1
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -6022,7 +6096,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head accuracy
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head
+    accuracy
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -6045,7 +6120,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head precision
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head
+    precision
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -6068,7 +6144,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head recall
+- selection_id: DAIC Head Ablation|DAIC|Audio + Text|Gemma 4 XGBoost raw hidden head
+    recall
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -6436,7 +6513,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 XGBoost raw hidden head macro-F1
+- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 XGBoost raw hidden head
+    macro-F1
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -6459,7 +6537,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 XGBoost raw hidden head positive-F1
+- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 XGBoost raw hidden head
+    positive-F1
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -6482,7 +6561,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 XGBoost raw hidden head accuracy
+- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 XGBoost raw hidden head
+    accuracy
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -6505,7 +6585,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 XGBoost raw hidden head precision
+- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 XGBoost raw hidden head
+    precision
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -6528,7 +6609,8 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
-- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 XGBoost raw hidden head recall
+- selection_id: DAIC Head Ablation|DAIC|Text only|Gemma 4 XGBoost raw hidden head
+    recall
   provenance_key:
     experiment: DAIC Head Ablation
     dataset: DAIC
@@ -6551,3 +6633,5459 @@ entries:
   group: DAIC official development heads
   wandb_policy: sync
   blocking_reasons: []
+- selection_id: Optuna100|Native|d3tec|audio_text|qwen|fold0
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|audio_text|qwen|fold1
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|audio_text|qwen|fold2
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|audio_text|qwen|fold3
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|audio_text|qwen|fold4
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|audio_text|gemma4|fold0
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|audio_text|gemma4|fold1
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|audio_text|gemma4|fold2
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|audio_text|gemma4|fold3
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|audio_text|gemma4|fold4
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|audio_only|qwen|fold0
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|audio_only|qwen|fold1
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|audio_only|qwen|fold2
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|audio_only|qwen|fold3
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|audio_only|qwen|fold4
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|audio_only|gemma4|fold0
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|audio_only|gemma4|fold1
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|audio_only|gemma4|fold2
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|audio_only|gemma4|fold3
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|audio_only|gemma4|fold4
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|text_only|qwen|fold0
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|text_only|qwen|fold1
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|text_only|qwen|fold2
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|text_only|qwen|fold3
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|text_only|qwen|fold4
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|text_only|gemma4|fold0
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|text_only|gemma4|fold1
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|text_only|gemma4|fold2
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|text_only|gemma4|fold3
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|d3tec|text_only|gemma4|fold4
+  provenance_key:
+    experiment: Native
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_text|qwen|fold0
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_text|qwen|fold1
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_text|qwen|fold2
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_text|qwen|fold3
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_text|qwen|fold4
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_text|gemma4|fold0
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_text|gemma4|fold1
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_text|gemma4|fold2
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_text|gemma4|fold3
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_text|gemma4|fold4
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_only|qwen|fold0
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_only|qwen|fold1
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_only|qwen|fold2
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_only|qwen|fold3
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_only|qwen|fold4
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_only|gemma4|fold0
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_only|gemma4|fold1
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_only|gemma4|fold2
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_only|gemma4|fold3
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|audio_only|gemma4|fold4
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|text_only|qwen|fold0
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|text_only|qwen|fold1
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|text_only|qwen|fold2
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|text_only|qwen|fold3
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|text_only|qwen|fold4
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|text_only|gemma4|fold0
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|text_only|gemma4|fold1
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|text_only|gemma4|fold2
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|text_only|gemma4|fold3
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|androids_interview|text_only|gemma4|fold4
+  provenance_key:
+    experiment: Native
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_text|qwen|fold0
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_text|qwen|fold1
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_text|qwen|fold2
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_text|qwen|fold3
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_text|qwen|fold4
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_text|gemma4|fold0
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_text|gemma4|fold1
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_text|gemma4|fold2
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_text|gemma4|fold3
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_text|gemma4|fold4
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_only|qwen|fold0
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_only|qwen|fold1
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_only|qwen|fold2
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_only|qwen|fold3
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_only|qwen|fold4
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_only|gemma4|fold0
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_only|gemma4|fold1
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_only|gemma4|fold2
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_only|gemma4|fold3
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|audio_only|gemma4|fold4
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|text_only|qwen|fold0
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|text_only|qwen|fold1
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|text_only|qwen|fold2
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|text_only|qwen|fold3
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|text_only|qwen|fold4
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|text_only|gemma4|fold0
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|text_only|gemma4|fold1
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|text_only|gemma4|fold2
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|text_only|gemma4|fold3
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|cmdc|text_only|gemma4|fold4
+  provenance_key:
+    experiment: Native
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_text|qwen|fold0
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_text|qwen|fold1
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_text|qwen|fold2
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_text|qwen|fold3
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_text|qwen|fold4
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_text|gemma4|fold0
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_text|gemma4|fold1
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_text|gemma4|fold2
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_text|gemma4|fold3
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_text|gemma4|fold4
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_only|qwen|fold0
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_only|qwen|fold1
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_only|qwen|fold2
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_only|qwen|fold3
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_only|qwen|fold4
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_only|gemma4|fold0
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_only|gemma4|fold1
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_only|gemma4|fold2
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_only|gemma4|fold3
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|audio_only|gemma4|fold4
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|text_only|qwen|fold0
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|text_only|qwen|fold1
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|text_only|qwen|fold2
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|text_only|qwen|fold3
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|text_only|qwen|fold4
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|text_only|gemma4|fold0
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|text_only|gemma4|fold1
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|text_only|gemma4|fold2
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|text_only|gemma4|fold3
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|turkish|text_only|gemma4|fold4
+  provenance_key:
+    experiment: Native
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|daic|audio_text|qwen|fold0
+  provenance_key:
+    experiment: Native
+    dataset: DAIC-WOZ
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|daic|audio_text|gemma4|fold0
+  provenance_key:
+    experiment: Native
+    dataset: DAIC-WOZ
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|daic|audio_only|qwen|fold0
+  provenance_key:
+    experiment: Native
+    dataset: DAIC-WOZ
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|daic|audio_only|gemma4|fold0
+  provenance_key:
+    experiment: Native
+    dataset: DAIC-WOZ
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|daic|text_only|qwen|fold0
+  provenance_key:
+    experiment: Native
+    dataset: DAIC-WOZ
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Native|daic|text_only|gemma4|fold0
+  provenance_key:
+    experiment: Native
+    dataset: DAIC-WOZ
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Native
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|audio_text|qwen|fold0
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|audio_text|qwen|fold1
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|audio_text|qwen|fold2
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|audio_text|qwen|fold3
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|audio_text|qwen|fold4
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|audio_text|gemma4|fold0
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|audio_text|gemma4|fold1
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|audio_text|gemma4|fold2
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|audio_text|gemma4|fold3
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|audio_text|gemma4|fold4
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|text_only|qwen|fold0
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|text_only|qwen|fold1
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|text_only|qwen|fold2
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|text_only|qwen|fold3
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|text_only|qwen|fold4
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|text_only|gemma4|fold0
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|text_only|gemma4|fold1
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|text_only|gemma4|fold2
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|text_only|gemma4|fold3
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|d3tec|text_only|gemma4|fold4
+  provenance_key:
+    experiment: English
+    dataset: D3TEC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|audio_text|qwen|fold0
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|audio_text|qwen|fold1
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|audio_text|qwen|fold2
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|audio_text|qwen|fold3
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|audio_text|qwen|fold4
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|audio_text|gemma4|fold0
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|audio_text|gemma4|fold1
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|audio_text|gemma4|fold2
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|audio_text|gemma4|fold3
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|audio_text|gemma4|fold4
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|text_only|qwen|fold0
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|text_only|qwen|fold1
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|text_only|qwen|fold2
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|text_only|qwen|fold3
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|text_only|qwen|fold4
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|text_only|gemma4|fold0
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|text_only|gemma4|fold1
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|text_only|gemma4|fold2
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|text_only|gemma4|fold3
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|androids_interview|text_only|gemma4|fold4
+  provenance_key:
+    experiment: English
+    dataset: Androids Interview
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|audio_text|qwen|fold0
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|audio_text|qwen|fold1
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|audio_text|qwen|fold2
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|audio_text|qwen|fold3
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|audio_text|qwen|fold4
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|audio_text|gemma4|fold0
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|audio_text|gemma4|fold1
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|audio_text|gemma4|fold2
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|audio_text|gemma4|fold3
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|audio_text|gemma4|fold4
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|text_only|qwen|fold0
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|text_only|qwen|fold1
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|text_only|qwen|fold2
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|text_only|qwen|fold3
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|text_only|qwen|fold4
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|text_only|gemma4|fold0
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|text_only|gemma4|fold1
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|text_only|gemma4|fold2
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|text_only|gemma4|fold3
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|cmdc|text_only|gemma4|fold4
+  provenance_key:
+    experiment: English
+    dataset: CMDC
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|audio_text|qwen|fold0
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|audio_text|qwen|fold1
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|audio_text|qwen|fold2
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|audio_text|qwen|fold3
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|audio_text|qwen|fold4
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|audio_text|gemma4|fold0
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|audio_text|gemma4|fold1
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|audio_text|gemma4|fold2
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|audio_text|gemma4|fold3
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|audio_text|gemma4|fold4
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|text_only|qwen|fold0
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|text_only|qwen|fold1
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|text_only|qwen|fold2
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|text_only|qwen|fold3
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|text_only|qwen|fold4
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|text_only|gemma4|fold0
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|text_only|gemma4|fold1
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|text_only|gemma4|fold2
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|text_only|gemma4|fold3
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|English|turkish|text_only|gemma4|fold4
+  provenance_key:
+    experiment: English
+    dataset: Turkish t17
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: English
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_text|qwen|fold0
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_text|qwen|fold1
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_text|qwen|fold2
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_text|qwen|fold3
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_text|qwen|fold4
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_text|gemma4|fold0
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_text|gemma4|fold1
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_text|gemma4|fold2
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_text|gemma4|fold3
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_text|gemma4|fold4
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_only|qwen|fold0
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_only|qwen|fold1
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_only|qwen|fold2
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_only|qwen|fold3
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_only|qwen|fold4
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_only|gemma4|fold0
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_only|gemma4|fold1
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_only|gemma4|fold2
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_only|gemma4|fold3
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|audio_only|gemma4|fold4
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|text_only|qwen|fold0
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|text_only|qwen|fold1
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|text_only|qwen|fold2
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|text_only|qwen|fold3
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|text_only|qwen|fold4
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|text_only|gemma4|fold0
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|text_only|gemma4|fold1
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 1
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|text_only|gemma4|fold2
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 2
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|text_only|gemma4|fold3
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 3
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_cv|text_only|gemma4|fold4
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 4
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_final|audio_text|qwen|fold0
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_final|audio_text|gemma4|fold0
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_final|audio_only|qwen|fold0
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_final|audio_only|gemma4|fold0
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_final|text_only|qwen|fold0
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|Symmetric merged|merged_final|text_only|gemma4|fold0
+  provenance_key:
+    experiment: Symmetric merged
+    dataset: Merged
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100_symmetric_merged
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Symmetric merged
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|DAIC official development|daic|audio_text|qwen|fold0
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC-WOZ
+    modality: Audio + Text
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|DAIC official development|daic|audio_text|gemma4|fold0
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC-WOZ
+    modality: Audio + Text
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|DAIC official development|daic|audio_only|qwen|fold0
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC-WOZ
+    modality: Audio only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|DAIC official development|daic|audio_only|gemma4|fold0
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC-WOZ
+    modality: Audio only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|DAIC official development|daic|text_only|qwen|fold0
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC-WOZ
+    modality: Text only
+    method: Optuna-100 XGB (Qwen)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: qwen_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
+- selection_id: Optuna100|DAIC official development|daic|text_only|gemma4|fold0
+  provenance_key:
+    experiment: DAIC official development
+    dataset: DAIC-WOZ
+    modality: Text only
+    method: Optuna-100 XGB (Gemma 4)
+  source_type: hidden_classifier
+  reason: optuna100_harmonized_v1
+  dependency_policy: all_contributing_folds
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: daic
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: DAIC official development
+  wandb_policy: skip_not_run
+  blocking_reasons:
+  - study not run yet
