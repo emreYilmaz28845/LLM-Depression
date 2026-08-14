@@ -31,6 +31,7 @@ from src.merged.provenance import write_slurm_provenance
 from src.model.runtime import (
     load_model_for_inference,
     load_processor,
+    prepare_backend_examples,
     resolve_processor_sampling_rate,
 )
 from src.utils import (
@@ -79,8 +80,15 @@ def _extract_partition(
     partition: str,
     sampling_rate: int | None,
     silence_audio: bool,
+    gemma_backend: bool = False,
+    expected_hidden_size: int | None = None,
 ) -> tuple[np.ndarray, list[dict[str, Any]], dict[str, Any]]:
-    collator = PromptOnlyExtractionCollator(processor)
+    if gemma_backend:
+        from src.features.gemma4_hidden_collator import Gemma4PromptOnlyExtractionCollator
+
+        collator = Gemma4PromptOnlyExtractionCollator(processor)
+    else:
+        collator = PromptOnlyExtractionCollator(processor)
     device = next(model.parameters()).device
     vectors: list[np.ndarray] = []
     rows: list[dict[str, Any]] = []
@@ -110,6 +118,11 @@ def _extract_partition(
         vector = last_valid_token(hidden, mask).cpu().numpy()[0].astype(np.float32, copy=False)
         if not np.isfinite(vector).all():
             raise ValueError(f"Non-finite hidden vector for {metadata['sample_id']}.")
+        if expected_hidden_size is not None and vector.shape[0] != expected_hidden_size:
+            raise ValueError(
+                f"Expected {expected_hidden_size} hidden features for the "
+                f"{'gemma4' if gemma_backend else 'qwen'} backend, got {vector.shape[0]}."
+            )
         sample_id = str(metadata["sample_id"])
         if sample_id in seen_samples:
             raise ValueError(f"Duplicate hidden feature sample identity: {sample_id}")
@@ -189,7 +202,6 @@ def postprocess_merged_fold(
 
     output_root = Path(merged_config["output_dirs"]["merged_root"]) / run_id / stage / f"fold_{int(fold)}"
     features_dir = output_root / "features"
-    qwen_dir = output_root / "qwen"
     identity = {
         "schema_version": "symmetric_merged_postprocess_identity.v1",
         "config_name": merged_config.get("name"),
@@ -205,11 +217,15 @@ def postprocess_merged_fold(
         "fold_hash": protocol["protocol"].get("folds", {}).get(str(int(fold)), {}).get("fold_hash"),
         "expected_holdout_datasets": list(expected_holdouts),
         "subjects_per_class": subjects_per_class if stage == "smoke" else None,
+        "model_backend": str(model_config.get("model_backend") or ""),
     }
     identity_path = output_root / "postprocess_identity.json"
     complete_path = output_root / "postprocess_complete.json"
     if complete_path.is_file() and identity_path.is_file():
         existing = read_json(identity_path)
+        # Historical Qwen outputs predate the model_backend identity field;
+        # treat a missing field as the Qwen default so they stay readable.
+        existing.setdefault("model_backend", "")
         if existing != identity:
             raise ValueError(f"Incompatible merged postprocess output: {output_root}")
         return {"status": "skipped_compatible_complete", "output_root": str(output_root)}
@@ -217,7 +233,6 @@ def postprocess_merged_fold(
         raise ValueError(f"Refusing to overwrite incomplete merged postprocess output: {output_root}")
     ensure_dir(output_root)
     ensure_dir(features_dir)
-    ensure_dir(qwen_dir)
     save_json(identity, identity_path)
     save_json(merged_config, output_root / "resolved_merged_config.json")
     write_slurm_provenance(
@@ -241,13 +256,30 @@ def postprocess_merged_fold(
     model.to(device=device, dtype=dtype)
     model.eval()
     sampling_rate = resolve_processor_sampling_rate(processor)
+    # Backend-dispatched prompt preparation (Gemma re-renders the prompt from
+    # the raw system/user fields; Qwen is a no-op).
+    train_grouped = {
+        dataset: prepare_backend_examples(examples, model_config, processor)
+        for dataset, examples in train_grouped.items()
+    }
+    holdout_grouped = {
+        dataset: prepare_backend_examples(examples, model_config, processor)
+        for dataset, examples in holdout_grouped.items()
+    }
+    gemma_backend = str(model_config.get("model_backend") or "") == "gemma4"
+    from src.features.extract_qwen_hidden import BACKEND_HIDDEN_SIZES
+
+    expected_hidden_size = next(
+        iter(BACKEND_HIDDEN_SIZES.get(str(model_config.get("model_backend") or ""), {0}))
+    ) if gemma_backend else None
+    eval_subdir = "gemma4" if gemma_backend else "qwen"
 
     qwen_summary: dict[str, Any] = {}
     for dataset in expected_holdouts:
         examples = holdout_grouped.get(dataset, [])
         if not examples:
             raise ValueError(f"Merged postprocess has no {dataset} outer holdout examples.")
-        eval_dir = ensure_dir(qwen_dir / dataset)
+        eval_dir = ensure_dir(output_root / eval_subdir / dataset)
         component_config = next(record["config"] for record in records if str(record["dataset"]).lower() == dataset)
         metrics = evaluate_examples(
             model,
@@ -264,7 +296,7 @@ def postprocess_merged_fold(
             "subject_count": len({str(example["subject_id"]) for example in examples}),
             "sample_count": len(examples),
         }
-    save_json(qwen_summary, qwen_dir / "summary.json")
+    save_json(qwen_summary, output_root / eval_subdir / "summary.json")
 
     train_examples = [example for dataset in DATASETS for example in train_grouped.get(dataset, [])]
     holdout_examples = [example for dataset in expected_holdouts for example in holdout_grouped.get(dataset, [])]
@@ -276,6 +308,8 @@ def postprocess_merged_fold(
         partition="outer_train",
         sampling_rate=sampling_rate,
         silence_audio=bool(model_config["data"].get("silence_audio", False)),
+        gemma_backend=gemma_backend,
+        expected_hidden_size=expected_hidden_size,
     )
     _, holdout_rows, holdout_summary = _extract_partition(
         model,
@@ -285,6 +319,8 @@ def postprocess_merged_fold(
         partition="outer_holdout",
         sampling_rate=sampling_rate,
         silence_audio=bool(model_config["data"].get("silence_audio", False)),
+        gemma_backend=gemma_backend,
+        expected_hidden_size=expected_hidden_size,
     )
     dimensions = {int(row["vector_dimension"]) for row in train_rows + holdout_rows}
     if len(dimensions) > 1:
@@ -303,6 +339,7 @@ def postprocess_merged_fold(
         "merged_config_sha256": identity["merged_config_sha256"],
         "fold_hash": identity["fold_hash"],
         "pooling": "last_valid_prompt_token",
+        "model_backend": str(model_config.get("model_backend") or ""),
         "partitions": {"outer_train": train_summary, "outer_holdout": holdout_summary},
         "gold_label_protection": {"labels_passed_to_model": False, "generation_used": False},
         "row_hashes": {

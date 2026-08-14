@@ -1,0 +1,15 @@
+# Paired Optuna-100 study matrix: symmetric-merged harmonized family.
+# 3 logical cells (three modalities), expanded per backend and stage:
+# 5 CV folds + 1 final fit per modality -> 18 studies per backend = 36.
+# Qwen features are the existing harmonized merged feature sets; Gemma
+# features come from the Gemma merged postprocess stage.
+name: optuna100_merged_matrix
+recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1
+protocol_profile: harmonized_optuna100_v1
+objective: mean_per_dataset_inner_macro_f1
+target_trials: 100
+family: merged
+studies:
+  - {modality: audio_text}
+  - {modality: audio_only}
+  - {modality: text_only}

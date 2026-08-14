@@ -21,6 +21,7 @@ from src.merged.protocol import (
     compute_hierarchical_example_weights,
     resolve_head_inner_folds,
 )
+from src.merged.configuration import validate_shared_backend
 from src.merged.runtime import load_merged_config, load_records_and_protocol
 from src.metrics import binary_auroc, classification_metrics
 from src.merged.provenance import write_slurm_provenance
@@ -277,6 +278,24 @@ def _objective_value(
 
 
 def _optuna_params(trial, config: dict[str, Any], seed: int, threads: int) -> dict[str, Any]:
+    from src.features import optuna100_policy as policy
+
+    optuna_cfg = (config.get("heads") or {}).get("optuna") or {}
+    if optuna_cfg.get("protocol_profile") == policy.PROTOCOL_PROFILE:
+        search_space = policy.resolved_search_space()
+        params = {
+            "objective": "binary:logistic",
+            "eval_metric": "logloss",
+            "tree_method": "hist",
+            "random_state": int(seed),
+            "n_jobs": int(threads),
+        }
+        for name, spec in search_space.items():
+            if spec["kind"] == "int":
+                params[name] = trial.suggest_int(name, spec["low"], spec["high"], step=spec.get("step", 1))
+            else:
+                params[name] = trial.suggest_float(name, spec["low"], spec["high"], log=bool(spec.get("log", False)))
+        return params
     return {
         "objective": "binary:logistic",
         "eval_metric": "logloss",
@@ -371,6 +390,34 @@ def _run_optuna(
     return params, summary
 
 
+def resolve_optuna_trials(
+    merged_config: dict[str, Any], stage: str, trials: int | None
+) -> int:
+    """Resolve and enforce the merged Optuna trial count from the config
+    identity. New harmonized configs declare the harmonized_optuna100_v1
+    profile and require exactly 100 production trials; historical configs
+    keep the fixed 150-trial rule; trials=0 disables Optuna."""
+    expected_trial_count = int(
+        trials
+        if trials is not None
+        else ((merged_config.get("heads") or {}).get("optuna") or {}).get("target_trials", 150)
+    )
+    from src.features import optuna100_policy as policy
+
+    optuna_cfg = (merged_config.get("heads") or {}).get("optuna") or {}
+    protocol_profile = str(optuna_cfg.get("protocol_profile") or "")
+    if expected_trial_count == 0:
+        return 0
+    if protocol_profile == policy.PROTOCOL_PROFILE:
+        policy.assert_production_target(expected_trial_count)
+        if stage == "smoke":
+            raise ValueError("Smoke merged Optuna studies must not use the production 100-trial profile.")
+        return expected_trial_count
+    if stage != "smoke" and expected_trial_count != 150:
+        raise ValueError("Historical production merged Optuna is fixed to 150 trials.")
+    return expected_trial_count
+
+
 def run_merged_heads(
     config_path: str | Path,
     *,
@@ -382,6 +429,7 @@ def run_merged_heads(
 ) -> dict[str, Any]:
     merged_config = load_merged_config(config_path)
     records, protocol = load_records_and_protocol(merged_config)
+    model_backend = validate_shared_backend(merged_config, records)
     del records
     resolved_config_path = resolve_project_path(config_path)
     feature_dir = Path(features_dir).resolve()
@@ -405,15 +453,18 @@ def run_merged_heads(
         raise ValueError("Merged train/holdout feature dimensions do not match.")
     if stage == "final" and {str(row["dataset"]) for row in holdout_rows} != {"daic"}:
         raise ValueError("Final merged heads may evaluate only the untouched DAIC official test.")
-    expected_trial_count = int(
-        trials
-        if trials is not None
-        else ((merged_config.get("heads") or {}).get("optuna") or {}).get("target_trials", 150)
-    )
+    expected_trial_count = resolve_optuna_trials(merged_config, stage, trials)
+    from src.features import optuna100_policy as policy
+
+    optuna_cfg = (merged_config.get("heads") or {}).get("optuna") or {}
+    protocol_profile = str(optuna_cfg.get("protocol_profile") or "")
     if expected_trial_count == 0:
         print("Optuna disabled (trials=0); fitting logreg and fixed XGBoost only.", flush=True)
-    elif stage != "smoke" and expected_trial_count != 150:
-        raise ValueError("Production merged Optuna is fixed to 150 trials.")
+    prediction_backend = (
+        policy.prediction_backend(model_backend, merged=True)
+        if protocol_profile == policy.PROTOCOL_PROFILE
+        else None
+    )
     output_root = feature_dir.parent / "heads"
     identity = {
         "schema_version": "symmetric_merged_heads_identity.v1",
@@ -429,11 +480,16 @@ def run_merged_heads(
         "optuna_trials": expected_trial_count,
         "inner_folds": resolve_head_inner_folds(merged_config, stage),
         "threshold": float((merged_config.get("protocol_settings") or {}).get("threshold", 0.5)),
+        "model_backend": model_backend,
+        "prediction_backend": prediction_backend,
     }
     identity_path = output_root / "heads_identity.json"
     complete_path = output_root / "heads_complete.json"
     if complete_path.is_file() and identity_path.is_file():
-        if read_json(identity_path) != identity:
+        existing_identity = read_json(identity_path)
+        existing_identity.setdefault("model_backend", "")
+        existing_identity.setdefault("prediction_backend", None)
+        if existing_identity != identity:
             raise ValueError(f"Incompatible completed merged heads: {output_root}")
         return {"status": "skipped_compatible_complete", "output_root": str(output_root)}
     if output_root.exists() and any(output_root.iterdir()) and not identity_path.is_file():
@@ -506,6 +562,8 @@ def run_merged_heads(
                 "holdout_subject_ids": sorted({str(row["subject_id"]) for row in holdout_rows}),
                 "manifest_hash": feature_metadata.get("manifest_hash"),
                 "split_hash": feature_metadata.get("split_hash"),
+                "model_backend": model_backend,
+                "prediction_backend": prediction_backend,
             },
             method_dir / "classifier_metadata.json",
         )

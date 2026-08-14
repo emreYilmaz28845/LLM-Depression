@@ -39,10 +39,11 @@ from src.merged.runtime import (
     make_final_partitions,
     make_fold_partitions,
 )
-from src.model.collator import Qwen2AudioSFTCollator
 from src.model.runtime import (
+    build_collator,
     load_model_for_training,
     load_processor,
+    prepare_backend_examples,
     resolve_processor_sampling_rate,
     restore_model_for_training,
     save_adapter_and_processor,
@@ -250,11 +251,17 @@ def train_merged_fold(
         "fold_hash": protocol.get("protocol", {}).get("folds", {}).get(str(int(fold)), {}).get("fold_hash"),
         "epochs": int(resolved_epochs),
         "subjects_per_class": subjects_per_class,
+        "model_backend": str(model_config.get("model_backend") or ""),
     }
     if complete_path.is_file() and best_dir.is_dir():
         existing = json.loads(complete_path.read_text(encoding="utf-8"))
         if existing.get("identity") != identity:
-            raise ValueError(f"Incompatible completed merged training output: {run_root}")
+            # Historical Qwen outputs predate the model_backend identity
+            # field; treat a missing field as the Qwen default.
+            existing_identity = dict(existing.get("identity") or {})
+            existing_identity.setdefault("model_backend", "")
+            if existing_identity != identity:
+                raise ValueError(f"Incompatible completed merged training output: {run_root}")
         expected_source_commit = (
             os.environ.get("SOURCE_COMMIT")
             or os.environ.get("SYMMETRIC_MERGED_SOURCE_COMMIT")
@@ -339,6 +346,16 @@ def train_merged_fold(
     model_name = str(resolve_model_name_or_path(None, model_config))
     processor = load_processor(model_name, model_config)
     sampling_rate = resolve_processor_sampling_rate(processor)
+    # Backend-dispatched prompt preparation: Gemma re-renders the prompt from
+    # the raw system/user fields through its pinned chat template; Qwen is a
+    # no-op. The collator factory below dispatches the same way.
+    train_examples_prepared = prepare_backend_examples(
+        weighted_examples, model_config, processor
+    )
+    selection_examples_prepared = {
+        dataset: prepare_backend_examples(examples, model_config, processor)
+        for dataset, examples in selection_examples.items()
+    }
     # Per-epoch stochastic K-chunk resampling for subject_audio components
     # (currently DAIC only). The sampling guard in AudioTextDataset requires
     # subject_chunk_paths + chunks_per_subject, which only subject_audio
@@ -347,12 +364,12 @@ def train_merged_fold(
     # the other datasets' exposure are unchanged. This restores the standalone
     # DAIC recipe's combinatorial K-view augmentation.
     train_dataset = AudioTextDataset(
-        weighted_examples,
+        train_examples_prepared,
         processor_sampling_rate=sampling_rate,
         silence_audio=bool(model_config.get("data", {}).get("silence_audio", False)),
         chunk_sampling="random",
     )
-    collator = Qwen2AudioSFTCollator(processor=processor, debug=False)
+    collator = build_collator(model_config, processor, debug=False)
     model = load_model_for_training(model_name, model_config)
     optimizer = AdamW(
         [parameter for parameter in model.parameters() if parameter.requires_grad],
@@ -470,7 +487,7 @@ def train_merged_fold(
                     metrics = evaluate_examples(
                         accelerator.unwrap_model(model),
                         processor,
-                        selection_examples[dataset],
+                        selection_examples_prepared[dataset],
                         records[[str(record["dataset"]).lower() for record in records].index(dataset)]["config"],
                         eval_dir,
                         checkpoint_name=f"epoch_{epoch_index}",

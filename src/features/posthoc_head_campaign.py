@@ -68,7 +68,6 @@ EVALUATION_METRIC_NAMES = (
 )
 
 STUDY_ARTIFACT_FILES = (
-    "study_config.json",
     "study.sqlite3",
     "trials.csv",
     "inner_subject_assignments.json",
@@ -87,6 +86,26 @@ STUDY_ARTIFACT_FILES = (
     "predictions_subject_level.jsonl",
     "predictions_subject_level.csv",
 )
+
+
+MERGED_STUDY_ARTIFACT_FILES = (
+    "study_config.json",
+    "study.sqlite3",
+    "trials.csv",
+    "inner_subject_assignments.json",
+    "inner_fold_metrics.json",
+    "best_params.json",
+    "pipeline.joblib",
+    "classifier_metadata.json",
+    "metrics.json",
+    "predictions_subject_level.jsonl",
+    "predictions_subject_level.csv",
+)
+
+
+def _attempt_family(attempt_dir: Path) -> str:
+    run_config = read_json(attempt_dir / "run_config.yaml")
+    return str((run_config.get("config") or {}).get("family") or "")
 
 
 class PosthocError(ValueError):
@@ -207,14 +226,42 @@ def load_task_spec(path: str | Path) -> dict[str, Any]:
 def _cache_metadata(cache_dir: str | Path) -> dict[str, Any]:
     path = Path(cache_dir)
     metadata_path = path / "extraction_metadata.json"
-    if not metadata_path.is_file():
-        raise PosthocError(f"cache has no extraction_metadata.json: {path}")
-    return read_json(metadata_path)
+    if metadata_path.is_file():
+        return read_json(metadata_path)
+    # Symmetric-merged feature sets carry feature_metadata.json instead.
+    merged_metadata_path = path / "feature_metadata.json"
+    if merged_metadata_path.is_file():
+        return read_json(merged_metadata_path)
+    raise PosthocError(
+        f"cache has neither extraction_metadata.json nor feature_metadata.json: {path}"
+    )
 
 
 def _verify_cache_identity(spec: dict[str, Any]) -> dict[str, Any]:
     """Verify the cache identity against the task spec; never overwrite."""
     metadata = _cache_metadata(spec["cache_dir"])
+    merged = str(spec.get("family", "")) == "merged"
+    if merged:
+        if str(metadata.get("modality", "")) != str(spec["modality"]):
+            raise PosthocError(
+                f"merged features modality {metadata.get('modality')} != task modality {spec['modality']}"
+            )
+        if int(metadata.get("fold", -1)) != int(spec["fold"]):
+            raise PosthocError(
+                f"merged features fold {metadata.get('fold')} != task fold {spec['fold']}"
+            )
+        backend = str(metadata.get("model_backend") or "").strip().lower()
+        spec_backend = str(spec.get("backend") or "").strip().lower()
+        if spec_backend == "qwen":
+            if backend not in {"", "qwen2audio", "qwen_text", "text", "qwen3omni"}:
+                raise PosthocError(
+                    f"merged features model_backend {backend!r} is not a Qwen backend"
+                )
+        elif spec_backend and backend != spec_backend:
+            raise PosthocError(
+                f"merged features model_backend {backend!r} != task backend {spec_backend!r}"
+            )
+        return metadata
     if str(metadata.get("dataset", "")).lower() != str(spec["dataset"]).lower():
         raise PosthocError(
             f"cache dataset {metadata.get('dataset')} != task dataset {spec['dataset']}"
@@ -547,6 +594,8 @@ def transition(attempt_dir: str | Path, to_state: str, reason: str | None = None
 
 
 def _study_artifacts(attempt_dir: Path) -> list[dict[str, Any]]:
+    family = _attempt_family(attempt_dir)
+    required_names = MERGED_STUDY_ARTIFACT_FILES if family == "merged" else STUDY_ARTIFACT_FILES
     records: list[dict[str, Any]] = []
     for name, artifact_type, role in (
         ("run_config.yaml", "run_config", "run_config"),
@@ -571,6 +620,8 @@ def _study_artifacts(attempt_dir: Path) -> list[dict[str, Any]]:
         ("predictions_subject_level.csv", "predictions", "predictions_subject_level_csv"),
     ):
         full = attempt_dir / name
+        if name not in required_names:
+            continue
         if not full.is_file():
             raise PosthocError(f"required study artifact missing: {full}")
         records.append(
@@ -591,7 +642,14 @@ def _evaluation_records(attempt_dir: Path) -> list[dict[str, Any]]:
     config = run_config.get("config") or {}
     evaluation = config.get("evaluation") or {}
     classifier = config.get("classifier") or {}
-    metrics = read_json(attempt_dir / "metrics.json")
+    metrics_doc = read_json(attempt_dir / "metrics.json")
+    # Merged studies store per-dataset metrics plus a pooled subject summary.
+    if "pooled_subject_metrics" in metrics_doc:
+        metrics = metrics_doc["pooled_subject_metrics"]
+        merged = True
+    else:
+        metrics = metrics_doc
+        merged = False
     metrics_sha = sha256_file(attempt_dir / "metrics.json")
     support = evaluation.get("support")
     if support is None:
@@ -707,10 +765,21 @@ def materialize_mn5_evidence(
 
 
 def _recompute_metrics(attempt_dir: Path) -> dict[str, Any]:
-    from src.aggregate import aggregate_binary_classifier_predictions
+    from src.metrics import classification_metrics
 
-    sample_rows = read_jsonl(attempt_dir / "predictions_sample_level.jsonl")
-    subject_rows, metrics = aggregate_binary_classifier_predictions(sample_rows)
+    sample_path = attempt_dir / "predictions_sample_level.jsonl"
+    if sample_path.is_file():
+        sample_rows = read_jsonl(sample_path)
+        from src.aggregate import aggregate_binary_classifier_predictions
+
+        subject_rows, metrics = aggregate_binary_classifier_predictions(sample_rows)
+    else:
+        # Merged studies store only subject-level predictions; recompute the
+        # six headline metrics directly from the subject rows.
+        subject_rows = read_jsonl(attempt_dir / "predictions_subject_level.jsonl")
+        y_true = [int(row["label"]) for row in subject_rows]
+        y_pred = [int(row["prediction"]) for row in subject_rows]
+        metrics = classification_metrics(y_true, y_pred)
     tn, fp = metrics["confusion_matrix"][0]
     fn, tp = metrics["confusion_matrix"][1]
     precision_neg = tn / (tn + fn) if tn + fn else 0.0

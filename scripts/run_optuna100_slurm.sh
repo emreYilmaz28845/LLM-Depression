@@ -33,6 +33,11 @@ EXPERIMENT_ID="${EXPERIMENT_ID:-xgb_optuna100_harmonized_v1}"
 OBJECTIVE="${OBJECTIVE:-macro_f1}"
 TARGET_TRIALS="${TARGET_TRIALS:-100}"
 XGB_THREADS="${XGB_THREADS:-20}"
+MERGED="${MERGED:-0}"
+MERGED_CONFIG="${MERGED_CONFIG:-}"
+STAGE="${STAGE:-cv}"
+FOLD="${FOLD:-0}"
+RUN_ID="${RUN_ID:-}"
 
 if [ ! -f "$ENV_ACTIVATE" ]; then
     echo "Qwen environment activate script not found: $ENV_ACTIVATE" >&2
@@ -97,15 +102,27 @@ cleanup() {
 }
 trap cleanup EXIT
 
-python baselines/qwen_hidden_xgb_optuna.py \
-    --cache-dir "$CACHE_DIR" \
-    --output-dir "$ATTEMPT_DIR" \
-    --objective "$OBJECTIVE" \
-    --target-trials "$TARGET_TRIALS" \
-    --inner-folds 3 \
-    --seed 1337 \
-    --inner-seed 1337 \
-    --sampling-mode none \
-    --experiment-id "$EXPERIMENT_ID" \
-    --protocol-profile harmonized_optuna100_v1 \
-    --xgb-threads "$XGB_THREADS"
+if [ "$MERGED" = "1" ]; then
+    : "${MERGED_CONFIG:?MERGED=1 requires MERGED_CONFIG}"
+    : "${RUN_ID:?MERGED=1 requires RUN_ID}"
+    python src/merged/optuna100.py \
+        --features-dir "$CACHE_DIR" \
+        --output-dir "$ATTEMPT_DIR" \
+        --merged-config "$MERGED_CONFIG" \
+        --stage "$STAGE" \
+        --fold "$FOLD" \
+        --run-id "$RUN_ID"
+else
+    python baselines/qwen_hidden_xgb_optuna.py \
+        --cache-dir "$CACHE_DIR" \
+        --output-dir "$ATTEMPT_DIR" \
+        --objective "$OBJECTIVE" \
+        --target-trials "$TARGET_TRIALS" \
+        --inner-folds 3 \
+        --seed 1337 \
+        --inner-seed 1337 \
+        --sampling-mode none \
+        --experiment-id "$EXPERIMENT_ID" \
+        --protocol-profile harmonized_optuna100_v1 \
+        --xgb-threads "$XGB_THREADS"
+fi
