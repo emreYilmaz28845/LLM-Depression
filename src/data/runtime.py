@@ -360,6 +360,8 @@ def _base_example_from_row(
         "input_modality": input_modality,
         "prompt_text": prompt_text,
         "training_text": build_training_text(prompt_text, example_internal_label),
+        "prompt_system_text": config["prompt"]["system"],
+        "prompt_user_text": user_text,
         "question_id": row.get("question_id", ""),
         "response_id": row.get("response_id", ""),
         "prompt_id": row.get("prompt_id", row.get("question_id", "")),

@@ -30,6 +30,9 @@ GEMMA4_LORA_TARGET_REGEX = (
 GEMMA4_EXPECTED_LORA_MODULES = 288
 GEMMA4_EVALUATION_VIEW = "harmonized_all_windows_full_coverage"
 GEMMA4_TURN_TERMINATOR = "<turn|>\n"
+GEMMA4_SUPPORTED_DATASETS = {"daic", "d3tec", "turkish", "androids_interview", "cmdc"}
+GEMMA4_DAIC_SAMPLE_MODE = "participant_speech_packed30"
+GEMMA4_HARMONIZED_SAMPLE_MODE = "harmonized_response_windows"
 
 AUDIO_TOLERANCE = 1e-6
 
@@ -122,7 +125,7 @@ def prepare_gemma4_example(
     config: dict[str, Any],
     processor,
 ) -> dict[str, Any]:
-    """Render the Gemma prompt and training text for one DAIC example.
+    """Render the Gemma prompt and training text for one example.
 
     Requires ``prompt_system_text`` and ``prompt_user_text`` on the example.
     Returns a shallow copy updated only in the backend-rendered prompt fields;
@@ -326,7 +329,13 @@ class Gemma4SFTCollator:
 
 
 def validate_gemma4_config(config: dict[str, Any]) -> None:
-    """Fail unless every Gemma-specific config invariant from runbook §9.6 holds."""
+    """Fail unless every Gemma-specific config invariant from runbook §9.6 holds.
+
+    DAIC keeps its packed30 contract exactly. D3TEC, Turkish, Androids, and
+    CMDC use the harmonized response-window recipe. Everything else (freeze,
+    BF16, gradient checkpointing, macro-F1 selection, teacher-forced
+    evaluation, pinned revision, exact LoRA regex) is shared across datasets.
+    """
     if resolve_model_backend(config) != MODEL_BACKEND_GEMMA4:
         return
     errors: list[str] = []
@@ -335,27 +344,51 @@ def validate_gemma4_config(config: dict[str, Any]) -> None:
         if not ok:
             errors.append(message)
 
-    _require(str(config.get("dataset", "")).lower() == "daic", "dataset must be daic")
+    dataset = str(config.get("dataset", "")).lower()
+    _require(
+        dataset in GEMMA4_SUPPORTED_DATASETS,
+        "dataset must be one of "
+        + ", ".join(sorted(GEMMA4_SUPPORTED_DATASETS)),
+    )
     modality = resolve_input_modality(config)
     _require(
         modality in {INPUT_MODALITY_TEXT_ONLY, INPUT_MODALITY_AUDIO_ONLY, INPUT_MODALITY_AUDIO_TEXT},
         "modality must be text-only, audio-only, or audio+text",
     )
     data_cfg = config.get("data", {})
-    _require(
-        str(data_cfg.get("sample_mode", "")).lower() == "participant_speech_packed30",
-        "data.sample_mode must be participant_speech_packed30",
-    )
-    if modality != INPUT_MODALITY_TEXT_ONLY:
+    if dataset == "daic":
         _require(
-            int(data_cfg.get("participant_chunk_samples", 0) or 0) == 480000,
-            "data.participant_chunk_samples must be 480000 for audio modes",
+            str(data_cfg.get("sample_mode", "")).lower() == GEMMA4_DAIC_SAMPLE_MODE,
+            f"data.sample_mode must be {GEMMA4_DAIC_SAMPLE_MODE} for daic",
         )
-    if modality == INPUT_MODALITY_AUDIO_TEXT:
+        if modality != INPUT_MODALITY_TEXT_ONLY:
+            _require(
+                int(data_cfg.get("participant_chunk_samples", 0) or 0) == 480000,
+                "data.participant_chunk_samples must be 480000 for audio modes",
+            )
+        if modality == INPUT_MODALITY_AUDIO_TEXT:
+            _require(
+                str(data_cfg.get("audio_text_transcript_scope", "")).lower() == "full_participant",
+                "data.audio_text_transcript_scope must be full_participant",
+            )
+    else:
         _require(
-            str(data_cfg.get("audio_text_transcript_scope", "")).lower() == "full_participant",
-            "data.audio_text_transcript_scope must be full_participant",
+            str(data_cfg.get("sample_mode", "")).lower() == GEMMA4_HARMONIZED_SAMPLE_MODE,
+            f"data.sample_mode must be {GEMMA4_HARMONIZED_SAMPLE_MODE} for "
+            f"dataset={dataset}",
         )
+        segment_seconds = float(data_cfg.get("segment_seconds", 0.0) or 0.0)
+        _require(
+            0.0 < segment_seconds <= 30.0,
+            "data.segment_seconds must be in (0, 30] for harmonized response windows",
+        )
+        if dataset == "androids_interview" and modality == INPUT_MODALITY_AUDIO_TEXT:
+            _require(
+                str(data_cfg.get("audio_text_transcript_scope", "")).lower()
+                == "full_subject",
+                "data.audio_text_transcript_scope must be full_subject for "
+                "androids_interview audio+text",
+            )
     audio_adapter_cfg = config.get("audio_adapter") or {}
     _require(
         not bool(audio_adapter_cfg.get("enabled", False)),
