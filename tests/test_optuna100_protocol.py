@@ -502,6 +502,40 @@ class TestPosthocAttempt:
         status = json.loads((attempt_dir / "status.json").read_text())
         assert status["state"] == "FAILED"
 
+    def test_posthoc_attempt_discovered_and_imported_as_modern(self, tmp_path: Path) -> None:
+        from src.experiment_tracking.discovery import discover_runs
+        from src.experiment_tracking.qualification import qualify_run
+        from src.experiment_tracking.sidecars import read_modern_sidecars
+
+        cache, metadata = make_cache(tmp_path, n_train=24, n_test=6)
+        parent_attempt = metadata["cache_config"]["parent_attempt_id"]
+        parent_fold = tmp_path / "parent_fold"
+        parent_fold.mkdir()
+        (parent_fold / "metadata.json").write_text(json.dumps({"attempt_id": parent_attempt}))
+        attempt_dir, attempt_id = _make_completed_study_attempt(
+            tmp_path, cache, parent_attempt, parent_fold
+        )
+        _run_job_events(attempt_dir)
+        campaign.materialize_mn5_evidence(attempt_dir)
+        campaign.verify_local(attempt_dir)
+
+        scan_root = tmp_path / "output_model"
+        runs = discover_runs(scan_root)
+        assert len(runs) == 1
+        discovered = runs[0]
+        assert discovered.fold == 0
+        assert discovered.run_name == "harmonized_v1_optuna100_test_cmdc_text_only"
+        assert discovered.modality == "text_only"
+        assert discovered.dataset == "cmdc"
+        assert Path(discovered.fold_dir) == attempt_dir
+        sidecars = read_modern_sidecars(discovered.fold_dir)
+        assert sidecars is not None
+        assert sidecars.state == "REPORTABLE"
+        result = qualify_run(discovered)
+        assert result.status == "REPORTABLE" or result.status == "QUALIFIED"
+        # The parent object is part of the modern metadata.
+        assert sidecars.metadata["parent"]["parent_attempt_id"] == parent_attempt
+
 
 class TestResolver:
     def test_resolver_counts_and_missing_caches(self) -> None:

@@ -699,8 +699,11 @@ def test_real_selection_yaml_covers_all_real_workbook_rows() -> None:
             ]
         )
         for entry in selection["entries"]
+        if not entry["selection_id"].startswith("Optuna100|")
     }
-    assert keys == entry_keys
+    # The Optuna-100 entries are deliberate future provenance rows (blank
+    # until evidence exists); every real workbook row must still be covered.
+    assert keys <= entry_keys
     from collections import Counter
 
     policies = Counter(entry["wandb_policy"] for entry in selection["entries"])

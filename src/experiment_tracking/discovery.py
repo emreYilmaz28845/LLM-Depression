@@ -39,8 +39,14 @@ _NON_CANONICAL_ROOTS = ("experiments", "audits")
 
 # Run layouts: output_model/<modality>/<dataset>/<run>/fold_* and the newer
 # output_model/<campaign>/<modality>/<dataset>/<run>/fold_*. Both parse with
-# modality/dataset/run taken from the three parts before fold_*.
-_RUN_GLOBS = ("*/*/*/fold_*/run_config.yaml", "*/*/*/*/fold_*/run_config.yaml")
+# modality/dataset/run taken from the three parts before fold_*. Post-hoc
+# head attempts live one level deeper: fold_* / <experiment_id> / with the
+# run_config.yaml and sidecars inside the attempt directory.
+_RUN_GLOBS = (
+    "*/*/*/fold_*/run_config.yaml",
+    "*/*/*/*/fold_*/run_config.yaml",
+    "*/*/*/*/fold_*/*/run_config.yaml",
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -215,12 +221,14 @@ def _discover_artifacts(fold_dir: Path) -> tuple[tuple[DiscoveredArtifact, ...],
     return tuple(artifacts), tuple(warnings)
 
 
-def _discover_run(scan_root: Path, fold_dir: Path) -> DiscoveredRun:
+def _discover_run(scan_root: Path, fold_dir: Path, *, parts_offset: int = 0) -> DiscoveredRun:
     warnings: list[str] = []
     relative = fold_dir.relative_to(scan_root)
     parts = relative.parts
-    modality, dataset, run_name = parts[-4], parts[-3], parts[-2]
-    fold = int(parts[-1].split("_", 1)[1])
+    # Post-hoc head attempts add one level (fold_*/<experiment_id>); the
+    # identity still comes from the three parts before the fold directory.
+    modality, dataset, run_name = parts[-4 - parts_offset], parts[-3 - parts_offset], parts[-2 - parts_offset]
+    fold = int(parts[-1 - parts_offset].split("_", 1)[1])
     run_config_path = fold_dir / "run_config.yaml"
 
     run_config_file_sha256: str | None = None
@@ -276,15 +284,20 @@ def discover_runs(scan_root: str | Path) -> list[DiscoveredRun]:
     for pattern in _RUN_GLOBS:
         for run_config_path in sorted(root.glob(pattern)):
             fold_dir = run_config_path.parent
+            parts_offset = 0
             if _FOLD_DIR_PATTERN.fullmatch(fold_dir.name) is None:
-                continue
+                # Post-hoc head attempt: the run_config sits inside
+                # fold_<n>/<experiment_id>/; the parent must be the fold dir.
+                if _FOLD_DIR_PATTERN.fullmatch(fold_dir.parent.name) is None:
+                    continue
+                parts_offset = 1
             relative = fold_dir.relative_to(root)
             if relative.parts and relative.parts[0] in _NON_CANONICAL_ROOTS:
                 continue
             if str(fold_dir) in seen:
                 continue
             seen.add(str(fold_dir))
-            runs.append(_discover_run(root, fold_dir))
+            runs.append(_discover_run(root, fold_dir, parts_offset=parts_offset))
     return runs
 
 
