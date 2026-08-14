@@ -1,0 +1,27 @@
+# Paired Optuna-100 study matrix: native harmonized family.
+# Logical cells: 15 (four non-DAIC datasets x 3 modalities x 5 folds, plus
+# DAIC x 3 modalities x 1 fold). Expanded per backend: 63 Qwen + 63 Gemma
+# studies = 126. The resolver discovers and qualifies the exact caches;
+# counts from directory globbing alone are never proof.
+name: optuna100_native_matrix
+recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1
+protocol_profile: harmonized_optuna100_v1
+objective: macro_f1
+target_trials: 100
+family: native
+studies:
+  - {dataset: d3tec, modality: audio_text, folds: [0, 1, 2, 3, 4]}
+  - {dataset: d3tec, modality: audio_only, folds: [0, 1, 2, 3, 4]}
+  - {dataset: d3tec, modality: text_only, folds: [0, 1, 2, 3, 4]}
+  - {dataset: androids_interview, modality: audio_text, folds: [0, 1, 2, 3, 4]}
+  - {dataset: androids_interview, modality: audio_only, folds: [0, 1, 2, 3, 4]}
+  - {dataset: androids_interview, modality: text_only, folds: [0, 1, 2, 3, 4]}
+  - {dataset: cmdc, modality: audio_text, folds: [0, 1, 2, 3, 4]}
+  - {dataset: cmdc, modality: audio_only, folds: [0, 1, 2, 3, 4]}
+  - {dataset: cmdc, modality: text_only, folds: [0, 1, 2, 3, 4]}
+  - {dataset: turkish, modality: audio_text, folds: [0, 1, 2, 3, 4]}
+  - {dataset: turkish, modality: audio_only, folds: [0, 1, 2, 3, 4]}
+  - {dataset: turkish, modality: text_only, folds: [0, 1, 2, 3, 4]}
+  - {dataset: daic, modality: audio_text, folds: [0]}
+  - {dataset: daic, modality: audio_only, folds: [0]}
+  - {dataset: daic, modality: text_only, folds: [0]}

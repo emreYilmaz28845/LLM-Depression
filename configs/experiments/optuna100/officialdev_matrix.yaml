@@ -1,0 +1,14 @@
+# Paired Optuna-100 study matrix: DAIC official-development family.
+# 3 logical cells (three modalities x 1 fold), expanded per backend:
+# 3 Qwen + 3 Gemma studies = 6. Caches come from the official-development
+# fixed-head attempts (86 inner-train / 35 dev subjects).
+name: optuna100_officialdev_matrix
+recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_tf_officialdev_v1
+protocol_profile: harmonized_optuna100_v1
+objective: macro_f1
+target_trials: 100
+family: officialdev
+studies:
+  - {dataset: daic, modality: audio_text, folds: [0]}
+  - {dataset: daic, modality: audio_only, folds: [0]}
+  - {dataset: daic, modality: text_only, folds: [0]}

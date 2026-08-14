@@ -1,0 +1,18 @@
+# Paired Optuna-100 study matrix: English-translation harmonized family.
+# 8 logical cells (four datasets x audio+text/text-only x 5 folds), expanded
+# per backend: 40 Qwen + 40 Gemma studies = 80. No audio-only cells.
+name: optuna100_english_matrix
+recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_tf_en_v1
+protocol_profile: harmonized_optuna100_v1
+objective: macro_f1
+target_trials: 100
+family: english
+studies:
+  - {dataset: d3tec, modality: audio_text, folds: [0, 1, 2, 3, 4]}
+  - {dataset: d3tec, modality: text_only, folds: [0, 1, 2, 3, 4]}
+  - {dataset: androids_interview, modality: audio_text, folds: [0, 1, 2, 3, 4]}
+  - {dataset: androids_interview, modality: text_only, folds: [0, 1, 2, 3, 4]}
+  - {dataset: cmdc, modality: audio_text, folds: [0, 1, 2, 3, 4]}
+  - {dataset: cmdc, modality: text_only, folds: [0, 1, 2, 3, 4]}
+  - {dataset: turkish, modality: audio_text, folds: [0, 1, 2, 3, 4]}
+  - {dataset: turkish, modality: text_only, folds: [0, 1, 2, 3, 4]}
