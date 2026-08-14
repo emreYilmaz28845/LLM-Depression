@@ -18,14 +18,10 @@ EVAL_WORKER="${EVAL_WORKER:-$PROJECT_ROOT/scripts/run_eval_slurm.sh}"
 HIDDEN_WORKER="${HIDDEN_WORKER:-$PROJECT_ROOT/scripts/run_qwen_hidden_extract_slurm.sh}"
 GITHUB_ISSUE="${GITHUB_ISSUE:?Set the harmonized English campaign GITHUB_ISSUE}"
 GITHUB_PR="${GITHUB_PR:?Set the harmonized English implementation GITHUB_PR}"
-SUBMISSIONS_ROOT="${SUBMISSIONS_ROOT:-$PROJECT_ROOT/outputs/harmonized_en_submissions}"
-CONTEXTS_ROOT="${CONTEXTS_ROOT:-$PROJECT_ROOT/outputs/harmonized_en_experiment_contexts}"
-FEATURES_ROOT="${FEATURES_ROOT:-$PROJECT_ROOT/outputs/hidden_features/harmonized_v1_en}"
-CLASSIFIERS_ROOT="${CLASSIFIERS_ROOT:-$PROJECT_ROOT/outputs/hidden_classifiers/harmonized_v1_en}"
-RUN_PREFIX="${RUN_PREFIX:-harmonized_v1_en}"
-GROUP_PREFIX="${GROUP_PREFIX:-harmonized-v1-en}"
-LOGICAL_PREFIX="${LOGICAL_PREFIX:-harmonized_v1_en}"
-# Campaign-family defaults: a Gemma matrix selects Gemma roots and naming.
+# Campaign-family defaults. A Gemma matrix selects the Gemma roots and
+# naming; the Qwen English matrix keeps today's values. The case must run
+# before the defaults are applied so ${VAR:-default} cannot lock the Qwen
+# value first.
 case "$MATRIX" in
   *gemma4*)
     SUBMISSIONS_ROOT="${SUBMISSIONS_ROOT:-$PROJECT_ROOT/outputs/gemma4_en_harmonized_submissions}"
@@ -35,6 +31,15 @@ case "$MATRIX" in
     RUN_PREFIX="${RUN_PREFIX:-gemma4_harmonized_v1_en}"
     GROUP_PREFIX="${GROUP_PREFIX:-gemma4-harmonized-v1-en}"
     LOGICAL_PREFIX="${LOGICAL_PREFIX:-gemma4_harmonized_v1_en}"
+    ;;
+  *)
+    SUBMISSIONS_ROOT="${SUBMISSIONS_ROOT:-$PROJECT_ROOT/outputs/harmonized_en_submissions}"
+    CONTEXTS_ROOT="${CONTEXTS_ROOT:-$PROJECT_ROOT/outputs/harmonized_en_experiment_contexts}"
+    FEATURES_ROOT="${FEATURES_ROOT:-$PROJECT_ROOT/outputs/hidden_features/harmonized_v1_en}"
+    CLASSIFIERS_ROOT="${CLASSIFIERS_ROOT:-$PROJECT_ROOT/outputs/hidden_classifiers/harmonized_v1_en}"
+    RUN_PREFIX="${RUN_PREFIX:-harmonized_v1_en}"
+    GROUP_PREFIX="${GROUP_PREFIX:-harmonized-v1-en}"
+    LOGICAL_PREFIX="${LOGICAL_PREFIX:-harmonized_v1_en}"
     ;;
 esac
 
