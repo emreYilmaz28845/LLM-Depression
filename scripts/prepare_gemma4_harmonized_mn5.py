@@ -224,12 +224,13 @@ def check_gemma_config(
     split_metadata_path = resolve_project_path(
         metadata.get("split_metadata_path") or metadata.get("folds_path")
     )
+    split_metadata_hash = metadata.get("split_metadata_sha256") or metadata.get("fold_hash")
     if not split_metadata_path.is_file():
         failures.append(f"missing split metadata: {split_metadata_path}")
         split_metadata: dict[str, Any] = {}
     else:
         split_metadata = read_json(split_metadata_path)
-        if sha256_file(split_metadata_path) != str(metadata.get("split_metadata_sha256", "")):
+        if split_metadata_hash and sha256_file(split_metadata_path) != str(split_metadata_hash):
             failures.append("split metadata hash mismatch")
 
     split_dir = resolve_project_path(config["output_dirs"]["split_dir"])
@@ -438,7 +439,12 @@ def prepare(
 
         processor = AutoProcessor.from_pretrained(model_path, local_files_only=True)
         config = AutoConfig.from_pretrained(model_path, local_files_only=True)
-        context_limit = int(config.get("max_position_embeddings", 0))
+        text_config = getattr(config, "text_config", None)
+        context_limit = int(
+            getattr(text_config, "max_position_embeddings", 0)
+            or getattr(config, "max_position_embeddings", 0)
+            or 0
+        )
         if context_limit <= 0:
             raise ValueError("model config declares no max_position_embeddings")
     except Exception as error:  # noqa: BLE001
