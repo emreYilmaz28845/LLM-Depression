@@ -37,6 +37,18 @@ CLASSIFIERS_ROOT="${CLASSIFIERS_ROOT:-$PROJECT_ROOT/outputs/hidden_classifiers/h
 RUN_PREFIX="${RUN_PREFIX:-harmonized_v1}"
 GROUP_PREFIX="${GROUP_PREFIX:-harmonized-v1}"
 LOGICAL_PREFIX="${LOGICAL_PREFIX:-harmonized_v1}"
+# Campaign-family defaults: a Gemma matrix selects Gemma roots and naming.
+case "$MATRIX" in
+  *gemma4*)
+    SUBMISSIONS_ROOT="${SUBMISSIONS_ROOT:-$PROJECT_ROOT/outputs/gemma4_harmonized_submissions}"
+    CONTEXTS_ROOT="${CONTEXTS_ROOT:-$PROJECT_ROOT/outputs/gemma4_experiment_contexts}"
+    FEATURES_ROOT="${FEATURES_ROOT:-$PROJECT_ROOT/outputs/hidden_features/harmonized_v1_gemma4}"
+    CLASSIFIERS_ROOT="${CLASSIFIERS_ROOT:-$PROJECT_ROOT/outputs/hidden_classifiers/harmonized_v1_gemma4}"
+    RUN_PREFIX="${RUN_PREFIX:-gemma4_harmonized_v1}"
+    GROUP_PREFIX="${GROUP_PREFIX:-gemma4-harmonized-v1}"
+    LOGICAL_PREFIX="${LOGICAL_PREFIX:-gemma4_harmonized_v1}"
+    ;;
+esac
 
 case "$DRY_RUN" in 0|1) ;; *) echo "DRY_RUN must be 0 or 1" >&2; exit 2;; esac
 case "$GITHUB_ISSUE" in ''|*[!0-9]*|0) echo "GITHUB_ISSUE must be a positive integer." >&2; exit 2;; esac
@@ -143,6 +155,8 @@ fi
 
 for spec in "${CELL_SPECS[@]}"; do
     IFS=$'\t' read -r config run_root separate_eval dataset modality fold train_ok failed_train failed_eval failed_hidden train_term eval_term hidden_term <<< "$spec"
+    backend_vars="$(bash "$PROJECT_ROOT/scripts/harmonized_backend_env.sh" "$config" "$PROJECT_ROOT")"
+    eval "$backend_vars"
     run_name_base="${RUN_PREFIX}_${RUN_ID}_${dataset}_${modality}"
     if [ "$train_ok" = "1" ]; then
         run_name="$run_name_base"
@@ -197,7 +211,7 @@ PY
         train_lane=$((train_index % MAX_CONCURRENT_TRAINS))
         train_throttle="${train_lanes[$train_lane]:-}"
         train_dep="$(dependency_arg "" "$train_throttle" || true)"
-        export_spec="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$config,FOLD=$fold,RUN_NAME=$run_name,SKIP_MANIFEST_BUILD=1,EXPERIMENT_CONTEXT=$context_path"
+        export_spec="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$config,FOLD=$fold,RUN_NAME=$run_name,SKIP_MANIFEST_BUILD=1,EXPERIMENT_CONTEXT=$context_path,ENV_ACTIVATE=$ENV_ACTIVATE,MODEL_PATH=$MODEL_PATH"
         train_cmd=(sbatch --parsable --job-name="hr-${dataset:0:4}-${modality:0:2}-f$fold" --export="$export_spec")
         [ -n "$train_dep" ] && train_cmd+=("$train_dep")
         train_cmd+=("$TRAIN_WORKER")
@@ -226,7 +240,7 @@ PY
         fi
         eval_cmd=(sbatch --parsable --job-name="hre-${dataset:0:4}-${modality:0:2}-f$fold")
         [ -n "$eval_dep" ] && eval_cmd+=("$eval_dep")
-        eval_cmd+=(--export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$config,FOLD=$fold,RUN_NAME=$run_name,SKIP_MANIFEST_BUILD=1,EXPERIMENT_CONTEXT=$context_path,CHECKPOINT_DIR=$fold_dir/best_model,OUTPUT_DIR=$eval_out" "$EVAL_WORKER")
+        eval_cmd+=(--export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$config,FOLD=$fold,RUN_NAME=$run_name,SKIP_MANIFEST_BUILD=1,EXPERIMENT_CONTEXT=$context_path,ENV_ACTIVATE=$ENV_ACTIVATE,MODEL_PATH=$MODEL_PATH,CHECKPOINT_DIR=$fold_dir/best_model,OUTPUT_DIR=$eval_out" "$EVAL_WORKER")
         eval_raw="$(submit "${eval_cmd[@]}")"
         eval_job="$(job_id "$eval_raw")"
         aux_lanes[$aux_lane]="$eval_job"
@@ -245,7 +259,7 @@ PY
         cache="$FEATURES_ROOT/$dataset/$run_name/fold_$fold"
         classifiers="$CLASSIFIERS_ROOT/$dataset/$run_name/fold_$fold"
     fi
-    hidden_cmd=(sbatch --parsable --job-name="hrh-${dataset:0:4}-${modality:0:2}-f$fold" "$hidden_dep" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CHECKPOINT_DIR=$fold_dir/best_model,CACHE_DIR=$cache,CLASSIFIER_DIR=$classifiers,CONDITION=$modality,CLASSIFIER_VARIANTS=logreg_raw:xgb_raw" "$HIDDEN_WORKER")
+    hidden_cmd=(sbatch --parsable --job-name="hrh-${dataset:0:4}-${modality:0:2}-f$fold" "$hidden_dep" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CHECKPOINT_DIR=$fold_dir/best_model,CACHE_DIR=$cache,CLASSIFIER_DIR=$classifiers,MODEL_PATH=$MODEL_PATH,CONDITION=$modality,CLASSIFIER_VARIANTS=$CLASSIFIER_VARIANTS" "$HIDDEN_WORKER")
     hidden_raw="$(submit "${hidden_cmd[@]}")"
     hidden_job="$(job_id "$hidden_raw")"
     aux_lanes[$aux_lane]="$hidden_job"

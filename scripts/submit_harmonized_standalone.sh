@@ -12,11 +12,40 @@ MAX_CONCURRENT_TRAINS="${MAX_CONCURRENT_TRAINS:-15}"
 MAX_CONCURRENT_AUX="${MAX_CONCURRENT_AUX:-4}"
 GPU_CEILING=64
 PREFLIGHT_AUDIT="${PREFLIGHT_AUDIT:-$PROJECT_ROOT/outputs/harmonized_mn5_preflight/$RUN_ID/audit.json}"
+PREFLIGHT_COMPONENTS="${PREFLIGHT_COMPONENTS:-5}"
+PREFLIGHT_MERGED="${PREFLIGHT_MERGED:-3}"
 TRAIN_WORKER="${TRAIN_WORKER:-$PROJECT_ROOT/scripts/run_train_slurm.sh}"
 EVAL_WORKER="${EVAL_WORKER:-$PROJECT_ROOT/scripts/run_eval_slurm.sh}"
 HIDDEN_WORKER="${HIDDEN_WORKER:-$PROJECT_ROOT/scripts/run_qwen_hidden_extract_slurm.sh}"
 GITHUB_ISSUE="${GITHUB_ISSUE:?Set the harmonized campaign GITHUB_ISSUE}"
 GITHUB_PR="${GITHUB_PR:?Set the primary harmonized methodology GITHUB_PR}"
+# Campaign-family defaults. The Qwen harmonized matrix keeps today's paths and
+# naming; a Gemma matrix selects the Gemma output/context/feature roots and
+# gemma4_* naming. Every knob remains overridable from the environment.
+case "$MATRIX" in
+  *gemma4*)
+    SUBMISSIONS_ROOT="${SUBMISSIONS_ROOT:-$PROJECT_ROOT/outputs/gemma4_harmonized_submissions}"
+    CONTEXTS_ROOT="${CONTEXTS_ROOT:-$PROJECT_ROOT/outputs/gemma4_experiment_contexts}"
+    FEATURES_ROOT="${FEATURES_ROOT:-$PROJECT_ROOT/outputs/hidden_features/harmonized_v1_gemma4}"
+    CLASSIFIERS_ROOT="${CLASSIFIERS_ROOT:-$PROJECT_ROOT/outputs/hidden_classifiers/harmonized_v1_gemma4}"
+    RUN_PREFIX="${RUN_PREFIX:-gemma4_harmonized_v1}"
+    GROUP_PREFIX="${GROUP_PREFIX:-gemma4-harmonized-v1}"
+    LOGICAL_PREFIX="${LOGICAL_PREFIX:-gemma4_harmonized_v1}"
+    EXPECTED_TRAIN_TASKS="${EXPECTED_TRAIN_TASKS:-60}"
+    EXPECTED_EVAL_TASKS="${EXPECTED_EVAL_TASKS:-30}"
+    ;;
+  *)
+    SUBMISSIONS_ROOT="${SUBMISSIONS_ROOT:-$PROJECT_ROOT/outputs/harmonized_submissions}"
+    CONTEXTS_ROOT="${CONTEXTS_ROOT:-$PROJECT_ROOT/outputs/harmonized_experiment_contexts}"
+    FEATURES_ROOT="${FEATURES_ROOT:-$PROJECT_ROOT/outputs/hidden_features/harmonized_v1}"
+    CLASSIFIERS_ROOT="${CLASSIFIERS_ROOT:-$PROJECT_ROOT/outputs/hidden_classifiers/harmonized_v1}"
+    RUN_PREFIX="${RUN_PREFIX:-harmonized_v1}"
+    GROUP_PREFIX="${GROUP_PREFIX:-harmonized-v1}"
+    LOGICAL_PREFIX="${LOGICAL_PREFIX:-harmonized_v1}"
+    EXPECTED_TRAIN_TASKS="${EXPECTED_TRAIN_TASKS:-63}"
+    EXPECTED_EVAL_TASKS="${EXPECTED_EVAL_TASKS:-33}"
+    ;;
+esac
 
 case "$DRY_RUN" in 0|1) ;; *) echo "DRY_RUN must be 0 or 1" >&2; exit 2;; esac
 case "$GITHUB_ISSUE" in ''|*[!0-9]*|0) echo "GITHUB_ISSUE must be a positive integer." >&2; exit 2;; esac
@@ -34,25 +63,39 @@ for path in "$MATRIX" "$TRAIN_WORKER" "$EVAL_WORKER" "$HIDDEN_WORKER"; do
 done
 
 if [ "$DRY_RUN" = 0 ]; then
-    python - "$PREFLIGHT_AUDIT" "$RUN_ID" <<'PY'
+    python - "$PREFLIGHT_AUDIT" "$RUN_ID" "$PREFLIGHT_COMPONENTS" "$PREFLIGHT_MERGED" <<'PY'
 import json, sys
 payload = json.load(open(sys.argv[1], encoding="utf-8"))
 if payload.get("status") != "passed" or payload.get("run_id") != sys.argv[2]:
     raise SystemExit(f"Incompatible MN5 preflight audit: {sys.argv[1]}")
-if len(payload.get("components", [])) != 5 or len(payload.get("merged", [])) != 3:
+components = payload.get("components", [])
+merged = payload.get("merged")
+if len(components) != int(sys.argv[3]):
     raise SystemExit(f"Incomplete MN5 preflight audit: {sys.argv[1]}")
+if int(sys.argv[4]) > 0 and len(merged or []) != int(sys.argv[4]):
+    raise SystemExit(f"Incomplete MN5 preflight audit: {sys.argv[1]}")
+if int(sys.argv[4]) == 0 and merged not in (None, [], {}):
+    raise SystemExit(f"Preflight audit must not contain merged records: {sys.argv[1]}")
 PY
 fi
 
 cd "$PROJECT_ROOT"
-mapfile -t TASKS < <(python - "$MATRIX" "$PROJECT_ROOT" <<'PY'
+mapfile -t TASKS < <(python - "$MATRIX" "$PROJECT_ROOT" "$EXPECTED_TRAIN_TASKS" "$EXPECTED_EVAL_TASKS" <<'PY'
 import sys, yaml
 from pathlib import Path
 root = Path(sys.argv[2])
+expected_train = int(sys.argv[3])
+expected_eval = int(sys.argv[4])
 matrix = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
-if matrix.get("fixed_heads") != ["logreg_raw", "xgb_raw"]:
-    raise SystemExit("Harmonized matrix must contain only logreg_raw and xgb_raw heads")
+backend = str(matrix.get("model_backend", "") or "")
+expected_heads = ["logreg_raw"] if backend == "gemma4" else ["logreg_raw", "xgb_raw"]
+if matrix.get("fixed_heads") != expected_heads:
+    raise SystemExit(
+        f"Harmonized matrix must contain only {expected_heads} heads for "
+        f"model_backend={backend or 'qwen'}"
+    )
 count = 0
+eval_count = 0
 for item in matrix["experiments"]:
     config_path = root / item["config"]
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -60,13 +103,24 @@ for item in matrix["experiments"]:
         raise SystemExit(f"Expected 20 epochs: {config_path}")
     if config["training"]["selection_metric"] != "inner_val_macro_f1":
         raise SystemExit(f"Expected macro-F1 selection: {config_path}")
+    config_backend = str(config.get("model_backend", "") or "")
+    if config_backend != backend:
+        raise SystemExit(
+            f"Matrix model_backend={backend!r} does not match config backend "
+            f"{config_backend!r}: {config_path}"
+        )
     modality = "audio_text" if config["data"].get("use_audio") and config["data"].get("use_text") else "audio_only" if config["data"].get("use_audio") else "text_only"
     run_root = str(config["output_dirs"]["run_root"]).replace("${PROJECT_ROOT}", str(root))
     for fold in item["folds"]:
-        print("\t".join((str(config_path), str(config["dataset"]), modality, str(fold), "1" if item["separate_eval"] else "0", run_root)))
+        print("\t".join((str(config_path), str(config["dataset"]), modality, str(fold), "1" if item["separate_eval"] else "0", run_root, config_backend)))
         count += 1
-if count != 63:
-    raise SystemExit(f"Expected 63 standalone fold tasks, found {count}")
+        if item["separate_eval"]:
+            eval_count += 1
+if count != expected_train or eval_count != expected_eval:
+    raise SystemExit(
+        f"Expected {expected_train} standalone fold tasks with "
+        f"{expected_eval} separate evals, found {count}/{eval_count}"
+    )
 PY
 )
 
@@ -91,7 +145,7 @@ dependency_arg() {
 train_index=0
 aux_index=0
 declare -a train_lanes aux_lanes
-registry="$PROJECT_ROOT/outputs/harmonized_submissions/$RUN_ID/jobs.tsv"
+registry="$SUBMISSIONS_ROOT/$RUN_ID/jobs.tsv"
 if [ "$DRY_RUN" = 0 ]; then
     [ ! -e "$registry" ] || { echo "Refusing existing submission registry: $registry" >&2; exit 4; }
     mkdir -p "$(dirname "$registry")"
@@ -99,28 +153,30 @@ if [ "$DRY_RUN" = 0 ]; then
 fi
 
 for task in "${TASKS[@]}"; do
-    IFS=$'\t' read -r config dataset modality fold separate_eval run_root <<< "$task"
-    run_name="harmonized_v1_${RUN_ID}_${dataset}_${modality}"
+    IFS=$'\t' read -r config dataset modality fold separate_eval run_root config_backend <<< "$task"
+    backend_vars="$(bash "$PROJECT_ROOT/scripts/harmonized_backend_env.sh" "$config" "$PROJECT_ROOT")"
+    eval "$backend_vars"
+    run_name="${RUN_PREFIX}_${RUN_ID}_${dataset}_${modality}"
     fold_dir="$run_root/$run_name/fold_$fold"
-    context_dir="$PROJECT_ROOT/outputs/harmonized_experiment_contexts/$RUN_ID/$dataset/$modality/fold_$fold"
+    context_dir="$CONTEXTS_ROOT/$RUN_ID/$dataset/$modality/fold_$fold"
     context_path="$context_dir/context.json"
     if [ "$DRY_RUN" = 0 ]; then
         mkdir -p "$context_dir"
-        python - "$context_path" "$PREFLIGHT_AUDIT" "$RUN_ID" "$dataset" "$modality" "$fold" "$run_name" "$PROJECT_ROOT" "$GITHUB_ISSUE" "$GITHUB_PR" <<'PY'
+        python - "$context_path" "$PREFLIGHT_AUDIT" "$RUN_ID" "$dataset" "$modality" "$fold" "$run_name" "$PROJECT_ROOT" "$GITHUB_ISSUE" "$GITHUB_PR" "$GROUP_PREFIX" "$LOGICAL_PREFIX" "$config_backend" <<'PY'
 import json, sys
 from pathlib import Path
-sys.path.insert(0, sys.argv[8])
+sys.path.insert(0, sys.argv[12])
 from src.experiment_tracking.identity import new_attempt_id
-context_path, audit_path, run_id, dataset, modality, fold, run_name, root, github_issue, github_pr = sys.argv[1:]
+context_path, audit_path, run_id, dataset, modality, fold, run_name, root, github_issue, github_pr, group_prefix, logical_prefix, config_backend = sys.argv[1:]
 audit = json.load(open(audit_path, encoding="utf-8"))
 component = next(item for item in audit["components"] if item["dataset"] == dataset)
 commit = str(audit.get("source_commit") or "")
 if len(commit) != 40:
     raise SystemExit("Preflight audit has no full source commit")
-logical = f"harmonized_v1_{dataset}_{modality}_seed1337"
+logical = f"{logical_prefix}_{dataset}_{modality}_seed1337"
 payload = {
     "schema_version": "audiollm.experiment_context.v1",
-    "group_id": f"harmonized-v1-{run_id}",
+    "group_id": f"{group_prefix}-{run_id}",
     "logical_run_name": logical,
     "attempt_id": new_attempt_id(logical, commit),
     "fold": int(fold),
@@ -128,6 +184,7 @@ payload = {
     "source": {"git_commit": commit, "git_branch": audit.get("source_branch"), "git_dirty": False},
     "research": {"github_issue": int(github_issue), "github_pr": int(github_pr)},
     "hashes": {"manifest_sha256": component["manifest_file_sha256"], "split_sha256": component["split_metadata_sha256"]},
+    "model_backend": config_backend or None,
     "slurm": {"train_job_id": None, "eval_job_ids": []},
 }
 path = Path(context_path)
@@ -140,7 +197,7 @@ PY
     train_lane=$((train_index % MAX_CONCURRENT_TRAINS))
     train_throttle="${train_lanes[$train_lane]:-}"
     train_dep="$(dependency_arg "" "$train_throttle" || true)"
-    export_spec="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$config,FOLD=$fold,RUN_NAME=$run_name,SKIP_MANIFEST_BUILD=1,EXPERIMENT_CONTEXT=$context_path"
+    export_spec="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$config,FOLD=$fold,RUN_NAME=$run_name,SKIP_MANIFEST_BUILD=1,EXPERIMENT_CONTEXT=$context_path,ENV_ACTIVATE=$ENV_ACTIVATE,MODEL_PATH=$MODEL_PATH"
     train_cmd=(sbatch --parsable --job-name="h-${dataset:0:4}-${modality:0:2}-f$fold" --export="$export_spec")
     [ -n "$train_dep" ] && train_cmd+=("$train_dep")
     train_cmd+=("$TRAIN_WORKER")
@@ -166,9 +223,9 @@ PY
     aux_lane=$((aux_index % MAX_CONCURRENT_AUX))
     aux_throttle="${aux_lanes[$aux_lane]:-}"
     hidden_dep="$(dependency_arg "$chain_job" "$aux_throttle")"
-    cache="$PROJECT_ROOT/outputs/hidden_features/harmonized_v1/$dataset/$run_name/fold_$fold"
-    classifiers="$PROJECT_ROOT/outputs/hidden_classifiers/harmonized_v1/$dataset/$run_name/fold_$fold"
-    hidden_cmd=(sbatch --parsable --job-name="hh-${dataset:0:4}-${modality:0:2}-f$fold" "$hidden_dep" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CHECKPOINT_DIR=$fold_dir/best_model,CACHE_DIR=$cache,CLASSIFIER_DIR=$classifiers,CONDITION=$modality,CLASSIFIER_VARIANTS=logreg_raw:xgb_raw" "$HIDDEN_WORKER")
+    cache="$FEATURES_ROOT/$dataset/$run_name/fold_$fold"
+    classifiers="$CLASSIFIERS_ROOT/$dataset/$run_name/fold_$fold"
+    hidden_cmd=(sbatch --parsable --job-name="hh-${dataset:0:4}-${modality:0:2}-f$fold" "$hidden_dep" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CHECKPOINT_DIR=$fold_dir/best_model,CACHE_DIR=$cache,CLASSIFIER_DIR=$classifiers,MODEL_PATH=$MODEL_PATH,CONDITION=$modality,CLASSIFIER_VARIANTS=$CLASSIFIER_VARIANTS" "$HIDDEN_WORKER")
     hidden_raw="$(submit "${hidden_cmd[@]}")"
     hidden_job="$(job_id "$hidden_raw")"
     aux_lanes[$aux_lane]="$hidden_job"

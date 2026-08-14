@@ -1,0 +1,20 @@
+name: gemma4_harmonized_v1_standalone_matrix
+recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1
+seed: 1337
+max_epochs: 20
+checkpoint_selection: inner_val_macro_f1
+model_backend: gemma4
+fixed_heads: [logreg_raw]
+experiments:
+  - {config: configs/main/d3tec_audio_text_harmonized_selmacrof1_tf_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: true}
+  - {config: configs/main/d3tec_audio_only_harmonized_selmacrof1_tf_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: true}
+  - {config: configs/main/d3tec_text_only_harmonized_selmacrof1_tf_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: true}
+  - {config: configs/main/androids_audio_text_harmonized_selmacrof1_tf_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: true}
+  - {config: configs/main/androids_audio_only_harmonized_selmacrof1_tf_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: true}
+  - {config: configs/main/androids_text_only_harmonized_selmacrof1_tf_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: true}
+  - {config: configs/main/cmdc_audio_text_harmonized_selmacrof1_tf_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
+  - {config: configs/main/cmdc_audio_only_harmonized_selmacrof1_tf_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
+  - {config: configs/main/cmdc_text_only_harmonized_selmacrof1_tf_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
+  - {config: configs/main/turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
+  - {config: configs/main/turkish_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
+  - {config: configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
