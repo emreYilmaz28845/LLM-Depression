@@ -375,7 +375,12 @@ def run_variant(
         _enforce_officialdev_contract(metadata, train_rows, test_rows, train_subjects)
     elif str(metadata.get("model_backend", "")).strip().lower() == "gemma4":
         _enforce_gemma_dependency_versions()
-        _enforce_gemma_daic_contract(metadata, train_rows, test_rows, train_subjects)
+        if evaluation_protocol == "daic_official_train_fit_locked_test_evaluation":
+            # The exact official-train/official-test contract is DAIC-specific.
+            _enforce_gemma_daic_contract(metadata, train_rows, test_rows, train_subjects)
+        # Harmonized (non-DAIC) Gemma caches enforce the generic invariants
+        # already proven above: both classes, disjoint fit/holdout subjects,
+        # finite vectors, equal subject totals via the weight audit below.
     result_identity = {
         "schema_version": FIXED_RESULT_SCHEMA_VERSION,
         "variant": variant,
