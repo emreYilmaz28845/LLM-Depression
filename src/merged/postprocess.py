@@ -86,7 +86,7 @@ def _extract_partition(
     if gemma_backend:
         from src.features.gemma4_hidden_collator import Gemma4PromptOnlyExtractionCollator
 
-        collator = Gemma4PromptOnlyExtractionCollator(processor)
+        collator = Gemma4PromptOnlyExtractionCollator(processor, require_unit_range=False)
     else:
         collator = PromptOnlyExtractionCollator(processor)
     device = next(model.parameters()).device

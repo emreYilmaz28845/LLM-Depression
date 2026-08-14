@@ -369,7 +369,7 @@ def train_merged_fold(
         silence_audio=bool(model_config.get("data", {}).get("silence_audio", False)),
         chunk_sampling="random",
     )
-    collator = build_collator(model_config, processor, debug=False)
+    collator = build_collator(model_config, processor, debug=False, require_unit_range=False)
     model = load_model_for_training(model_name, model_config)
     optimizer = AdamW(
         [parameter for parameter in model.parameters() if parameter.requires_grad],

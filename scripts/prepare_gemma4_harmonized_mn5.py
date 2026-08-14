@@ -68,6 +68,11 @@ GEMMA_MODEL_PATH = (
     "/gpfs/projects/etur92/ozu647717/models/gemma-4-12B-it/"
     "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7"
 )
+GEMMA_MERGED_CONFIGS = (
+    "configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_text.yaml",
+    "configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_only.yaml",
+    "configs/experiments/merged/symmetric_merged_harmonized_gemma4_text_only.yaml",
+)
 AUDIO_SAMPLING_RATE = 16000
 TOKENIZE_EXAMPLES_PER_CONFIG = 32
 
@@ -433,38 +438,68 @@ def prepare(
     ]
 
     merged: list[dict[str, Any]] = []
+    gemma_merged: list[dict[str, Any]] = []
     if not english:
-        try:
-            for raw_path in MERGED_CONFIGS:
-                config_path = resolve_project_path(raw_path)
-                config = load_yaml_with_overrides(config_path, [])
-                from src.merged.protocol import (
-                    load_component_records,
-                    save_protocol_artifacts,
-                )
+        for raw_path in MERGED_CONFIGS:
+            config_path = resolve_project_path(raw_path)
+            config = load_yaml_with_overrides(config_path, [])
+            from src.merged.protocol import (
+                load_component_records,
+                save_protocol_artifacts,
+            )
 
-                records = load_component_records(config, require_files=True)
-                output_dir = resolve_project_path(config["output_dirs"]["merged_root"])
-                payload = save_protocol_artifacts(
-                    config,
-                    records,
-                    output_dir,
-                    seed=int(config.get("seed", 1337)),
-                    inner_val_ratio=float(config["protocol_settings"]["inner_val_ratio"]),
-                )
-                if payload["split_audit"].get("status") != "passed":
-                    failures.append(f"merged protocol audit failed for {config_path}")
-                merged.append(
-                    {
-                        "modality": config["modality"],
-                        "config": str(config_path),
-                        "manifest_file_sha256": payload["manifest_file_sha256"],
-                        "split_hash": payload["protocol"]["split_hash"],
-                        "artifact_hash": payload["artifact_hash"],
-                    }
-                )
-        except Exception as error:  # noqa: BLE001
-            failures.append(f"merged protocol preparation failed: {error}")
+            records = load_component_records(config, require_files=True)
+            output_dir = resolve_project_path(config["output_dirs"]["merged_root"])
+            payload = save_protocol_artifacts(
+                config,
+                records,
+                output_dir,
+                seed=int(config.get("seed", 1337)),
+                inner_val_ratio=float(config["protocol_settings"]["inner_val_ratio"]),
+            )
+            if payload["split_audit"].get("status") != "passed":
+                failures.append(f"merged protocol audit failed for {config_path}")
+            merged.append(
+                {
+                    "modality": config["modality"],
+                    "config": str(config_path),
+                    "manifest_file_sha256": payload["manifest_file_sha256"],
+                    "split_hash": payload["protocol"]["split_hash"],
+                    "artifact_hash": payload["artifact_hash"],
+                }
+            )
+        # The Gemma merged training roots need the same protocol artifacts;
+        # the components and protocol are identical (shared manifests), only
+        # the output root differs. They are recorded separately so the
+        # standalone launcher's three-record merged audit check is unchanged.
+        for raw_path in GEMMA_MERGED_CONFIGS:
+            config_path = resolve_project_path(raw_path)
+            config = load_yaml_with_overrides(config_path, [])
+            from src.merged.protocol import (
+                load_component_records,
+                save_protocol_artifacts,
+            )
+
+            records = load_component_records(config, require_files=True)
+            output_dir = resolve_project_path(config["output_dirs"]["merged_root"])
+            payload = save_protocol_artifacts(
+                config,
+                records,
+                output_dir,
+                seed=int(config.get("seed", 1337)),
+                inner_val_ratio=float(config["protocol_settings"]["inner_val_ratio"]),
+            )
+            if payload["split_audit"].get("status") != "passed":
+                failures.append(f"gemma merged protocol audit failed for {config_path}")
+            gemma_merged.append(
+                {
+                    "modality": config["modality"],
+                    "config": str(config_path),
+                    "manifest_file_sha256": payload["manifest_file_sha256"],
+                    "split_hash": payload["protocol"]["split_hash"],
+                    "artifact_hash": payload["artifact_hash"],
+                }
+            )
 
     processor = None
     context_limit = 0
@@ -565,6 +600,7 @@ def prepare(
         "required_path_prefix": str(required_path_prefix) if required_path_prefix else None,
         "components": components,
         "merged": merged,
+        "gemma_merged": gemma_merged,
         "gemma_checks": gemma_checks,
         "job_scope": job_scope,
         "optuna_enabled": False,

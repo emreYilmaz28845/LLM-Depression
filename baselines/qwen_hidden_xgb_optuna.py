@@ -867,6 +867,10 @@ def run_optuna_raw_xgb(
     fixed_params = fixed_xgb_params(
         seed, xgb_threads, sampling_mode=sampling_mode
     )
+    if protocol_profile_value is not None:
+        # The harmonized_optuna100_v1 search space owns scale_pos_weight;
+        # a fixed value would collide with the suggested parameter.
+        fixed_params.pop("scale_pos_weight", None)
     study = _study(output_dir, config["study_name"], config, config_hash)
     completed = len(_completed_trials(study))
     if target_trials < completed:

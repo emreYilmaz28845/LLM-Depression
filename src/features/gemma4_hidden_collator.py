@@ -28,8 +28,9 @@ class Gemma4PromptOnlyExtractionCollator:
     external metadata fields ever reaches the model inputs.
     """
 
-    def __init__(self, processor):
+    def __init__(self, processor, require_unit_range: bool = True):
         self.processor = processor
+        self.require_unit_range = require_unit_range
 
     def __call__(
         self, batch: list[dict[str, Any]]
@@ -45,7 +46,9 @@ class Gemma4PromptOnlyExtractionCollator:
                     f"example; sample_id={example.get('sample_id', '')} has {len(audio)}."
                 )
             sampling_rate = int(self.processor.feature_extractor.sampling_rate)
-            validate_gemma4_audio(audio[0], sampling_rate)
+            validate_gemma4_audio(
+                audio[0], sampling_rate, require_unit_range=self.require_unit_range
+            )
         kwargs: dict[str, Any] = {
             "text": example["prompt_text"],
             "return_tensors": "pt",

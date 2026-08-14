@@ -612,7 +612,10 @@ def _extract_partition(
     sampling_rate = resolve_processor_sampling_rate(processor)
     gemma_backend = resolve_model_backend(config) == MODEL_BACKEND_GEMMA4
     collator = (
-        Gemma4PromptOnlyExtractionCollator(processor)
+        Gemma4PromptOnlyExtractionCollator(
+            processor,
+            require_unit_range=str(config.get("dataset", "")).lower() == "daic",
+        )
         if gemma_backend
         else PromptOnlyExtractionCollator(processor)
     )
