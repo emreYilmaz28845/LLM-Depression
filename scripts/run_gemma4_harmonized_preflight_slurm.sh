@@ -55,6 +55,8 @@ export ANDROIDS_DATASET_ROOT="${ANDROIDS_DATASET_ROOT:-$DATASET_BASE_ROOT/Androi
 export ANDROIDS_INTERVIEW_FULL_TRANSCRIPTS="${ANDROIDS_INTERVIEW_FULL_TRANSCRIPTS:-$ANDROIDS_DATASET_ROOT/interview_transcripts_qwen3_asr_italian.jsonl}"
 export ANDROIDS_INTERVIEW_SEGMENT_TRANSCRIPTS="${ANDROIDS_INTERVIEW_SEGMENT_TRANSCRIPTS:-$ANDROIDS_DATASET_ROOT/interview_transcripts_qwen3_asr_italian_segments.jsonl}"
 export TRANSLATION_ROOT="${TRANSLATION_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/translations}"
+export HARMONIZED_SOURCE_COMMIT="${HARMONIZED_SOURCE_COMMIT:-$(tr -d '\n' < "$PROJECT_ROOT/.provenance/git_commit.txt")}"
+export HARMONIZED_SOURCE_BRANCH="${HARMONIZED_SOURCE_BRANCH:-$(tr -d '\n' < "$PROJECT_ROOT/.provenance/git_branch.txt")}"
 
 LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/gemma4_harmonized_preflight}"
 mkdir -p "$LOG_ROOT"
