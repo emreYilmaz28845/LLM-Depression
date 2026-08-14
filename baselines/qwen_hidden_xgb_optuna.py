@@ -326,10 +326,12 @@ def _sample_rows_for_predictions(
     sampling_mode: str = LEGACY_SAMPLING_MODE,
     oversampling_ratio: float | None = None,
     oversampling_seed: int = 1337,
+    prediction_backend: str | None = None,
 ) -> list[dict[str, Any]]:
     condition = str(metadata.get("condition") or metadata["input_modality"])
-    return [
-        {
+    output: list[dict[str, Any]] = []
+    for row, probability, prediction in zip(rows, probabilities.tolist(), predictions.tolist()):
+        record: dict[str, Any] = {
             "dataset": metadata["dataset"],
             "modality": metadata["input_modality"],
             "condition": condition,
@@ -351,8 +353,11 @@ def _sample_rows_for_predictions(
             "oversampling_ratio": oversampling_ratio,
             "oversampling_seed": int(oversampling_seed),
         }
-        for row, probability, prediction in zip(rows, probabilities.tolist(), predictions.tolist())
-    ]
+        if prediction_backend is not None:
+            record["prediction_backend"] = prediction_backend
+            record["model_backend"] = metadata.get("model_backend")
+        output.append(record)
+    return output
 
 
 def make_objective(
@@ -368,6 +373,7 @@ def make_objective(
     sampling_mode: str = LEGACY_SAMPLING_MODE,
     oversampling_ratio: float | None = None,
     oversampling_seed: int = 1337,
+    prediction_backend: str | None = None,
 ) -> Callable[[Any], float]:
     train_y = np.asarray([int(row["label"]) for row in train_rows], dtype=np.int64)
     outer_subjects = {str(row["subject_id"]) for row in train_rows}
@@ -415,6 +421,7 @@ def make_objective(
                 sampling_mode,
                 oversampling_ratio,
                 oversampling_seed,
+                prediction_backend,
             )
             subject_rows, metrics = aggregate_binary_classifier_predictions(sample_rows)
             fold_metrics.append(
@@ -483,6 +490,8 @@ def build_study_config(
     sampling_mode: str = LEGACY_SAMPLING_MODE,
     oversampling_ratio: float | None = None,
     oversampling_seed: int = 1337,
+    protocol_profile: str | None = None,
+    prediction_backend: str | None = None,
 ) -> tuple[dict[str, Any], str]:
     try:
         import optuna
@@ -492,8 +501,14 @@ def build_study_config(
     import sklearn
 
     condition = str(metadata.get("condition") or metadata["input_modality"])
-    search_space = resolved_oversampling_search_space(search_profile, sampling_mode)
-    if sampling_mode == LEGACY_SAMPLING_MODE:
+    if protocol_profile is not None:
+        from src.features import optuna100_policy as policy
+
+        search_space = policy.resolved_search_space()
+        policy.assert_production_target(target_trials)
+    else:
+        search_space = resolved_oversampling_search_space(search_profile, sampling_mode)
+    if protocol_profile is not None or sampling_mode == LEGACY_SAMPLING_MODE:
         study_name = (
             f"{metadata['dataset']}_{condition}_fold{int(metadata['fold'])}_"
             f"{experiment_id}_{objective_name}"
@@ -543,6 +558,32 @@ def build_study_config(
             "numpy": np.__version__,
         },
     }
+    if protocol_profile is not None:
+        config.update(
+            {
+                "protocol_profile": protocol_profile,
+                "prediction_backend": prediction_backend,
+                "model_backend": metadata.get("model_backend"),
+                "cache_parent": {
+                    "checkpoint_dir": metadata.get("cache_config", {}).get("checkpoint_dir"),
+                    "parent_attempt_id": metadata.get("cache_config", {}).get("parent_attempt_id"),
+                    "adapter_config_sha256": metadata.get("cache_config", {}).get(
+                        "adapter_config_sha256"
+                    ),
+                    "adapter_sha256": metadata.get("cache_config", {}).get("adapter_sha256"),
+                    "saved_run_config_sha256": metadata.get("cache_config", {}).get(
+                        "saved_run_config_sha256"
+                    ),
+                    "saved_split_sha256": metadata.get("cache_config", {}).get(
+                        "saved_split_sha256"
+                    ),
+                    "manifest_sha256": metadata.get("cache_config", {}).get("manifest_sha256"),
+                    "split_metadata_sha256": metadata.get("cache_config", {}).get(
+                        "split_metadata_sha256"
+                    ),
+                },
+            }
+        )
     if sampling_mode != LEGACY_SAMPLING_MODE:
         config.update(
             {
@@ -702,6 +743,7 @@ def run_optuna_raw_xgb(
     sampling_mode: str = LEGACY_SAMPLING_MODE,
     oversampling_ratio: float | None = None,
     oversampling_seed: int = 1337,
+    protocol_profile: str | None = None,
 ) -> dict[str, Any]:
     if objective_name not in SUPPORTED_OBJECTIVES:
         raise ValueError(f"Unsupported objective {objective_name!r}; expected one of {SUPPORTED_OBJECTIVES}.")
@@ -718,9 +760,34 @@ def run_optuna_raw_xgb(
     if sampling_mode == SAMPLING_MODE_SUBJECT_OVERSAMPLE and oversampling_ratio is None:
         raise ValueError("oversampling_ratio is required for minority_subject_oversample.")
     resolved_inner_seed = seed if inner_seed is None else inner_seed
-    search_space = resolved_oversampling_search_space(search_profile, sampling_mode)
+
+    from src.features import optuna100_policy as policy
+
+    prediction_backend: str | None = None
+    protocol_profile_value: str | None = None
+    if protocol_profile == policy.PROTOCOL_PROFILE:
+        policy.assert_production_target(target_trials)
+        policy.assert_protocol_settings(
+            inner_folds=inner_folds,
+            seed=seed,
+            inner_seed=resolved_inner_seed,
+            sampling_mode=sampling_mode,
+            objective_name=objective_name,
+        )
+        search_profile = policy.PROTOCOL_PROFILE
+        protocol_profile_value = policy.PROTOCOL_PROFILE
+    elif protocol_profile is not None:
+        raise ValueError(f"Unsupported protocol_profile {protocol_profile!r}.")
+
     train_x, train_rows = _load_partition(cache_dir, "outer_train")
     metadata = read_json(cache_dir / "extraction_metadata.json")
+    if protocol_profile_value is not None:
+        prediction_backend = policy.prediction_backend(metadata.get("model_backend"))
+    search_space = (
+        policy.resolved_search_space()
+        if protocol_profile_value is not None
+        else resolved_oversampling_search_space(search_profile, sampling_mode)
+    )
     run_name = validate_experiment_output(
         output_dir,
         metadata=metadata,
@@ -747,6 +814,8 @@ def run_optuna_raw_xgb(
         sampling_mode=sampling_mode,
         oversampling_ratio=oversampling_ratio,
         oversampling_seed=oversampling_seed,
+        protocol_profile=protocol_profile_value,
+        prediction_backend=prediction_backend,
     )
     _write_or_validate_study_config(output_dir, config, config_hash)
     _write_or_validate_json(
@@ -816,6 +885,7 @@ def run_optuna_raw_xgb(
             sampling_mode=sampling_mode,
             oversampling_ratio=oversampling_ratio,
             oversampling_seed=oversampling_seed,
+            prediction_backend=prediction_backend,
         )
         study.optimize(objective, n_trials=remaining, n_jobs=1)
     completed = len(_completed_trials(study))
@@ -887,6 +957,7 @@ def run_optuna_raw_xgb(
         sampling_mode,
         oversampling_ratio,
         oversampling_seed,
+        prediction_backend,
     )
     subject_rows, metrics = aggregate_binary_classifier_predictions(sample_rows)
     metrics = _metrics_with_negative_f1(metrics)
@@ -937,6 +1008,9 @@ def run_optuna_raw_xgb(
         "classifier_family": CLASSIFIER_FAMILY,
         "classifier_variant": experiment_id,
         "experiment_id": experiment_id,
+        "prediction_backend": prediction_backend,
+        "model_backend": metadata.get("model_backend"),
+        "protocol_profile": protocol_profile_value,
         "seed": seed,
         "sampler_seed": seed,
         "model_seed": seed,
@@ -1022,6 +1096,12 @@ def parse_args() -> argparse.Namespace:
         default="standard_d6",
     )
     parser.add_argument("--xgb-threads", type=int, default=20)
+    parser.add_argument(
+        "--protocol-profile",
+        choices=("", "harmonized_optuna100_v1"),
+        default="",
+        help="Fixed 100-trial harmonized Optuna-100 protocol (production only).",
+    )
     return parser.parse_args()
 
 
@@ -1041,6 +1121,7 @@ def main() -> None:
         sampling_mode=args.sampling_mode,
         oversampling_ratio=args.oversampling_ratio,
         oversampling_seed=args.oversampling_seed,
+        protocol_profile=args.protocol_profile or None,
     )
     print(json.dumps(summary, indent=2), flush=True)
 
