@@ -32,10 +32,18 @@ def test_harmonized_main_has_five_datasets_by_three_modalities() -> None:
         assert modalities == {(True, False), (False, True), (True, True)}
 
 
-def test_gemma4_variants_exist_for_daic_only() -> None:
-    gemma = sorted(MAIN.glob("*harmonized_selmacrof1_tf_gemma4_12b.yaml"))
-    assert len(gemma) == 3
-    assert all("daic_" in path.name for path in gemma)
+def test_gemma4_variants_cover_daic_and_the_harmonized_non_daic_family() -> None:
+    gemma = sorted(MAIN.glob("*harmonized_selmacrof1_tf*gemma4_12b.yaml"))
+    daic = [path for path in gemma if path.name.startswith("daic_")]
+    assert len(daic) == 3
+    assert all(path.name.startswith("daic_") for path in daic)
+    # 12 native non-DAIC (four datasets x three modalities) + 8 English
+    # (four datasets x audio+text/text-only).
+    non_daic = [path for path in gemma if not path.name.startswith("daic_")]
+    assert len(non_daic) == 20
+    assert len([path for path in non_daic if "_en_" in path.name]) == 8
+    assert len([path for path in non_daic if "_en_" not in path.name]) == 12
+    assert len(gemma) == 23
 
 
 def test_harmonized_selection_and_teacher_forced_recipe_is_locked() -> None:

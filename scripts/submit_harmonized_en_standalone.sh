@@ -25,6 +25,18 @@ CLASSIFIERS_ROOT="${CLASSIFIERS_ROOT:-$PROJECT_ROOT/outputs/hidden_classifiers/h
 RUN_PREFIX="${RUN_PREFIX:-harmonized_v1_en}"
 GROUP_PREFIX="${GROUP_PREFIX:-harmonized-v1-en}"
 LOGICAL_PREFIX="${LOGICAL_PREFIX:-harmonized_v1_en}"
+# Campaign-family defaults: a Gemma matrix selects Gemma roots and naming.
+case "$MATRIX" in
+  *gemma4*)
+    SUBMISSIONS_ROOT="${SUBMISSIONS_ROOT:-$PROJECT_ROOT/outputs/gemma4_en_harmonized_submissions}"
+    CONTEXTS_ROOT="${CONTEXTS_ROOT:-$PROJECT_ROOT/outputs/gemma4_en_experiment_contexts}"
+    FEATURES_ROOT="${FEATURES_ROOT:-$PROJECT_ROOT/outputs/hidden_features/harmonized_v1_en_gemma4}"
+    CLASSIFIERS_ROOT="${CLASSIFIERS_ROOT:-$PROJECT_ROOT/outputs/hidden_classifiers/harmonized_v1_en_gemma4}"
+    RUN_PREFIX="${RUN_PREFIX:-gemma4_harmonized_v1_en}"
+    GROUP_PREFIX="${GROUP_PREFIX:-gemma4-harmonized-v1-en}"
+    LOGICAL_PREFIX="${LOGICAL_PREFIX:-gemma4_harmonized_v1_en}"
+    ;;
+esac
 
 case "$DRY_RUN" in 0|1) ;; *) echo "DRY_RUN must be 0 or 1" >&2; exit 2;; esac
 case "$GITHUB_ISSUE" in ''|*[!0-9]*|0) echo "GITHUB_ISSUE must be a positive integer." >&2; exit 2;; esac
@@ -62,8 +74,13 @@ import sys, yaml
 from pathlib import Path
 root = Path(sys.argv[2])
 matrix = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
-if matrix.get("fixed_heads") != ["logreg_raw", "xgb_raw"]:
-    raise SystemExit("English matrix must contain only logreg_raw and xgb_raw heads")
+backend = str(matrix.get("model_backend", "") or "")
+expected_heads = ["logreg_raw"] if backend == "gemma4" else ["logreg_raw", "xgb_raw"]
+if matrix.get("fixed_heads") != expected_heads:
+    raise SystemExit(
+        f"English matrix must contain only {expected_heads} heads for "
+        f"model_backend={backend or 'qwen'}"
+    )
 if matrix.get("optuna") is not False:
     raise SystemExit("English matrix must disable Optuna")
 if matrix.get("max_epochs") != 20 or matrix.get("checkpoint_selection") != "inner_val_macro_f1":
@@ -77,6 +94,12 @@ for item in matrix["experiments"]:
         raise SystemExit(f"Expected 20 epochs: {config_path}")
     if config["training"]["selection_metric"] != "inner_val_macro_f1":
         raise SystemExit(f"Expected macro-F1 selection: {config_path}")
+    config_backend = str(config.get("model_backend", "") or "")
+    if config_backend != backend:
+        raise SystemExit(
+            f"Matrix model_backend={backend!r} does not match config backend "
+            f"{config_backend!r}: {config_path}"
+        )
     dataset = str(config["dataset"])
     if dataset in ("daic", "edaic"):
         raise SystemExit(f"DAIC/E-DAIC must not appear in the English matrix: {config_path}")
@@ -92,7 +115,7 @@ for item in matrix["experiments"]:
         raise SystemExit(f"English matrix config has no English overlay: {config_path}")
     run_root = str(config["output_dirs"]["run_root"]).replace("${PROJECT_ROOT}", str(root))
     for fold in item["folds"]:
-        print("\t".join((str(config_path), dataset, modality, str(fold), "1" if item["separate_eval"] else "0", run_root)))
+        print("\t".join((str(config_path), dataset, modality, str(fold), "1" if item["separate_eval"] else "0", run_root, config_backend)))
         count += 1
         if item["separate_eval"]:
             eval_count += 1
@@ -130,19 +153,21 @@ if [ "$DRY_RUN" = 0 ]; then
 fi
 
 for task in "${TASKS[@]}"; do
-    IFS=$'\t' read -r config dataset modality fold separate_eval run_root <<< "$task"
+    IFS=$'\t' read -r config dataset modality fold separate_eval run_root config_backend <<< "$task"
+    backend_vars="$(bash "$PROJECT_ROOT/scripts/harmonized_backend_env.sh" "$config" "$PROJECT_ROOT")"
+    eval "$backend_vars"
     run_name="${RUN_PREFIX}_${RUN_ID}_${dataset}_${modality}"
     fold_dir="$run_root/$run_name/fold_$fold"
     context_dir="$CONTEXTS_ROOT/$RUN_ID/$dataset/$modality/fold_$fold"
     context_path="$context_dir/context.json"
     if [ "$DRY_RUN" = 0 ]; then
         mkdir -p "$context_dir"
-        python - "$context_path" "$PREFLIGHT_AUDIT" "$RUN_ID" "$dataset" "$modality" "$fold" "$run_name" "$PROJECT_ROOT" "$GITHUB_ISSUE" "$GITHUB_PR" "$GROUP_PREFIX" "$LOGICAL_PREFIX" <<'PY'
+        python - "$context_path" "$PREFLIGHT_AUDIT" "$RUN_ID" "$dataset" "$modality" "$fold" "$run_name" "$PROJECT_ROOT" "$GITHUB_ISSUE" "$GITHUB_PR" "$GROUP_PREFIX" "$LOGICAL_PREFIX" "$config_backend" <<'PY'
 import json, sys
 from pathlib import Path
-sys.path.insert(0, sys.argv[11])
+sys.path.insert(0, sys.argv[12])
 from src.experiment_tracking.identity import new_attempt_id
-context_path, audit_path, run_id, dataset, modality, fold, run_name, root, github_issue, github_pr, group_prefix, logical_prefix = sys.argv[1:]
+context_path, audit_path, run_id, dataset, modality, fold, run_name, root, github_issue, github_pr, group_prefix, logical_prefix, config_backend = sys.argv[1:]
 audit = json.load(open(audit_path, encoding="utf-8"))
 component = next(item for item in audit["components"] if item["dataset"] == dataset)
 commit = str(audit.get("source_commit") or "")
@@ -159,6 +184,7 @@ payload = {
     "source": {"git_commit": commit, "git_branch": audit.get("source_branch"), "git_dirty": False},
     "research": {"github_issue": int(github_issue), "github_pr": int(github_pr)},
     "hashes": {"manifest_sha256": component["manifest_file_sha256"], "split_sha256": component["split_metadata_sha256"]},
+    "model_backend": config_backend or None,
     "slurm": {"train_job_id": None, "eval_job_ids": []},
 }
 path = Path(context_path)
@@ -171,7 +197,7 @@ PY
     train_lane=$((train_index % MAX_CONCURRENT_TRAINS))
     train_throttle="${train_lanes[$train_lane]:-}"
     train_dep="$(dependency_arg "" "$train_throttle" || true)"
-    export_spec="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$config,FOLD=$fold,RUN_NAME=$run_name,SKIP_MANIFEST_BUILD=1,EXPERIMENT_CONTEXT=$context_path"
+    export_spec="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$config,FOLD=$fold,RUN_NAME=$run_name,SKIP_MANIFEST_BUILD=1,EXPERIMENT_CONTEXT=$context_path,ENV_ACTIVATE=$ENV_ACTIVATE,MODEL_PATH=$MODEL_PATH"
     train_cmd=(sbatch --parsable --job-name="he-${dataset:0:4}-${modality:0:2}-f$fold" --export="$export_spec")
     [ -n "$train_dep" ] && train_cmd+=("$train_dep")
     train_cmd+=("$TRAIN_WORKER")
@@ -199,7 +225,7 @@ PY
     hidden_dep="$(dependency_arg "$chain_job" "$aux_throttle")"
     cache="$FEATURES_ROOT/$dataset/$run_name/fold_$fold"
     classifiers="$CLASSIFIERS_ROOT/$dataset/$run_name/fold_$fold"
-    hidden_cmd=(sbatch --parsable --job-name="he-hidden-${dataset:0:4}-${modality:0:2}-f$fold" "$hidden_dep" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CHECKPOINT_DIR=$fold_dir/best_model,CACHE_DIR=$cache,CLASSIFIER_DIR=$classifiers,CONDITION=$modality,CLASSIFIER_VARIANTS=logreg_raw:xgb_raw" "$HIDDEN_WORKER")
+    hidden_cmd=(sbatch --parsable --job-name="he-hidden-${dataset:0:4}-${modality:0:2}-f$fold" "$hidden_dep" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CHECKPOINT_DIR=$fold_dir/best_model,CACHE_DIR=$cache,CLASSIFIER_DIR=$classifiers,MODEL_PATH=$MODEL_PATH,CONDITION=$modality,CLASSIFIER_VARIANTS=$CLASSIFIER_VARIANTS" "$HIDDEN_WORKER")
     hidden_raw="$(submit "${hidden_cmd[@]}")"
     hidden_job="$(job_id "$hidden_raw")"
     aux_lanes[$aux_lane]="$hidden_job"
