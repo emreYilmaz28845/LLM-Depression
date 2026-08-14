@@ -276,12 +276,9 @@ def build_job_specs(
     if github_issue is not None and (github_issue < 1 or github_pr is None or github_pr < 1):
         raise ValueError("GitHub Issue and PR provenance must use positive integers.")
     if stage == "smoke":
-        configs = [
-            path for path in configs
-            if str(load_merged_config(path).get("modality")) == "audio_text"
-        ]
-        if len(configs) != 1:
-            raise ValueError("Merged smoke requires exactly one audio_text config.")
+        configs = [path for path in configs]
+        if len(configs) < 1:
+            raise ValueError("Merged smoke requires at least one merged config.")
         folds = [0]
     elif stage == "cv":
         folds = list(range(5))
@@ -313,6 +310,7 @@ def build_job_specs(
                 final_epochs = _final_epoch(config, run_id, modality)
         else:
             final_epochs = None
+        model_backend = str(config.get("model_backend") or "")
         for fold in folds:
             roots = _run_roots(config, run_id, stage, fold)
             chain = [
@@ -324,6 +322,7 @@ def build_job_specs(
                     "fold": fold,
                     "run_id": run_id,
                     "run_root": str(roots["train"]),
+                    "model_backend": model_backend,
                     "resource": {"gpus": 4, "cpus": 80, "time": config["execution"]["qwen_time"]},
                     "epochs": final_epochs if stage == "final" else (smoke_epochs if stage == "smoke" else None),
                     "subjects_per_class": smoke_subjects if stage == "smoke" else None,
@@ -336,6 +335,7 @@ def build_job_specs(
                     "fold": fold,
                     "run_id": run_id,
                     "run_root": str(roots["post"]),
+                    "model_backend": model_backend,
                     "checkpoint_dir": str(roots["train"] / "best_model"),
                     "subjects_per_class": smoke_subjects if stage == "smoke" else None,
                     "resource": {"gpus": 1, "cpus": 20, "time": config["execution"]["postprocess_time"]},
@@ -348,6 +348,7 @@ def build_job_specs(
                     "fold": fold,
                     "run_id": run_id,
                     "run_root": str(roots["post"] / "heads"),
+                    "model_backend": model_backend,
                     "features_dir": str(roots["post"] / "features"),
                     "resource": {"gpus": 0, "cpus": 20, "time": config["execution"]["head_time"]},
                     "trials": head_trials,
@@ -438,6 +439,16 @@ def _submit_job(
         "RUN_ID": job["run_id"],
         "SOURCE_COMMIT": _source_commit(),
     }
+    if str(job.get("model_backend") or "") == "gemma4":
+        export_values["ENV_ACTIVATE"] = os.environ.get(
+            "GEMMA_ENV",
+            "/gpfs/projects/etur92/ozu647717/venvs/gemma4_12b_tf5_14_1",
+        ) + "/bin/activate"
+        export_values["MODEL_PATH"] = os.environ.get(
+            "GEMMA4_MODEL_PATH",
+            "/gpfs/projects/etur92/ozu647717/models/gemma-4-12B-it/"
+            "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
+        )
     for key in ("epochs", "subjects_per_class", "trials", "checkpoint_dir", "features_dir"):
         if job.get(key) is not None:
             export_values[key.upper()] = str(job[key])

@@ -100,9 +100,12 @@ def test_harmonized_smoke_keeps_custom_config_and_zero_trials() -> None:
         github_issue=12,
         github_pr=10,
     )
-    assert len(registry["jobs"]) == 3
-    assert {job["config"] for job in registry["jobs"]} == {str(MERGED["audio_text"])}
-    assert next(job for job in registry["jobs"] if job["kind"] == "head")["trials"] == 0
+    # The smoke stage now covers all three modalities (runbook Section 13:
+    # one merged smoke per modality): 3 modalities x train/postprocess/head.
+    assert len(registry["jobs"]) == 9
+    assert {job["config"] for job in registry["jobs"]} == {str(path) for path in MERGED.values()}
+    assert {job["kind"] for job in registry["jobs"]} == {"train", "postprocess", "head"}
+    assert all(next(job for job in registry["jobs"] if job["kind"] == "head" and job["modality"] == modality)["trials"] == 0 for modality in ("audio_text", "audio_only", "text_only"))
 
 
 def test_harmonized_auditor_requires_only_enabled_heads_and_global_registry() -> None:
