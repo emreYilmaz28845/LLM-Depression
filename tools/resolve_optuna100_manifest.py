@@ -136,6 +136,24 @@ def _parent_from_checkpoint_dir(metadata: dict[str, Any]) -> dict[str, Any] | No
     }
 
 
+def _derive_split_name(protocol: str, provenance: dict[str, Any]) -> str:
+    """Split name for the evaluation record; provenance may carry one, but
+    older cache extractions (Qwen) omit it, so derive it from the protocol
+    deterministically when missing."""
+    explicit = str(provenance.get("split_name") or "")
+    if explicit:
+        return explicit
+    if protocol in (
+        "saved_final_evaluation",
+        "daic_official_train_fit_locked_test_evaluation",
+        "table_aligned_outer_validation",
+    ):
+        return "test"
+    if protocol == "daic_official_train_inner_split_dev_evaluation":
+        return "val"
+    return ""
+
+
 def _evaluation_qualifiers(cache_dir: Path, metadata: dict[str, Any]) -> dict[str, Any]:
     provenance = metadata.get("evaluation_provenance") or {}
     support: int | None = None
@@ -147,10 +165,11 @@ def _evaluation_qualifiers(cache_dir: Path, metadata: dict[str, Any]) -> dict[st
                 for row in read_jsonl(rows_path)
             }
         )
+    protocol = str(provenance.get("evaluation_protocol") or "")
     return {
         "dataset": metadata["dataset"],
-        "split_name": str(provenance.get("split_name") or ""),
-        "split_protocol": str(provenance.get("evaluation_protocol") or ""),
+        "split_name": _derive_split_name(protocol, provenance),
+        "split_protocol": protocol,
         "evaluation_view": "harmonized_all_windows_full_coverage",
         "aggregation": "subject_level",
         "metric_namespace": "headline/binary_strict",
