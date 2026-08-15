@@ -279,7 +279,9 @@ PY
         cache="$FEATURES_ROOT/$dataset/$run_name/fold_$fold"
         classifiers="$CLASSIFIERS_ROOT/$dataset/$run_name/fold_$fold"
     fi
-    hidden_cmd=(sbatch --parsable --job-name="hrh-${dataset:0:4}-${modality:0:2}-f$fold" "$hidden_dep" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CHECKPOINT_DIR=$fold_dir/best_model,CACHE_DIR=$cache,CLASSIFIER_DIR=$classifiers,MODEL_PATH=$MODEL_PATH,CONDITION=$modality,CLASSIFIER_VARIANTS=$CLASSIFIER_VARIANTS" "$HIDDEN_WORKER")
+    hidden_cmd=(sbatch --parsable --job-name="hrh-${dataset:0:4}-${modality:0:2}-f$fold")
+    [ -n "$hidden_dep" ] && hidden_cmd+=("$hidden_dep")
+    hidden_cmd+=(--export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CHECKPOINT_DIR=$fold_dir/best_model,CACHE_DIR=$cache,CLASSIFIER_DIR=$classifiers,MODEL_PATH=$MODEL_PATH,CONDITION=$modality,CLASSIFIER_VARIANTS=$CLASSIFIER_VARIANTS" "$HIDDEN_WORKER")
     hidden_raw="$(submit "${hidden_cmd[@]}")"
     hidden_job="$(job_id "$hidden_raw")"
     aux_lanes[$aux_lane]="$hidden_job"
