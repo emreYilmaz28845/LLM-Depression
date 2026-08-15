@@ -28,6 +28,7 @@ from src.metrics import classification_metrics  # noqa: E402
 HEADS_ROOT = PROJECT_ROOT / "outputs/hidden_classifiers/harmonized_v1_gemma4"
 FEATURES_ROOT = PROJECT_ROOT / "outputs/hidden_features/harmonized_v1_gemma4"
 RUN_FILTER = "gemma4_v1_prod_20260814T2030Z_1ab337d2_r2"
+RUN_FAMILY = "native"
 VARIANT = "logreg_raw"
 BACKEND = "gemma4_hidden_logreg_raw"
 
@@ -45,11 +46,21 @@ def _negative_f1(metrics: dict) -> float:
 
 
 def collect() -> dict:
-    """Map (dataset, modality, fold) -> per-subject predictions + metadata."""
+    """Map (dataset, modality, fold) -> per-subject predictions + metadata.
+
+    Multiple production runs may exist for one cell (bounded retries of the
+    hidden job); the run with the highest retry tag is selected
+    deterministically.
+    """
+    import re as _re
+
     cells: dict[tuple[str, str, int], dict] = {}
+    grouped: dict[tuple[str, str, int], list[tuple[int, Path]]] = {}
     for variant_dir in HEADS_ROOT.rglob(f"*/{VARIANT}/predictions_subject_level.csv"):
         run_dir = variant_dir.parents[1]
         if RUN_FILTER not in str(run_dir):
+            continue
+        if "smoke" in str(run_dir):
             continue
         fold_dir = variant_dir.parents[2] if variant_dir.parents[2].name.startswith("fold_") else variant_dir.parents[1]
         if not fold_dir.name.startswith("fold_"):
@@ -59,6 +70,17 @@ def collect() -> dict:
         metadata = read_json(cache_dir / "extraction_metadata.json")
         dataset = str(metadata["dataset"]).lower()
         modality = str(metadata["input_modality"])
+        tag_match = _re.search(r"_r(\d+)$", run_dir.name)
+        grouped.setdefault((dataset, modality, fold), []).append(
+            (int(tag_match.group(1)) if tag_match else 0, variant_dir)
+        )
+    for key, candidates in grouped.items():
+        best = max(candidates, key=lambda item: item[0])
+        variant_dir = best[1]
+        fold_dir = variant_dir.parents[2] if variant_dir.parents[2].name.startswith("fold_") else variant_dir.parents[1]
+        fold = int(fold_dir.name.split("_", 1)[1])
+        cache_dir = FEATURES_ROOT / variant_dir.parents[1].relative_to(HEADS_ROOT).parent / fold_dir.name
+        metadata = read_json(cache_dir / "extraction_metadata.json")
         classifier_meta = read_json(variant_dir.parent / "classifier_metadata.json")
         metrics = read_json(variant_dir.parent / "metrics.json")
         subject_rows = []
@@ -71,7 +93,7 @@ def collect() -> dict:
                         "prediction": int(float(row.get("prediction") or row.get("predicted_class"))),
                     }
                 )
-        cells[(dataset, modality, fold)] = {
+        cells[key] = {
             "fold": fold,
             "metadata": metadata,
             "classifier_metadata": classifier_meta,
@@ -80,7 +102,7 @@ def collect() -> dict:
             "predictions_path": str(variant_dir),
             "metrics_path": str(variant_dir.parent / "metrics.json"),
             "cache_dir": str(cache_dir),
-            "run_dir": str(run_dir),
+            "run_dir": str(variant_dir.parents[1]),
         }
     return cells
 
@@ -128,7 +150,7 @@ def group_report(cells: dict, dataset: str, modality: str) -> dict:
     }
     return {
         "schema_version": "gemma4_harmonized_lr_group_report.v1",
-        "family": "native",
+        "family": RUN_FAMILY,
         "dataset": dataset,
         "modality": modality,
         "backend": BACKEND,
@@ -153,16 +175,29 @@ def group_report(cells: dict, dataset: str, modality: str) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-root", type=Path, default=PROJECT_ROOT / "outputs/experiment_reports/gemma4_harmonized")
+    parser.add_argument("--family", choices=("native", "english"), default="native")
+    parser.add_argument("--heads-root", type=Path, default=None)
+    parser.add_argument("--features-root", type=Path, default=None)
+    parser.add_argument("--run-filter", default=None)
     args = parser.parse_args()
+    global HEADS_ROOT, FEATURES_ROOT, RUN_FILTER, RUN_FAMILY
+    if args.family == "english":
+        HEADS_ROOT = PROJECT_ROOT / "outputs/hidden_classifiers/harmonized_v1_en_gemma4"
+        FEATURES_ROOT = PROJECT_ROOT / "outputs/hidden_features/harmonized_v1_en_gemma4"
+        RUN_FILTER = "gemma4_en_prod_20260815T1300Z_a955cdd"
+        RUN_FAMILY = "english"
+    if args.heads_root is not None:
+        HEADS_ROOT = args.heads_root
+    if args.features_root is not None:
+        FEATURES_ROOT = args.features_root
+    if args.run_filter:
+        RUN_FILTER = args.run_filter
     cells = collect()
+    modalities = ("audio_text", "audio_only", "text_only") if RUN_FAMILY == "native" else ("audio_text", "text_only")
     pairs = [
-        ("d3tec", m) for m in ("audio_text", "audio_only", "text_only")
-    ] + [
-        ("androids_interview", m) for m in ("audio_text", "audio_only", "text_only")
-    ] + [
-        ("cmdc", m) for m in ("audio_text", "audio_only", "text_only")
-    ] + [
-        ("turkish", m) for m in ("audio_text", "audio_only", "text_only")
+        (ds, m)
+        for ds in ("d3tec", "androids_interview", "cmdc", "turkish")
+        for m in modalities
     ]
     reports = {}
     for dataset, modality in pairs:
@@ -170,7 +205,8 @@ def main() -> int:
         if report["fold_count"] != 5:
             print(f"WARNING {dataset} {modality}: expected 5 folds, got {report['fold_count']}", file=sys.stderr)
         reports[f"{dataset}/{modality}"] = report
-        out = args.output_root / "native_lr" / f"{dataset}_{modality}.json"
+        family_dir = "native_lr" if RUN_FAMILY == "native" else "english_lr"
+        out = args.output_root / family_dir / f"{dataset}_{modality}.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=2, sort_keys=True))
     summary = {
@@ -180,7 +216,8 @@ def main() -> int:
         }
         for key, value in reports.items()
     }
-    (args.output_root / "native_lr" / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True))
+    family_dir = "native_lr" if RUN_FAMILY == "native" else "english_lr"
+    (args.output_root / family_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True))
     for key, value in sorted(summary.items()):
         pooled = value["pooled"]
         fold = value["fold_mean"]

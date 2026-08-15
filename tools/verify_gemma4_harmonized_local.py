@@ -176,7 +176,7 @@ def _materialize_train_side_evaluation(fold_dir: Path) -> None:
         write_json_atomic(fold_dir / "artifacts.json", artifact_record)
 
 
-def build_canonical_copy(fold_dir: Path, canonical_root: Path) -> Path:
+def build_canonical_copy(fold_dir: Path, canonical_root: Path, run_root: Path | None = None) -> Path:
     """Create a non-destructive canonical copy of a fold whose sidecars mix
     two attempts (retry SUBMITTED events or retry evaluation records written
     into the original fold). The original is never modified. The copy keeps
@@ -188,7 +188,7 @@ def build_canonical_copy(fold_dir: Path, canonical_root: Path) -> Path:
     # The contaminated fold cannot pass the strict sidecar reader; read the
     # metadata directly for the original attempt identity.
     original_attempt = str(read_json(fold_dir / "metadata.json").get("attempt_id"))
-    base = (PROJECT_ROOT / "output_model/harmonized_v1_gemma4").resolve()
+    base = (run_root or PROJECT_ROOT / "output_model/harmonized_v1_gemma4").resolve()
     try:
         relative = fold_dir.resolve().relative_to(base)
     except ValueError:
@@ -211,6 +211,15 @@ def build_canonical_copy(fold_dir: Path, canonical_root: Path) -> Path:
         source = fold_dir / name
         if source.is_file():
             shutil.copy2(source, canonical_dir / name)
+
+    if (canonical_dir / "artifacts.json").is_file():
+        artifact_record = read_json(canonical_dir / "artifacts.json")
+        artifact_record["artifacts"] = [
+            artifact
+            for artifact in artifact_record.get("artifacts", [])
+            if "standalone_eval_r" not in str(artifact.get("path", ""))
+        ]
+        write_json_atomic(canonical_dir / "artifacts.json", artifact_record)
 
     original_jobs = []
     if (fold_dir / "jobs.jsonl").is_file():
@@ -263,11 +272,11 @@ def build_canonical_copy(fold_dir: Path, canonical_root: Path) -> Path:
     # uniquely attributable retry artifacts (standalone_eval_r{2,3}).
     retry_evals = sorted((fold_dir / "best_model").glob("standalone_eval_r*"))
     if retry_evals and not (canonical_dir / "best_model" / "standalone_eval").is_dir():
-        build_retry_attempt_canonical(fold_dir, canonical_dir, retry_evals)
+        build_retry_attempt_canonical(fold_dir, canonical_dir, retry_evals, run_root=run_root)
     return canonical_dir
 
 
-def build_retry_attempt_canonical(fold_dir: Path, canonical_dir: Path, retry_evals: list[Path]) -> None:
+def build_retry_attempt_canonical(fold_dir: Path, canonical_dir: Path, retry_evals: list[Path], run_root: Path | None = None) -> None:
     """Reconstruct the canonical evidence for the retry attempt of a fold
     whose original separate evaluation was cancelled before it ran. The retry
     attempt's identity comes from its submission context; the scientific
@@ -282,8 +291,14 @@ def build_retry_attempt_canonical(fold_dir: Path, canonical_dir: Path, retry_eva
     run_config = yaml.safe_load((fold_dir / "run_config.yaml").read_text(encoding="utf-8")) or {}
     metadata = read_json(fold_dir / "metadata.json")
     context_root = PROJECT_ROOT / "outputs/gemma4_experiment_contexts"
+    if (run_root or "").name == "harmonized_v1_en_gemma4":
+        context_root = PROJECT_ROOT / "outputs/gemma4_en_experiment_contexts"
     # The retry contexts live under the campaign run id with retry_r* tags.
-    campaign = str(run_config.get("tracking", {}).get("group_id", "")).replace("gemma4-harmonized-v1-", "")
+    campaign = (
+        str(run_config.get("tracking", {}).get("group_id", ""))
+        .replace("gemma4-harmonized-v1-en-", "")
+        .replace("gemma4-harmonized-v1-", "")
+    )
     context_paths = list(context_root.glob(f"{campaign}/retry_*/**/context.json"))
     dataset = str(metadata.get("dataset") or run_config.get("config", {}).get("dataset", ""))
     modality = str(run_config.get("config", {}).get("modality", ""))
@@ -433,7 +448,7 @@ def build_retry_attempt_canonical(fold_dir: Path, canonical_dir: Path, retry_eva
     # Qualifiers follow the original sibling evaluations of the same dataset
     # (split protocol and aggregation come from the harmonized recipe).
     sibling_qualifiers = None
-    original_root = PROJECT_ROOT / "output_model/harmonized_v1_gemma4"
+    original_root = run_root or PROJECT_ROOT / "output_model/harmonized_v1_gemma4"
     try:
         sibling_base = (original_root / fold_dir.resolve().relative_to(original_root.resolve())).parents[1]
     except ValueError:
@@ -499,7 +514,7 @@ def build_retry_attempt_canonical(fold_dir: Path, canonical_dir: Path, retry_eva
     write_json_atomic(canonical_dir / "evaluations.json", evaluations)
 
 
-def verify_fold(fold_dir: Path, canonical_root: Path | None = None) -> dict:
+def verify_fold(fold_dir: Path, canonical_root: Path | None = None, run_root: Path | None = None) -> dict:
     report: dict = {
         "fold_dir": str(fold_dir),
         "failures": [],
@@ -510,12 +525,12 @@ def verify_fold(fold_dir: Path, canonical_root: Path | None = None) -> dict:
     except Exception as error:  # noqa: BLE001
         if canonical_root is not None and "contradictory" in str(error):
             try:
-                canonical_dir = build_canonical_copy(fold_dir, canonical_root)
+                canonical_dir = build_canonical_copy(fold_dir, canonical_root, run_root=run_root)
             except Exception as copy_error:  # noqa: BLE001
                 report["failures"].append(f"canonical copy failed: {copy_error}")
                 return report
             report["canonical_dir"] = str(canonical_dir)
-            return verify_fold(canonical_dir, canonical_root=None)
+            return verify_fold(canonical_dir, canonical_root=None, run_root=run_root)
         report["failures"].append(f"sidecar validation failed: {error}")
         return report
     if sidecars is None:
@@ -524,7 +539,7 @@ def verify_fold(fold_dir: Path, canonical_root: Path | None = None) -> dict:
     attempt_id = sidecars.attempt_id
     report["attempt_id"] = attempt_id
 
-    if sidecars.state not in {"RUNNING", "COMPLETED_ON_MN5", "SYNCED_LOCALLY", "LOCALLY_VALIDATED", "REPORTABLE"}:
+    if sidecars.state not in {"RUNNING", "COMPLETED_ON_MN5", "SYNCED_LOCALLY", "LOCALLY_VALIDATED", "REPORTABLE", "SUPERSEDED"}:
         report["failures"].append(f"unexpected state {sidecars.state}")
         return report
 
@@ -605,7 +620,8 @@ def verify_fold(fold_dir: Path, canonical_root: Path | None = None) -> dict:
 
     # 4. Lifecycle transitions.
     record = StatusRecord.from_dict(read_status(fold_dir / "status.json"))
-    if record.state == "REPORTABLE":
+    if record.state in {"REPORTABLE", "SUPERSEDED"}:
+        report["state"] = record.state
         report["state"] = record.state
         report["already_reportable"] = True
         return report
@@ -656,7 +672,7 @@ def main() -> int:
     failures: list[str] = []
     reportable = 0
     for metadata_path in fold_dirs:
-        result = verify_fold(metadata_path.parent, canonical_root=args.canonical_root)
+        result = verify_fold(metadata_path.parent, canonical_root=args.canonical_root, run_root=args.run_root)
         results.append(result)
         if result["failures"]:
             failures.append(f"{result['fold_dir']}: {result['failures'][0]}")
