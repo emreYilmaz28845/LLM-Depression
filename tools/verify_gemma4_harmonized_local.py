@@ -21,7 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.experiment_tracking.canonical import read_json, sha256_file, write_json_atomic  # noqa: E402
+from src.experiment_tracking.canonical import canonical_sha256, read_json, sha256_file, write_json_atomic  # noqa: E402
 from src.experiment_tracking.lifecycle import StatusRecord, read_status, write_status  # noqa: E402
 from src.experiment_tracking.sidecars import read_modern_sidecars  # noqa: E402
 from src.metrics import classification_metrics  # noqa: E402
@@ -132,11 +132,48 @@ def _materialize_train_side_evaluation(fold_dir: Path) -> None:
         None,
     )
     if prior is not None:
-        if prior != record:
+        # warnings are cleared by the verification step, so they are not part
+        # of the record identity.
+        prior_normalized = {k: v for k, v in prior.items() if k != "warnings"}
+        record_normalized = {k: v for k, v in record.items() if k != "warnings"}
+        if prior_normalized != record_normalized:
             raise ValueError(f"refusing to change evaluation record: {eval_id}")
-        return
-    evaluations_record["evaluations"].append(record)
-    write_json_atomic(fold_dir / "evaluations.json", evaluations_record)
+    else:
+        evaluations_record["evaluations"].append(record)
+        write_json_atomic(fold_dir / "evaluations.json", evaluations_record)
+
+    # The train-side eval artifacts must be registered in artifacts.json for
+    # the modern importer to accept the evaluation record.
+    artifact_record = read_json(fold_dir / "artifacts.json") if (fold_dir / "artifacts.json").is_file() else {
+        "schema_version": "audiollm.artifacts.v1",
+        "attempt_id": sidecars.attempt_id,
+        "fold": sidecars.fold,
+        "artifacts": [],
+    }
+    known = {entry["path"] for entry in artifact_record.get("artifacts", [])}
+    additions = []
+    for relative in ("eval/best_validation/metrics_original_teacher_forced.json", "eval/best_validation/predictions_subject_level.csv"):
+        if relative in known:
+            continue
+        full = fold_dir / relative
+        if not full.is_file():
+            continue
+        additions.append(
+            {
+                "artifact_id": "art-" + canonical_sha256({"p": relative, "a": str(sidecars.attempt_id)})[:24],
+                "artifact_type": "metrics" if "metrics" in relative else "predictions",
+                "role": relative.replace("/", "_"),
+                "path": relative,
+                "sha256": sha256_file(full),
+                "size_bytes": full.stat().st_size,
+                "exists_on_mn5": True,
+                "exists_locally": True,
+                "locally_verified": False,
+            }
+        )
+    if additions:
+        artifact_record["artifacts"].extend(additions)
+        write_json_atomic(fold_dir / "artifacts.json", artifact_record)
 
 
 def build_canonical_copy(fold_dir: Path, canonical_root: Path) -> Path:
@@ -159,7 +196,13 @@ def build_canonical_copy(fold_dir: Path, canonical_root: Path) -> Path:
     canonical_dir = canonical_root / relative
     if (canonical_dir / "metadata.json").is_file():
         existing = read_json(canonical_dir / "metadata.json")
-        if str(existing.get("attempt_id")) != original_attempt:
+        existing_attempt = str(existing.get("attempt_id"))
+        if existing_attempt != original_attempt:
+            # A retry-attempt canonical copy is valid when it carries its own
+            # reconstructed eval evidence (its original separate evaluation
+            # was cancelled before it ran).
+            if (canonical_dir / "best_model" / "standalone_eval").is_dir():
+                return canonical_dir
             raise ValueError(f"canonical copy has a different attempt: {canonical_dir}")
         return canonical_dir
     canonical_dir.mkdir(parents=True, exist_ok=True)
@@ -387,17 +430,46 @@ def build_retry_attempt_canonical(fold_dir: Path, canonical_dir: Path, retry_eva
     support = len({str(row.get("subject_id")) for row in subject_rows})
     from src.experiment_tracking.identity import evaluation_id
 
+    # Qualifiers follow the original sibling evaluations of the same dataset
+    # (split protocol and aggregation come from the harmonized recipe).
+    sibling_qualifiers = None
+    original_root = PROJECT_ROOT / "output_model/harmonized_v1_gemma4"
+    try:
+        sibling_base = (original_root / fold_dir.resolve().relative_to(original_root.resolve())).parents[1]
+    except ValueError:
+        sibling_base = None
+    if sibling_base is not None:
+        for sibling in sorted(sibling_base.glob("*/fold_*/evaluations.json")):
+            try:
+                sibling_evals = read_json(sibling)
+                for entry in sibling_evals.get("evaluations", []):
+                    if str(entry.get("backend")) == "original_teacher_forced" and entry.get("metrics_artifact_path", "").startswith("best_model/standalone_eval") and "standalone_eval_r" not in entry.get("metrics_artifact_path", ""):
+                        sibling_qualifiers = {
+                            "split_name": entry.get("split_name", "test"),
+                            "split_protocol": entry.get("split_protocol", "saved_final_evaluation"),
+                            "aggregation": entry.get("aggregation", "subject_level"),
+                        }
+                        break
+                if sibling_qualifiers:
+                    break
+            except Exception:  # noqa: BLE001
+                continue
+    qualifiers = sibling_qualifiers or {
+        "split_name": "test",
+        "split_protocol": "saved_final_evaluation",
+        "aggregation": "subject_level",
+    }
     eval_id = evaluation_id(
         attempt_id=retry_attempt,
         fold=fold,
         dataset=dataset,
-        split_name="test",
-        split_protocol="saved_final_evaluation",
+        split_name=qualifiers["split_name"],
+        split_protocol=qualifiers["split_protocol"],
         checkpoint_role="best_model",
         checkpoint_path="best_model",
         backend="original_teacher_forced",
         evaluation_view="harmonized_all_windows_full_coverage",
-        aggregation="subject_level",
+        aggregation=qualifiers["aggregation"],
         metric_namespace="headline/binary_strict",
         metrics_artifact_sha256=sha256_file(eval_dir / "metrics_original_teacher_forced.json"),
     )
@@ -405,13 +477,13 @@ def build_retry_attempt_canonical(fold_dir: Path, canonical_dir: Path, retry_eva
         {
             "evaluation_id": eval_id,
             "dataset": dataset,
-            "split_name": "test",
-            "split_protocol": "saved_final_evaluation",
+            "split_name": qualifiers["split_name"],
+            "split_protocol": qualifiers["split_protocol"],
             "checkpoint_role": "best_model",
             "checkpoint_path": "best_model",
             "backend": "original_teacher_forced",
             "evaluation_view": "harmonized_all_windows_full_coverage",
-            "aggregation": "subject_level",
+            "aggregation": qualifiers["aggregation"],
             "metric_namespace": "headline/binary_strict",
             "metrics_artifact_path": "best_model/standalone_eval/metrics_original_teacher_forced.json",
             "predictions_artifact_path": "best_model/standalone_eval/predictions_subject_level.csv",
@@ -452,15 +524,26 @@ def verify_fold(fold_dir: Path, canonical_root: Path | None = None) -> dict:
     attempt_id = sidecars.attempt_id
     report["attempt_id"] = attempt_id
 
-    if sidecars.state == "REPORTABLE":
-        report["state"] = sidecars.state
-        report["already_reportable"] = True
-        return report
-    if sidecars.state not in {"RUNNING", "COMPLETED_ON_MN5", "SYNCED_LOCALLY", "LOCALLY_VALIDATED"}:
+    if sidecars.state not in {"RUNNING", "COMPLETED_ON_MN5", "SYNCED_LOCALLY", "LOCALLY_VALIDATED", "REPORTABLE"}:
         report["failures"].append(f"unexpected state {sidecars.state}")
         return report
 
-    # 1. Artifact hash verification.
+    # 0. Train-side evaluation record and artifact registration (idempotent).
+    if (fold_dir / "eval/best_validation/metrics_original_teacher_forced.json").is_file():
+        _materialize_train_side_evaluation(fold_dir)
+    sidecars = read_modern_sidecars(fold_dir)
+
+    # 1. Artifact hash verification. The tool-managed sidecar ledgers are
+    #    refreshed first so a re-verification of an already-transitioned fold
+    #    does not trip on the hashes this tool itself rewrote.
+    artifact_record = read_json(fold_dir / "artifacts.json")
+    for artifact in artifact_record.get("artifacts", []):
+        if artifact.get("sha256") is None:
+            continue
+        full = fold_dir / artifact["path"]
+        if artifact["path"] in {"status.json", "evaluations.json", "artifacts.json"} and full.is_file():
+            artifact["sha256"] = sha256_file(full)
+    write_json_atomic(fold_dir / "artifacts.json", artifact_record)
     artifact_record = read_json(fold_dir / "artifacts.json")
     for artifact in artifact_record.get("artifacts", []):
         sha = artifact.get("sha256")
@@ -474,12 +557,8 @@ def verify_fold(fold_dir: Path, canonical_root: Path | None = None) -> dict:
             report["failures"].append(f"hash mismatch: {artifact['path']}")
 
     # 2. Recompute the headline metrics from subject predictions and match
-    #    the metrics artifact + evaluation records. Folds whose final
-    #    evaluation ran inside training (CMDC, Turkish) get their evaluation
-    #    record materialized from the train-side artifacts first.
+    #    the metrics artifact + evaluation records.
     evaluations_path = fold_dir / "evaluations.json"
-    if not evaluations_path.is_file() and (fold_dir / "eval/best_validation/metrics_original_teacher_forced.json").is_file():
-        _materialize_train_side_evaluation(fold_dir)
     evaluations_record = read_json(evaluations_path)
     for evaluation in evaluations_record.get("evaluations", []):
         metrics_path = fold_dir / evaluation["metrics_artifact_path"]
@@ -506,11 +585,17 @@ def verify_fold(fold_dir: Path, canonical_root: Path | None = None) -> dict:
     if report["failures"]:
         return report
 
-    # 3. Mark artifacts and evaluations locally verified.
+    # 3. Mark artifacts and evaluations locally verified. Sidecar files that
+    #    this tool rewrote (status/evaluations/artifacts) get their recorded
+    #    hashes refreshed so the artifact ledger matches the final state.
     for artifact in artifact_record.get("artifacts", []):
-        if artifact.get("sha256") is not None:
-            artifact["exists_locally"] = True
-            artifact["locally_verified"] = True
+        if artifact.get("sha256") is None:
+            continue
+        full = fold_dir / artifact["path"]
+        if artifact["path"] in {"status.json", "evaluations.json", "artifacts.json"} and full.is_file():
+            artifact["sha256"] = sha256_file(full)
+        artifact["exists_locally"] = True
+        artifact["locally_verified"] = True
     write_json_atomic(fold_dir / "artifacts.json", artifact_record)
     for evaluation in evaluations_record.get("evaluations", []):
         evaluation["locally_verified"] = True
@@ -520,6 +605,10 @@ def verify_fold(fold_dir: Path, canonical_root: Path | None = None) -> dict:
 
     # 4. Lifecycle transitions.
     record = StatusRecord.from_dict(read_status(fold_dir / "status.json"))
+    if record.state == "REPORTABLE":
+        report["state"] = record.state
+        report["already_reportable"] = True
+        return report
     for to_state, reason in (
         ("COMPLETED_ON_MN5", "training and dependent jobs reached terminal COMPLETED states"),
         ("SYNCED_LOCALLY", "compact evidence synced locally"),
@@ -531,6 +620,18 @@ def verify_fold(fold_dir: Path, canonical_root: Path | None = None) -> dict:
         record.transition(to_state, reason=reason)
         report["transitions"].append(to_state)
     write_status(fold_dir / "status.json", record)
+    # The status rewrite above changed the status.json hash; refresh the
+    # artifact ledger once more so the importer sees a consistent state.
+    final_artifacts = read_json(fold_dir / "artifacts.json")
+    for artifact in final_artifacts.get("artifacts", []):
+        if artifact.get("sha256") is None:
+            continue
+        full = fold_dir / artifact["path"]
+        if artifact["path"] in {"status.json", "evaluations.json", "artifacts.json"} and full.is_file():
+            artifact["sha256"] = sha256_file(full)
+        artifact["exists_locally"] = True
+        artifact["locally_verified"] = True
+    write_json_atomic(fold_dir / "artifacts.json", final_artifacts)
     report["state"] = record.state
     return report
 
