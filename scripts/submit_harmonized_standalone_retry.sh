@@ -158,7 +158,21 @@ if [ "$DRY_RUN" = 0 ]; then
 fi
 
 for spec in "${CELL_SPECS[@]}"; do
-    IFS=$'\t' read -r config run_root separate_eval dataset modality fold train_ok failed_train failed_eval failed_hidden train_term eval_term hidden_term <<< "$spec"
+    # bash read with tab IFS treats tab as whitespace and collapses
+    # consecutive empty fields, shifting empty failed_eval/failed_train
+    # columns into the wrong variables. Parse the 13 fields explicitly.
+    eval "$(python3 - "$spec" <<'PY'
+import shlex, sys
+fields = sys.argv[1].split("\t")
+names = [
+    "config", "run_root", "separate_eval", "dataset", "modality", "fold",
+    "train_ok", "failed_train", "failed_eval", "failed_hidden",
+    "train_term", "eval_term", "hidden_term",
+]
+for index, name in enumerate(names):
+    print(f"{name}={shlex.quote(fields[index] if index < len(fields) else '')}")
+PY
+)"
     backend_vars="$(bash "$PROJECT_ROOT/scripts/harmonized_backend_env.sh" "$config" "$PROJECT_ROOT")"
     eval "$backend_vars"
     run_name_base="${RUN_PREFIX}_${RUN_ID}_${dataset}_${modality}"
