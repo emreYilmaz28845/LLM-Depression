@@ -158,13 +158,22 @@ def _evaluation_qualifiers(cache_dir: Path, metadata: dict[str, Any]) -> dict[st
     }
 
 
+def _retry_tag(run_dir: Path) -> int:
+    import re
+
+    match = re.search(r"_r(\d+)$", run_dir.name)
+    return int(match.group(1)) if match else 0
+
+
 def _discover_features_cache(
     root: Path, dataset: str, modality: str, fold: int, backend: str
 ) -> tuple[Path, dict[str, Any]] | None:
-    """Discover the unique production cache under a features root.
+    """Discover the production cache under a features root.
 
-    Run dirs named with ``smoke`` are excluded. Exactly one production cache
-    per (dataset, modality, fold) may exist; duplicates are ambiguous.
+    Run dirs named with ``smoke`` are excluded. When several production runs
+    exist for the same cell (bounded retries of the hidden job), the run with
+    the highest retry tag is selected deterministically; equal tags or a tie
+    between unrelated runs remain ambiguous.
     """
     dataset_root = root / dataset
     if not dataset_root.is_dir():
@@ -192,10 +201,14 @@ def _discover_features_cache(
     if not candidates:
         return None
     if len(candidates) > 1:
-        raise ValueError(
-            f"ambiguous caches for {dataset}/{modality}/fold {fold} backend {backend}: "
-            + ", ".join(str(path) for path, _ in candidates)
-        )
+        best_tag = max(_retry_tag(path.parent) for path, _ in candidates)
+        best = [item for item in candidates if _retry_tag(item[0].parent) == best_tag]
+        if len(best) > 1:
+            raise ValueError(
+                f"ambiguous caches for {dataset}/{modality}/fold {fold} backend {backend}: "
+                + ", ".join(str(path) for path, _ in best)
+            )
+        return best[0]
     return candidates[0]
 
 

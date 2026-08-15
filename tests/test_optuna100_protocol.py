@@ -555,12 +555,38 @@ class TestResolver:
             assert manifest["per_backend"] == {"qwen": expected // 2, "gemma4": expected // 2}
             assert manifest["protocol_profile"] == "harmonized_optuna100_v1"
 
-    def test_resolver_require_caches_fails_on_missing_gemma_caches(self) -> None:
+    def test_resolver_selects_highest_retry_tag_deterministically(self) -> None:
+        import tools.resolve_optuna100_manifest as resolver
+
+        manifest = resolver.resolve(
+            family="native",
+            run_id="t3_test",
+            merged_sha=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+            branch="main",
+            github_issue=None,
+            pr=None,
+            require_caches=False,
+        )
+        for study in manifest["studies"]:
+            if study["cache_missing"]:
+                continue
+            if (
+                study["backend"] == "gemma4"
+                and study["dataset"] == "androids_interview"
+                and study["modality"] == "audio_only"
+                and study["fold"] == 4
+            ):
+                assert study["cache_dir"].endswith("_r3/fold_4")
+                break
+        else:
+            raise AssertionError("androids_interview/audio_only fold 4 gemma4 study missing")
+
+    def test_resolver_require_caches_fails_on_missing_merged_gemma_features(self) -> None:
         import tools.resolve_optuna100_manifest as resolver
 
         with pytest.raises(FileNotFoundError, match="missing"):
             resolver.resolve(
-                family="native",
+                family="merged",
                 run_id="t3_test",
                 merged_sha=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
                 branch="main",
