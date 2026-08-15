@@ -269,7 +269,9 @@ PY
 
     aux_lane=$((aux_index % MAX_CONCURRENT_AUX))
     aux_throttle="${aux_lanes[$aux_lane]:-}"
-    hidden_dep="$(dependency_arg "$chain_job" "$aux_throttle")"
+    # dependency_arg returns 1 for an empty value; the || true mirrors the
+    # eval line above so an empty chain/throttle cannot trip set -e.
+    hidden_dep="$(dependency_arg "$chain_job" "$aux_throttle" || true)"
     if [ "$train_ok" = "1" ]; then
         cache="$FEATURES_ROOT/$dataset/${run_name_base}_${RETRY_TAG}/fold_$fold"
         classifiers="$CLASSIFIERS_ROOT/$dataset/${run_name_base}_${RETRY_TAG}/fold_$fold"
