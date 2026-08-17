@@ -581,16 +581,18 @@ class TestResolver:
         else:
             raise AssertionError("androids_interview/audio_only fold 4 gemma4 study missing")
 
-    def test_resolver_require_caches_fails_on_missing_merged_gemma_features(self) -> None:
+    def test_resolver_merged_require_caches_resolves(self) -> None:
         import tools.resolve_optuna100_manifest as resolver
 
-        with pytest.raises(FileNotFoundError, match="missing"):
-            resolver.resolve(
-                family="merged",
-                run_id="t3_test",
-                merged_sha=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
-                branch="main",
-                github_issue=None,
-                pr=None,
-                require_caches=True,
-            )
+        manifest = resolver.resolve(
+            family="merged",
+            run_id="t3_test",
+            merged_sha=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+            branch="main",
+            github_issue=None,
+            pr=None,
+            require_caches=True,
+        )
+        assert manifest["study_count"] == 36
+        assert manifest["per_backend"] == {"qwen": 18, "gemma4": 18}
+        assert manifest["missing_cache_count"] == 0
