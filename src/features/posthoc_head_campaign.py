@@ -237,6 +237,20 @@ def _cache_metadata(cache_dir: str | Path) -> dict[str, Any]:
     )
 
 
+def _cache_identity_for_spec(spec: dict[str, Any], cache_dir: Path) -> dict[str, Any]:
+    """Cache identity honoring the merged feature layout (no final_eval
+    partition; the postprocess writes outer_train/outer_holdout only)."""
+    if str(spec.get("family", "")) == "merged":
+        return {
+            "feature_metadata.json": file_identity(cache_dir / "feature_metadata.json"),
+            "outer_train.npz": file_identity(cache_dir / "outer_train.npz"),
+            "outer_train_rows.jsonl": file_identity(cache_dir / "outer_train_rows.jsonl"),
+            "outer_holdout.npz": file_identity(cache_dir / "outer_holdout.npz"),
+            "outer_holdout_rows.jsonl": file_identity(cache_dir / "outer_holdout_rows.jsonl"),
+        }
+    return cache_identity(cache_dir)
+
+
 def _verify_cache_identity(spec: dict[str, Any]) -> dict[str, Any]:
     """Verify the cache identity against the task spec; never overwrite."""
     metadata = _cache_metadata(spec["cache_dir"])
@@ -352,9 +366,11 @@ def build_run_config(spec: dict[str, Any], attempt_id: str, source_sha: str) -> 
         },
         "cache": {
             "cache_dir": str(cache_dir),
-            "cache_identity": cache_identity(cache_dir),
-            "cache_identity_sha256": policy_canonical_sha256(cache_identity(cache_dir)),
-            "extraction_metadata_sha256": sha256_file(cache_dir / "extraction_metadata.json"),
+            "cache_identity": _cache_identity_for_spec(spec, cache_dir),
+            "cache_identity_sha256": policy_canonical_sha256(_cache_identity_for_spec(spec, cache_dir)),
+            "extraction_metadata_sha256": sha256_file(
+                cache_dir / ("feature_metadata.json" if str(spec.get("family", "")) == "merged" else "extraction_metadata.json")
+            ),
             "parent_attempt_id": cache_config.get("parent_attempt_id"),
             "adapter_config_sha256": cache_config.get("adapter_config_sha256"),
             "adapter_sha256": cache_config.get("adapter_sha256"),
