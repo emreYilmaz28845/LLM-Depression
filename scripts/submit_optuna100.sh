@@ -41,7 +41,7 @@ for study in studies:
     print("\t".join((
         study["backend"], study["dataset"], study["modality"], str(study["fold"]),
         study["attempt_dir"], study["cache_dir"], study["run_name"],
-        study.get("group_id", ""),
+        study.get("group_id", ""), str(study.get("stage", "")),
     )))
 PY
 )
@@ -68,7 +68,7 @@ fi
 create_count=0
 submit_count=0
 for study in "${STUDIES[@]}"; do
-    IFS=$'\t' read -r backend dataset modality fold attempt_dir cache_dir run_name group_id <<< "$study"
+    IFS=$'\t' read -r backend dataset modality fold attempt_dir cache_dir run_name group_id stage <<< "$study"
     spec_json="$SUBMISSIONS_ROOT/$RUN_ID/specs/${backend}_${dataset}_${modality}_fold${fold}.json"
     if [ "$DRY_RUN" = 0 ]; then
         mkdir -p "$(dirname "$spec_json")"
@@ -112,20 +112,20 @@ else:
     print("0")
 PY
 )" = "1" ]; then
-        merged_config="$(python - "$MANIFEST" "$backend" "$modality" "$fold" <<'PY'
+        merged_config="$(python - "$MANIFEST" "$backend" "$modality" "$fold" "$stage" <<'PY'
 import json, sys
 manifest = json.load(open(sys.argv[1], encoding="utf-8"))
 for study in manifest["studies"]:
-    if (study["backend"], study["modality"], str(study["fold"])) == (sys.argv[2], sys.argv[3], sys.argv[4]):
+    if (study["backend"], study["modality"], str(study["fold"]), str(study.get("stage", ""))) == (sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]):
         print(study["merged_config"])
         break
 PY
 )"
-        stage="$(python - "$MANIFEST" "$backend" "$modality" "$fold" <<'PY'
+        stage="$(python - "$MANIFEST" "$backend" "$modality" "$fold" "$stage" <<'PY'
 import json, sys
 manifest = json.load(open(sys.argv[1], encoding="utf-8"))
 for study in manifest["studies"]:
-    if (study["backend"], study["modality"], str(study["fold"])) == (sys.argv[2], sys.argv[3], sys.argv[4]):
+    if (study["backend"], study["modality"], str(study["fold"]), str(study.get("stage", ""))) == (sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]):
         print(study["stage"])
         break
 PY
