@@ -51,6 +51,7 @@ from src.features.hidden_classifier_policy import (
     cache_identity,
     canonical_sha256 as policy_canonical_sha256,
     classifier_aggregation_policy,
+    file_identity,
 )
 
 TASK_SCHEMA_VERSION = "audiollm.posthoc_head_task.v1"
