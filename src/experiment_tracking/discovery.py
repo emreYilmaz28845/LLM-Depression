@@ -46,6 +46,9 @@ _RUN_GLOBS = (
     "*/*/*/fold_*/run_config.yaml",
     "*/*/*/*/fold_*/run_config.yaml",
     "*/*/*/*/fold_*/*/run_config.yaml",
+    "*/*/*/fold_*/*/run_config.yaml",
+    "*/*/*/*/*/fold_*/resolved_merged_config.json",
+    "*/*/*/*/*/*/fold_*/resolved_merged_config.json",
 )
 
 
@@ -229,7 +232,14 @@ def _discover_run(scan_root: Path, fold_dir: Path, *, parts_offset: int = 0) -> 
     # identity still comes from the three parts before the fold directory.
     modality, dataset, run_name = parts[-4 - parts_offset], parts[-3 - parts_offset], parts[-2 - parts_offset]
     fold = int(parts[-1 - parts_offset].split("_", 1)[1])
-    run_config_path = fold_dir / "run_config.yaml"
+    merged_layout = (fold_dir / "resolved_merged_config.json").is_file() and not (fold_dir / "run_config.yaml").is_file()
+    if merged_layout:
+        modality, dataset, run_name = parts[-4 - parts_offset], "merged", parts[-3 - parts_offset]
+    elif parts_offset == 1 and len(parts) == 5:
+        # Merged Optuna post-hoc layout omits the dataset level:
+        # <modality>/<run>/fold_<n>/<experiment_id>.
+        modality, dataset, run_name = parts[-4], "merged", parts[-3]
+    run_config_path = fold_dir / "run_config.yaml" if not merged_layout else fold_dir / "resolved_merged_config.json"
 
     run_config_file_sha256: str | None = None
     run_config_parse_ok = False
@@ -246,6 +256,9 @@ def _discover_run(scan_root: Path, fold_dir: Path, *, parts_offset: int = 0) -> 
         if isinstance(data, dict):
             run_config_parse_ok = True
             resolved_config = data.get("config") if isinstance(data.get("config"), dict) else None
+            if merged_layout and resolved_config is None:
+                resolved_config = dict(data)
+                resolved_config["dataset"] = "merged"
             protocol = {key: value for key, value in data.items() if key != "config"}
             if resolved_config is not None:
                 resolved_config_sha256 = canonical_sha256(resolved_config)
