@@ -220,11 +220,19 @@ def _build_plan(
         candidate = Path(run_dir) / run_config_path
         if candidate.is_file():
             config_path = candidate
+    if config_path is None and run_dir:
+        # Post-hoc attempts may omit the run_config artifact; fall back to the
+        # standard run_config.yaml in the attempt directory.
+        fallback = Path(run_dir) / "run_config.yaml"
+        if fallback.is_file():
+            config_path = fallback
     if config_path is not None:
         try:
             data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
             if isinstance(data, dict) and isinstance(data.get("config"), dict):
                 resolved_config = data["config"]
+            elif isinstance(data, dict):
+                resolved_config = data
         except (OSError, yaml.YAMLError):
             resolved_config = None
     safe_config, config_exclusions = filter_safe(resolved_config) if resolved_config is not None else (None, [])
@@ -261,8 +269,23 @@ def _build_plan(
     if not history_ok:
         method = ""
         if isinstance(resolved_config, dict):
-            method = str(resolved_config.get("method") or "")
-        if method not in {"gemma4_hidden_fixed_heads", "qwen_hidden_fixed_heads"}:
+            method = str(
+                (
+                    resolved_config.get("method")
+                    or resolved_config.get("config", {}).get("method")
+                    or resolved_config.get("protocol")
+                    or ""
+                )
+            )
+        if method not in {
+            "gemma4_hidden_fixed_heads",
+            "qwen_hidden_fixed_heads",
+            "xgb_optuna100_harmonized_v1",
+            "qwen_hidden_xgb_optuna100",
+            "gemma4_hidden_xgb_optuna100",
+            "xgb_optuna_posthoc",
+            "symmetric_merged",
+        }:
             # Post-hoc fixed-head attempts never train, so they have no
             # training history by design; the runbook records their method so
             # the exporter can distinguish them from incomplete legacy runs.

@@ -1075,17 +1075,66 @@ def build_merged_summary(wb: Workbook, *, detailed: bool) -> None:
     ws.freeze_panes = "A5"
 
 
+def _optuna_report_values(family: str, dataset: str, modality: str, backend: str) -> tuple:
+    """Look up qualified macro-F1 / positive-F1 for an Optuna-100 workbook cell."""
+    backend_key = "qwen" if backend == "Qwen" else "gemma4"
+    modality_key = {
+        "Audio + Text": "audio_text",
+        "Audio only": "audio_only",
+        "Text only": "text_only",
+    }[modality]
+    if family == "Symmetric merged":
+        report_root = PROJECT_ROOT / "outputs/experiment_reports/optuna100_merged"
+        stage_key = "cv" if dataset == "CV (5-fold)" else "final"
+        cell = f"{modality_key}_{stage_key}_{backend_key}"
+        report_path = report_root / cell / "group_report.json"
+        if not report_path.is_file():
+            return None, None, "missing report"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        return report.get("aggregate", {}).get("mean"), None, f"report:{report_path.relative_to(PROJECT_ROOT)}"
+    if family == "DAIC official development":
+        report_root = PROJECT_ROOT / "outputs/experiment_reports/optuna100_officialdev"
+        cell = f"daic_{modality_key}_{backend_key}"
+        report_path = report_root / cell / "group_report.json"
+        if not report_path.is_file():
+            return None, None, "missing report"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        return report.get("aggregate", {}).get("mean"), None, f"report:{report_path.relative_to(PROJECT_ROOT)}"
+    dataset_key = {
+        "D3TEC": "d3tec", "Androids Interview": "androids_interview",
+        "CMDC": "cmdc", "Turkish t17": "turkish", "DAIC-WOZ": "daic",
+    }[dataset]
+    if family == "Native":
+        report_root = PROJECT_ROOT / "outputs/experiment_reports/optuna100_native"
+        cell = f"{dataset_key}_{modality_key}_{backend_key}"
+        stage_key = None
+    elif family == "English":
+        report_root = PROJECT_ROOT / "outputs/experiment_reports/optuna100_english"
+        cell = f"{dataset_key}_{modality_key}_{backend_key}"
+        stage_key = None
+    else:
+        report_root = PROJECT_ROOT / "outputs/experiment_reports/optuna100_english"
+        cell = f"{dataset_key}_{modality_key}_{backend_key}"
+        stage_key = None
+    report_path = report_root / cell / "group_report.json"
+    if not report_path.is_file():
+        return None, None, "missing report"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    mean = report.get("aggregate", {}).get("mean")
+    return mean, None, f"report:{report_path.relative_to(PROJECT_ROOT)}"
+
+
 def build_optuna100_summary(wb: Workbook) -> None:
     """Standardized Optuna-100 XGBoost comparison sheet.
 
-    Cells stay blank until qualified Optuna-100 evidence exists (runbook
+    Cells are populated from the qualified Optuna-100 group reports (runbook
     Tasks 9-12). The fixed XGBoost rows in the historical sheets remain
     available and labelled; this sheet is the new standardized comparison
     and never mixes the two.
     """
     ws = wb.create_sheet("Optuna-100 XGB")
     _widths(ws, {"A": 26, "B": 18, "C": 18, "D": 16, "E": 14, "F": 14, "G": 60})
-    _title(ws, "Standardized Optuna-100 XGBoost — macro-F1 (not run yet)", 7)
+    _title(ws, "Standardized Optuna-100 XGBoost — macro-F1", 7)
     _note(
         ws, 2,
         "Protocol harmonized_optuna100_v1: exactly 100 TPE trials, seeds 1337/1337/1337, "
@@ -1094,9 +1143,10 @@ def build_optuna100_summary(wb: Workbook) -> None:
         "Prediction backends qwen_hidden_xgb_optuna100 / gemma4_hidden_xgb_optuna100 "
         "(+ _symmetric_merged for merged). Qwen and Gemma paired cells share manifests, splits, "
         "weights, view (original_teacher_forced, harmonized_all_windows_full_coverage), namespace "
-        "headline/binary_strict, and seeds. Fixed historical XGB rows remain in their original "
-        "sheets, labelled, and are not replaced. All cells blank until evidence exists; "
-        "not-run fields stay blank.",
+        "headline/binary_strict, and seeds. Values are fold-mean macro-F1 from the qualified "
+        "group reports; the merged 'Final (DAIC official test)' rows are the single DAIC test "
+        "fold. Fixed historical XGB rows remain in their original sheets, labelled, and are not "
+        "replaced.",
         7, height=90,
     )
     _header_row(ws, 4, ["Family / Dataset", "Modality", "Backend", "Aggregation", "Macro-F1", "Positive-F1", "Evidence"])
@@ -1128,10 +1178,11 @@ def build_optuna100_summary(wb: Workbook) -> None:
                     ws.cell(row, 1).border = BORDER
                     _body_cell(ws, row, 2, modality)
                     _body_cell(ws, row, 3, backend)
-                    _body_cell(ws, row, 4, "pooled / fold-mean")
-                    _body_cell(ws, row, 5, None, fmt="0.0000")
-                    _body_cell(ws, row, 6, None, fmt="0.0000")
-                    _body_cell(ws, row, 7, "not run yet")
+                    _body_cell(ws, row, 4, "fold-mean")
+                    macro_f1, positive_f1, evidence = _optuna_report_values(family, dataset, modality, backend)
+                    _body_cell(ws, row, 5, round(macro_f1, 4) if macro_f1 is not None else None, fmt="0.0000")
+                    _body_cell(ws, row, 6, round(positive_f1, 4) if positive_f1 is not None else None, fmt="0.0000")
+                    _body_cell(ws, row, 7, evidence or "missing report")
                     row += 1
     ws.freeze_panes = "A5"
 
