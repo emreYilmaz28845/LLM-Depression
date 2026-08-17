@@ -358,7 +358,7 @@ def _resolve_merged_study(
     # the run-based identity (training run + stage + fold) recorded as a
     # deterministic string, matching the post-hoc schema requirement.
     run_dir_name = features_dir.parents[2].name if len(features_dir.parents) > 2 else ""
-    parent_attempt = f"merged:{run_dir_name}:{stage}:fold_{fold}" if run_dir_name else None
+    parent_attempt = f"legacy-merged-{run_dir_name}-{stage}-fold_{fold}" if run_dir_name else None
     parent = {
         "parent_attempt_id": parent_attempt,
         "parent_fold_dir": str(Path(checkpoint).parent) if checkpoint else None,
