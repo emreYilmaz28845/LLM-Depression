@@ -688,7 +688,11 @@ def test_real_selection_yaml_covers_all_real_workbook_rows() -> None:
     selection = load_selection(selection_path)
     assert inventory["summary"]["duplicate_keys"] == 0
     assert inventory["summary"]["malformed_rows"] == 0
-    keys = {row["provenance_key"] for row in inventory["rows"]}
+    keys = {
+        row["provenance_key"]
+        for row in inventory["rows"]
+        if not str(row["provenance_key"]).startswith("Optuna100")
+    }
     entry_keys = {
         "|".join(
             [
@@ -701,8 +705,10 @@ def test_real_selection_yaml_covers_all_real_workbook_rows() -> None:
         for entry in selection["entries"]
         if not entry["selection_id"].startswith("Optuna100|")
     }
-    # The Optuna-100 entries are deliberate future provenance rows (blank
-    # until evidence exists); every real workbook row must still be covered.
+    # The Optuna-100 rows are self-evidenced through the 'Optuna-100 XGB' sheet
+    # and its per-cell report paths (the selection entries for them are the
+    # per-fold W&B export units); every other real workbook row must still be
+    # covered by the selection.
     assert keys <= entry_keys
     from collections import Counter
 
