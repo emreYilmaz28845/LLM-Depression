@@ -68,10 +68,10 @@ def test_wandb_selection_entries_are_safe_and_unique() -> None:
     assert len(legacy) == 15
 
 
-def test_workbook_regeneration_keeps_existing_sheets_and_adds_optuna_values() -> None:
+def test_workbook_regeneration_keeps_compact_sheet_set_with_qwen_vs_gemma() -> None:
     workbook = load_workbook(WORKBOOK_PATH, data_only=True)
-    assert "Optuna-100 XGB" in workbook.sheetnames
-    sheet = workbook["Optuna-100 XGB"]
+    assert workbook.sheetnames == ["Summary", "Qwen vs Gemma", "DAIC Packed30 Family", "Provenance"]
+    sheet = workbook["Qwen vs Gemma"]
     value_cells = []
     for row in sheet.iter_rows():
         for cell in row:
@@ -79,21 +79,8 @@ def test_workbook_regeneration_keeps_existing_sheets_and_adds_optuna_values() ->
                 value_cells.append(cell.value)
     assert value_cells and any(isinstance(value, (int, float)) for value in value_cells)
     assert not any(isinstance(value, (int, float)) and (value < 0 or value > 1) for value in value_cells)
-    # All pre-existing sheets remain present.
-    for expected in (
-        "Summary",
-        "Merged Symmetric Summary",
-        "EN Translation",
-        "EN vs Native MacroF1",
-        "Merged vs Standalone MacroF1",
-        "DAIC Packed30 Family",
-        "Gemma 4 DAIC",
-        "Gemma vs Qwen",
-        "DAIC LLM Comparison",
-        "DAIC Head Ablation",
-        "Provenance",
-    ):
-        assert expected in workbook.sheetnames
+    methods = {sheet.cell(r, 4).value for r in range(5, sheet.max_row + 1)}
+    assert {"Teacher-forced", "LogReg head", "XGBoost"} <= methods
 
 
 def test_workbook_and_builder_hashes_recorded_in_wandb_selection() -> None:
