@@ -1066,9 +1066,10 @@ def build_summary(wb: Workbook, *, detailed: bool) -> None:
         9, height=80,
     )
     headers = ["Evaluation / Modality", "Fine-tuned Qwen", "LogReg head", "XGBoost fixed",
-               "Fine-tuned Gemma", "LogReg head (Gemma)", "XGBoost Optuna-100 (Gemma)"]
+               "XGBoost Optuna-100 (Qwen)", "Fine-tuned Gemma", "LogReg head (Gemma)",
+               "XGBoost Optuna-100 (Gemma)"]
     if detailed:
-        headers += ["XGBoost Optuna (Qwen)", "XGBoost Subject OS\n(3-seed mean)"]
+        headers += ["XGBoost Subject OS\n(3-seed mean)"]
     _header_row(ws, 4, headers)
     row = 5
     for dataset in DATASETS:
@@ -1082,11 +1083,11 @@ def build_summary(wb: Workbook, *, detailed: bool) -> None:
             logreg, xgb, optuna, os_ = STANDALONE_HEADS[(dataset, modality)]
             _body_cell(ws, row, 3, logreg, fmt="0.0000")
             _body_cell(ws, row, 4, xgb, fmt="0.0000")
-            _body_cell(ws, row, 5, GEMMA_NATIVE_TF[(dataset, modality)], fmt="0.0000")
-            _body_cell(ws, row, 6, GEMMA_NATIVE_LR[(dataset, modality)], fmt="0.0000")
-            _body_cell(ws, row, 7, GEMMA_OPTUNA[(dataset, modality)], fmt="0.0000")
+            _body_cell(ws, row, 5, QWEN_OPTUNA[(dataset, modality)], fmt="0.0000")
+            _body_cell(ws, row, 6, GEMMA_NATIVE_TF[(dataset, modality)], fmt="0.0000")
+            _body_cell(ws, row, 7, GEMMA_NATIVE_LR[(dataset, modality)], fmt="0.0000")
+            _body_cell(ws, row, 8, GEMMA_OPTUNA[(dataset, modality)], fmt="0.0000")
             if detailed:
-                _body_cell(ws, row, 8, optuna, fmt="0.0000")
                 _body_cell(ws, row, 9, os_, fmt="0.0000")
             row += 1
     ws.freeze_panes = "A5"
@@ -1650,9 +1651,60 @@ def build_provenance(wb: Workbook, *, detailed: bool) -> None:
 
     build_gemma4_provenance(ws, put)
     build_gemma_native_provenance(ws, put)
+    build_optuna100_provenance(ws, put)
     build_daic_officialdev_provenance(ws, put)
 
     ws.freeze_panes = "A3"
+
+
+def build_optuna100_provenance(ws, put) -> None:
+    """Provenance for the standardized Optuna-100 XGBoost comparison sheet
+    (both Qwen and Gemma), linking every displayed fold-mean to its group
+    report and the registry attempt group."""
+    backend_label = {"qwen": "Qwen", "gemma4": "Gemma 4"}
+    run_ids = {
+        "native": "optuna100_native_20260815T0330Z_99efc52",
+        "english": "optuna100_english_20260815T2300Z_a955cdd",
+        "merged": "optuna100_merged_20260816T2000Z_9efd6e5",
+        "officialdev": "optuna100_officialdev_20260815T0330Z_99efc52",
+    }
+    ds_key = {"D3TEC": "d3tec", "Androids Interview": "androids_interview", "CMDC": "cmdc",
+              "Turkish": "turkish", "DAIC": "daic"}
+    mod_key = {"Audio + Text": "audio_text", "Audio only": "audio_only", "Text only": "text_only"}
+    cells = []
+    for dataset in ("D3TEC", "Androids Interview", "CMDC", "Turkish", "DAIC"):
+        for modality in MODALITIES:
+            for backend in ("qwen", "gemma4"):
+                cells.append(("native", dataset, modality, backend,
+                              f"outputs/experiment_reports/optuna100_native/{ds_key[dataset]}_{mod_key[modality]}_{backend}/group_report.json"))
+    for dataset in ("D3TEC", "Androids Interview", "CMDC", "Turkish"):
+        for modality in ("Audio + Text", "Text only"):
+            for backend in ("qwen", "gemma4"):
+                cells.append(("english", dataset, modality, backend,
+                              f"outputs/experiment_reports/optuna100_english/{ds_key[dataset]}_{mod_key[modality]}_{backend}/group_report.json"))
+    for modality in MODALITIES:
+        for stage, stage_label in (("cv", "CV (5-fold)"), ("final", "Final (DAIC official test)")):
+            for backend in ("qwen", "gemma4"):
+                cells.append(("merged", stage_label, modality, backend,
+                              f"outputs/experiment_reports/optuna100_merged/{mod_key[modality]}_{stage}_{backend}/group_report.json"))
+    for modality in MODALITIES:
+        for backend in ("qwen", "gemma4"):
+            cells.append(("officialdev", "DAIC", modality, backend,
+                          f"outputs/experiment_reports/optuna100_officialdev/daic_{mod_key[modality]}_{backend}/group_report.json"))
+    agg = ("Optuna-100 fold-mean, 100 TPE trials seed 1337, 3 subject-grouped inner folds, "
+           "macro-F1 objective, harmonized_all_windows_full_coverage, headline/binary-strict")
+    for family, dataset, modality, backend, report in cells:
+        report_path = PROJECT_ROOT / report
+        if not report_path.is_file():
+            continue
+        value = json.loads(report_path.read_text(encoding="utf-8")).get("aggregate", {}).get("mean")
+        source = (
+            f"campaign {run_ids[family]}, {backend_label[backend]} backend, 100 trials/fold, "
+            f"all attempts REPORTABLE in registry (group {family}-optuna100-{run_ids[family]})"
+        )
+        put(f"Optuna100 {family}", dataset, modality,
+            f"XGBoost Optuna-100 ({backend_label[backend]})", value, source, agg,
+            report, "group report OK; attempts REPORTABLE")
 
 
 def build_daic_officialdev_provenance(ws, put) -> None:
