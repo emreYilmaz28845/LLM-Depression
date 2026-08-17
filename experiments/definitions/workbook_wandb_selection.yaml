@@ -1,9 +1,9 @@
 schema_version: audiollm.workbook_wandb_selection.v1
 workbook:
   path: depression_results_clean.xlsx
-  sha256: 504935d6edb544011207b4b068227feff9d27ec9ebbb548fd9c90391f06fd7de
+  sha256: 714a2951b14eceb181a3e5105961b57c43ecece68ba7902484e33ab7895b94fe
   builder_path: scripts/build_clean_workbook.py
-  builder_sha256: 7158179d74a79d1fabd1568f084505eaefcd8e739cf837c1758ea253ec09ac2c
+  builder_sha256: 38689d4e78d6369460a66e508d818147a56d8b5820762cc1c58ec51def0d5c07
   provenance_sheet: Provenance
 entries:
 - selection_id: Standalone|DAIC|Audio + Text|Fine-tuned Qwen
@@ -12089,3 +12089,951 @@ entries:
   wandb_policy: skip_not_run
   blocking_reasons:
   - study not run yet
+- selection_id: Gemma native|D3TEC|Audio + Text|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma native
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_d3tec_audio_text_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|D3TEC|Audio + Text|Gemma LogReg raw hidden head
+  provenance_key:
+    experiment: Gemma native
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_d3tec_audio_text_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|D3TEC|Audio + Text|Gemma XGBoost Optuna-100 raw hidden
+    head
+  provenance_key:
+    experiment: Gemma native
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Gemma XGBoost Optuna-100 raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_optuna100_optuna100_native_20260815t0330z_99efc52_d3tec_audio_text
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|D3TEC|Audio only|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma native
+    dataset: D3TEC
+    modality: Audio only
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_d3tec_audio_only_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|D3TEC|Audio only|Gemma LogReg raw hidden head
+  provenance_key:
+    experiment: Gemma native
+    dataset: D3TEC
+    modality: Audio only
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_d3tec_audio_only_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|D3TEC|Audio only|Gemma XGBoost Optuna-100 raw hidden
+    head
+  provenance_key:
+    experiment: Gemma native
+    dataset: D3TEC
+    modality: Audio only
+    method: Gemma XGBoost Optuna-100 raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_optuna100_optuna100_native_20260815t0330z_99efc52_d3tec_audio_only
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|D3TEC|Text only|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma native
+    dataset: D3TEC
+    modality: Text only
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_d3tec_text_only_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|D3TEC|Text only|Gemma LogReg raw hidden head
+  provenance_key:
+    experiment: Gemma native
+    dataset: D3TEC
+    modality: Text only
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_d3tec_text_only_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|D3TEC|Text only|Gemma XGBoost Optuna-100 raw hidden head
+  provenance_key:
+    experiment: Gemma native
+    dataset: D3TEC
+    modality: Text only
+    method: Gemma XGBoost Optuna-100 raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_optuna100_optuna100_native_20260815t0330z_99efc52_d3tec_text_only
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|Androids Interview|Audio + Text|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma native
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_androids_interview_audio_text_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|Androids Interview|Audio + Text|Gemma LogReg raw hidden
+    head
+  provenance_key:
+    experiment: Gemma native
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_androids_interview_audio_text_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|Androids Interview|Audio + Text|Gemma XGBoost Optuna-100
+    raw hidden head
+  provenance_key:
+    experiment: Gemma native
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Gemma XGBoost Optuna-100 raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_optuna100_optuna100_native_20260815t0330z_99efc52_androids_interview_audio_text
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|Androids Interview|Audio only|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma native
+    dataset: Androids Interview
+    modality: Audio only
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_androids_interview_audio_only_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|Androids Interview|Audio only|Gemma LogReg raw hidden
+    head
+  provenance_key:
+    experiment: Gemma native
+    dataset: Androids Interview
+    modality: Audio only
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_androids_interview_audio_only_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|Androids Interview|Audio only|Gemma XGBoost Optuna-100
+    raw hidden head
+  provenance_key:
+    experiment: Gemma native
+    dataset: Androids Interview
+    modality: Audio only
+    method: Gemma XGBoost Optuna-100 raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_optuna100_optuna100_native_20260815t0330z_99efc52_androids_interview_audio_only
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|Androids Interview|Text only|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma native
+    dataset: Androids Interview
+    modality: Text only
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_androids_interview_text_only_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|Androids Interview|Text only|Gemma LogReg raw hidden
+    head
+  provenance_key:
+    experiment: Gemma native
+    dataset: Androids Interview
+    modality: Text only
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_androids_interview_text_only_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|Androids Interview|Text only|Gemma XGBoost Optuna-100
+    raw hidden head
+  provenance_key:
+    experiment: Gemma native
+    dataset: Androids Interview
+    modality: Text only
+    method: Gemma XGBoost Optuna-100 raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_optuna100_optuna100_native_20260815t0330z_99efc52_androids_interview_text_only
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|CMDC|Audio + Text|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma native
+    dataset: CMDC
+    modality: Audio + Text
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_cmdc_audio_text_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|CMDC|Audio + Text|Gemma LogReg raw hidden head
+  provenance_key:
+    experiment: Gemma native
+    dataset: CMDC
+    modality: Audio + Text
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_cmdc_audio_text_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|CMDC|Audio + Text|Gemma XGBoost Optuna-100 raw hidden
+    head
+  provenance_key:
+    experiment: Gemma native
+    dataset: CMDC
+    modality: Audio + Text
+    method: Gemma XGBoost Optuna-100 raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_optuna100_optuna100_native_20260815t0330z_99efc52_cmdc_audio_text
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|CMDC|Audio only|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma native
+    dataset: CMDC
+    modality: Audio only
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_cmdc_audio_only_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|CMDC|Audio only|Gemma LogReg raw hidden head
+  provenance_key:
+    experiment: Gemma native
+    dataset: CMDC
+    modality: Audio only
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_cmdc_audio_only_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|CMDC|Audio only|Gemma XGBoost Optuna-100 raw hidden head
+  provenance_key:
+    experiment: Gemma native
+    dataset: CMDC
+    modality: Audio only
+    method: Gemma XGBoost Optuna-100 raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_optuna100_optuna100_native_20260815t0330z_99efc52_cmdc_audio_only
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|CMDC|Text only|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma native
+    dataset: CMDC
+    modality: Text only
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_cmdc_text_only_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|CMDC|Text only|Gemma LogReg raw hidden head
+  provenance_key:
+    experiment: Gemma native
+    dataset: CMDC
+    modality: Text only
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_cmdc_text_only_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|CMDC|Text only|Gemma XGBoost Optuna-100 raw hidden head
+  provenance_key:
+    experiment: Gemma native
+    dataset: CMDC
+    modality: Text only
+    method: Gemma XGBoost Optuna-100 raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_optuna100_optuna100_native_20260815t0330z_99efc52_cmdc_text_only
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|Turkish|Audio + Text|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma native
+    dataset: Turkish
+    modality: Audio + Text
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_turkish_audio_text_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|Turkish|Audio + Text|Gemma LogReg raw hidden head
+  provenance_key:
+    experiment: Gemma native
+    dataset: Turkish
+    modality: Audio + Text
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_turkish_audio_text_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|Turkish|Audio + Text|Gemma XGBoost Optuna-100 raw hidden
+    head
+  provenance_key:
+    experiment: Gemma native
+    dataset: Turkish
+    modality: Audio + Text
+    method: Gemma XGBoost Optuna-100 raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_optuna100_optuna100_native_20260815t0330z_99efc52_turkish_audio_text
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|Turkish|Audio only|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma native
+    dataset: Turkish
+    modality: Audio only
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_turkish_audio_only_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|Turkish|Audio only|Gemma LogReg raw hidden head
+  provenance_key:
+    experiment: Gemma native
+    dataset: Turkish
+    modality: Audio only
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_turkish_audio_only_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|Turkish|Audio only|Gemma XGBoost Optuna-100 raw hidden
+    head
+  provenance_key:
+    experiment: Gemma native
+    dataset: Turkish
+    modality: Audio only
+    method: Gemma XGBoost Optuna-100 raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_optuna100_optuna100_native_20260815t0330z_99efc52_turkish_audio_only
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|Turkish|Text only|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma native
+    dataset: Turkish
+    modality: Text only
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_turkish_text_only_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|Turkish|Text only|Gemma LogReg raw hidden head
+  provenance_key:
+    experiment: Gemma native
+    dataset: Turkish
+    modality: Text only
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_turkish_text_only_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma native|Turkish|Text only|Gemma XGBoost Optuna-100 raw hidden
+    head
+  provenance_key:
+    experiment: Gemma native
+    dataset: Turkish
+    modality: Text only
+    method: Gemma XGBoost Optuna-100 raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_native_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_optuna100_optuna100_native_20260815t0330z_99efc52_turkish_text_only
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_xgb_optuna100
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
