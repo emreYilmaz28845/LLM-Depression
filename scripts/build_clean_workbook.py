@@ -455,6 +455,71 @@ GEMMA4_HEADS = {
     },
 }
 GEMMA4_HEADS_BACKEND = {"logreg": "gemma4_hidden_logreg_raw", "xgb": "gemma4_hidden_xgb_raw"}
+
+# --------------------------------------------------------------------------- Native Gemma 4 harmonized campaign (verified)
+# Teacher-forced (TF) and LogReg fold-means from the local native group reports
+# (outputs/experiment_reports/gemma4_harmonized/native_tf_* and native_lr/*),
+# seed 1337, macro-F1, binary-strict, harmonized view. DAIC rows reuse the DAIC
+# official-test campaign (GEMMA4_QWEN / GEMMA4_HEADS). XGBoost uses the
+# standardized Optuna-100 fold-mean: the runbook deliberately fits no fixed XGB
+# head for Gemma ("every new Gemma XGBoost result comes from the standardized
+# Optuna-100 protocol, never from a fixed head").
+GEMMA_NATIVE_TF = {
+    ("DAIC", "Audio + Text"): 0.7631048387096775,
+    ("DAIC", "Audio only"): 0.4125,
+    ("DAIC", "Text only"): 0.7552083333333333,
+    ("CMDC", "Audio + Text"): 1.0,
+    ("CMDC", "Audio only"): 0.784022,
+    ("CMDC", "Text only"): 0.957439,
+    ("Turkish", "Audio + Text"): 0.565776,
+    ("Turkish", "Audio only"): 0.468559,
+    ("Turkish", "Text only"): 0.678178,
+    ("D3TEC", "Audio + Text"): 0.571399,
+    ("D3TEC", "Audio only"): 0.405413,
+    ("D3TEC", "Text only"): 0.550505,
+    ("Androids Interview", "Audio + Text"): 0.860541,
+    ("Androids Interview", "Audio only"): 0.806987,
+    ("Androids Interview", "Text only"): 0.776201,
+}
+GEMMA_NATIVE_LR = {
+    ("DAIC", "Audio + Text"): 0.7898658718330849,
+    ("DAIC", "Audio only"): 0.6258420085731782,
+    ("DAIC", "Text only"): 0.70625,
+    ("CMDC", "Audio + Text"): 1.0,
+    ("CMDC", "Audio only"): 0.984127,
+    ("CMDC", "Text only"): 0.956334,
+    ("Turkish", "Audio + Text"): 0.618816,
+    ("Turkish", "Audio only"): 0.529039,
+    ("Turkish", "Text only"): 0.558253,
+    ("D3TEC", "Audio + Text"): 0.498159,
+    ("D3TEC", "Audio only"): 0.522677,
+    ("D3TEC", "Text only"): 0.522456,
+    ("Androids Interview", "Audio + Text"): 0.857269,
+    ("Androids Interview", "Audio only"): 0.796701,
+    ("Androids Interview", "Text only"): 0.802669,
+}
+# Paired Optuna-100 fold-mean macro-F1 (same standardized protocol, seed 1337,
+# harmonized view) for the Qwen/Gemma XGB comparison rows.
+QWEN_OPTUNA = {
+    ("DAIC", "Audio + Text"): 0.715726, ("DAIC", "Audio only"): 0.576127, ("DAIC", "Text only"): 0.725729,
+    ("CMDC", "Audio + Text"): 0.925089, ("CMDC", "Audio only"): 0.951555, ("CMDC", "Text only"): 0.953900,
+    ("Turkish", "Audio + Text"): 0.631141, ("Turkish", "Audio only"): 0.514507, ("Turkish", "Text only"): 0.589237,
+    ("D3TEC", "Audio + Text"): 0.523398, ("D3TEC", "Audio only"): 0.519475, ("D3TEC", "Text only"): 0.634535,
+    ("Androids Interview", "Audio + Text"): 0.854305, ("Androids Interview", "Audio only"): 0.810943, ("Androids Interview", "Text only"): 0.846597,
+}
+GEMMA_OPTUNA = {
+    ("DAIC", "Audio + Text"): 0.815686, ("DAIC", "Audio only"): 0.725729, ("DAIC", "Text only"): 0.769608,
+    ("CMDC", "Audio + Text"): 0.984127, ("CMDC", "Audio only"): 0.958369, ("CMDC", "Text only"): 0.924588,
+    ("Turkish", "Audio + Text"): 0.681937, ("Turkish", "Audio only"): 0.567052, ("Turkish", "Text only"): 0.520832,
+    ("D3TEC", "Audio + Text"): 0.583227, ("D3TEC", "Audio only"): 0.546075, ("D3TEC", "Text only"): 0.571942,
+    ("Androids Interview", "Audio + Text"): 0.856547, ("Androids Interview", "Audio only"): 0.802024, ("Androids Interview", "Text only"): 0.748177,
+}
+GEMMA_NATIVE_EVIDENCE = {
+    "tf": "outputs/experiment_reports/gemma4_harmonized/native_tf_{ds}_{mod}/group_report.json",
+    "lr": "outputs/experiment_reports/gemma4_harmonized/native_lr/{ds}_{mod}.json",
+    "optuna": "outputs/experiment_reports/optuna100_native/{ds}_{mod}_{backend}/group_report.json",
+}
+
 GEMMA4_HEADS_EVIDENCE = "output_model/harmonized_v1_gemma4_heads/<modality>/daic/<run>/fold_0/hidden_classifiers/<variant>/"
 
 
@@ -920,66 +985,70 @@ def build_daic_officialdev_heads(wb: Workbook, *, detailed: bool) -> None:
 
 
 def build_gemma_vs_qwen(wb: Workbook) -> None:
-    """Gemma 4 vs Qwen — DAIC official test comparison across the three
-    backbone/head methods. Qwen reference = harmonized campaign (teacher-forced
-    macro-F1 from STANDALONE_QWEN; hidden heads from STANDALONE_HEADS). Gemma =
-    the Gemma 4 DAIC campaign (teacher-forced from GEMMA4_QWEN; fixed heads
-    from GEMMA4_HEADS). Values are the same cells as the Gemma 4 DAIC sheet and
-    the Summary sheet; this page only compares them side by side.
+    """Gemma 4 vs Qwen — macro-F1 comparison across every dataset, the three
+    modalities, and the three backbone/head methods. Qwen teacher-forced and
+    hidden-head values = harmonized campaign (STANDALONE_QWEN /
+    STANDALONE_HEADS). Gemma teacher-forced + LogReg = the native Gemma
+    campaign (verified native group reports; DAIC reuses the official-test
+    campaign GEMMA4_QWEN / GEMMA4_HEADS). XGBoost compares the standardized
+    Optuna-100 fold-means for both backends (the runbook fits no fixed XGB
+    head for Gemma). Delta = Gemma minus Qwen.
     """
     ws = wb.create_sheet("Gemma vs Qwen")
     _widths(ws, {"A": 16, "B": 30, "C": 15, "D": 15, "E": 15})
-    _title(ws, "Gemma 4 vs Qwen — DAIC official test, macro-F1 (seed 1337, fold 0)", 5)
+    _title(ws, "Gemma 4 vs Qwen — macro-F1 (seed 1337, harmonized view)", 5)
     _note(
         ws, 2,
-        "Macro-F1, binary-strict, best_model, official 47-subject DAIC test. Qwen: harmonized "
-        "campaign harmonized_v1_prod_20260809T171705Z_d1e8130b (teacher-forced row = Fine-tuned "
-        "Qwen STANDALONE_QWEN; head rows = harmonized hidden-state heads STANDALONE_HEADS, "
-        "pooled subject-level). Gemma: campaign gemma4_v1_prod_20260812T020449Z_cca3f4ae "
-        "(teacher-forced GEMMA4_QWEN, subject mean-score) and fixed-head campaign "
-        "gemma4-daic-fixed-heads-v1-799cc412 (GEMMA4_HEADS, subject mean probability >= 0.5). "
-        "One seed each — differences are observations, not variance estimates. "
+        "Macro-F1, binary-strict, best_model. Qwen: harmonized campaign "
+        "harmonized_v1_prod_20260809T171705Z_d1e8130b (teacher-forced = Fine-tuned Qwen; "
+        "head rows = harmonized hidden-state heads, pooled/fold subject-level). Gemma: native "
+        "harmonized campaign gemma4_v1_prod_20260814T2030Z_1ab337d2_r2 (teacher-forced and LogReg "
+        "fold-means from the verified native group reports); DAIC rows reuse the DAIC official-test "
+        "campaign (GEMMA4_QWEN / GEMMA4_HEADS). XGBoost rows compare the standardized Optuna-100 "
+        "fold-means (100 trials, seed 1337) for both backends; the runbook fits no fixed XGB head "
+        "for Gemma by design, and the Qwen historical fixed-XGB rows remain in the Summary sheet. "
         "Delta = Gemma minus Qwen. Provenance: Provenance sheet.",
         5, height=110,
     )
-    _header_row(ws, 4, ["Modality", "Method", "Qwen macro-F1", "Gemma macro-F1", "Δ (Gemma − Qwen)"])
-    mod_keys = ["audio_text", "audio_only", "text_only"]
-    mod_labels = ["Audio + Text", "Audio only", "Text only"]
-    rows: list[tuple[str, str, float, float]] = []
-    for mod_key, mod_label in zip(mod_keys, mod_labels):
-        qwen_tf = STANDALONE_QWEN[("DAIC", mod_label)]
-        gemma_tf = GEMMA4_QWEN[mod_key][0]
-        rows.append((mod_label, "Teacher-forced", qwen_tf, gemma_tf))
-        qwen_logreg, qwen_xgb = STANDALONE_HEADS[("DAIC", mod_label)][0], STANDALONE_HEADS[("DAIC", mod_label)][1]
-        gemma_logreg = GEMMA4_HEADS[mod_key]["logreg"][0]
-        gemma_xgb = GEMMA4_HEADS[mod_key]["xgb"][0]
-        if qwen_logreg is not None:
-            rows.append((mod_label, "LogReg raw hidden head", qwen_logreg, gemma_logreg))
-        if qwen_xgb is not None:
-            rows.append((mod_label, "XGBoost raw hidden head", qwen_xgb, gemma_xgb))
+    _header_row(ws, 4, ["Dataset", "Modality", "Method", "Qwen macro-F1", "Gemma macro-F1", "Δ (Gemma − Qwen)"])
+    mod_keys = ["Audio + Text", "Audio only", "Text only"]
     row = 5
-    for mod_label, method, qwen_value, gemma_value in rows:
-        ws.cell(row, 1, mod_label).font = BODY_FONT
-        ws.cell(row, 1).fill = BODY
-        ws.cell(row, 1).alignment = LEFT
-        ws.cell(row, 1).border = BORDER
-        _body_cell(ws, row, 2, method)
-        _body_cell(ws, row, 3, qwen_value, fmt="0.0000")
-        _body_cell(ws, row, 4, gemma_value, fmt="0.0000")
-        _delta_cell(ws, row, 5, gemma_value - qwen_value)
+    for dataset in DATASETS:
+        _section(ws, row, dataset, 6)
         row += 1
-    _note(ws, row, "Teacher-forced = backbone classification without hidden-state heads. "
-                   "Hidden heads classify the final prompt-token hidden state with the locked "
-                   "LogReg/XGBoost implementations. See the 'Gemma 4 DAIC' and 'Summary' sheets "
-                   "for the full metric sets and per-cell provenance.", 5, height=60)
+        for mod_label in mod_keys:
+            rows = [
+                ("Teacher-forced", STANDALONE_QWEN[(dataset, mod_label)], GEMMA_NATIVE_TF[(dataset, mod_label)]),
+            ]
+            logreg = STANDALONE_HEADS[(dataset, mod_label)][0]
+            if logreg is not None:
+                rows.append(("LogReg raw hidden head", logreg, GEMMA_NATIVE_LR[(dataset, mod_label)]))
+            rows.append(("XGBoost Optuna-100 raw hidden head", QWEN_OPTUNA[(dataset, mod_label)], GEMMA_OPTUNA[(dataset, mod_label)]))
+            for method, qwen_value, gemma_value in rows:
+                ws.cell(row, 1, dataset).font = BODY_FONT
+                ws.cell(row, 1).fill = BODY
+                ws.cell(row, 1).alignment = LEFT
+                ws.cell(row, 1).border = BORDER
+                _body_cell(ws, row, 2, mod_label)
+                _body_cell(ws, row, 3, method)
+                _body_cell(ws, row, 4, qwen_value, fmt="0.0000")
+                _body_cell(ws, row, 5, gemma_value, fmt="0.0000")
+                _delta_cell(ws, row, 6, gemma_value - qwen_value)
+                row += 1
+    _note(ws, row, "Teacher-forced = backbone classification without hidden-state heads. Hidden "
+                   "heads classify the final prompt-token hidden state with the locked LogReg or the "
+                   "standardized Optuna-100 XGBoost implementation. DAIC = official 47-subject test; "
+                   "CMDC/Turkish = 5-fold mean (train_val); D3TEC/Androids = pooled 5-fold subject-level. "
+                   "See the 'Gemma 4 DAIC', 'Summary', and 'Optuna-100 XGB' sheets for full metric sets "
+                   "and per-cell provenance.", 6, height=60)
     ws.freeze_panes = "A5"
 
 
 # --------------------------------------------------------------------------- sheets
 def build_summary(wb: Workbook, *, detailed: bool) -> None:
     ws = wb.create_sheet("Summary")
-    _widths(ws, {"A": 30, "B": 15, "C": 15, "D": 15, "E": 15, "F": 17})
-    _title(ws, "Depression Detection — Macro-F1 Summary (clean, verified)", 6)
+    _widths(ws, {"A": 30, "B": 15, "C": 15, "D": 15, "E": 15, "F": 17, "G": 15, "H": 18, "I": 21})
+    _title(ws, "Depression Detection — Macro-F1 Summary (clean, verified)", 9)
     _note(
         ws, 2,
         "Macro-F1 only; higher is better. Harmonized campaign harmonized_v1_prod_20260809T171705Z_d1e8130b "
@@ -988,13 +1057,18 @@ def build_summary(wb: Workbook, *, detailed: bool) -> None:
         "first-wave failures replaced by _r1 retries (retry_r1_jobs.tsv). "
         "DAIC = fixed official test (47 subjects). CMDC/Turkish = 5-fold mean (train_val protocol). "
         "D3TEC = pooled 5-fold subject-level (62 subjects). Androids = pooled 5-fold subject-level (116 subjects). "
-        "Optuna/Subject-OS not run -> blank. Every value recomputed 2026-08-10 from local artifacts; "
+        "Gemma columns: native Gemma harmonized campaign gemma4_v1_prod_20260814T2030Z_1ab337d2_r2 "
+        "(teacher-forced + LogReg fold-means from the verified native group reports; DAIC reuses the DAIC "
+        "official-test campaign). 'XGBoost Optuna-100 (Gemma)' = the standardized Optuna-100 fold-mean; the "
+        "runbook fits no fixed XGB head for Gemma by design. "
+        "Optuna/Subject-OS not run -> blank. Every value recomputed from local artifacts; "
         "per-cell provenance (run, aggregation, eval view, artifact): Provenance sheet.",
-        6, height=80,
+        9, height=80,
     )
-    headers = ["Evaluation / Modality", "Fine-tuned Qwen", "LogReg head", "XGBoost fixed"]
+    headers = ["Evaluation / Modality", "Fine-tuned Qwen", "LogReg head", "XGBoost fixed",
+               "Fine-tuned Gemma", "LogReg head (Gemma)", "XGBoost Optuna-100 (Gemma)"]
     if detailed:
-        headers += ["XGBoost Optuna", "XGBoost Subject OS\n(3-seed mean)"]
+        headers += ["XGBoost Optuna (Qwen)", "XGBoost Subject OS\n(3-seed mean)"]
     _header_row(ws, 4, headers)
     row = 5
     for dataset in DATASETS:
@@ -1008,9 +1082,12 @@ def build_summary(wb: Workbook, *, detailed: bool) -> None:
             logreg, xgb, optuna, os_ = STANDALONE_HEADS[(dataset, modality)]
             _body_cell(ws, row, 3, logreg, fmt="0.0000")
             _body_cell(ws, row, 4, xgb, fmt="0.0000")
+            _body_cell(ws, row, 5, GEMMA_NATIVE_TF[(dataset, modality)], fmt="0.0000")
+            _body_cell(ws, row, 6, GEMMA_NATIVE_LR[(dataset, modality)], fmt="0.0000")
+            _body_cell(ws, row, 7, GEMMA_OPTUNA[(dataset, modality)], fmt="0.0000")
             if detailed:
-                _body_cell(ws, row, 5, optuna, fmt="0.0000")
-                _body_cell(ws, row, 6, os_, fmt="0.0000")
+                _body_cell(ws, row, 8, optuna, fmt="0.0000")
+                _body_cell(ws, row, 9, os_, fmt="0.0000")
             row += 1
     ws.freeze_panes = "A5"
 
@@ -1572,6 +1649,7 @@ def build_provenance(wb: Workbook, *, detailed: bool) -> None:
             artifact, "recomputed from predictions_subject_level.jsonl (metrics match)")
 
     build_gemma4_provenance(ws, put)
+    build_gemma_native_provenance(ws, put)
     build_daic_officialdev_provenance(ws, put)
 
     ws.freeze_panes = "A3"
@@ -1643,6 +1721,40 @@ def build_daic_officialdev_provenance(ws, put) -> None:
                         f"{method} {metric_label}", head[metric_key], source, heads_agg,
                         head_evidence + "metrics.json + predictions_subject_level.csv",
                         "recomputed locally by verify-local; REPORTABLE")
+
+
+def build_gemma_native_provenance(ws, put) -> None:
+    """Provenance for the native Gemma 4 harmonized campaign cells added to the
+    Summary and Gemma vs Qwen sheets (teacher-forced, LogReg, and Optuna-100
+    XGBoost). DAIC rows are covered by build_gemma4_provenance; here we add the
+    non-DAIC cells with their verified local report paths.
+    """
+    campaign_id = "gemma4_v1_prod_20260814T2030Z_1ab337d2_r2"
+    group_id = "gemma4-harmonized-v1-gemma4_v1_prod_20260814T2030Z_1ab337d2_r2"
+    ds_key = {"D3TEC": "d3tec", "Androids Interview": "androids_interview", "CMDC": "cmdc", "Turkish": "turkish"}
+    mod_key = {"Audio + Text": "audio_text", "Audio only": "audio_only", "Text only": "text_only"}
+    for dataset in ("D3TEC", "Androids Interview", "CMDC", "Turkish"):
+        for modality in MODALITIES:
+            m = mod_key[modality]
+            if dataset == "CMDC" or dataset == "Turkish":
+                agg = "5-fold mean (train_val protocol), teacher-forced, binary-strict, harmonized_all_windows_full_coverage"
+            else:
+                agg = "pooled 5-fold subject-level, teacher-forced, binary-strict, harmonized_all_windows_full_coverage"
+            source = f"campaign {campaign_id}, group {group_id}, seed 1337, 5 folds REPORTABLE (registry); model google/gemma-4-12B-it rev 707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7"
+            tf_report = GEMMA_NATIVE_EVIDENCE["tf"].replace("{ds}", ds_key[dataset]).replace("{mod}", m)
+            put("Gemma native", dataset, modality, "Fine-tuned Gemma (teacher-forced)",
+                GEMMA_NATIVE_TF[(dataset, modality)], source, agg, tf_report,
+                "recomputed from local predictions (matches metrics JSON); group report OK")
+            lr_report = GEMMA_NATIVE_EVIDENCE["lr"].replace("{ds}", ds_key[dataset]).replace("{mod}", m)
+            lr_agg = agg.replace("teacher-forced", "LogReg raw hidden head")
+            put("Gemma native", dataset, modality, "Gemma LogReg raw hidden head",
+                GEMMA_NATIVE_LR[(dataset, modality)], source, lr_agg, lr_report,
+                "recomputed from predictions_subject_level.csv (matches metrics.json)")
+            optuna_report = GEMMA_NATIVE_EVIDENCE["optuna"].replace("{ds}", ds_key[dataset]).replace("{mod}", m).replace("{backend}", "gemma4")
+            optuna_agg = "Optuna-100 fold-mean, 100 trials seed 1337, 3 inner folds, subject-level macro-F1 objective"
+            put("Gemma native", dataset, modality, "Gemma XGBoost Optuna-100 raw hidden head",
+                GEMMA_OPTUNA[(dataset, modality)], source, optuna_agg, optuna_report,
+                "group report OK; attempt REPORTABLE in registry")
 
 
 def build_gemma4_provenance(ws, put) -> None:
