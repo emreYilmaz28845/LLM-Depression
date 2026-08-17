@@ -68,16 +68,17 @@ def test_wandb_selection_entries_are_safe_and_unique() -> None:
     assert len(legacy) == 15
 
 
-def test_workbook_regeneration_keeps_existing_sheets_and_adds_empty_structure() -> None:
+def test_workbook_regeneration_keeps_existing_sheets_and_adds_optuna_values() -> None:
     workbook = load_workbook(WORKBOOK_PATH, data_only=True)
     assert "Optuna-100 XGB" in workbook.sheetnames
     sheet = workbook["Optuna-100 XGB"]
     value_cells = []
     for row in sheet.iter_rows():
         for cell in row:
-            if cell.column in (5, 6) and cell.row > 4:
+            if cell.column == 5 and cell.row > 4:
                 value_cells.append(cell.value)
-    assert value_cells and all(value is None for value in value_cells)
+    assert value_cells and any(isinstance(value, (int, float)) for value in value_cells)
+    assert not any(isinstance(value, (int, float)) and (value < 0 or value > 1) for value in value_cells)
     # All pre-existing sheets remain present.
     for expected in (
         "Summary",
