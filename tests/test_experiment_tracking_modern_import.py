@@ -527,6 +527,26 @@ def test_evidence_verification_refuses_missing_artifacts(tmp_path: Path) -> None
         verify_evaluations_locally(fold_dir)
 
 
+def test_evidence_verification_preserves_warned_evaluation_as_non_reportable(
+    tmp_path: Path,
+) -> None:
+    fold_dir = build_modern_run(tmp_path)
+    verify_artifacts_locally(fold_dir)
+    payload = json.loads((fold_dir / "evaluations.json").read_text(encoding="utf-8"))
+    payload["evaluations"][0]["warnings"] = ["invalidated by provenance correction"]
+    payload["evaluations"][0]["locally_verified"] = True
+    payload["evaluations"][0]["reportable"] = True
+    write_json_atomic(fold_dir / "evaluations.json", payload)
+
+    result = verify_evaluations_locally(fold_dir)
+    assert result["verified_evaluations"] == 0
+    assert result["reportable_evaluations"] == 0
+    corrected = json.loads((fold_dir / "evaluations.json").read_text(encoding="utf-8"))
+    assert corrected["evaluations"][0]["locally_verified"] is False
+    assert corrected["evaluations"][0]["reportable"] is False
+    assert corrected["evaluations"][0]["warnings"] == ["invalidated by provenance correction"]
+
+
 def test_set_metadata_supersedes_only_when_absent(tmp_path: Path) -> None:
     from src.experiment_tracking.evidence import EvidenceVerificationError
 

@@ -12,6 +12,14 @@ class EvidenceVerificationError(ValueError):
     pass
 
 
+def _explicitly_invalidated(evaluation: dict[str, Any]) -> bool:
+    warnings = evaluation.get("warnings") or []
+    return bool(warnings) and all(
+        isinstance(warning, str) and warning.startswith("invalidated by ")
+        for warning in warnings
+    )
+
+
 def _read_record(fold_dir: Path, filename: str, schema_version: str) -> dict[str, Any]:
     path = fold_dir / filename
     if not path.is_file():
@@ -77,6 +85,24 @@ def verify_evaluations_locally(fold_dir: str | Path) -> dict[str, Any]:
     by_path = {artifact["path"]: artifact for artifact in artifacts["artifacts"]}
     changed: list[dict[str, Any]] = []
     for evaluation in record["evaluations"]:
+        # A warning is an explicit disqualification. Preserve the record for
+        # audit history, keep it non-reportable, and continue verifying other
+        # valid evaluations in the same attempt.
+        if _explicitly_invalidated(evaluation):
+            updates: dict[str, Any] = {}
+            if evaluation.get("locally_verified") is not False:
+                updates["locally_verified"] = False
+            if evaluation.get("reportable") is not False:
+                updates["reportable"] = False
+            if updates:
+                evaluation.update(updates)
+                changed.append({"evaluation_id": evaluation["evaluation_id"], **updates})
+            continue
+        if evaluation.get("warnings"):
+            raise EvidenceVerificationError(
+                f"evaluation {evaluation['evaluation_id']} has warnings and cannot be reportable: "
+                f"{evaluation['warnings']}"
+            )
         required = [
             evaluation.get("metrics_artifact_path"),
             evaluation.get("predictions_artifact_path"),
@@ -92,11 +118,6 @@ def verify_evaluations_locally(fold_dir: str | Path) -> dict[str, Any]:
         updates: dict[str, Any] = {}
         if evaluation.get("locally_verified") is not True:
             updates["locally_verified"] = True
-        if evaluation.get("warnings"):
-            raise EvidenceVerificationError(
-                f"evaluation {evaluation['evaluation_id']} has warnings and cannot be reportable: "
-                f"{evaluation['warnings']}"
-            )
         if evaluation.get("reportable") is not True:
             updates["reportable"] = True
         if updates:

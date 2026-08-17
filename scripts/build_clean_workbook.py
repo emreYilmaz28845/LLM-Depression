@@ -516,18 +516,17 @@ GEMMA_OPTUNA = {
 }
 # --------------------------------------------------------------------------- Merged (symmetric) comparison values
 # Qwen merged TF/LogReg from the historical merged campaign (Merged Symmetric
-# Summary); Gemma merged TF/LogReg from the merged training selection metrics
-# and the merged heads' logreg (verified local evidence). XGBoost = the
-# standardized Optuna-100 fold-mean for both backends. The merged final
-# teacher-forced test evaluation was not produced as a separate artifact for
-# Gemma, so the Gemma final TF row is omitted (noted in the sheet).
+# Summary); Gemma merged CV TF from training selection, merged final TF from
+# the postprocess teacher-forced DAIC evaluation, and LogReg from the merged
+# heads (verified local evidence). XGBoost = the standardized Optuna-100
+# fold-mean for both backends.
 MERGED_TF = {
     ("cv", "Audio + Text"): (0.6976, 0.761239),
     ("cv", "Audio only"): (0.69046, 0.386284),
     ("cv", "Text only"): (0.75408, 0.776333),
-    ("final", "Audio + Text"): (0.7631, None),
-    ("final", "Audio only"): (0.5332, None),
-    ("final", "Text only"): (0.7756, None),
+    ("final", "Audio + Text"): (0.7631, 0.7257294429708223),
+    ("final", "Audio only"): (0.5332, 0.5190058479532164),
+    ("final", "Text only"): (0.7756, 0.7755968169761273),
 }
 MERGED_LR = {
     ("cv", "Audio + Text"): (0.70036, 0.741441),
@@ -1069,8 +1068,7 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
         "the runbook fits no fixed XGB head for Gemma. Delta = Gemma minus Qwen. DAIC = official "
         "47-subject test; CMDC/Turkish = 5-fold mean (train_val); D3TEC/Androids = pooled 5-fold "
         "subject-level; merged CV = mean over the five datasets; merged Final = DAIC official test. "
-        "The merged final teacher-forced test evaluation was not produced as a separate artifact for "
-        "Gemma, so that row is omitted. Per-cell provenance: Provenance sheet.",
+        "Per-cell provenance: Provenance sheet.",
         7, height=110,
     )
     _header_row(ws, 4, ["Experiment", "Dataset", "Modality", "Method", "Qwen", "Gemma 4", "Δ (Gemma − Qwen)"])
@@ -1823,16 +1821,27 @@ def build_en_merged_gemma_provenance(ws, put) -> None:
                 "recomputed from predictions_subject_level.csv (matches metrics.json)")
     merged_campaign = "gemma4_merged_v1_prod_20260816T0000Z_d4ff33e"
     mmod_key = {"Audio + Text": "audio_text", "Audio only": "audio_only", "Text only": "text_only"}
+    merged_postprocess_jobs = {"audio_text": "44684476", "audio_only": "44684479", "text_only": "44684482"}
     for stage, stage_label in (("cv", "CV (5-fold)"), ("final", "Final (DAIC test)")):
         for modality, mk in mmod_key.items():
             q, g = MERGED_TF[(stage, modality)]
             if g is None:
                 continue
-            put("Gemma merged", stage_label, modality, "Teacher-forced",
-                g, f"campaign {merged_campaign}, merged training selection (mean_dataset_macro_f1)",
-                f"{stage_label}, teacher-forced, mean over five datasets",
-                f"output_model/symmetric_merged/gemma4/harmonized_v1/{mk}/{merged_campaign}/{stage}/fold_0/logs/training_history.json",
-                "from local training_history selected epoch")
+            if stage == "final":
+                put("Gemma merged", stage_label, modality, "Teacher-forced",
+                    g, (f"campaign {merged_campaign}, postprocess job {merged_postprocess_jobs[mk]}, "
+                        "source bfc13b4f8b177547a11a9abad526115b712d32ef"),
+                    ("DAIC official test, 47 subjects, teacher-forced, binary-strict, subject mean-score, "
+                     "harmonized_all_windows_full_coverage"),
+                    (f"outputs/symmetric_merged/gemma4/harmonized_v1/{mk}/{merged_campaign}/final/fold_0/"
+                     "gemma4/daic/metrics_original_teacher_forced.json + predictions_subject_level.csv"),
+                    "recomputed locally from 47 subject predictions; zero invalid subjects")
+            else:
+                put("Gemma merged", stage_label, modality, "Teacher-forced",
+                    g, f"campaign {merged_campaign}, merged training selection (mean_dataset_macro_f1)",
+                    f"{stage_label}, teacher-forced, mean over five datasets",
+                    f"output_model/symmetric_merged/gemma4/harmonized_v1/{mk}/{merged_campaign}/{stage}/fold_0/logs/training_history.json",
+                    "from local training_history selected epoch")
             q, g = MERGED_LR[(stage, modality)]
             put("Gemma merged", stage_label, modality, "LogReg head",
                 g, f"campaign {merged_campaign}, merged heads",

@@ -1,9 +1,9 @@
 schema_version: audiollm.workbook_wandb_selection.v1
 workbook:
   path: depression_results_clean.xlsx
-  sha256: f49692ac8e174d13d6d116d2c1041b7fab5d77e7e1fbfe88f7abd3d0a206ba82
+  sha256: 728d6733f235024af8e1f89fd6f6b2f13ddc8b3360e9bfc215c072bcd9fa29d4
   builder_path: scripts/build_clean_workbook.py
-  builder_sha256: 781aabed4b669e9dfbae60b7363d3faf3a240f260ec24235c6dfe2dea0ce8231
+  builder_sha256: a4dddd58bd97d21dfc7f0f586999412d04f4ae279c13e65772ce13456521b771
   provenance_sheet: Provenance
 entries:
 - selection_id: Standalone|DAIC|Audio + Text|Fine-tuned Qwen
@@ -13622,7 +13622,7 @@ entries:
   expected_folds:
   - 0
   required_evaluations:
-  - dataset: merged
+  - dataset: daic
     namespace: headline/binary_strict
     backend: original_teacher_forced
     aggregation: subject_level
@@ -13666,7 +13666,7 @@ entries:
   expected_folds:
   - 0
   required_evaluations:
-  - dataset: merged
+  - dataset: daic
     namespace: headline/binary_strict
     backend: original_teacher_forced
     aggregation: subject_level
@@ -13710,7 +13710,7 @@ entries:
   expected_folds:
   - 0
   required_evaluations:
-  - dataset: merged
+  - dataset: daic
     namespace: headline/binary_strict
     backend: original_teacher_forced
     aggregation: subject_level
