@@ -80,7 +80,13 @@ def test_wandb_selection_entries_are_safe_and_unique() -> None:
 
 def test_workbook_regeneration_keeps_compact_sheet_set_with_qwen_vs_gemma() -> None:
     workbook = load_workbook(WORKBOOK_PATH, data_only=True)
-    assert workbook.sheetnames == ["Summary", "Qwen vs Gemma", "DAIC Packed30 Family", "Provenance"]
+    assert workbook.sheetnames == [
+        "Summary",
+        "Qwen vs Gemma",
+        "Native vs EN",
+        "DAIC Packed30 Family",
+        "Provenance",
+    ]
     sheet = workbook["Qwen vs Gemma"]
     value_cells = []
     for row in sheet.iter_rows():
