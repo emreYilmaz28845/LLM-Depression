@@ -354,8 +354,13 @@ def _resolve_merged_study(
     marker = "LLM-Depression/"
     if marker in checkpoint:
         checkpoint = str(PROJECT_ROOT / checkpoint.split(marker, 1)[1])
+    # The merged training runs predate the attempt sidecars; the parent is
+    # the run-based identity (training run + stage + fold) recorded as a
+    # deterministic string, matching the post-hoc schema requirement.
+    run_dir_name = features_dir.parents[2].name if len(features_dir.parents) > 2 else ""
+    parent_attempt = f"merged:{run_dir_name}:{stage}:fold_{fold}" if run_dir_name else None
     parent = {
-        "parent_attempt_id": None,
+        "parent_attempt_id": parent_attempt,
         "parent_fold_dir": str(Path(checkpoint).parent) if checkpoint else None,
         "parent_checkpoint_path": checkpoint or None,
         "adapter_config_sha256": (metadata.get("checkpoint_hashes") or {}).get("adapter_config_sha256"),
