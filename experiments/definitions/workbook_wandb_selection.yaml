@@ -1,9 +1,9 @@
 schema_version: audiollm.workbook_wandb_selection.v1
 workbook:
   path: depression_results_clean.xlsx
-  sha256: 714a2951b14eceb181a3e5105961b57c43ecece68ba7902484e33ab7895b94fe
+  sha256: f49692ac8e174d13d6d116d2c1041b7fab5d77e7e1fbfe88f7abd3d0a206ba82
   builder_path: scripts/build_clean_workbook.py
-  builder_sha256: 38689d4e78d6369460a66e508d818147a56d8b5820762cc1c58ec51def0d5c07
+  builder_sha256: 781aabed4b669e9dfbae60b7363d3faf3a240f260ec24235c6dfe2dea0ce8231
   provenance_sheet: Provenance
 entries:
 - selection_id: Standalone|DAIC|Audio + Text|Fine-tuned Qwen
@@ -13035,5 +13035,709 @@ entries:
     checkpoint_role: best_model
     view: harmonized_all_windows_full_coverage
   group: Gemma native
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma EN|D3TEC|Audio + Text|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma EN
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_en_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_en_gemma4_en_prod_20260815T1300Z_a955cdd_d3tec_audio_text
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma EN|D3TEC|Audio + Text|Gemma LogReg raw hidden head
+  provenance_key:
+    experiment: Gemma EN
+    dataset: D3TEC
+    modality: Audio + Text
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_en_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_en_gemma4_en_prod_20260815T1300Z_a955cdd_d3tec_audio_text
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma EN|D3TEC|Text only|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma EN
+    dataset: D3TEC
+    modality: Text only
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_en_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_en_gemma4_en_prod_20260815T1300Z_a955cdd_d3tec_text_only
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma EN|D3TEC|Text only|Gemma LogReg raw hidden head
+  provenance_key:
+    experiment: Gemma EN
+    dataset: D3TEC
+    modality: Text only
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_en_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_en_gemma4_en_prod_20260815T1300Z_a955cdd_d3tec_text_only
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: d3tec
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma EN|Androids Interview|Audio + Text|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma EN
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_en_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_en_gemma4_en_prod_20260815T1300Z_a955cdd_androids_interview_audio_text
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma EN|Androids Interview|Audio + Text|Gemma LogReg raw hidden head
+  provenance_key:
+    experiment: Gemma EN
+    dataset: Androids Interview
+    modality: Audio + Text
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_en_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_en_gemma4_en_prod_20260815T1300Z_a955cdd_androids_interview_audio_text
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma EN|Androids Interview|Text only|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma EN
+    dataset: Androids Interview
+    modality: Text only
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_en_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_en_gemma4_en_prod_20260815T1300Z_a955cdd_androids_interview_text_only
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma EN|Androids Interview|Text only|Gemma LogReg raw hidden head
+  provenance_key:
+    experiment: Gemma EN
+    dataset: Androids Interview
+    modality: Text only
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_en_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_en_gemma4_en_prod_20260815T1300Z_a955cdd_androids_interview_text_only
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: androids_interview
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma EN|CMDC|Audio + Text|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma EN
+    dataset: CMDC
+    modality: Audio + Text
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_en_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_en_gemma4_en_prod_20260815T1300Z_a955cdd_cmdc_audio_text
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma EN|CMDC|Audio + Text|Gemma LogReg raw hidden head
+  provenance_key:
+    experiment: Gemma EN
+    dataset: CMDC
+    modality: Audio + Text
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_en_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_en_gemma4_en_prod_20260815T1300Z_a955cdd_cmdc_audio_text
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma EN|CMDC|Text only|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma EN
+    dataset: CMDC
+    modality: Text only
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_en_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_en_gemma4_en_prod_20260815T1300Z_a955cdd_cmdc_text_only
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma EN|CMDC|Text only|Gemma LogReg raw hidden head
+  provenance_key:
+    experiment: Gemma EN
+    dataset: CMDC
+    modality: Text only
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_en_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_en_gemma4_en_prod_20260815T1300Z_a955cdd_cmdc_text_only
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: cmdc
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma EN|Turkish|Audio + Text|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma EN
+    dataset: Turkish
+    modality: Audio + Text
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_en_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_en_gemma4_en_prod_20260815T1300Z_a955cdd_turkish_audio_text
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma EN|Turkish|Audio + Text|Gemma LogReg raw hidden head
+  provenance_key:
+    experiment: Gemma EN
+    dataset: Turkish
+    modality: Audio + Text
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_en_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_en_gemma4_en_prod_20260815T1300Z_a955cdd_turkish_audio_text
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma EN|Turkish|Text only|Fine-tuned Gemma (teacher-forced)
+  provenance_key:
+    experiment: Gemma EN
+    dataset: Turkish
+    modality: Text only
+    method: Fine-tuned Gemma (teacher-forced)
+  source_type: ordinary_qwen
+  reason: gemma_en_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_en_gemma4_en_prod_20260815T1300Z_a955cdd_turkish_text_only
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma EN|Turkish|Text only|Gemma LogReg raw hidden head
+  provenance_key:
+    experiment: Gemma EN
+    dataset: Turkish
+    modality: Text only
+    method: Gemma LogReg raw hidden head
+  source_type: hidden_classifier
+  reason: gemma_en_harmonized
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_en_gemma4_en_prod_20260815T1300Z_a955cdd_turkish_text_only
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: turkish
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma EN
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma merged|CV (5-fold)|Audio + Text|Teacher-forced
+  provenance_key:
+    experiment: Gemma merged
+    dataset: CV (5-fold)
+    modality: Audio + Text
+    method: Teacher-forced
+  source_type: ordinary_qwen
+  reason: gemma_merged
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_merged_audio_text_cv_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma merged
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma merged|CV (5-fold)|Audio + Text|LogReg head
+  provenance_key:
+    experiment: Gemma merged
+    dataset: CV (5-fold)
+    modality: Audio + Text
+    method: LogReg head
+  source_type: hidden_classifier
+  reason: gemma_merged
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_merged_audio_text_cv_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma merged
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma merged|CV (5-fold)|Audio only|Teacher-forced
+  provenance_key:
+    experiment: Gemma merged
+    dataset: CV (5-fold)
+    modality: Audio only
+    method: Teacher-forced
+  source_type: ordinary_qwen
+  reason: gemma_merged
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_merged_audio_only_cv_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma merged
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma merged|CV (5-fold)|Audio only|LogReg head
+  provenance_key:
+    experiment: Gemma merged
+    dataset: CV (5-fold)
+    modality: Audio only
+    method: LogReg head
+  source_type: hidden_classifier
+  reason: gemma_merged
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_merged_audio_only_cv_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma merged
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma merged|CV (5-fold)|Text only|Teacher-forced
+  provenance_key:
+    experiment: Gemma merged
+    dataset: CV (5-fold)
+    modality: Text only
+    method: Teacher-forced
+  source_type: ordinary_qwen
+  reason: gemma_merged
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_merged_text_only_cv_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma merged
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma merged|CV (5-fold)|Text only|LogReg head
+  provenance_key:
+    experiment: Gemma merged
+    dataset: CV (5-fold)
+    modality: Text only
+    method: LogReg head
+  source_type: hidden_classifier
+  reason: gemma_merged
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_merged_text_only_cv_seed1337
+  expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma merged
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma merged|Final (DAIC test)|Audio + Text|Teacher-forced
+  provenance_key:
+    experiment: Gemma merged
+    dataset: Final (DAIC test)
+    modality: Audio + Text
+    method: Teacher-forced
+  source_type: ordinary_qwen
+  reason: gemma_merged
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_merged_audio_text_final_seed1337
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma merged
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma merged|Final (DAIC test)|Audio + Text|LogReg head
+  provenance_key:
+    experiment: Gemma merged
+    dataset: Final (DAIC test)
+    modality: Audio + Text
+    method: LogReg head
+  source_type: hidden_classifier
+  reason: gemma_merged
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_merged_audio_text_final_seed1337
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma merged
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma merged|Final (DAIC test)|Audio only|Teacher-forced
+  provenance_key:
+    experiment: Gemma merged
+    dataset: Final (DAIC test)
+    modality: Audio only
+    method: Teacher-forced
+  source_type: ordinary_qwen
+  reason: gemma_merged
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_merged_audio_only_final_seed1337
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma merged
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma merged|Final (DAIC test)|Audio only|LogReg head
+  provenance_key:
+    experiment: Gemma merged
+    dataset: Final (DAIC test)
+    modality: Audio only
+    method: LogReg head
+  source_type: hidden_classifier
+  reason: gemma_merged
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_merged_audio_only_final_seed1337
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma merged
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma merged|Final (DAIC test)|Text only|Teacher-forced
+  provenance_key:
+    experiment: Gemma merged
+    dataset: Final (DAIC test)
+    modality: Text only
+    method: Teacher-forced
+  source_type: ordinary_qwen
+  reason: gemma_merged
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_merged_text_only_final_seed1337
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: original_teacher_forced
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma merged
+  wandb_policy: sync
+  blocking_reasons: []
+- selection_id: Gemma merged|Final (DAIC test)|Text only|LogReg head
+  provenance_key:
+    experiment: Gemma merged
+    dataset: Final (DAIC test)
+    modality: Text only
+    method: LogReg head
+  source_type: hidden_classifier
+  reason: gemma_merged
+  dependency_policy: all_contributing_folds
+  logical_run_name: gemma4_harmonized_v1_merged_text_only_final_seed1337
+  expected_folds:
+  - 0
+  required_evaluations:
+  - dataset: merged
+    namespace: headline/binary_strict
+    backend: gemma4_hidden_logreg_raw
+    aggregation: subject_level
+    checkpoint_role: best_model
+    view: harmonized_all_windows_full_coverage
+  group: Gemma merged
   wandb_policy: sync
   blocking_reasons: []
