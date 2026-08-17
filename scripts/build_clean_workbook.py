@@ -516,18 +516,17 @@ GEMMA_OPTUNA = {
 }
 # --------------------------------------------------------------------------- Merged (symmetric) comparison values
 # Qwen merged TF/LogReg from the historical merged campaign (Merged Symmetric
-# Summary); Gemma merged TF/LogReg from the merged training selection metrics
-# and the merged heads' logreg (verified local evidence). XGBoost = the
-# standardized Optuna-100 fold-mean for both backends. The merged final
-# teacher-forced test evaluation was not produced as a separate artifact for
-# Gemma, so the Gemma final TF row is omitted (noted in the sheet).
+# Summary); Gemma merged CV TF from training selection, merged final TF from
+# the postprocess teacher-forced DAIC evaluation, and LogReg from the merged
+# heads (verified local evidence). XGBoost = the standardized Optuna-100
+# fold-mean for both backends.
 MERGED_TF = {
     ("cv", "Audio + Text"): (0.6976, 0.761239),
     ("cv", "Audio only"): (0.69046, 0.386284),
     ("cv", "Text only"): (0.75408, 0.776333),
-    ("final", "Audio + Text"): (0.7631, None),
-    ("final", "Audio only"): (0.5332, None),
-    ("final", "Text only"): (0.7756, None),
+    ("final", "Audio + Text"): (0.7631, 0.7257294429708223),
+    ("final", "Audio only"): (0.5332, 0.5190058479532164),
+    ("final", "Text only"): (0.7756, 0.7755968169761273),
 }
 MERGED_LR = {
     ("cv", "Audio + Text"): (0.70036, 0.741441),
@@ -1069,8 +1068,7 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
         "the runbook fits no fixed XGB head for Gemma. Delta = Gemma minus Qwen. DAIC = official "
         "47-subject test; CMDC/Turkish = 5-fold mean (train_val); D3TEC/Androids = pooled 5-fold "
         "subject-level; merged CV = mean over the five datasets; merged Final = DAIC official test. "
-        "The merged final teacher-forced test evaluation was not produced as a separate artifact for "
-        "Gemma, so that row is omitted. Per-cell provenance: Provenance sheet.",
+        "Per-cell provenance: Provenance sheet.",
         7, height=110,
     )
     _header_row(ws, 4, ["Experiment", "Dataset", "Modality", "Method", "Qwen", "Gemma 4", "Δ (Gemma − Qwen)"])
@@ -1134,6 +1132,98 @@ def _fill_cell(ws, row: int, experiment: str, dataset: str, modality: str, metho
         _delta_cell(ws, row, 7, gemma_value - qwen_value)
     else:
         _body_cell(ws, row, 7, None)
+
+
+def build_native_vs_english(wb: Workbook) -> None:
+    """Paired native-vs-English comparison for both current backends.
+
+    Translation changes transcript-bearing inputs only, so the sheet contains
+    Audio + Text and Text only. Audio-only would be the same native control,
+    not a separate English experiment. XGBoost values use the standardized
+    Optuna-100 protocol, matching the main comparison sheets.
+    """
+    ws = wb.create_sheet("Native vs EN")
+    _widths(ws, {
+        "A": 22, "B": 18, "C": 17,
+        "D": 14, "E": 14, "F": 16,
+        "G": 14, "H": 14, "I": 16, "J": 24,
+    })
+    _title(ws, "Native vs English-translated transcripts — macro-F1", 10)
+    _note(
+        ws, 2,
+        "Paired native and English-translated transcript conditions for Qwen and Gemma 4. "
+        "Delta = EN minus native; positive means translation improved macro-F1. Teacher-forced "
+        "and LogReg use the harmonized best_model evidence; XGBoost uses the standardized "
+        "100-trial Optuna search, seed 1337. D3TEC/Androids = pooled 5-fold subject-level; "
+        "CMDC/Turkish = 5-fold mean (train_val). Audio-only is omitted because transcript "
+        "translation does not create a distinct audio-only experiment. Per-cell evidence is in "
+        "the Provenance sheet.",
+        10, height=92,
+    )
+    _header_row(ws, 4, [
+        "Dataset", "Modality", "Method",
+        "Qwen native", "Qwen EN", "Qwen Δ (EN − native)",
+        "Gemma native", "Gemma EN", "Gemma Δ (EN − native)",
+        "Direction",
+    ])
+    row = 5
+    for dataset in ("D3TEC", "Androids Interview", "CMDC", "Turkish"):
+        for modality in ("Audio + Text", "Text only"):
+            native_lr = STANDALONE_HEADS[(dataset, modality)][0]
+            comparisons = (
+                (
+                    "Teacher-forced",
+                    STANDALONE_QWEN[(dataset, modality)],
+                    EN_TF[(dataset, modality)][0],
+                    GEMMA_NATIVE_TF[(dataset, modality)],
+                    EN_TF[(dataset, modality)][1],
+                ),
+                (
+                    "LogReg head",
+                    native_lr,
+                    EN_LR[(dataset, modality)][0],
+                    GEMMA_NATIVE_LR[(dataset, modality)],
+                    EN_LR[(dataset, modality)][1],
+                ),
+                (
+                    "XGBoost",
+                    QWEN_OPTUNA[(dataset, modality)],
+                    EN_XGB[(dataset, modality)][0],
+                    GEMMA_OPTUNA[(dataset, modality)],
+                    EN_XGB[(dataset, modality)][1],
+                ),
+            )
+            for method, q_native, q_en, g_native, g_en in comparisons:
+                q_delta = q_en - q_native
+                g_delta = g_en - g_native
+                _body_cell(ws, row, 1, dataset)
+                _body_cell(ws, row, 2, modality)
+                _body_cell(ws, row, 3, method)
+                _body_cell(ws, row, 4, q_native, fmt="0.0000")
+                _body_cell(ws, row, 5, q_en, fmt="0.0000")
+                _delta_cell(ws, row, 6, q_delta)
+                _body_cell(ws, row, 7, g_native, fmt="0.0000")
+                _body_cell(ws, row, 8, g_en, fmt="0.0000")
+                _delta_cell(ws, row, 9, g_delta)
+                if abs(q_delta) < 0.03 and abs(g_delta) < 0.03:
+                    direction = "~tie for both"
+                elif q_delta >= 0.03 and g_delta >= 0.03:
+                    direction = "EN better for both"
+                elif q_delta <= -0.03 and g_delta <= -0.03:
+                    direction = "Native better for both"
+                elif q_delta > g_delta:
+                    direction = "EN helps Qwen more"
+                else:
+                    direction = "EN helps Gemma more"
+                _body_cell(ws, row, 10, direction)
+                row += 1
+    _note(
+        ws, row,
+        "Direction uses |Δ| < 0.03 as a practical tie for the compact label only; the exact "
+        "deltas remain visible. This is descriptive and is not a significance test.",
+        10, height=42,
+    )
+    ws.freeze_panes = "A5"
 
 
 # --------------------------------------------------------------------------- sheets
@@ -1823,16 +1913,27 @@ def build_en_merged_gemma_provenance(ws, put) -> None:
                 "recomputed from predictions_subject_level.csv (matches metrics.json)")
     merged_campaign = "gemma4_merged_v1_prod_20260816T0000Z_d4ff33e"
     mmod_key = {"Audio + Text": "audio_text", "Audio only": "audio_only", "Text only": "text_only"}
+    merged_postprocess_jobs = {"audio_text": "44684476", "audio_only": "44684479", "text_only": "44684482"}
     for stage, stage_label in (("cv", "CV (5-fold)"), ("final", "Final (DAIC test)")):
         for modality, mk in mmod_key.items():
             q, g = MERGED_TF[(stage, modality)]
             if g is None:
                 continue
-            put("Gemma merged", stage_label, modality, "Teacher-forced",
-                g, f"campaign {merged_campaign}, merged training selection (mean_dataset_macro_f1)",
-                f"{stage_label}, teacher-forced, mean over five datasets",
-                f"output_model/symmetric_merged/gemma4/harmonized_v1/{mk}/{merged_campaign}/{stage}/fold_0/logs/training_history.json",
-                "from local training_history selected epoch")
+            if stage == "final":
+                put("Gemma merged", stage_label, modality, "Teacher-forced",
+                    g, (f"campaign {merged_campaign}, postprocess job {merged_postprocess_jobs[mk]}, "
+                        "source bfc13b4f8b177547a11a9abad526115b712d32ef"),
+                    ("DAIC official test, 47 subjects, teacher-forced, binary-strict, subject mean-score, "
+                     "harmonized_all_windows_full_coverage"),
+                    (f"outputs/symmetric_merged/gemma4/harmonized_v1/{mk}/{merged_campaign}/final/fold_0/"
+                     "gemma4/daic/metrics_original_teacher_forced.json + predictions_subject_level.csv"),
+                    "recomputed locally from 47 subject predictions; zero invalid subjects")
+            else:
+                put("Gemma merged", stage_label, modality, "Teacher-forced",
+                    g, f"campaign {merged_campaign}, merged training selection (mean_dataset_macro_f1)",
+                    f"{stage_label}, teacher-forced, mean over five datasets",
+                    f"output_model/symmetric_merged/gemma4/harmonized_v1/{mk}/{merged_campaign}/{stage}/fold_0/logs/training_history.json",
+                    "from local training_history selected epoch")
             q, g = MERGED_LR[(stage, modality)]
             put("Gemma merged", stage_label, modality, "LogReg head",
                 g, f"campaign {merged_campaign}, merged heads",
@@ -2206,6 +2307,7 @@ def main() -> None:
     wb.remove(wb.active)
     build_summary(wb, detailed=detailed)
     build_gemma_vs_qwen(wb)
+    build_native_vs_english(wb)
     build_packed30(wb)
     build_provenance(wb, detailed=detailed)
     out = OUT_DETAILED if detailed else OUT

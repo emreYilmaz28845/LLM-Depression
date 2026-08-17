@@ -66,11 +66,27 @@ def test_wandb_selection_entries_are_safe_and_unique() -> None:
     # The existing Gemma legacy reconciliation entries are untouched.
     legacy = [entry for entry in entries if entry["wandb_policy"] == "pending_wandb_reconciliation"]
     assert len(legacy) == 15
+    merged_final_tf = [
+        entry for entry in entries
+        if entry["selection_id"].startswith("Gemma merged|Final (DAIC test)")
+        and entry["selection_id"].endswith("Teacher-forced")
+    ]
+    assert len(merged_final_tf) == 3
+    assert all(
+        entry["required_evaluations"][0]["dataset"] == "daic"
+        for entry in merged_final_tf
+    )
 
 
 def test_workbook_regeneration_keeps_compact_sheet_set_with_qwen_vs_gemma() -> None:
     workbook = load_workbook(WORKBOOK_PATH, data_only=True)
-    assert workbook.sheetnames == ["Summary", "Qwen vs Gemma", "DAIC Packed30 Family", "Provenance"]
+    assert workbook.sheetnames == [
+        "Summary",
+        "Qwen vs Gemma",
+        "Native vs EN",
+        "DAIC Packed30 Family",
+        "Provenance",
+    ]
     sheet = workbook["Qwen vs Gemma"]
     value_cells = []
     for row in sheet.iter_rows():
@@ -81,6 +97,18 @@ def test_workbook_regeneration_keeps_compact_sheet_set_with_qwen_vs_gemma() -> N
     assert not any(isinstance(value, (int, float)) and (value < 0 or value > 1) for value in value_cells)
     methods = {sheet.cell(r, 4).value for r in range(5, sheet.max_row + 1)}
     assert {"Teacher-forced", "LogReg head", "XGBoost"} <= methods
+
+    merged_final_tf = {
+        sheet.cell(row, 3).value: sheet.cell(row, 6).value
+        for row in range(5, sheet.max_row + 1)
+        if sheet.cell(row, 1).value == "Merged — Final (DAIC test)"
+        and sheet.cell(row, 4).value == "Teacher-forced"
+    }
+    assert merged_final_tf == {
+        "Audio + Text": pytest.approx(0.7257294429708223),
+        "Audio only": pytest.approx(0.5190058479532164),
+        "Text only": pytest.approx(0.7755968169761273),
+    }
 
 
 def test_workbook_and_builder_hashes_recorded_in_wandb_selection() -> None:

@@ -242,9 +242,28 @@ def reportable_state_issues(sidecars: ModernSidecars) -> list[str]:
     if sidecars.state != "REPORTABLE":
         return []
     issues: list[str] = []
+    active_evaluations = [
+        evaluation for evaluation in sidecars.evaluations
+        if not (
+            evaluation.get("warnings")
+            and all(
+                isinstance(warning, str) and warning.startswith("invalidated by ")
+                for warning in evaluation["warnings"]
+            )
+        )
+    ]
     if not sidecars.evaluations:
         issues.append("REPORTABLE attempt has no evaluations")
+    elif not active_evaluations:
+        issues.append("REPORTABLE attempt has no active evaluations")
     for index, evaluation in enumerate(sidecars.evaluations):
+        explicitly_invalidated = evaluation not in active_evaluations
+        if explicitly_invalidated:
+            if evaluation.get("locally_verified") is not False:
+                issues.append(f"evaluations.json[{index}] invalidated but locally verified")
+            if evaluation.get("reportable") is not False:
+                issues.append(f"evaluations.json[{index}] invalidated but reportable")
+            continue
         if evaluation.get("locally_verified") is not True:
             issues.append(f"evaluations.json[{index}] not locally verified")
         if evaluation.get("reportable") is not True:
