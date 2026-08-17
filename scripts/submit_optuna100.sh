@@ -72,12 +72,12 @@ for study in "${STUDIES[@]}"; do
     spec_json="$SUBMISSIONS_ROOT/$RUN_ID/specs/${backend}_${dataset}_${modality}_fold${fold}.json"
     if [ "$DRY_RUN" = 0 ]; then
         mkdir -p "$(dirname "$spec_json")"
-        python - "$MANIFEST" "$backend" "$dataset" "$modality" "$fold" "$spec_json" <<'PY'
+        python - "$MANIFEST" "$backend" "$dataset" "$modality" "$fold" "$stage" "$spec_json" <<'PY'
 import json, sys
 manifest = json.load(open(sys.argv[1], encoding="utf-8"))
-backend, dataset, modality, fold, target = sys.argv[2:7]
+backend, dataset, modality, fold, stage, target = sys.argv[2:8]
 for study in manifest["studies"]:
-    if (study["backend"], study["dataset"], study["modality"], str(study["fold"])) == (backend, dataset, modality, fold):
+    if (study["backend"], study["dataset"], study["modality"], str(study["fold"]), str(study.get("stage", ""))) == (backend, dataset, modality, fold, stage):
         json.dump(study, open(target, "w", encoding="utf-8"), indent=2)
         break
 else:
