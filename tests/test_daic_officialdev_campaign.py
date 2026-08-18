@@ -84,24 +84,24 @@ def test_launcher_dry_run_describes_exactly_24_jobs_without_mutation() -> None:
     assert "smoke" not in launcher_text.lower()
 
 
-def test_launcher_dry_run_prints_worst_case_gpu_ceiling() -> None:
+def test_launcher_dry_run_prints_gpu_allocation_info() -> None:
     env = {
         **__import__("os").environ,
         "PROJECT_ROOT": str(PROJECT_ROOT),
-        "RUN_ID": "test_ceiling_000001",
+        "RUN_ID": "test_allocation_000001",
         "DRY_RUN": "1",
         "GITHUB_ISSUE": "88",
         "GITHUB_PR": "89",
         "MAX_CONCURRENT_TRAINS": "6",
-        "MAX_CONCURRENT_AUX": "12",
+        "MAX_CONCURRENT_AUX": "18",
     }
     result = _run(["bash", str(LAUNCHER)], env=env)
     assert result.returncode == 0, result.stderr
-    assert "ceiling=64" in result.stdout
-    assert "worst_case=" in result.stdout
+    assert "currently_allocated=" in result.stdout
+    assert "requested_by_campaign=42" in result.stdout
 
 
-def test_launcher_refuses_impossible_lane_shape() -> None:
+def test_launcher_allows_large_lane_shape() -> None:
     env = {
         **__import__("os").environ,
         "PROJECT_ROOT": str(PROJECT_ROOT),
@@ -113,8 +113,8 @@ def test_launcher_refuses_impossible_lane_shape() -> None:
         "MAX_CONCURRENT_AUX": "12",
     }
     result = _run(["bash", str(LAUNCHER)], env=env)
-    assert result.returncode == 2
-    assert "ceiling" in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "max_gpus=92" in result.stdout
 
 
 def test_workers_have_offline_flags_and_heads_has_no_gpu() -> None:

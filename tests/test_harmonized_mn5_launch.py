@@ -160,15 +160,17 @@ def test_standalone_dry_run_has_63_trains_33_evals_and_63_fixed_heads() -> None:
     assert sum("run_train_slurm.sh" in line for line in commands) == 63
     assert sum("run_eval_slurm.sh" in line for line in commands) == 33
     assert sum("run_qwen_hidden_extract_slurm.sh" in line for line in commands) == 63
-    assert "max_gpus=64" in result.stdout
+    assert "max_gpus=315" in result.stdout
     assert "xgb_optuna" not in result.stdout + result.stderr
     assert "github_issue=12 github_pr=10" in result.stdout
 
 
-def test_harmonized_launchers_refuse_more_than_64_gpus() -> None:
+def test_harmonized_launchers_allow_unlimited_parallelism(tmp_path: Path) -> None:
+    cells = tmp_path / "cells.tsv"
+    cells.write_text("d3tec\taudio_text\t0\t0\t123456\t\t\tFAILED\n", encoding="utf-8")
     for launcher, extra_env in (
         ("scripts/submit_harmonized_standalone.sh", {"MAX_CONCURRENT_AUX": "1"}),
-        ("scripts/submit_harmonized_standalone_retry.sh", {"MAX_CONCURRENT_AUX": "1", "CELLS": "unused"}),
+        ("scripts/submit_harmonized_standalone_retry.sh", {"MAX_CONCURRENT_AUX": "1", "CELLS": str(cells)}),
         ("scripts/submit_harmonized_merged.sh", {"MAX_CONCURRENT_POSTPROCESS": "1", "STAGE": "smoke"}),
     ):
         result = subprocess.run(
@@ -187,8 +189,11 @@ def test_harmonized_launchers_refuse_more_than_64_gpus() -> None:
             text=True,
             capture_output=True,
         )
-        assert result.returncode == 2
-        assert "64-GPU project ceiling" in result.stderr
+        assert result.returncode == 0, result.stderr
+        if launcher == "scripts/submit_harmonized_merged.sh":
+            assert '"status": "dry_run_complete"' in result.stdout
+        else:
+            assert "max_gpus=" in result.stdout
 
 
 def test_harmonized_launchers_require_campaign_provenance() -> None:

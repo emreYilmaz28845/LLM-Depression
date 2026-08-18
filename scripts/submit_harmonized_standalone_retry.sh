@@ -18,9 +18,8 @@ RETRY_TAG="${RETRY_TAG:-r1}"
 REASON="${REASON:-retry of a failed harmonized standalone cell}"
 ORIGINAL_TERMINAL_EVENT="${ORIGINAL_TERMINAL_EVENT:-FAILED}"
 case "$ORIGINAL_TERMINAL_EVENT" in FAILED|CANCELLED) ;; *) echo "ORIGINAL_TERMINAL_EVENT must be FAILED or CANCELLED" >&2; exit 2;; esac
-MAX_CONCURRENT_TRAINS="${MAX_CONCURRENT_TRAINS:-15}"
-MAX_CONCURRENT_AUX="${MAX_CONCURRENT_AUX:-4}"
-GPU_CEILING=64
+MAX_CONCURRENT_TRAINS="${MAX_CONCURRENT_TRAINS:-63}"
+MAX_CONCURRENT_AUX="${MAX_CONCURRENT_AUX:-63}"
 PREFLIGHT_AUDIT="${PREFLIGHT_AUDIT:-$PROJECT_ROOT/outputs/harmonized_mn5_preflight/$RUN_ID/audit.json}"
 PREFLIGHT_COMPONENTS="${PREFLIGHT_COMPONENTS:-5}"
 PREFLIGHT_MERGED="${PREFLIGHT_MERGED:-3}"
@@ -57,10 +56,6 @@ esac
 case "$DRY_RUN" in 0|1) ;; *) echo "DRY_RUN must be 0 or 1" >&2; exit 2;; esac
 case "$GITHUB_ISSUE" in ''|*[!0-9]*|0) echo "GITHUB_ISSUE must be a positive integer." >&2; exit 2;; esac
 case "$GITHUB_PR" in ''|*[!0-9]*|0) echo "GITHUB_PR must be a positive integer." >&2; exit 2;; esac
-if [ $((MAX_CONCURRENT_TRAINS * 4 + MAX_CONCURRENT_AUX)) -gt "$GPU_CEILING" ]; then
-    echo "Requested lanes can exceed the $GPU_CEILING-GPU project ceiling: trains=$MAX_CONCURRENT_TRAINS aux=$MAX_CONCURRENT_AUX" >&2
-    exit 2
-fi
 for path in "$CELLS" "$MATRIX" "$TRAIN_WORKER" "$EVAL_WORKER" "$HIDDEN_WORKER"; do
     [ -f "$path" ] || { echo "Missing required file: $path" >&2; exit 3; }
 done

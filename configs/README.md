@@ -97,7 +97,7 @@ MN5 execution order:
 
 Both GPU launchers require `GITHUB_ISSUE` and `GITHUB_PR`. For the full harmonized reproduction campaign, use Issue #12 and primary methodology PR #10. The production Git SHA must contain both PR #10 and its PR #11 acceptance-auditor correction. These fields provide scientific context; the full Git SHA and deployed-source hash remain the canonical source identity.
 
-All launchers default to dry-run. Their default throttles reserve fifteen four-GPU training lanes (60 H100s) and at most four one-GPU auxiliary jobs, for a hard ceiling of 64 allocated H100s. This is the combined ceiling across all active project campaigns, not a separate allowance for each launcher.
+All launchers default to dry-run. Their default lane counts run the whole matrix in parallel: one four-GPU training lane per training task and one one-GPU auxiliary lane per auxiliary job. There is no project-wide GPU cap; the scheduler, account, and QoS limits are the only binding constraints. Use `MAX_CONCURRENT_TRAINS` / `MAX_CONCURRENT_AUX` (or `MAX_CONCURRENT_POSTPROCESS`) to tune lane counts.
 
 ## Harmonized English-translation family
 
