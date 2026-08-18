@@ -69,9 +69,9 @@ poll_job() {
     queue_state="$(squeue -j "$job_id" -h -o '%T' 2>/dev/null || true)"
     if [ -z "$queue_state" ]; then
       local sacct_state exit_code elapsed
-      sacct_state="$(sacct -j "$job_id" -n -X -o State --format=State 2>/dev/null | head -1 | tr -d ' ' || true)"
-      exit_code="$(sacct -j "$job_id" -n -X -o ExitCode --format=ExitCode 2>/dev/null | head -1 | tr -d ' ' || true)"
-      elapsed="$(sacct -j "$job_id" -n -X -o Elapsed --format=Elapsed 2>/dev/null | head -1 | tr -d ' ' || true)"
+      sacct_state="$(sacct -j "$job_id" -n -X -o State 2>/dev/null | head -1 | tr -d ' ' || true)"
+      exit_code="$(sacct -j "$job_id" -n -X -o ExitCode 2>/dev/null | head -1 | tr -d ' ' || true)"
+      elapsed="$(sacct -j "$job_id" -n -X -o Elapsed 2>/dev/null | head -1 | tr -d ' ' || true)"
       if [ -n "$sacct_state" ] && [[ "$sacct_state" == *"COMPLETED"* || "$sacct_state" == *"FAILED"* || "$sacct_state" == *"CANCELLED"* || "$sacct_state" == *"TIMEOUT"* || "$sacct_state" == *"OUT_OF_MEMORY"* || "$sacct_state" == *"NODE_FAIL"* || "$sacct_state" == *"PREEMPTED"* || "$sacct_state" == *"BOOT_FAIL"* || "$sacct_state" == *"OUT_OF_"* ]]; then
         record_job "$DEPLOYMENT_ID" "$stage" "$job_id" "$sacct_state" "${exit_code:-unknown}" "$attempt"
         echo "job $job_id ($stage) terminal: state=$sacct_state exit=$exit_code elapsed=$elapsed"
@@ -141,7 +141,7 @@ for line in open(path, encoding="utf-8"):
         last = record
 print(last["slurm_job_id"] if last else "")
 PY
-)" -n -X -o State --format=State 2>/dev/null | head -1 | tr -d ' ' || true)"
+)" -n -X -o State 2>/dev/null | head -1 | tr -d ' ' || true)"
   case "$state" in
     NODE_FAIL|PREEMPTED|BOOT_FAIL)
       echo "transient infrastructure failure ($state); retrying $stage once as attempt2" >&2

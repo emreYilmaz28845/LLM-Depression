@@ -246,6 +246,8 @@ class TestWheelTags:
             "packaging-25.0-cp38-abi3-manylinux_2_28_x86_64.whl",
             "soundfile-0.13.1-cp310-cp310-musllinux_2_17_x86_64.whl",
             "psutil-7.0.0-cp310-cp310-linux_x86_64.whl",
+            "interegular-0.3.3-py37-none-any.whl",
+            "attrs-25.0.0-py39-none-any.whl",
         ],
     )
     def test_acceptable_tags(self, filename):

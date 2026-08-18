@@ -182,14 +182,25 @@ def wheel_tag_errors(filename: str, *, python_minor: int = PYTHON_MINOR) -> list
             continue
         errors.append(f"platform {tag!r}: unsupported platform tag")
 
-    supported_py = {"py3", f"cp{python_minor}", f"cp3{python_minor}"}
+    supported_py = {
+        "py3",
+        f"cp{python_minor}",
+        f"cp3{python_minor}",
+        *(f"py3{i}" for i in range(python_minor + 1)),
+    }
     abi3_ok = any(
         re.fullmatch(rf"cp3[0-{python_minor}]?-abi3", tag)
         or re.fullmatch(rf"cp{python_minor}?-abi3", tag)
         or tag == "abi3"
         for tag in abi_tags
     )
-    if not any(tag in supported_py for tag in py_tags) and not abi3_ok:
+    older_cp_pure = any(
+        re.fullmatch(rf"cp3[0-{python_minor - 1}]", tag) for tag in py_tags
+    )
+    compatible = any(tag in supported_py for tag in py_tags)
+    if older_cp_pure and abi3_ok:
+        compatible = True
+    if not compatible:
         errors.append(
             f"ABI {py_tags}/{abi_tags}: no tag supports CPython 3.{python_minor}"
         )
