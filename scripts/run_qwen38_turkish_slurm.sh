@@ -166,7 +166,7 @@ start_server() {
     --gpu-memory-utilization 0.90 \
     --reasoning-parser qwen3 \
     --generation-config vllm \
-    --disable-log-requests \
+    --no-enable-log-requests \
     > "$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
   echo "SERVER_PID=$SERVER_PID"
