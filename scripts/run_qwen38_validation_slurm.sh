@@ -32,6 +32,7 @@ WHEELHOUSE_DIR="${WHEELHOUSE_DIR:-/gpfs/projects/etur92/ozu647717/wheelhouses/qw
 VENV_DIR="${VENV_DIR:-/gpfs/projects/etur92/ozu647717/venvs/qwen38_inference}"
 MODEL_REVISION="${MODEL_REVISION:-1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0}"
 FIXTURE_PATH="${FIXTURE_PATH:-$PROJECT_ROOT/tests/fixtures/qwen38_synthetic_cases.jsonl}"
+PORT=8000
 
 DEPLOYMENT_ID="${DEPLOYMENT_ID:?Set DEPLOYMENT_ID}"
 TP_SIZE="${TP_SIZE:?Set TP_SIZE}"
@@ -232,7 +233,7 @@ start_server() {
     --model "$MODEL_DIR" \
     --served-model-name qwen3.8-27b \
     --host 127.0.0.1 \
-    --port 8000 \
+    --port "$PORT" \
     --tensor-parallel-size "$TP_SIZE" \
     --dtype bfloat16 \
     --language-model-only \
