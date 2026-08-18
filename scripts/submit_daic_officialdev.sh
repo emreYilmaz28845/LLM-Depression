@@ -3,10 +3,10 @@
 #
 # Submits the six-cell chain graph (train -> official-dev eval -> hidden
 # extraction -> CPU fixed heads) with backend-correct environments, minted
-# experiment contexts, immediate SUBMITTED events, raw sbatch responses in a
-# task-owned audit, and the combined project-wide 64-H100 ceiling enforced
-# against live allocations under the worst case. Dry-run by default; dry-run
-# performs zero mutation.
+# experiment contexts, immediate SUBMITTED events, and raw sbatch responses
+# in a task-owned audit. Default lanes run all six cells in parallel; there
+# is no project-wide GPU cap. Dry-run by default; dry-run performs zero
+# mutation.
 set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
@@ -14,8 +14,7 @@ MATRIX="${MATRIX:-$PROJECT_ROOT/configs/experiments/daic_officialdev/matrix.yaml
 RUN_ID="${RUN_ID:?Set a unique campaign RUN_ID}"
 DRY_RUN="${DRY_RUN:-1}"
 MAX_CONCURRENT_TRAINS="${MAX_CONCURRENT_TRAINS:-6}"
-MAX_CONCURRENT_AUX="${MAX_CONCURRENT_AUX:-12}"
-GPU_CEILING=64
+MAX_CONCURRENT_AUX="${MAX_CONCURRENT_AUX:-18}"
 PREFLIGHT_AUDIT="${PREFLIGHT_AUDIT:-$PROJECT_ROOT/outputs/daic_officialdev_mn5_preflight/$RUN_ID/audit.json}"
 TRAIN_WORKER="${TRAIN_WORKER:-$PROJECT_ROOT/scripts/run_train_slurm.sh}"
 EVAL_WORKER="${EVAL_WORKER:-$PROJECT_ROOT/scripts/run_eval_slurm.sh}"
@@ -36,10 +35,6 @@ case "$GITHUB_ISSUE" in ''|*[!0-9]*|0) echo "GITHUB_ISSUE must be a positive int
 case "$GITHUB_PR" in ''|*[!0-9]*|0) echo "GITHUB_PR must be a positive integer." >&2; exit 2;; esac
 if [ "$MAX_CONCURRENT_TRAINS" -lt 1 ] || [ "$MAX_CONCURRENT_AUX" -lt 1 ]; then
     echo "Concurrency limits must be positive." >&2
-    exit 2
-fi
-if [ $((MAX_CONCURRENT_TRAINS * 4 + MAX_CONCURRENT_AUX)) -gt "$GPU_CEILING" ]; then
-    echo "Requested lanes can exceed the $GPU_CEILING-GPU project ceiling: trains=$MAX_CONCURRENT_TRAINS aux=$MAX_CONCURRENT_AUX" >&2
     exit 2
 fi
 for path in "$MATRIX" "$TRAIN_WORKER" "$EVAL_WORKER" "$EXTRACT_WORKER" "$HEADS_WORKER"; do
@@ -68,8 +63,9 @@ if len(payload.get("configs") or []) != 6:
 PY
 fi
 
-# Live worst-case allocation check: current user GPU allocations plus the
-# maximum this campaign could add must stay at or below the combined ceiling.
+# Live allocation snapshot: current user GPU allocations plus the maximum
+# this campaign could add. Informational only; there is no project-wide
+# ceiling and the scheduler is the only limiter.
 current_alloc=0
 while IFS= read -r tres; do
     gpu="$(printf '%s' "$tres" | sed -n 's/.*gres\/gpu=\([0-9][0-9]*\).*/\1/p')"
@@ -78,12 +74,7 @@ while IFS= read -r tres; do
     fi
 done < <(squeue -h -r -u "$USER" -o "%b" 2>/dev/null || true)
 requested=$((MAX_CONCURRENT_TRAINS * 4 + MAX_CONCURRENT_AUX))
-worst_case=$((current_alloc + requested))
-echo "GPU allocation check: currently_allocated=$current_alloc requested_by_campaign=$requested worst_case=$worst_case ceiling=$GPU_CEILING"
-if [ "$worst_case" -gt "$GPU_CEILING" ]; then
-    echo "Worst-case combined allocation exceeds the $GPU_CEILING-H100 project ceiling." >&2
-    exit 2
-fi
+echo "GPU allocation info: currently_allocated=$current_alloc requested_by_campaign=$requested"
 
 mapfile -t TASKS < <(python - "$MATRIX" "$PROJECT_ROOT" <<'PY'
 import sys, yaml
@@ -306,6 +297,6 @@ PY
     fi
 done
 
-echo "Officialdev campaign plan: cells=${#TASKS[@]} train_lanes=$MAX_CONCURRENT_TRAINS aux_lanes=$MAX_CONCURRENT_AUX max_gpus=$requested worst_case_gpus=$worst_case github_issue=$GITHUB_ISSUE github_pr=$GITHUB_PR dry_run=$DRY_RUN"
+echo "Officialdev campaign plan: cells=${#TASKS[@]} train_lanes=$MAX_CONCURRENT_TRAINS aux_lanes=$MAX_CONCURRENT_AUX max_gpus=$requested github_issue=$GITHUB_ISSUE github_pr=$GITHUB_PR dry_run=$DRY_RUN"
 [ "$DRY_RUN" = 1 ] || echo "Submission registry: $registry"
 [ "$DRY_RUN" = 1 ] || echo "Raw submission audit: $raw_log"

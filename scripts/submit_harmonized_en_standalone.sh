@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Submit the 40-fold harmonized English standalone matrix (audio+text and
-# text-only for D3TEC, Androids, CMDC, Turkish) with a strict 64-GPU cap.
+# text-only for D3TEC, Androids, CMDC, Turkish) with maximum parallelism:
+# one four-GPU lane per train task and one one-GPU lane per aux task.
 # Exactly 40 train + 20 separate eval + 40 hidden jobs = 100 jobs. No
 # audio-only, DAIC, E-DAIC, merged, or Optuna cells.
 set -euo pipefail
@@ -9,9 +10,8 @@ PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depre
 MATRIX="${MATRIX:-$PROJECT_ROOT/configs/experiments/harmonized/english_translation_matrix.yaml}"
 RUN_ID="${RUN_ID:?Set a unique RUN_ID}"
 DRY_RUN="${DRY_RUN:-1}"
-MAX_CONCURRENT_TRAINS="${MAX_CONCURRENT_TRAINS:-15}"
-MAX_CONCURRENT_AUX="${MAX_CONCURRENT_AUX:-4}"
-GPU_CEILING=64
+MAX_CONCURRENT_TRAINS="${MAX_CONCURRENT_TRAINS:-40}"
+MAX_CONCURRENT_AUX="${MAX_CONCURRENT_AUX:-40}"
 PREFLIGHT_AUDIT="${PREFLIGHT_AUDIT:-$PROJECT_ROOT/outputs/harmonized_en_mn5_preflight/$RUN_ID/audit.json}"
 TRAIN_WORKER="${TRAIN_WORKER:-$PROJECT_ROOT/scripts/run_train_slurm.sh}"
 EVAL_WORKER="${EVAL_WORKER:-$PROJECT_ROOT/scripts/run_eval_slurm.sh}"
@@ -48,10 +48,6 @@ case "$GITHUB_ISSUE" in ''|*[!0-9]*|0) echo "GITHUB_ISSUE must be a positive int
 case "$GITHUB_PR" in ''|*[!0-9]*|0) echo "GITHUB_PR must be a positive integer." >&2; exit 2;; esac
 if [ "$MAX_CONCURRENT_TRAINS" -lt 1 ] || [ "$MAX_CONCURRENT_AUX" -lt 1 ]; then
     echo "Concurrency limits must be positive." >&2
-    exit 2
-fi
-if [ $((MAX_CONCURRENT_TRAINS * 4 + MAX_CONCURRENT_AUX)) -gt "$GPU_CEILING" ]; then
-    echo "Requested lanes can exceed the $GPU_CEILING-GPU project ceiling: trains=$MAX_CONCURRENT_TRAINS aux=$MAX_CONCURRENT_AUX" >&2
     exit 2
 fi
 for path in "$MATRIX" "$TRAIN_WORKER" "$EVAL_WORKER" "$HIDDEN_WORKER"; do

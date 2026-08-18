@@ -210,12 +210,12 @@ def test_native_gemma_launcher_dry_run_counts_and_backend_routing() -> None:
     assert "run_qwen_hidden_extract_slurm.sh" not in output
 
 
-def test_native_gemma_launcher_enforces_64_gpu_ceiling() -> None:
+def test_native_gemma_launcher_allows_unlimited_parallelism() -> None:
     ok = _run_launcher(GEMMA_NATIVE_MATRIX, extra_env={"MAX_CONCURRENT_TRAINS": "15", "MAX_CONCURRENT_AUX": "4"})
     assert ok.returncode == 0
-    over = _run_launcher(GEMMA_NATIVE_MATRIX, extra_env={"MAX_CONCURRENT_TRAINS": "16", "MAX_CONCURRENT_AUX": "1"})
-    assert over.returncode == 2
-    assert "64" in over.stderr
+    wide = _run_launcher(GEMMA_NATIVE_MATRIX, extra_env={"MAX_CONCURRENT_TRAINS": "60", "MAX_CONCURRENT_AUX": "60"})
+    assert wide.returncode == 0
+    assert "max_gpus=300" in wide.stdout
 
 
 def test_en_gemma_launcher_dry_run_counts() -> None:

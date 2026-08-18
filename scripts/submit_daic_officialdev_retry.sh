@@ -20,8 +20,7 @@ DRY_RUN="${DRY_RUN:-1}"
 RETRY_TAG="${RETRY_TAG:-r1}"
 REASON="${REASON:-retry of a failed DAIC official-development cell}"
 MAX_CONCURRENT_TRAINS="${MAX_CONCURRENT_TRAINS:-6}"
-MAX_CONCURRENT_AUX="${MAX_CONCURRENT_AUX:-12}"
-GPU_CEILING=64
+MAX_CONCURRENT_AUX="${MAX_CONCURRENT_AUX:-18}"
 PREFLIGHT_AUDIT="${PREFLIGHT_AUDIT:-$PROJECT_ROOT/outputs/daic_officialdev_mn5_preflight/$RUN_ID/audit.json}"
 TRAIN_WORKER="${TRAIN_WORKER:-$PROJECT_ROOT/scripts/run_train_slurm.sh}"
 EVAL_WORKER="${EVAL_WORKER:-$PROJECT_ROOT/scripts/run_eval_slurm.sh}"
@@ -40,10 +39,6 @@ MODEL_PATH_GEMMA4="${MODEL_PATH_GEMMA4:-/gpfs/projects/etur92/ozu647717/models/g
 case "$DRY_RUN" in 0|1) ;; *) echo "DRY_RUN must be 0 or 1" >&2; exit 2;; esac
 case "$GITHUB_ISSUE" in ''|*[!0-9]*|0) echo "GITHUB_ISSUE must be a positive integer." >&2; exit 2;; esac
 case "$GITHUB_PR" in ''|*[!0-9]*|0) echo "GITHUB_PR must be a positive integer." >&2; exit 2;; esac
-if [ $((MAX_CONCURRENT_TRAINS * 4 + MAX_CONCURRENT_AUX)) -gt "$GPU_CEILING" ]; then
-    echo "Requested lanes can exceed the $GPU_CEILING-GPU project ceiling." >&2
-    exit 2
-fi
 [ -f "$CELLS" ] || { echo "Missing cells file: $CELLS" >&2; exit 3; }
 
 cd "$PROJECT_ROOT"

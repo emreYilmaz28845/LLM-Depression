@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Submit the 63-fold harmonized standalone matrix with a strict 64-GPU cap.
-# Fifteen four-GPU train lanes plus four shared one-GPU eval/extraction lanes
-# can use at most 60 + 4 = 64 H100s at once.
+# Submit the 63-fold harmonized standalone matrix with maximum parallelism.
+# One four-GPU train lane per training task plus one one-GPU auxiliary lane
+# per aux task, so every cell starts as soon as the scheduler grants GPUs.
+# There is no project-wide GPU cap.
 set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
 MATRIX="${MATRIX:-$PROJECT_ROOT/configs/experiments/harmonized/standalone_matrix.yaml}"
 RUN_ID="${RUN_ID:?Set a unique RUN_ID}"
 DRY_RUN="${DRY_RUN:-1}"
-MAX_CONCURRENT_TRAINS="${MAX_CONCURRENT_TRAINS:-15}"
-MAX_CONCURRENT_AUX="${MAX_CONCURRENT_AUX:-4}"
-GPU_CEILING=64
+MAX_CONCURRENT_TRAINS="${MAX_CONCURRENT_TRAINS:-63}"
+MAX_CONCURRENT_AUX="${MAX_CONCURRENT_AUX:-63}"
 PREFLIGHT_AUDIT="${PREFLIGHT_AUDIT:-$PROJECT_ROOT/outputs/harmonized_mn5_preflight/$RUN_ID/audit.json}"
 PREFLIGHT_COMPONENTS="${PREFLIGHT_COMPONENTS:-5}"
 PREFLIGHT_MERGED="${PREFLIGHT_MERGED:-3}"
@@ -52,10 +52,6 @@ case "$GITHUB_ISSUE" in ''|*[!0-9]*|0) echo "GITHUB_ISSUE must be a positive int
 case "$GITHUB_PR" in ''|*[!0-9]*|0) echo "GITHUB_PR must be a positive integer." >&2; exit 2;; esac
 if [ "$MAX_CONCURRENT_TRAINS" -lt 1 ] || [ "$MAX_CONCURRENT_AUX" -lt 1 ]; then
     echo "Concurrency limits must be positive." >&2
-    exit 2
-fi
-if [ $((MAX_CONCURRENT_TRAINS * 4 + MAX_CONCURRENT_AUX)) -gt "$GPU_CEILING" ]; then
-    echo "Requested lanes can exceed the $GPU_CEILING-GPU project ceiling: trains=$MAX_CONCURRENT_TRAINS aux=$MAX_CONCURRENT_AUX" >&2
     exit 2
 fi
 for path in "$MATRIX" "$TRAIN_WORKER" "$EVAL_WORKER" "$HIDDEN_WORKER"; do
