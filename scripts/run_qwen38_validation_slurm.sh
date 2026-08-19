@@ -80,7 +80,11 @@ python -c "import torch, vllm; print('torch', torch.__version__, '| vllm', vllm.
 nvidia-smi --query-gpu=index,driver_version,memory.total,name --format=csv > "$ATTEMPT_DIR/gpu_info.txt"
 cat "$ATTEMPT_DIR/gpu_info.txt"
 DRIVER_VERSION="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)"
-VISIBLE_COUNT="$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l)"
+if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
+  VISIBLE_COUNT="$(printf '%s' "$CUDA_VISIBLE_DEVICES" | tr ',' '\n' | sed '/^$/d' | wc -l)"
+else
+  VISIBLE_COUNT="$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l)"
+fi
 GPU_MODEL="$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
 GPU_MEMORY="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader | head -1)"
 GPU_RECORD_PATH="$ATTEMPT_DIR/gpu_record.json"
@@ -105,10 +109,11 @@ with open(path, "w", encoding="utf-8") as handle:
     handle.write("\n")
 PY
 
-if [ "$VISIBLE_COUNT" != "$TP_SIZE" ]; then
-  echo "FAILED: expected exactly $TP_SIZE visible GPUs, found $VISIBLE_COUNT" >&2
+if [ "$VISIBLE_COUNT" -lt "$TP_SIZE" ]; then
+  echo "FAILED: expected at least $TP_SIZE visible GPUs, found $VISIBLE_COUNT" >&2
   exit 1
 fi
+echo "visible GPUs: $VISIBLE_COUNT (CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset})"
 python - "$DRIVER_VERSION" <<'PY'
 import sys
 
