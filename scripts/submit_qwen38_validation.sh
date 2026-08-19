@@ -188,7 +188,7 @@ fi
 echo "[stage:q38-tp2-smoke]"
 run_with_transient_retry "q38-tp2-smoke" \
   -A etur92 -q acc_ehpc -t 00:30:00 \
-  --cpus-per-task=40 --gres=gpu:2 \
+  --cpus-per-task=40 --gres=gpu:2 --exclusive \
   --export=ALL,DEPLOYMENT_ID="$DEPLOYMENT_ID",PROJECT_ROOT="$PROJECT_ROOT",DEPLOY_ROOT="$DEPLOY_ROOT",MODEL_DIR="$MODEL_DIR",WHEELHOUSE_DIR="$WHEELHOUSE_DIR",VENV_DIR="$VENV_DIR",MODEL_REVISION="$MODEL_REVISION",SOURCE_COMMIT="$SOURCE_COMMIT",TP_SIZE=2,ATTEMPT=1,RUN_LABEL=q38-tp2-smoke \
   "$PROJECT_ROOT/scripts/run_qwen38_validation_slurm.sh"
 if [ "$DRY_RUN" = "0" ]; then
@@ -210,7 +210,7 @@ if [ "$SKIP_TP1" != "1" ]; then
   echo "[stage:q38-tp1-compare]"
   run_with_transient_retry "q38-tp1-compare" \
     -A etur92 -q acc_ehpc -t 00:30:00 \
-    --cpus-per-task=20 --gres=gpu:1 \
+    --cpus-per-task=20 --gres=gpu:1 --exclusive \
     --export=ALL,DEPLOYMENT_ID="$DEPLOYMENT_ID",PROJECT_ROOT="$PROJECT_ROOT",DEPLOY_ROOT="$DEPLOY_ROOT",MODEL_DIR="$MODEL_DIR",WHEELHOUSE_DIR="$WHEELHOUSE_DIR",VENV_DIR="$VENV_DIR",MODEL_REVISION="$MODEL_REVISION",SOURCE_COMMIT="$SOURCE_COMMIT",TP_SIZE=1,ATTEMPT=1,RUN_LABEL=q38-tp1-compare \
     "$PROJECT_ROOT/scripts/run_qwen38_validation_slurm.sh"
 else
@@ -221,7 +221,7 @@ if [ "$SKIP_TP4" != "1" ]; then
   echo "[stage:q38-tp4-compare]"
   run_with_transient_retry "q38-tp4-compare" \
     -A etur92 -q acc_ehpc -t 00:30:00 \
-    --cpus-per-task=80 --gres=gpu:4 \
+    --cpus-per-task=80 --gres=gpu:4 --exclusive \
     --export=ALL,DEPLOYMENT_ID="$DEPLOYMENT_ID",PROJECT_ROOT="$PROJECT_ROOT",DEPLOY_ROOT="$DEPLOY_ROOT",MODEL_DIR="$MODEL_DIR",WHEELHOUSE_DIR="$WHEELHOUSE_DIR",VENV_DIR="$VENV_DIR",MODEL_REVISION="$MODEL_REVISION",SOURCE_COMMIT="$SOURCE_COMMIT",TP_SIZE=4,ATTEMPT=1,RUN_LABEL=q38-tp4-compare \
     "$PROJECT_ROOT/scripts/run_qwen38_validation_slurm.sh"
 else
