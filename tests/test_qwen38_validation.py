@@ -28,6 +28,38 @@ class TestSyntheticFixture:
         assert isinstance(VALIDATION_SYSTEM_PROMPT, str)
         assert VALIDATION_SYSTEM_PROMPT.strip()
 
+    def test_select_reads_acceptance_summary_rates(self, tmp_path, capsys):
+        from scripts.qwen38_validation_client import cmd_select
+
+        deploy = tmp_path / "deploy"
+        for tp in (1, 2, 4):
+            attempt = deploy / "qwen38_test" / "validation" / f"tp{tp}" / "attempt1"
+            attempt.mkdir(parents=True)
+            summary = {
+                "c1_pass_a": {"aggregate_requests_per_second": 1.0 + tp},
+                "c8": {"aggregate_requests_per_second": 0.8 + tp},
+            }
+            (attempt / "acceptance.json").write_text(
+                json.dumps({"passed": tp == 2, "summary": summary}), encoding="utf-8"
+            )
+            (attempt / "results.json").write_text(
+                json.dumps({"levels": {"c1_pass_a": [], "c8": []}}), encoding="utf-8"
+            )
+
+        class Args:
+            deploy_dir = str(deploy)
+            deployment_id = "qwen38_test"
+            source_commit = "abc123"
+
+        rc = cmd_select(Args())
+        assert rc == 0
+        payload = json.loads(
+            (deploy / "qwen38_test" / "serving_selection.json").read_text(encoding="utf-8")
+        )
+        assert payload["selected_tp"] == 2
+        assert payload["candidate_results"]["1"]["request_rate_c1"] == 2.0
+        assert payload["candidate_results"]["2"]["request_rate_c1"] == 3.0
+
     def test_run_case_sends_plain_string_contents(self):
         import asyncio
 
