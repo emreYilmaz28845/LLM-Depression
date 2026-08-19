@@ -76,9 +76,9 @@ nvidia-smi --query-gpu=index,driver_version,memory.total,name --format=csv > "$R
 chmod 600 "$RESTRICTED/gpu_info.txt"
 DRIVER_VERSION="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)"
 if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
-  VISIBLE_COUNT="$(printf '%s' "$CUDA_VISIBLE_DEVICES" | tr ',' '\n' | sed '/^$/d' | wc -l)"
+  VISIBLE_COUNT="$(printf '%s' "$CUDA_VISIBLE_DEVICES" | tr ',' '\n' | grep -c . || true)"
 else
-  VISIBLE_COUNT="$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l)"
+  VISIBLE_COUNT="$(nvidia-smi --query-gpu=index --format=csv,noheader | grep -c . || true)"
 fi
 GPU_MODEL="$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
 GPU_MEMORY="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader | head -1)"
