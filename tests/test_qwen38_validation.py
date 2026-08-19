@@ -28,6 +28,68 @@ class TestSyntheticFixture:
         assert isinstance(VALIDATION_SYSTEM_PROMPT, str)
         assert VALIDATION_SYSTEM_PROMPT.strip()
 
+    def test_run_case_sends_plain_string_contents(self):
+        import asyncio
+
+        from src.qwen38.validation import _run_case
+
+        captured_messages: list[list[dict]] = []
+
+        class _Delta:
+            def __init__(self, content):
+                self.content = content
+
+        class _Choice:
+            def __init__(self, content):
+                self.delta = _Delta(content)
+
+        class _Chunk:
+            def __init__(self, content):
+                self.choices = [_Choice(content)]
+
+        class _Stream:
+            def __init__(self, content):
+                self._chunks = [
+                    _Chunk(chunk) for chunk in (content[:3], content[3:])
+                ]
+                self._i = 0
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                if self._i >= len(self._chunks):
+                    raise StopAsyncIteration
+                chunk = self._chunks[self._i]
+                self._i += 1
+                return chunk
+
+        class _Completions:
+            async def create(self, **kwargs):
+                captured_messages.append(kwargs["messages"])
+                return _Stream(
+                    '{"case_id": "x", "inferred_question": "q", '
+                    '"label": "POSITIVE", "confidence": "HIGH"}'
+                )
+
+        class _Chat:
+            completions = _Completions()
+
+        class _Client:
+            chat = _Chat()
+
+        case = load_synthetic_cases(FIXTURE)[0]
+        result = asyncio.run(
+            _run_case(
+                _Client(), "qwen3.8-27b", case, max_tokens=1024, seed=42, repair=True
+            )
+        )
+        assert captured_messages
+        for messages in captured_messages:
+            for message in messages:
+                assert isinstance(message["content"], str), message["content"]
+        assert result["json_valid"] is True
+
     def test_fixture_distribution(self):
         cases = load_synthetic_cases(FIXTURE)
         assert len(cases) == 64
