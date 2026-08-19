@@ -157,8 +157,15 @@ CONSOLIDATION_FINAL_SYSTEM_PROMPT = (
 )
 
 SCHEMA_CORRECTION_MESSAGE = (
-    "Your previous answer was not valid JSON matching the required schema. Return only "
-    "the single JSON object, no prose."
+    "Your previous answer failed validation. Return exactly one JSON object matching "
+    "the exact schema shown above, with only these field names and no additional "
+    "fields. Use the exact enum spellings POSITIVE, NEGATIVE, NEUTRAL, MIXED, "
+    "EXPLICIT_ECHO, INFERRED_PARAPHRASE, HIGH, MEDIUM, and LOW. Do not use any "
+    "quote, apostrophe, backtick, [WINDOW marker, closing bracket, subject or "
+    "sequence identifier in any text field. Do not copy any 12-token sequence from "
+    "the answer windows; paraphrase the evidence instead. If no supported family "
+    "exists, use empty question_tr and question_en with a short abstain_reason. "
+    "Return only the JSON object, with no prose or markdown."
 )
 
 PROMPT_VERSION = "qwen38_turkish_v2"
