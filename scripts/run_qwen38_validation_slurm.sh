@@ -288,7 +288,29 @@ trap cleanup EXIT INT TERM
 # --- 4. Main workload ------------------------------------------------------
 export MODEL_REVISION SOURCE_COMMIT
 start_server
-wait_ready
+if ! wait_ready; then
+  # TP=1 capacity failure (OOM / insufficient memory) is CAPACITY_INELIGIBLE,
+  # not a deployment failure (runbook section 16).
+  python - "$ATTEMPT_DIR/acceptance.json" <<'PY'
+import json
+import os
+import sys
+import time
+path = sys.argv[1]
+record = {
+    "passed": False,
+    "capacity_ineligible": True,
+    "reason": "vLLM server failed to become ready (likely CUDA OOM at TP=1)",
+    "slurm_job_id": os.environ.get("SLURM_JOB_ID", ""),
+    "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(record, handle, indent=2)
+    handle.write("\n")
+PY
+  echo "TP=$TP_SIZE server startup failed; recorded acceptance.json"
+  exit 1
+fi
 
 python scripts/qwen38_validation_client.py run \
   --base-url http://127.0.0.1:8000/v1 \
