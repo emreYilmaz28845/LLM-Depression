@@ -2005,8 +2005,12 @@ def consolidate(
                         }
                     )
 
+            # Use smaller output budget for final merge to stay within 8192 context (6145 input + 1024 <8192)
+            final_max_tokens = 1024
+            final_settings = dict(settings)
+            final_settings["max_tokens"] = final_max_tokens
             final_parsed, family_assignment, used_simplified = await _final_consolidate_with_fallback(
-                client, model, cluster_summaries, all_cluster_ids, max_tokens, seed, settings
+                client, model, cluster_summaries, all_cluster_ids, final_max_tokens, seed, final_settings
             )
             # final_parsed may already have families
             families = final_parsed["families"] if "families" in final_parsed else final_parsed.get("families")
