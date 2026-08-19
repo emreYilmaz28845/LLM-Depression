@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+from pathlib import Path
 
 import pytest
 
@@ -557,6 +558,16 @@ class TestDeploymentAudit:
         )
 
         assert result["passed"], [c for c in result["checks"] if not c["passed"]]
+
+    def test_turkish_retry_uses_run_scoped_reconciliation_and_append_only_ledger(self):
+        submitter = (Path(__file__).resolve().parents[1] / "scripts" / "submit_qwen38_turkish.sh").read_text(
+            encoding="utf-8"
+        )
+        assert 'turkish_job_reconciliation_${TURKISH_RUN_ID}.json' in submitter
+        assert 'record.get("turkish_run_id") == run_id' in submitter
+        assert '"analysis_attempt": int(analysis_attempt)' in submitter
+        assert '"supersedes_job_ids": [item for item in supersedes_job_ids.split(",") if item]' in submitter
+        assert 'Turkish ledger or reconciliation already exists' not in submitter
 
     def test_deployment_audit_accepts_recorded_comparison_failures(self, tmp_path):
         deploy, deployment_id, model, wheelhouse, env_dir = self._build_deployment(tmp_path)

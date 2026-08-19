@@ -37,7 +37,7 @@ ANALYSIS_ATTEMPT="${ANALYSIS_ATTEMPT:-1}"
 SUPERSEDES_JOB_IDS="${SUPERSEDES_JOB_IDS:-44797563,44797605,44799622}"
 TURKISH_LEDGER="$DEPLOY_ROOT/$DEPLOYMENT_ID/turkish_jobs.jsonl"
 VALIDATION_LEDGER="$DEPLOY_ROOT/$DEPLOYMENT_ID/jobs.jsonl"
-RECONCILIATION_FILE="$DEPLOY_ROOT/$DEPLOYMENT_ID/turkish_job_reconciliation.json"
+RECONCILIATION_FILE="$DEPLOY_ROOT/$DEPLOYMENT_ID/turkish_job_reconciliation_${TURKISH_RUN_ID}.json"
 cd "$PROJECT_ROOT"
 
 if [ ! -f "$SELECTION_FILE" ]; then
@@ -82,8 +82,26 @@ if [ -e "$RUN_ROOT" ]; then
   exit 1
 fi
 CPUS=$((20 * SELECTED_TP))
-if [ -e "$TURKISH_LEDGER" ] || [ -e "$RECONCILIATION_FILE" ]; then
-  echo "FAILED: Turkish ledger or reconciliation already exists; refusing to mix attempts" >&2
+if [ -e "$RECONCILIATION_FILE" ]; then
+  echo "FAILED: reconciliation already exists for TURKISH_RUN_ID=$TURKISH_RUN_ID" >&2
+  exit 1
+fi
+if [ -f "$TURKISH_LEDGER" ] && python - "$TURKISH_LEDGER" "$TURKISH_RUN_ID" <<'PY'
+import json
+import sys
+
+path, run_id = sys.argv[1:]
+for line in open(path, encoding="utf-8"):
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if record.get("turkish_run_id") == run_id:
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+then
+  echo "FAILED: Turkish ledger already contains TURKISH_RUN_ID=$TURKISH_RUN_ID" >&2
   exit 1
 fi
 PROMPT_CONTRACT_SHA256="$(python - <<'PY'
@@ -124,14 +142,24 @@ PY
 write_reconciliation() {
   local prior_ids="44786675,44787044,44787058,44787265,44787858,44788198,44788385,44788761,44789295,44789857,44790166,44790785,44791198,44791795,44792293,44792525,44792690,44793073,44793552,44793816,44794141,44794513,44794838,44795227,44795599,44796268,44796478,44797033,44797196,44797499,44797563,44797605,44798109,44798371,44798414,44798606,44798835,44798943,44799225,44799432,44799622"
   local current_job_id="${1:?current Turkish job ID is required}"
-  python - "$RECONCILIATION_FILE" "$prior_ids" "$current_job_id" "$VALIDATION_LEDGER" "$TURKISH_LEDGER" <<'PY'
+  python - "$RECONCILIATION_FILE" "$prior_ids" "$current_job_id" "$TURKISH_RUN_ID" "$ANALYSIS_ATTEMPT" "$DEPLOYMENT_ID" "$SOURCE_COMMIT" "$SUPERSEDES_JOB_IDS" "$VALIDATION_LEDGER" "$TURKISH_LEDGER" <<'PY'
 import json
 import os
 import subprocess
 import sys
 import time
 
-path, ids_csv, current_job_id, *ledger_paths = sys.argv[1:]
+(
+    path,
+    ids_csv,
+    current_job_id,
+    turkish_run_id,
+    analysis_attempt,
+    deployment_id,
+    source_commit,
+    supersedes_job_ids,
+    *ledger_paths,
+) = sys.argv[1:]
 ids = []
 seen = set()
 
@@ -175,6 +203,11 @@ for line in result.stdout.splitlines():
 found = {record["job_id"] for record in records}
 payload = {
     "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    "turkish_run_id": turkish_run_id,
+    "analysis_attempt": int(analysis_attempt),
+    "deployment_id": deployment_id,
+    "source_commit": source_commit,
+    "supersedes_job_ids": [item for item in supersedes_job_ids.split(",") if item],
     "prior_job_ids": ids,
     "current_turkish_job_id": current_job_id,
     "ledger_sources": ledger_paths,
