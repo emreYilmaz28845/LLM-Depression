@@ -81,7 +81,26 @@ SUBJECT_SYSTEM_PROMPT = (
     "evidence_basis must be a short, non-quoted description and must not copy any "
     "transcript text. When an answer does not support any question family, return the "
     "episode with empty question_tr and question_en and a short abstain_reason.\n"
-    "Return exactly one JSON object matching the required schema."
+    "Return exactly one JSON object, no prose, no markdown fences, with this exact "
+    "shape:\n"
+    '{\n'
+    '  "episodes": [\n'
+    '    {\n'
+    '      "sequence_id": "the sequence id provided above",\n'
+    '      "episode_order": 1,\n'
+    '      "question_tr": "concise Turkish question",\n'
+    '      "question_en": "concise English question",\n'
+    '      "label": "POSITIVE | NEGATIVE | NEUTRAL | MIXED",\n'
+    '      "wording_status": "EXPLICIT_ECHO | INFERRED_PARAPHRASE",\n'
+    '      "confidence": "HIGH | MEDIUM | LOW",\n'
+    '      "evidence_window_indices": [1, 2],\n'
+    '      "evidence_basis": "short non-quoted description",\n'
+    '      "abstain_reason": ""\n'
+    '    }\n'
+    '  ]\n'
+    '}\n'
+    "Use exactly the field names shown. The sequence_id field must equal the "
+    "sequence id provided to you; never invent a different id."
 )
 
 CONSOLIDATION_BATCH_SYSTEM_PROMPT = (
@@ -92,7 +111,20 @@ CONSOLIDATION_BATCH_SYSTEM_PROMPT = (
     "Merge paraphrases that plausibly represent the same interviewer prompt while "
     "keeping distinct topics separate. Every candidate ID must appear in exactly one "
     "cluster. Propose concise canonical Turkish and English wording for each cluster.\n"
-    "Return exactly one JSON object with a clusters array matching the required schema."
+    "Return exactly one JSON object, no prose, no markdown fences, with this exact "
+    "shape:\n"
+    '{\n'
+    '  "clusters": [\n'
+    '    {\n'
+    '      "cluster_id": "c1",\n'
+    '      "canonical_question_tr": "concise Turkish wording",\n'
+    '      "canonical_question_en": "concise English wording",\n'
+    '      "member_candidate_ids": ["S0001-1", "S0002-3"]\n'
+    '    }\n'
+    '  ]\n'
+    '}\n'
+    "Use exactly the field names shown. Every candidate id must appear in exactly "
+    "one member_candidate_ids list."
 )
 
 CONSOLIDATION_FINAL_SYSTEM_PROMPT = (
@@ -104,7 +136,20 @@ CONSOLIDATION_FINAL_SYSTEM_PROMPT = (
     "one family. For each final family, propose concise, semantically aligned "
     "canonical wording in Turkish and English. Do not include any subject ID, "
     "filename, window marker, quotation, diagnostic label, or outcome in the wording.\n"
-    "Return exactly one JSON object with a families array matching the required schema."
+    "Return exactly one JSON object, no prose, no markdown fences, with this exact "
+    "shape:\n"
+    '{\n'
+    '  "families": [\n'
+    '    {\n'
+    '      "family_id": "f1",\n'
+    '      "question_tr": "concise Turkish wording",\n'
+    '      "question_en": "concise English wording",\n'
+    '      "member_cluster_ids": ["c1", "c2"]\n'
+    '    }\n'
+    '  ]\n'
+    '}\n'
+    "Use exactly the field names shown. Every cluster id must appear in exactly "
+    "one member_cluster_ids list."
 )
 
 SCHEMA_CORRECTION_MESSAGE = (
@@ -412,58 +457,6 @@ def infer_subjects(
         pending.append(sequence)
 
     settings = request_settings(max_tokens)
-    schema_payload = structured_output_schema(
-        {
-            "type": "object",
-            "properties": {
-                "episodes": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "sequence_id": {"type": "string"},
-                            "episode_order": {"type": "integer", "minimum": 1},
-                            "question_tr": {"type": "string"},
-                            "question_en": {"type": "string"},
-                            "label": {
-                                "type": "string",
-                                "enum": [label.value for label in Label],
-                            },
-                            "wording_status": {
-                                "type": "string",
-                                "enum": [status.value for status in WordingStatus],
-                            },
-                            "confidence": {
-                                "type": "string",
-                                "enum": [conf.value for conf in Confidence],
-                            },
-                            "evidence_window_indices": {
-                                "type": "array",
-                                "items": {"type": "integer"},
-                            },
-                            "evidence_basis": {"type": "string"},
-                            "abstain_reason": {"type": "string"},
-                        },
-                        "required": [
-                            "sequence_id",
-                            "episode_order",
-                            "question_tr",
-                            "question_en",
-                            "label",
-                            "wording_status",
-                            "confidence",
-                            "evidence_window_indices",
-                            "evidence_basis",
-                            "abstain_reason",
-                        ],
-                        "additionalProperties": False,
-                    },
-                }
-            },
-            "required": ["episodes"],
-            "additionalProperties": False,
-        }
-    )
 
     async def infer_one(sequence: dict[str, Any]) -> tuple[str, bool, str | None]:
         sequence_id = sequence["sequence_id"]
@@ -484,7 +477,6 @@ def infer_subjects(
                     top_p=settings["top_p"],
                     max_tokens=settings["max_tokens"],
                     seed=seed,
-                    response_format=schema_payload,
                     extra_body={"chat_template_kwargs": settings["chat_template_kwargs"]},
                     stream=True,
                 )
@@ -674,7 +666,6 @@ async def _consolidation_request(
     settings: dict[str, Any],
     label: str,
 ) -> dict[str, Any]:
-    schema_payload = structured_output_schema(schema)
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
@@ -690,7 +681,6 @@ async def _consolidation_request(
                 top_p=settings["top_p"],
                 max_tokens=settings["max_tokens"],
                 seed=seed,
-                response_format=schema_payload,
                 extra_body={"chat_template_kwargs": settings["chat_template_kwargs"]},
                 stream=True,
             )
