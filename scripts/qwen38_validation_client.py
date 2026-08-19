@@ -157,8 +157,9 @@ def cmd_select(args: argparse.Namespace) -> int:
             continue
         acceptance = _read_json(acceptance_path)
         metrics = _read_json(metrics_path) if metrics_path.is_file() else {}
-        rate_c1 = metrics.get("levels", {}).get("c1_pass_a", {}).get("aggregate_requests_per_second")
-        rate_c8 = metrics.get("levels", {}).get("c8", {}).get("aggregate_requests_per_second")
+        level_summaries = acceptance.get("summary", {})
+        rate_c1 = level_summaries.get("c1_pass_a", {}).get("aggregate_requests_per_second")
+        rate_c8 = level_summaries.get("c8", {}).get("aggregate_requests_per_second")
         passed = bool(acceptance.get("passed"))
         candidates[tp] = CandidateResult(
             tp=tp,
