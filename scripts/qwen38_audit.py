@@ -46,6 +46,7 @@ def cmd_deployment(args: argparse.Namespace) -> int:
         wheelhouse_dir=args.wheelhouse_dir,
         environment_dir=args.environment_dir,
         source_commit=args.source_commit,
+        selection_file=args.selection_file,
     )
     write_audit_json(result, Path(args.out))
     print(f"deployment audit passed={result['passed']} checks={len(result['checks'])}")
@@ -65,14 +66,17 @@ def cmd_turkish(args: argparse.Namespace) -> int:
             return 1
     result = audit_turkish(
         args.run_dir,
+        turkish_run_id=args.turkish_run_id,
         transcript_path=args.transcript,
         deploy_dir=args.deploy_dir,
         deployment_id=args.deployment_id,
         model_dir=args.model_dir,
         wheelhouse_dir=args.wheelhouse_dir,
         source_commit=args.source_commit,
+        selection_file=args.selection_file,
         slurm_metadata=slurm_metadata,
         remote_reference=args.remote_reference,
+        remote_audit_sha256_path=args.remote_audit_sha256,
     )
     write_audit_json(result, Path(args.out))
     print(f"turkish audit passed={result['passed']} checks={len(result['checks'])}")
@@ -104,19 +108,23 @@ def build_parser() -> argparse.ArgumentParser:
     deployment.add_argument("--wheelhouse-dir", required=True)
     deployment.add_argument("--environment-dir", default=None)
     deployment.add_argument("--source-commit", default=None)
+    deployment.add_argument("--selection-file", default=None)
     deployment.add_argument("--out", required=True)
     deployment.set_defaults(func=cmd_deployment)
 
     turkish = subparsers.add_parser("turkish", help="audit the Turkish compact outputs")
     turkish.add_argument("--run-dir", required=True)
+    turkish.add_argument("--turkish-run-id", required=True)
     turkish.add_argument("--transcript", required=True)
     turkish.add_argument("--deploy-dir", required=True)
     turkish.add_argument("--deployment-id", required=True)
     turkish.add_argument("--model-dir", required=True)
     turkish.add_argument("--wheelhouse-dir", required=True)
     turkish.add_argument("--source-commit", required=True)
+    turkish.add_argument("--selection-file", required=True)
     turkish.add_argument("--slurm-metadata", default=None, help="JSON with job/state/exit/node/timestamps")
     turkish.add_argument("--remote-reference", default=None, help="remote audit.json to reference")
+    turkish.add_argument("--remote-audit-sha256", default=None, help="audit.json SHA-256 sidecar")
     turkish.add_argument("--out", required=True)
     turkish.set_defaults(func=cmd_turkish)
 

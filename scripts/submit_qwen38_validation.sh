@@ -5,17 +5,18 @@
 # TP=4 bounded comparisons (concurrent) -> serving-configuration selection.
 #
 # Required env:
-#   DEPLOYMENT_ID
+#   DEPLOYMENT_ID, SOURCE_COMMIT
 # Optional env:
 #   PROJECT_ROOT, DEPLOY_ROOT, MODEL_DIR, WHEELHOUSE_DIR, VENV_DIR,
 #   MODEL_REVISION, SOURCE_COMMIT, DRY_RUN (default 0), WAIT (default 1),
 #   SKIP_ENV_BUILD (default 0), SKIP_TP1 (default 0), SKIP_TP4 (default 0),
-#   SKIP_SELECTION (default 0), MAX_POLL_SECONDS (default 5400 per stage).
+#   SKIP_SELECTION (default 0), TP4_ATTEMPT (default 1),
+#   MAX_POLL_SECONDS (default 5400 per stage).
 #
 # Every submitted job ID is appended to
-# $DEPLOY_ROOT/$DEPLOYMENT_ID/jobs.jsonl. A failed job is retried once with
-# attempt=2 only for transient infrastructure states (NODE_FAIL, PREEMPTED,
-# BOOT_FAIL), per runbook section 22.
+# $DEPLOY_ROOT/$DEPLOYMENT_ID/jobs.jsonl. A failed job is retried once with a
+# new artifact attempt only for transient infrastructure states (NODE_FAIL,
+# PREEMPTED, BOOT_FAIL), per runbook section 22.
 
 set -euo pipefail
 
@@ -25,19 +26,26 @@ MODEL_DIR="${MODEL_DIR:-/gpfs/projects/etur92/ozu647717/models/Qwen3.8-27B}"
 WHEELHOUSE_DIR="${WHEELHOUSE_DIR:-/gpfs/projects/etur92/ozu647717/wheelhouses/qwen38_vllm_0.25.1_tf5.8.0_cu130_py310}"
 VENV_DIR="${VENV_DIR:-/gpfs/projects/etur92/ozu647717/venvs/qwen38_inference}"
 MODEL_REVISION="${MODEL_REVISION:-1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0}"
-SOURCE_COMMIT="${SOURCE_COMMIT:-unknown}"
+SOURCE_COMMIT="${SOURCE_COMMIT:?Set SOURCE_COMMIT to the full merged source SHA}"
 DRY_RUN="${DRY_RUN:-0}"
 WAIT="${WAIT:-1}"
 SKIP_ENV_BUILD="${SKIP_ENV_BUILD:-0}"
 SKIP_TP1="${SKIP_TP1:-0}"
 SKIP_TP4="${SKIP_TP4:-0}"
 SKIP_SELECTION="${SKIP_SELECTION:-0}"
+TP4_ATTEMPT="${TP4_ATTEMPT:-1}"
 MAX_POLL_SECONDS="${MAX_POLL_SECONDS:-5400}"
 
 DEPLOYMENT_ID="${DEPLOYMENT_ID:?Set DEPLOYMENT_ID}"
 JOBS_FILE="$DEPLOY_ROOT/$DEPLOYMENT_ID/jobs.jsonl"
 mkdir -p "$DEPLOY_ROOT/$DEPLOYMENT_ID"
 cd "$PROJECT_ROOT"
+ORIGIN_MAIN_SHA="${LOCAL_ORIGIN_MAIN_SHA:-$(git rev-parse origin/main 2>/dev/null || true)}"
+REMOTE_PROVENANCE_SHA="$(tr -d '[:space:]' < "$PROJECT_ROOT/.provenance/git_commit.txt" 2>/dev/null || true)"
+if [ "$SOURCE_COMMIT" != "$ORIGIN_MAIN_SHA" ] || [ "$SOURCE_COMMIT" != "$REMOTE_PROVENANCE_SHA" ]; then
+  echo "FAILED: source identity mismatch (SOURCE_COMMIT=$SOURCE_COMMIT origin/main=$ORIGIN_MAIN_SHA provenance=$REMOTE_PROVENANCE_SHA)" >&2
+  exit 1
+fi
 
 record_job() {
   local deployment_id="$1" stage="$2" job_id="$3" state="$4" exit_code="$5" attempt="$6"
@@ -122,8 +130,8 @@ submit_and_wait() {
 }
 
 run_with_transient_retry() {
-  local stage="$1"
-  shift
+  local stage="$1" first_artifact_attempt="$2" retry_artifact_attempt="$3"
+  shift 3
   if submit_and_wait "$stage" "1" "$@"; then
     return 0
   fi
@@ -144,8 +152,21 @@ PY
 )" -n -X -o State 2>/dev/null | head -1 | tr -d ' ' || true)"
   case "$state" in
     NODE_FAIL|PREEMPTED|BOOT_FAIL)
-      echo "transient infrastructure failure ($state); retrying $stage once as attempt2" >&2
-      if submit_and_wait "$stage" "2" "$@"; then
+      echo "transient infrastructure failure ($state); retrying $stage once with artifact attempt${retry_artifact_attempt}" >&2
+      local retry_args=("$@")
+      local replaced=0
+      local index
+      for index in "${!retry_args[@]}"; do
+        if [[ "${retry_args[$index]}" == *"ATTEMPT=$first_artifact_attempt"* ]]; then
+          retry_args[$index]="${retry_args[$index]//ATTEMPT=$first_artifact_attempt/ATTEMPT=$retry_artifact_attempt}"
+          replaced=$((replaced + 1))
+        fi
+      done
+      if [ "$replaced" -ne 1 ]; then
+        echo "FAILED: retry could not move $stage to artifact attempt${retry_artifact_attempt}" >&2
+        return 1
+      fi
+      if submit_and_wait "$stage" "2" "${retry_args[@]}"; then
         return 0
       fi
       echo "attempt2 also failed; stopping" >&2
@@ -171,10 +192,10 @@ echo "jobs_file=$JOBS_FILE"
 ENV_DIR="$DEPLOY_ROOT/$DEPLOYMENT_ID/environment"
 if [ "$SKIP_ENV_BUILD" != "1" ] && [ ! -f "$ENV_DIR/environment_acceptance.json" ]; then
   echo "[stage:env-build]"
-  run_with_transient_retry "q38-env-build" \
+  run_with_transient_retry "q38-env-build" 1 2 \
     -A etur92 -q acc_ehpc -t 00:30:00 \
     --cpus-per-task=4 --gres=none \
-    --export=ALL,DEPLOYMENT_ID="$DEPLOYMENT_ID",PROJECT_ROOT="$PROJECT_ROOT",DEPLOY_ROOT="$DEPLOY_ROOT",MODEL_DIR="$MODEL_DIR",WHEELHOUSE_DIR="$WHEELHOUSE_DIR",VENV_DIR="$VENV_DIR",MODEL_REVISION="$MODEL_REVISION",SOURCE_COMMIT="$SOURCE_COMMIT" \
+    --export=ALL,DEPLOYMENT_ID="$DEPLOYMENT_ID",PROJECT_ROOT="$PROJECT_ROOT",DEPLOY_ROOT="$DEPLOY_ROOT",MODEL_DIR="$MODEL_DIR",WHEELHOUSE_DIR="$WHEELHOUSE_DIR",VENV_DIR="$VENV_DIR",MODEL_REVISION="$MODEL_REVISION",SOURCE_COMMIT="$SOURCE_COMMIT",LOCAL_ORIGIN_MAIN_SHA="$ORIGIN_MAIN_SHA" \
     "$PROJECT_ROOT/scripts/run_qwen38_env_build_slurm.sh"
   if [ "$DRY_RUN" = "0" ] && [ ! -f "$ENV_DIR/environment_acceptance.json" ]; then
     echo "FAILED: environment build did not produce environment_acceptance.json" >&2
@@ -197,10 +218,10 @@ then
   echo "[stage:q38-tp2-smoke] skipped (acceptance already passed)"
 else
   echo "[stage:q38-tp2-smoke]"
-  run_with_transient_retry "q38-tp2-smoke" \
+  run_with_transient_retry "q38-tp2-smoke" 1 2 \
     -A etur92 -q acc_ehpc -t 00:30:00 \
     --cpus-per-task=40 --gres=gpu:2 --exclusive \
-    --export=ALL,DEPLOYMENT_ID="$DEPLOYMENT_ID",PROJECT_ROOT="$PROJECT_ROOT",DEPLOY_ROOT="$DEPLOY_ROOT",MODEL_DIR="$MODEL_DIR",WHEELHOUSE_DIR="$WHEELHOUSE_DIR",VENV_DIR="$VENV_DIR",MODEL_REVISION="$MODEL_REVISION",SOURCE_COMMIT="$SOURCE_COMMIT",TP_SIZE=2,ATTEMPT=1,RUN_LABEL=q38-tp2-smoke \
+    --export=ALL,DEPLOYMENT_ID="$DEPLOYMENT_ID",PROJECT_ROOT="$PROJECT_ROOT",DEPLOY_ROOT="$DEPLOY_ROOT",MODEL_DIR="$MODEL_DIR",WHEELHOUSE_DIR="$WHEELHOUSE_DIR",VENV_DIR="$VENV_DIR",MODEL_REVISION="$MODEL_REVISION",SOURCE_COMMIT="$SOURCE_COMMIT",LOCAL_ORIGIN_MAIN_SHA="$ORIGIN_MAIN_SHA",TP_SIZE=2,ATTEMPT=1,RUN_LABEL=q38-tp2-smoke \
     "$PROJECT_ROOT/scripts/run_qwen38_validation_slurm.sh"
   if [ "$DRY_RUN" = "0" ]; then
     if [ ! -f "$TP2_ACCEPTANCE" ] || ! python - "$TP2_ACCEPTANCE" <<'PY'
@@ -252,10 +273,10 @@ if [ "$SKIP_TP1" != "1" ]; then
     echo "[stage:q38-tp1-compare] skipped (acceptance or capacity record exists)"
   else
     echo "[stage:q38-tp1-compare]"
-    if run_with_transient_retry "q38-tp1-compare" \
+    if run_with_transient_retry "q38-tp1-compare" 1 2 \
       -A etur92 -q acc_ehpc -t 00:30:00 \
       --cpus-per-task=20 --gres=gpu:1 --exclusive \
-      --export=ALL,DEPLOYMENT_ID="$DEPLOYMENT_ID",PROJECT_ROOT="$PROJECT_ROOT",DEPLOY_ROOT="$DEPLOY_ROOT",MODEL_DIR="$MODEL_DIR",WHEELHOUSE_DIR="$WHEELHOUSE_DIR",VENV_DIR="$VENV_DIR",MODEL_REVISION="$MODEL_REVISION",SOURCE_COMMIT="$SOURCE_COMMIT",TP_SIZE=1,ATTEMPT=1,RUN_LABEL=q38-tp1-compare \
+      --export=ALL,DEPLOYMENT_ID="$DEPLOYMENT_ID",PROJECT_ROOT="$PROJECT_ROOT",DEPLOY_ROOT="$DEPLOY_ROOT",MODEL_DIR="$MODEL_DIR",WHEELHOUSE_DIR="$WHEELHOUSE_DIR",VENV_DIR="$VENV_DIR",MODEL_REVISION="$MODEL_REVISION",SOURCE_COMMIT="$SOURCE_COMMIT",LOCAL_ORIGIN_MAIN_SHA="$ORIGIN_MAIN_SHA",TP_SIZE=1,ATTEMPT=1,RUN_LABEL=q38-tp1-compare \
       "$PROJECT_ROOT/scripts/run_qwen38_validation_slurm.sh"; then
       :
     else
@@ -275,15 +296,15 @@ else
 fi
 
 if [ "$SKIP_TP4" != "1" ]; then
-  TP4_DONE="$DEPLOY_ROOT/$DEPLOYMENT_ID/validation/tp4/attempt1/acceptance.json"
+  TP4_DONE="$DEPLOY_ROOT/$DEPLOYMENT_ID/validation/tp4/attempt${TP4_ATTEMPT}/acceptance.json"
   if [ -f "$TP4_DONE" ]; then
     echo "[stage:q38-tp4-compare] skipped (acceptance exists)"
   else
     echo "[stage:q38-tp4-compare]"
-    if run_with_transient_retry "q38-tp4-compare" \
+    if run_with_transient_retry "q38-tp4-compare" "$TP4_ATTEMPT" "$((TP4_ATTEMPT + 1))" \
       -A etur92 -q acc_ehpc -t 00:30:00 \
       --cpus-per-task=80 --gres=gpu:4 --exclusive \
-      --export=ALL,DEPLOYMENT_ID="$DEPLOYMENT_ID",PROJECT_ROOT="$PROJECT_ROOT",DEPLOY_ROOT="$DEPLOY_ROOT",MODEL_DIR="$MODEL_DIR",WHEELHOUSE_DIR="$WHEELHOUSE_DIR",VENV_DIR="$VENV_DIR",MODEL_REVISION="$MODEL_REVISION",SOURCE_COMMIT="$SOURCE_COMMIT",TP_SIZE=4,ATTEMPT=1,RUN_LABEL=q38-tp4-compare \
+      --export=ALL,DEPLOYMENT_ID="$DEPLOYMENT_ID",PROJECT_ROOT="$PROJECT_ROOT",DEPLOY_ROOT="$DEPLOY_ROOT",MODEL_DIR="$MODEL_DIR",WHEELHOUSE_DIR="$WHEELHOUSE_DIR",VENV_DIR="$VENV_DIR",MODEL_REVISION="$MODEL_REVISION",SOURCE_COMMIT="$SOURCE_COMMIT",LOCAL_ORIGIN_MAIN_SHA="$ORIGIN_MAIN_SHA",TP_SIZE=4,ATTEMPT="$TP4_ATTEMPT",RUN_LABEL=q38-tp4-compare \
       "$PROJECT_ROOT/scripts/run_qwen38_validation_slurm.sh"; then
       :
     else
@@ -296,6 +317,10 @@ fi
 
 # --- Stage 4: serving-configuration selection ---------------------------------
 if [ "$SKIP_SELECTION" != "1" ]; then
+  if [ "$TP4_ATTEMPT" != "1" ]; then
+    echo "FAILED: TP4_ATTEMPT=$TP4_ATTEMPT requires SKIP_SELECTION=1; original selection is immutable" >&2
+    exit 1
+  fi
   echo "[stage:select]"
   if [ "$DRY_RUN" = "1" ]; then
     echo "would run: python scripts/qwen38_validation_client.py select --deploy-dir $DEPLOY_ROOT --deployment-id $DEPLOYMENT_ID --source-commit $SOURCE_COMMIT"

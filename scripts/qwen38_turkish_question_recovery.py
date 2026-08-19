@@ -68,12 +68,21 @@ def _restrict_run_dir(run_dir: Path) -> None:
 
 
 def cmd_prepare(args: argparse.Namespace) -> int:
+    if not args.selection_file:
+        raise ValueError("--selection-file is required for a Turkish analysis attempt")
     summary = prepare_sequences(
         args.transcript,
         run_dir=args.run_dir,
         deployment_id=args.deployment_id,
         model_revision=args.model_revision,
         source_commit=args.source_commit,
+        turkish_run_id=args.turkish_run_id,
+        analysis_attempt=args.analysis_attempt,
+        selected_tp=args.selected_tp,
+        selection_file=args.selection_file,
+        supersedes_job_ids=[
+            value for value in (item.strip() for item in args.supersedes_job_ids.split(",")) if value
+        ],
     )
     _restrict_run_dir(Path(args.run_dir))
     _atomic_write_json(summary, Path(args.run_dir) / "prepare_summary.json")
@@ -94,6 +103,8 @@ def cmd_infer_subjects(args: argparse.Namespace) -> int:
         concurrency=args.concurrency,
         seed=args.seed,
         max_tokens=args.max_tokens,
+        source_commit=args.source_commit,
+        turkish_run_id=args.turkish_run_id,
     )
     _atomic_write_json(summary, Path(args.run_dir) / "inference_summary.json")
     os.chmod(Path(args.run_dir) / "inference_summary.json", 0o600)
@@ -184,9 +195,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--deployment-id", required=True)
+    common.add_argument("--turkish-run-id", required=True)
     common.add_argument("--run-dir", required=True, help="run output directory")
-    common.add_argument("--source-commit", default="")
+    common.add_argument("--source-commit", required=True)
     common.add_argument("--model-revision", default=MODEL_REVISION)
+    common.add_argument("--selection-file", default=None)
+    common.add_argument("--selected-tp", type=int, default=None)
+    common.add_argument("--analysis-attempt", type=int, default=1)
+    common.add_argument("--supersedes-job-ids", default="")
 
     prepare = subparsers.add_parser("prepare", parents=[common], help="prepare subject sequences")
     prepare.add_argument("--transcript", required=True, help="private ASR transcript JSONL")

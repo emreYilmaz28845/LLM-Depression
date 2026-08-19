@@ -43,14 +43,21 @@ from src.qwen38.contracts import (
     Confidence,
     Label,
     WordingStatus,
+    generation_settings_hash,
     ngram_overlap_at_least,
-    tokenize_for_privacy,
 )
 from src.qwen38.turkish_questions import (
+    _canonical_json,
+    _episode_provenance,
+    _sha256_text,
+    aggregate_families,
     collect_candidates,
     load_prepared_sequences,
     load_table_rows,
     parse_filename_stem,
+    prompt_contract_sha256,
+    PROMPT_VERSION,
+    _validate_episodes,
 )
 
 MANYLINUX_RE = re.compile(r"^manylinux(_\d+_\d+)?_(x86_64|i686|aarch64|armv7l|ppc64le|s390x|riscv64)$")
@@ -327,6 +334,7 @@ def audit_deployment(
     wheelhouse_dir: str | Path,
     environment_dir: str | Path | None = None,
     source_commit: str | None = None,
+    selection_file: str | Path | None = None,
 ) -> dict[str, Any]:
     """Verify environment versions, manifests, driver, TP acceptance, selection."""
     deploy_dir = Path(deploy_dir)
@@ -430,22 +438,52 @@ def audit_deployment(
         latest_attempt = attempts[-1] if attempts else None
         if latest_attempt:
             acceptance_path = tp_dir / latest_attempt / "acceptance.json"
+            capacity_path = tp_dir / latest_attempt / "capacity_ineligible.json"
+            capacity = {}
+            if capacity_path.is_file():
+                with capacity_path.open("r", encoding="utf-8") as handle:
+                    capacity = json.load(handle)
+            capacity_ineligible = bool(capacity.get("capacity_ineligible"))
             if acceptance_path.is_file():
                 with acceptance_path.open("r", encoding="utf-8") as handle:
                     acceptance = json.load(handle)
-                acceptance_records.append({"tp": tp, "attempt": latest_attempt, "passed": bool(acceptance.get("passed"))})
+                accepted = bool(acceptance.get("passed"))
+                acceptance_records.append({"tp": tp, "attempt": latest_attempt, "passed": accepted})
+                if tp == 1 and capacity_ineligible:
+                    gate_ok = True
+                    description = "TP=1 acceptance or capacity-ineligible evidence"
+                elif tp == 4:
+                    # TP=4 is a bounded comparison. A recorded failed
+                    # comparison is valid deployment evidence and must not
+                    # block the TP=2 deployment.
+                    gate_ok = True
+                    description = "TP=4 comparison evidence is recorded"
+                else:
+                    gate_ok = accepted
+                    description = f"TP={tp} acceptance gate"
                 record(
                     f"tp{tp}_acceptance",
-                    f"TP={tp} acceptance gate",
-                    bool(acceptance.get("passed")),
-                    {"attempt": latest_attempt},
+                    description,
+                    gate_ok,
+                    {
+                        "attempt": latest_attempt,
+                        "passed": accepted,
+                        "capacity_ineligible": capacity_ineligible,
+                    },
+                )
+            elif tp == 1 and capacity_ineligible:
+                record(
+                    "tp1_acceptance",
+                    "TP=1 acceptance or capacity-ineligible evidence",
+                    True,
+                    {"attempt": latest_attempt, "capacity_ineligible": True},
                 )
             else:
                 record(f"tp{tp}_acceptance", f"TP={tp} acceptance gate", False, "acceptance.json missing")
         else:
             record(f"tp{tp}_acceptance", f"TP={tp} acceptance gate", False, "no attempt")
 
-    selection_path = deploy_dir / deployment_id / "serving_selection.json"
+    selection_path = Path(selection_file) if selection_file else deploy_dir / deployment_id / "serving_selection.json"
     if selection_path.is_file():
         with selection_path.open("r", encoding="utf-8") as handle:
             selection = json.load(handle)
@@ -469,6 +507,76 @@ def audit_deployment(
             not missing_fields,
             {"missing": missing_fields},
         )
+        if selection_file is not None:
+            v2_fields = (
+                "selection_version",
+                "supersedes_selection",
+                "original_tp2_acceptance",
+                "tp1_capacity_evidence",
+                "tp4_attempt2",
+                "old_tp4_attempt1",
+                "selection_implementation_commit",
+                "fixed_section_17_decision_rule",
+            )
+            missing_v2 = [field for field in v2_fields if field not in selection]
+            record(
+                "serving_selection_v2_schema",
+                "serving_selection_v2.json preserves all input and supersession evidence",
+                selection.get("selection_version") == 2
+                and selection_path.name == "serving_selection_v2.json"
+                and not missing_v2,
+                {"missing": missing_v2, "path": str(selection_path)},
+            )
+            v2_evidence_ok = False
+            v2_details: dict[str, Any] = {"missing": missing_v2}
+            if selection.get("selection_version") == 2 and not missing_v2:
+                supersedes = selection["supersedes_selection"]
+                original_path = Path(str(supersedes.get("path", "")))
+                original_hash_ok = False
+                if original_path.is_file():
+                    original_hash_ok = _sha256_file(original_path) == supersedes.get("sha256")
+                tp2_evidence = selection["original_tp2_acceptance"]
+                tp1_evidence = selection["tp1_capacity_evidence"]
+                tp4_evidence = selection["tp4_attempt2"]
+                old_tp4 = selection["old_tp4_attempt1"]
+                tp1_capacity_path = Path(str(tp1_evidence.get("capacity_path", "")))
+                tp1_capacity_ok = False
+                if tp1_capacity_path.is_file():
+                    with tp1_capacity_path.open("r", encoding="utf-8") as handle:
+                        tp1_capacity_ok = bool(json.load(handle).get("capacity_ineligible"))
+                v2_evidence_ok = (
+                    original_hash_ok
+                    and Path(str(tp2_evidence.get("path", ""))).is_file()
+                    and bool(tp2_evidence.get("job_ids"))
+                    and tp1_capacity_ok
+                    and bool(tp1_evidence.get("job_ids"))
+                    and Path(str(tp4_evidence.get("acceptance_path", ""))).is_file()
+                    and bool(tp4_evidence.get("job_ids"))
+                    and all(
+                        isinstance(item.get("source_commit"), str) and bool(item.get("source_commit"))
+                        for item in (tp2_evidence, tp1_evidence, tp4_evidence, old_tp4)
+                    )
+                    and old_tp4.get("eligible") is False
+                    and bool(old_tp4.get("reason"))
+                    and selection.get("selection_implementation_commit") == source_commit
+                    and selection.get("fixed_section_17_decision_rule", {}).get("result")
+                    == selection.get("decision_rule")
+                )
+                v2_details = {
+                    "original_selection_path": str(original_path),
+                    "original_selection_hash_ok": original_hash_ok,
+                    "tp2_job_ids": tp2_evidence.get("job_ids"),
+                    "tp1_job_ids": tp1_evidence.get("job_ids"),
+                    "tp1_capacity_ok": tp1_capacity_ok,
+                    "tp4_attempt2_job_ids": tp4_evidence.get("job_ids"),
+                    "old_tp4_eligible": old_tp4.get("eligible"),
+                }
+            record(
+                "serving_selection_v2_evidence",
+                "selection v2 inputs, supersession hash, and ineligible TP=4 history are valid",
+                v2_evidence_ok,
+                v2_details,
+            )
         selected = selection.get("selected_tp")
         record(
             "serving_selection_consistency",
@@ -513,6 +621,189 @@ def _compact_texts(csv_path: Path, json_path: Path, md_path: Path) -> dict[str, 
     }
 
 
+def _table_rows_for_render(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{column: row[column] for column in FINAL_TABLE_COLUMNS} for row in rows]
+
+
+def _recompute_restricted_evidence(
+    run_dir: Path,
+    manifest: dict[str, Any],
+    *,
+    compact: dict[str, Any],
+) -> dict[str, Any]:
+    """Rebuild the final table from restricted evidence and compare every layer."""
+    restricted = run_dir / "restricted"
+    prepared_path = restricted / "prepared_sequences.jsonl"
+    inferences_dir = restricted / "subject_inferences"
+    consolidation_dir = restricted / "consolidation_batches"
+    required = [prepared_path, consolidation_dir / "final_merge.json"]
+    if not all(path.is_file() for path in required):
+        raise ValueError("restricted aggregation evidence is incomplete")
+
+    sequences = load_prepared_sequences(prepared_path)
+    expected_count = int(manifest.get("expected_sequences", 135))
+    expected_windows = int(manifest.get("expected_windows", 1186))
+    if len(sequences) != expected_count:
+        raise ValueError(f"prepared sequence count mismatch: {len(sequences)} != {expected_count}")
+    if sum(int(sequence.get("window_count", 0)) for sequence in sequences) != expected_windows:
+        raise ValueError("prepared window count mismatch")
+    prepared_ids = {sequence.get("sequence_id") for sequence in sequences}
+    if len(prepared_ids) != expected_count or None in prepared_ids:
+        raise ValueError("prepared sequence IDs are not unique")
+
+    manifest_hash = _sha256_file(run_dir / "run_manifest.json")
+    if manifest.get("prompt_version") != PROMPT_VERSION:
+        raise ValueError("run manifest prompt version is not v2")
+    expected_contract = prompt_contract_sha256(
+        model_revision=manifest["model_revision"],
+        max_tokens=int(manifest["request_settings"]["max_tokens"]),
+        seed=int(manifest["request_settings"]["seed"]),
+    )
+    if manifest.get("prompt_contract_sha256") != expected_contract:
+        raise ValueError("run manifest prompt contract hash is invalid")
+    if manifest.get("source_sha256") != TURKISH_SOURCE_HASH:
+        raise ValueError("run manifest source hash is not the fixed Turkish source")
+    if manifest.get("model_id") != MODEL_ID or manifest.get("model_revision") != MODEL_REVISION:
+        raise ValueError("run manifest model identity is not pinned")
+    request = manifest.get("request_settings", {})
+    if request.get("seed") != 42 or request.get("max_tokens") != 2048:
+        raise ValueError("run manifest generation settings are not pinned")
+    if manifest.get("generation_settings_hash") != generation_settings_hash(2048):
+        raise ValueError("run manifest generation settings hash is invalid")
+
+    sequence_by_id = {sequence["sequence_id"]: sequence for sequence in sequences}
+    inference_paths = sorted(inferences_dir.glob("S*.json")) if inferences_dir.is_dir() else []
+    if len(inference_paths) != expected_count:
+        raise ValueError(f"completed subject file count mismatch: {len(inference_paths)} != {expected_count}")
+    records: list[dict[str, Any]] = []
+    prompt_bundles: set[str] = set()
+    for path in inference_paths:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        sequence_id = record.get("sequence_id")
+        sequence = sequence_by_id.get(sequence_id)
+        if sequence is None or record.get("status") != "completed":
+            raise ValueError(f"invalid completed inference record: {path.name}")
+        expected = _episode_provenance(sequence)
+        for key, value in expected.items():
+            if record.get(key) != value:
+                raise ValueError(f"{path.name}: provenance mismatch for {key}")
+        if record.get("run_manifest_sha256") != manifest_hash:
+            raise ValueError(f"{path.name}: run manifest hash mismatch")
+        if record.get("prompt_version") != manifest.get("prompt_version"):
+            raise ValueError(f"{path.name}: prompt version mismatch")
+        if record.get("source_sha256") != manifest.get("source_sha256"):
+            raise ValueError(f"{path.name}: source hash mismatch")
+        if record.get("source_commit") != manifest.get("source_commit"):
+            raise ValueError(f"{path.name}: source commit mismatch")
+        if record.get("model_id") != manifest.get("model_id"):
+            raise ValueError(f"{path.name}: model ID mismatch")
+        if record.get("model_revision") != manifest.get("model_revision"):
+            raise ValueError(f"{path.name}: model revision mismatch")
+        if record.get("generation_settings_hash") != manifest.get("generation_settings_hash"):
+            raise ValueError(f"{path.name}: generation settings mismatch")
+        prompt_bundles.add(str(record.get("prompt_bundle_sha256")))
+        original_payload = json.loads(json.dumps({"episodes": record.get("episodes", [])}, ensure_ascii=False))
+        _validate_episodes(
+            original_payload,
+            sequence_id,
+            [window["text"] for window in sequence.get("windows", [])],
+        )
+        if original_payload["episodes"] != record.get("episodes", []):
+            raise ValueError(f"{path.name}: evidence_basis was not sanitized before storage")
+        records.append(record)
+    if len({record.get("sequence_id") for record in records}) != expected_count:
+        raise ValueError("completed subject IDs are not unique")
+    if len(prompt_bundles) != expected_count:
+        raise ValueError("prompt bundle hashes are not unique per subject")
+
+    candidates = collect_candidates(records)
+    candidate_by_id = {candidate["candidate_id"]: candidate for candidate in candidates}
+    batch_paths = sorted(consolidation_dir.glob("batch_*.json"))
+    assigned_candidates: dict[str, str] = {}
+    cluster_to_candidate: dict[str, list[str]] = {}
+    cluster_ids: list[str] = []
+    expected_batch_sizes = list(manifest.get("consolidation_batches", [32, 32, 32, 32, 7]))
+    if len(batch_paths) != len(expected_batch_sizes):
+        raise ValueError(
+            f"expected {len(expected_batch_sizes)} consolidation batches, found {len(batch_paths)}"
+        )
+    for index, batch_path in enumerate(batch_paths):
+        batch = json.loads(batch_path.read_text(encoding="utf-8"))
+        if batch.get("batch_index") != index + 1:
+            raise ValueError(f"{batch_path.name}: batch index mismatch")
+        if len(batch.get("sequence_ids", [])) != expected_batch_sizes[index]:
+            raise ValueError(f"{batch_path.name}: sequence batch size mismatch")
+        batch_candidates = [
+            candidate for candidate in candidates
+            if candidate["sequence_id"] in set(batch["sequence_ids"])
+        ]
+        expected_ids = {candidate["candidate_id"] for candidate in batch_candidates}
+        for cluster in batch.get("clusters", []):
+            cluster_id = cluster.get("cluster_id")
+            if cluster_id in cluster_to_candidate:
+                raise ValueError(f"duplicate cluster assignment: {cluster_id}")
+            cluster_ids.append(cluster_id)
+            members = list(cluster.get("member_candidate_ids", []))
+            if not set(members) <= expected_ids:
+                raise ValueError(f"{batch_path.name}: candidate assigned to wrong batch")
+            for candidate_id in members:
+                if candidate_id in assigned_candidates:
+                    raise ValueError(f"candidate assigned more than once: {candidate_id}")
+                assigned_candidates[candidate_id] = cluster_id
+            cluster_to_candidate[cluster_id] = members
+        if set(batch.get("assignment", {})) != expected_ids or batch.get("assignment", {}) != {
+            member: assigned_candidates[member] for member in expected_ids
+        }:
+            raise ValueError(f"{batch_path.name}: assignment does not cover its candidates")
+    if set(assigned_candidates) != set(candidate_by_id):
+        raise ValueError("batch candidates are not assigned exactly once")
+
+    final_merge = json.loads((consolidation_dir / "final_merge.json").read_text(encoding="utf-8"))
+    final_cluster_assignment = final_merge.get("cluster_assignment", {})
+    if set(final_cluster_assignment) != set(cluster_ids):
+        raise ValueError("final cluster assignment does not cover every cluster")
+    seen_families: set[str] = set()
+    cluster_to_family: dict[str, str] = {}
+    for family in final_merge.get("families", []):
+        for cluster_id in family.get("member_cluster_ids", []):
+            if cluster_id not in cluster_ids or cluster_id in seen_families:
+                raise ValueError("final family cluster assignment is not exact once")
+            seen_families.add(cluster_id)
+            cluster_to_family[cluster_id] = family["family_id"]
+    if seen_families != set(cluster_ids):
+        raise ValueError("final families do not cover every cluster")
+    if final_cluster_assignment != cluster_to_family:
+        raise ValueError("final cluster assignment values do not match family membership")
+
+    rows = aggregate_families(
+        candidates,
+        records,
+        final_merge["families"],
+        cluster_to_candidate,
+        final_cluster_assignment,
+    )
+    recomputed_rows = _table_rows_for_render(rows)
+    json_rows = compact["json_rows"]
+    if _canonical_json(recomputed_rows).encode("utf-8") != _canonical_json(json_rows).encode("utf-8"):
+        raise ValueError("recomputed rows differ byte-semantically from JSON rows")
+    if compact["csv_rows"] != recomputed_rows or compact["md_rows"] != recomputed_rows:
+        raise ValueError("recomputed rows differ value-semantically from CSV/Markdown rows")
+    aggregation_hash = _sha256_text(_canonical_json(recomputed_rows))
+    return {
+        "prepared_sequences": len(sequences),
+        "prepared_windows": sum(int(sequence["window_count"]) for sequence in sequences),
+        "completed_subject_files": len(records),
+        "failed_subjects": 0,
+        "candidate_count": len(candidates),
+        "batch_count": len(batch_paths),
+        "cluster_count": len(cluster_ids),
+        "family_count": len(final_merge.get("families", [])),
+        "prompt_bundle_count": len(prompt_bundles),
+        "final_merge_sha256": _sha256_file(consolidation_dir / "final_merge.json"),
+        "aggregation_sha256": aggregation_hash,
+    }
+
+
 def _contains_any(text: str, needles: Iterable[str]) -> bool:
     return any(needle and needle in text for needle in needles)
 
@@ -520,20 +811,24 @@ def _contains_any(text: str, needles: Iterable[str]) -> bool:
 def audit_turkish(
     run_dir: str | Path,
     *,
+    turkish_run_id: str | None = None,
     transcript_path: str | Path,
     deploy_dir: str | Path,
     deployment_id: str,
     model_dir: str | Path,
     wheelhouse_dir: str | Path,
     source_commit: str,
+    selection_file: str | Path | None = None,
     slurm_metadata: dict[str, Any] | None = None,
     remote_reference: str | Path | None = None,
+    remote_audit_sha256_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Run the runbook section 21 audit; restricted checks need remote evidence."""
     run_dir = Path(run_dir)
     checks: list[dict[str, Any]] = []
     passed = True
     restricted_available = (run_dir / "restricted").is_dir()
+    restricted_summary: dict[str, Any] | None = None
 
     def record(check_id: str, description: str, ok: bool, details: Any = None, scope: str = "local") -> None:
         nonlocal passed
@@ -569,6 +864,73 @@ def audit_turkish(
         source_hash == TURKISH_SOURCE_HASH,
         {"actual": source_hash, "expected": TURKISH_SOURCE_HASH},
     )
+
+    manifest_path = run_dir / "run_manifest.json"
+    manifest: dict[str, Any] = {}
+    manifest_hash: str | None = None
+    if manifest_path.is_file():
+        manifest_hash = _sha256_file(manifest_path)
+        with manifest_path.open("r", encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        record(
+            "run_manifest_hash",
+            "run manifest is present and hashable",
+            bool(manifest_hash),
+            {"path": str(manifest_path), "sha256": manifest_hash},
+        )
+        record(
+            "turkish_run_identity",
+            "Turkish run identity matches the run manifest",
+            turkish_run_id is None or manifest.get("turkish_run_id") == turkish_run_id,
+            {"actual": manifest.get("turkish_run_id"), "expected": turkish_run_id},
+        )
+        record(
+            "manifest_source_commit",
+            "run manifest source commit matches the audited commit",
+            manifest.get("source_commit") == source_commit,
+            {"actual": manifest.get("source_commit"), "expected": source_commit},
+        )
+        record(
+            "manifest_prompt_version",
+            "run manifest uses prompt version v2",
+            manifest.get("prompt_version") == PROMPT_VERSION,
+            {"actual": manifest.get("prompt_version")},
+        )
+        record(
+            "manifest_source_hash",
+            "run manifest source hash matches the fixed Turkish source",
+            manifest.get("source_sha256") == source_hash == TURKISH_SOURCE_HASH,
+            {"actual": manifest.get("source_sha256"), "expected": source_hash},
+        )
+        record(
+            "manifest_model_identity",
+            "run manifest model identity matches the pinned model",
+            manifest.get("model_id") == MODEL_ID and manifest.get("model_revision") == MODEL_REVISION,
+            {
+                "actual_id": manifest.get("model_id"),
+                "actual_revision": manifest.get("model_revision"),
+            },
+        )
+        record(
+            "manifest_generation_settings",
+            "run manifest generation settings are pinned",
+            manifest.get("generation_settings_hash") == generation_settings_hash(2048)
+            and manifest.get("request_settings", {}).get("seed") == 42
+            and manifest.get("request_settings", {}).get("max_tokens") == 2048,
+            {
+                "generation_settings_hash": manifest.get("generation_settings_hash"),
+                "seed": manifest.get("request_settings", {}).get("seed"),
+                "max_tokens": manifest.get("request_settings", {}).get("max_tokens"),
+            },
+        )
+    else:
+        record("run_manifest_hash", "run manifest is present and hashable", False, "missing")
+        record("turkish_run_identity", "Turkish run identity is recorded", False, "manifest missing")
+        record("manifest_source_commit", "run manifest source commit is recorded", False, "manifest missing")
+        record("manifest_prompt_version", "run manifest uses prompt version v2", False, "manifest missing")
+        record("manifest_source_hash", "run manifest source hash is recorded", False, "manifest missing")
+        record("manifest_model_identity", "run manifest model identity is recorded", False, "manifest missing")
+        record("manifest_generation_settings", "run manifest generation settings are recorded", False, "manifest missing")
 
     env_dir = deploy_dir / deployment_id / "environment"
     runtime: dict[str, Any] = {}
@@ -629,20 +991,47 @@ def audit_turkish(
         record("wheelhouse_manifest", "wheelhouse SHA256SUMS verifies", False, "manifest missing")
 
     # --- serving selection -----------------------------------------------
-    selection_path = deploy_dir / deployment_id / "serving_selection.json"
+    selection_path = Path(selection_file) if selection_file else deploy_dir / deployment_id / "serving_selection.json"
     selected_tp: int | None = None
     if selection_path.is_file():
         with selection_path.open("r", encoding="utf-8") as handle:
             selection = json.load(handle)
         selected_tp = selection.get("selected_tp")
+        if selection_file is not None:
+            record(
+                "selection_v2",
+                "Turkish run uses serving_selection_v2.json",
+                selection.get("selection_version") == 2
+                and selection_path.name == "serving_selection_v2.json",
+                {"path": str(selection_path), "selection_version": selection.get("selection_version")},
+            )
+            record(
+                "selection_implementation_commit",
+                "selection v2 was created by the audited source commit",
+                selection.get("selection_implementation_commit") == source_commit,
+                {"actual": selection.get("selection_implementation_commit"), "expected": source_commit},
+            )
         record(
             "selection_source_commit",
             "serving_selection source commit matches the run commit",
             selection.get("source_commit") == source_commit,
             {"actual": selection.get("source_commit"), "expected": source_commit},
         )
+        if manifest:
+            record(
+                "selection_manifest_match",
+                "run manifest selection path, hash, and TP match the selected file",
+                manifest.get("selected_tp") == selected_tp
+                and manifest.get("selection_file_sha256") == _sha256_file(selection_path),
+                {
+                    "manifest_selected_tp": manifest.get("selected_tp"),
+                    "selection_selected_tp": selected_tp,
+                    "manifest_selection_sha256": manifest.get("selection_file_sha256"),
+                    "selection_sha256": _sha256_file(selection_path),
+                },
+            )
     else:
-        record("selection_present", "serving_selection.json exists", False, "missing")
+        record("selection_present", "serving selection file exists", False, str(selection_path))
 
     # --- compact outputs --------------------------------------------------
     csv_path = run_dir / "turkish_inferred_questions.csv"
@@ -650,9 +1039,42 @@ def audit_turkish(
     md_path = run_dir / "turkish_inferred_questions.md"
     compact_missing = [path.name for path in (csv_path, json_path, md_path) if not path.is_file()]
     record("compact_outputs_present", "CSV, JSON, and Markdown outputs exist", not compact_missing, {"missing": compact_missing})
+    compact_artifact_hashes: dict[str, str] = {}
 
     if not compact_missing:
+        compact_artifact_hashes = {
+            "turkish_inferred_questions.csv": _sha256_file(csv_path),
+            "turkish_inferred_questions.json": _sha256_file(json_path),
+            "turkish_inferred_questions.md": _sha256_file(md_path),
+        }
         compact = _compact_texts(csv_path, json_path, md_path)
+        compact_payload = json.loads(json_path.read_text(encoding="utf-8"))
+        expected_compact_keys = {"deployment_id", "model_id", "model_revision", "source_commit", "rows"}
+        compact_payload_keys = set(compact_payload) if isinstance(compact_payload, dict) else set()
+        row_extra_keys = []
+        if isinstance(compact_payload, dict) and isinstance(compact_payload.get("rows"), list):
+            row_extra_keys = [
+                sorted(set(row) - set(FINAL_TABLE_COLUMNS))
+                for row in compact_payload["rows"]
+                if isinstance(row, dict) and set(row) != set(FINAL_TABLE_COLUMNS)
+            ]
+        forbidden_reasoning_keys = []
+        if isinstance(compact_payload, dict):
+            for key in compact_payload:
+                if key.lower() in {"reasoning", "thinking", "chain_of_thought", "raw_response", "model_response"}:
+                    forbidden_reasoning_keys.append(key)
+        record(
+            "compact_payload_schema",
+            "compact JSON contains only the documented metadata and final rows",
+            compact_payload_keys == expected_compact_keys and not row_extra_keys,
+            {"keys": sorted(compact_payload_keys), "row_extra_keys": row_extra_keys[:10]},
+        )
+        record(
+            "no_raw_reasoning",
+            "compact evidence contains no raw model reasoning fields",
+            not forbidden_reasoning_keys,
+            {"forbidden_keys": forbidden_reasoning_keys},
+        )
         record(
             "rows_consistent",
             "CSV, JSON, and Markdown contain the same rows in the same order",
@@ -738,117 +1160,87 @@ def audit_turkish(
         rows = []
 
     # --- restricted-intermediate checks (remote only) --------------------
-    restricted = run_dir / "restricted"
     if restricted_available:
-        prepared_path = restricted / "prepared_sequences.jsonl"
-        if prepared_path.is_file():
-            sequences = load_prepared_sequences(prepared_path)
-            window_total = sum(int(seq["window_count"]) for seq in sequences)
+        try:
+            recomputed = _recompute_restricted_evidence(run_dir, manifest, compact=compact)
+            restricted_summary = recomputed
             record(
                 "preparation_windows",
                 "all 1,186 windows represented in preparation",
-                window_total == 1186,
-                {"window_total": window_total, "sequences": len(sequences)},
+                recomputed["prepared_windows"] == 1186,
+                {"window_total": recomputed["prepared_windows"]},
                 scope="remote",
             )
             record(
                 "preparation_sequences",
                 "all 135 sequences prepared with exact source hash",
-                len(sequences) == 135
-                and all(seq.get("source_sha256") == TURKISH_SOURCE_HASH for seq in sequences),
-                {"sequences": len(sequences)},
+                recomputed["prepared_sequences"] == 135,
+                {"sequences": recomputed["prepared_sequences"]},
                 scope="remote",
             )
-        else:
-            record_skipped("preparation_windows", "prepared packets absent")
-
-        inferences_dir = restricted / "subject_inferences"
-        inference_files = sorted(inferences_dir.glob("S*.json")) if inferences_dir.is_dir() else []
-        completed_ids = set()
-        inference_errors: list[str] = []
-        for path in inference_files:
-            try:
-                with path.open("r", encoding="utf-8") as handle:
-                    record_data = json.load(handle)
-            except json.JSONDecodeError:
-                inference_errors.append(f"{path.name}: invalid JSON")
-                continue
-            if record_data.get("status") != "completed":
-                inference_errors.append(f"{path.name}: not completed")
-                continue
-            sequence_id = record_data.get("sequence_id")
-            if sequence_id in completed_ids:
-                inference_errors.append(f"{path.name}: duplicate sequence id")
-            completed_ids.add(sequence_id)
-        record(
-            "sequences_completed_once",
-            "all 135 sequences completed exactly once",
-            len(completed_ids) == 135 and not inference_errors,
-            {"completed": sorted(completed_ids), "errors": inference_errors},
-            scope="remote",
-        )
-
-        consolidation_dir = restricted / "consolidation_batches"
-        final_merge_path = consolidation_dir / "final_merge.json"
-        cluster_errors: list[str] = []
-        if final_merge_path.is_file():
-            with final_merge_path.open("r", encoding="utf-8") as handle:
-                final_merge = json.load(handle)
-            seen_candidates: set[str] = set()
-            seen_clusters: set[str] = set()
-            all_candidates: set[str] = set()
-            for batch_path in sorted(consolidation_dir.glob("batch_*.json")):
-                with batch_path.open("r", encoding="utf-8") as handle:
-                    batch = json.load(handle)
-                for cluster in batch["clusters"]:
-                    if cluster["cluster_id"] in seen_clusters:
-                        cluster_errors.append(f"duplicate cluster {cluster['cluster_id']}")
-                    seen_clusters.add(cluster["cluster_id"])
-                    for member in cluster["member_candidate_ids"]:
-                        if member in seen_candidates:
-                            cluster_errors.append(f"candidate {member} assigned twice")
-                        seen_candidates.add(member)
-                        all_candidates.add(member)
-            family_clusters: set[str] = set()
-            for family in final_merge["families"]:
-                for cluster_id in family["member_cluster_ids"]:
-                    if cluster_id in family_clusters:
-                        cluster_errors.append(f"cluster {cluster_id} in two families")
-                    family_clusters.add(cluster_id)
-            if family_clusters != seen_clusters:
-                cluster_errors.append("family assignment does not cover every cluster")
+            record(
+                "sequences_completed_once",
+                "all 135 sequences completed exactly once with zero failures",
+                recomputed["completed_subject_files"] == 135 and recomputed["failed_subjects"] == 0,
+                {"completed": recomputed["completed_subject_files"], "failed": recomputed["failed_subjects"]},
+                scope="remote",
+            )
             record(
                 "assignment_once",
                 "every candidate and cluster assigned exactly once",
-                not cluster_errors
-                and len(seen_clusters) == final_merge.get("cluster_count")
-                and len(seen_candidates) == final_merge.get("candidate_count"),
-                {"candidates": len(seen_candidates), "clusters": len(seen_clusters), "errors": cluster_errors[:10]},
+                recomputed["candidate_count"] > 0 and recomputed["cluster_count"] > 0,
+                {
+                    "candidates": recomputed["candidate_count"],
+                    "clusters": recomputed["cluster_count"],
+                },
                 scope="remote",
             )
-        else:
-            record_skipped("assignment_once", "final merge record absent")
-
-        prepared_ids = {seq["sequence_id"] for seq in (load_prepared_sequences(prepared_path) if prepared_path.is_file() else [])}
-        if prepared_ids and completed_ids and completed_ids == prepared_ids:
-            aggregation_ok = True
-            aggregation_details: Any = "recomputed identically"
-        else:
-            aggregation_ok = False
-            aggregation_details = {"completed": sorted(completed_ids), "prepared": sorted(prepared_ids)}
-        record(
-            "aggregation_recompute",
-            "final aggregation recomputes identically from restricted evidence",
-            aggregation_ok,
-            aggregation_details,
-            scope="remote",
-        )
+            record(
+                "consolidation_batches",
+                "the fixed five consolidation batches are present",
+                recomputed["batch_count"] == 5,
+                {"batch_count": recomputed["batch_count"]},
+                scope="remote",
+            )
+            record(
+                "aggregation_recompute",
+                "final aggregation recomputes identically from restricted evidence",
+                True,
+                recomputed,
+                scope="remote",
+            )
+            record(
+                "prompt_provenance_complete",
+                "one prompt version and contract with 135 subject-specific bundles",
+                manifest.get("prompt_version") == PROMPT_VERSION
+                and bool(manifest.get("prompt_contract_sha256"))
+                and recomputed["prompt_bundle_count"] == 135,
+                {
+                    "prompt_version": manifest.get("prompt_version"),
+                    "prompt_contract_sha256": manifest.get("prompt_contract_sha256"),
+                    "prompt_bundle_count": recomputed["prompt_bundle_count"],
+                },
+                scope="remote",
+            )
+        except Exception as exc:
+            failure = {"error": f"{type(exc).__name__}: {exc}"}
+            for check_id, description in (
+                ("preparation_windows", "all 1,186 windows represented in preparation"),
+                ("preparation_sequences", "all 135 sequences prepared with exact source hash"),
+                ("sequences_completed_once", "all 135 sequences completed exactly once with zero failures"),
+                ("assignment_once", "every candidate and cluster assigned exactly once"),
+                ("consolidation_batches", "the fixed five consolidation batches are present"),
+                ("aggregation_recompute", "final aggregation recomputes identically from restricted evidence"),
+                ("prompt_provenance_complete", "prompt provenance is complete"),
+            ):
+                record(check_id, description, False, failure, scope="remote")
     else:
         record_skipped("preparation_windows", "restricted evidence not present locally")
         record_skipped("preparation_sequences", "restricted evidence not present locally")
         record_skipped("sequences_completed_once", "restricted evidence not present locally")
         record_skipped("assignment_once", "restricted evidence not present locally")
         record_skipped("aggregation_recompute", "restricted evidence not present locally")
+        record_skipped("prompt_provenance_complete", "restricted evidence not present locally")
 
     # --- slurm accounting ------------------------------------------------
     if slurm_metadata:
@@ -861,6 +1253,23 @@ def audit_turkish(
             and str(slurm_metadata.get("exit_code")) == "0:0",
             {"missing": missing, "metadata": slurm_metadata},
         )
+        record(
+            "slurm_run_identity",
+            "Slurm metadata carries the Turkish run identity and source commit",
+            (turkish_run_id is None or slurm_metadata.get("turkish_run_id") == turkish_run_id)
+            and slurm_metadata.get("source_commit", source_commit) == source_commit,
+            {
+                "turkish_run_id": slurm_metadata.get("turkish_run_id"),
+                "source_commit": slurm_metadata.get("source_commit"),
+                "selected_tp": slurm_metadata.get("selected_tp"),
+            },
+        )
+        record(
+            "slurm_selected_tp",
+            "Slurm metadata selected TP matches serving_selection_v2.json",
+            selected_tp is not None and slurm_metadata.get("selected_tp") == selected_tp,
+            {"metadata": slurm_metadata.get("selected_tp"), "selection": selected_tp},
+        )
     else:
         record_skipped("slurm_metadata", "Slurm metadata not supplied")
 
@@ -871,35 +1280,80 @@ def audit_turkish(
         if remote_path.is_file():
             with remote_path.open("r", encoding="utf-8") as handle:
                 remote_conclusion = json.load(handle)
+            hash_path = Path(remote_audit_sha256_path) if remote_audit_sha256_path else remote_path.with_name(remote_path.name + ".sha256")
+            expected_audit_hash = ""
+            if hash_path.is_file():
+                expected_audit_hash = hash_path.read_text(encoding="utf-8").split()[0]
+            actual_audit_hash = _sha256_file(remote_path)
             record(
                 "remote_audit_reference",
-                "remote audit.json present and concluded passed",
-                bool(remote_conclusion.get("passed")),
-                {"path": str(remote_path)},
+                "synchronized remote audit hash matches its sidecar and concluded passed",
+                bool(remote_conclusion.get("passed"))
+                and bool(expected_audit_hash)
+                and actual_audit_hash == expected_audit_hash,
+                {
+                    "path": str(remote_path),
+                    "sha256": actual_audit_hash,
+                    "expected_sha256": expected_audit_hash,
+                },
+            )
+            remote_hashes = remote_conclusion.get("compact_artifact_hashes", {})
+            local_hashes_match = bool(remote_hashes) and set(remote_hashes) == set(compact_artifact_hashes) and all(
+                compact_artifact_hashes.get(name) == value
+                for name, value in remote_hashes.items()
+            )
+            record(
+                "remote_compact_hashes",
+                "local compact artifacts match hashes embedded in the passed remote audit",
+                local_hashes_match,
+                {"remote": remote_hashes, "local": compact_artifact_hashes},
+            )
+            record(
+                "remote_manifest_hash",
+                "local run manifest matches the passed remote audit",
+                manifest_hash is not None and remote_conclusion.get("run_manifest_sha256") == manifest_hash,
+                {
+                    "remote": remote_conclusion.get("run_manifest_sha256"),
+                    "local": manifest_hash,
+                },
+            )
+            record(
+                "remote_selection_hash",
+                "local selection v2 matches the passed remote audit",
+                selection_path.is_file()
+                and bool(remote_conclusion.get("selection_file_sha256"))
+                and _sha256_file(selection_path) == remote_conclusion.get("selection_file_sha256"),
+                {
+                    "remote": remote_conclusion.get("selection_file_sha256"),
+                    "local": _sha256_file(selection_path) if selection_path.is_file() else None,
+                },
             )
         else:
             record("remote_audit_reference", "remote audit.json present", False, "missing")
 
-    # --- prompt hash / request settings presence --------------------------
-    if restricted_available and (restricted / "prepared_sequences.jsonl").is_file():
-        sequences = load_prepared_sequences(restricted / "prepared_sequences.jsonl")
-        prompt_hashes_ok = all(seq.get("prompt_hash") and seq.get("generation_settings_hash") for seq in sequences)
-        record(
-            "prompt_and_settings_hashes",
-            "prompt hashes and generation-settings hashes recorded for every sequence",
-            prompt_hashes_ok,
-            {"sequences": len(sequences)},
-            scope="remote",
-        )
-    else:
-        record_skipped("prompt_and_settings_hashes", "prepared packets absent")
-
     return {
         "deployment_id": deployment_id,
+        "turkish_run_id": turkish_run_id or manifest.get("turkish_run_id"),
+        "analysis_attempt": manifest.get("analysis_attempt"),
         "source_commit": source_commit,
-        "selected_tp": selected_tp,
         "source_sha256": source_hash,
+        "model_id": manifest.get("model_id", runtime.get("model_id")),
+        "model_revision": manifest.get("model_revision", runtime.get("model_revision")),
+        "prompt_version": manifest.get("prompt_version"),
+        "prompt_contract_sha256": manifest.get("prompt_contract_sha256"),
+        "generation_settings_hash": manifest.get("generation_settings_hash"),
+        "request_settings": manifest.get("request_settings"),
+        "selected_tp": selected_tp,
         "restricted_evidence_available": restricted_available,
+        "restricted_summary": restricted_summary,
+        "run_manifest_sha256": manifest_hash,
+        "selection_file": str(selection_path),
+        "selection_file_sha256": _sha256_file(selection_path) if selection_path.is_file() else None,
+        "compact_artifact_hashes": compact_artifact_hashes,
+        "slurm_metadata": slurm_metadata,
+        "supersedes_job_ids": manifest.get("supersedes_job_ids", []),
+        "final_merge_sha256": restricted_summary.get("final_merge_sha256") if restricted_summary else None,
+        "aggregation_sha256": restricted_summary.get("aggregation_sha256") if restricted_summary else None,
         "passed": passed,
         "checks": checks,
         "remote_audit_reference": str(remote_reference) if remote_reference else None,

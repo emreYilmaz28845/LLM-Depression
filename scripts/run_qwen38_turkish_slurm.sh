@@ -8,7 +8,8 @@
 
 # Qwen3.8 private Turkish question-recovery job (runbook sections 18-21).
 #
-# Required env: DEPLOYMENT_ID, SELECTED_TP, SOURCE_COMMIT.
+# Required env: DEPLOYMENT_ID, TURKISH_RUN_ID, ANALYSIS_ATTEMPT, SELECTED_TP,
+# SOURCE_COMMIT, SELECTION_FILE.
 # Optional: PROJECT_ROOT, DEPLOY_ROOT, MODEL_DIR, WHEELHOUSE_DIR, VENV_DIR,
 # MODEL_REVISION, TRANSCRIPT_PATH.
 #
@@ -16,7 +17,8 @@
 # selected TP, two-hour wall time. The worker serves the model on localhost
 # only, prepares the 135 subject sequences, infers question families, runs
 # the two-level consolidation, renders the compact tables, runs the remote
-# audit, and stops the server. It is resumable within the deployment ID.
+# audit, and stops the server. Every scientific attempt has a fresh immutable
+# run root.
 
 set -euo pipefail
 
@@ -29,16 +31,34 @@ MODEL_REVISION="${MODEL_REVISION:-1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0}"
 TRANSCRIPT_PATH="${TRANSCRIPT_PATH:-/gpfs/projects/etur92/ozu647717/AudioLLM/private_inputs/turkish_question_recovery/whisper_transcripts_qwen3_asr.jsonl}"
 
 DEPLOYMENT_ID="${DEPLOYMENT_ID:?Set DEPLOYMENT_ID}"
+TURKISH_RUN_ID="${TURKISH_RUN_ID:?Set TURKISH_RUN_ID}"
+ANALYSIS_ATTEMPT="${ANALYSIS_ATTEMPT:?Set ANALYSIS_ATTEMPT}"
 SELECTED_TP="${SELECTED_TP:?Set SELECTED_TP}"
 SOURCE_COMMIT="${SOURCE_COMMIT:?Set SOURCE_COMMIT}"
+SELECTION_FILE="${SELECTION_FILE:?Set SELECTION_FILE}"
+SUPERSEDES_JOB_IDS="${SUPERSEDES_JOB_IDS:-}"
 
-RUN_ROOT="$PROJECT_ROOT/outputs/turkish_question_recovery/qwen38_${DEPLOYMENT_ID}"
+RUN_ROOT="$PROJECT_ROOT/outputs/turkish_question_recovery/$TURKISH_RUN_ID"
 RESTRICTED="$RUN_ROOT/restricted"
 LOG_DIR="$DEPLOY_ROOT/$DEPLOYMENT_ID/logs"
-mkdir -p "$RUN_ROOT" "$RESTRICTED" "$LOG_DIR"
-chmod 700 "$RUN_ROOT" "$RESTRICTED"
-ART_LOG="$LOG_DIR/turkish_${SLURM_JOB_ID:-local}.log"
-SERVER_LOG="$LOG_DIR/turkish_${SLURM_JOB_ID:-local}_vllm_server.log"
+if [[ ! "$TURKISH_RUN_ID" =~ ^q38tr_[0-9a-f]{12}_attempt[0-9]+$ ]]; then
+  echo "FAILED: invalid TURKISH_RUN_ID=$TURKISH_RUN_ID" >&2
+  exit 1
+fi
+if [ -e "$RUN_ROOT" ]; then
+  echo "FAILED: refusing to reuse existing Turkish run root $RUN_ROOT" >&2
+  exit 1
+fi
+if [ ! -f "$SELECTION_FILE" ]; then
+  echo "FAILED: selection v2 missing at $SELECTION_FILE" >&2
+  exit 1
+fi
+mkdir -p "$LOG_DIR"
+ART_LOG="$LOG_DIR/turkish_${TURKISH_RUN_ID}_${SLURM_JOB_ID:-local}.log"
+SERVER_LOG="$LOG_DIR/turkish_${TURKISH_RUN_ID}_${SLURM_JOB_ID:-local}_vllm_server.log"
+GPU_INFO_PATH="$LOG_DIR/turkish_${TURKISH_RUN_ID}_${SLURM_JOB_ID:-local}_gpu_info.txt"
+GPU_RECORD_PATH="$LOG_DIR/turkish_${TURKISH_RUN_ID}_${SLURM_JOB_ID:-local}_gpu_record.json"
+LEDGER_PATH="$DEPLOY_ROOT/$DEPLOYMENT_ID/turkish_jobs.jsonl"
 
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
@@ -58,8 +78,10 @@ echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "SLURM_JOB_ID: ${SLURM_JOB_ID:-}"
 echo "Hostname: $(hostname)"
 echo "Deployment: $DEPLOYMENT_ID"
+echo "Turkish run ID: $TURKISH_RUN_ID attempt=$ANALYSIS_ATTEMPT"
 echo "Selected TP: $SELECTED_TP"
 echo "Source commit: $SOURCE_COMMIT"
+echo "Selection file: $SELECTION_FILE"
 echo "Run root: $RUN_ROOT"
 echo "========================================"
 
@@ -68,12 +90,71 @@ module load bsc/1.0
 module load miniforge/24.3.0-0
 source "$VENV_DIR/bin/activate"
 cd "$PROJECT_ROOT"
+ORIGIN_MAIN_SHA="${LOCAL_ORIGIN_MAIN_SHA:-$(git rev-parse origin/main 2>/dev/null || true)}"
+REMOTE_PROVENANCE_SHA="$(tr -d '[:space:]' < "$PROJECT_ROOT/.provenance/git_commit.txt" 2>/dev/null || true)"
+if [ "$SOURCE_COMMIT" != "$ORIGIN_MAIN_SHA" ] || [ "$SOURCE_COMMIT" != "$REMOTE_PROVENANCE_SHA" ]; then
+  echo "FAILED: source identity mismatch (SOURCE_COMMIT=$SOURCE_COMMIT origin/main=$ORIGIN_MAIN_SHA provenance=$REMOTE_PROVENANCE_SHA)" >&2
+  exit 1
+fi
+SELECTION_TP="$(python - "$SELECTION_FILE" <<'PY'
+import json
+import sys
+selection = json.load(open(sys.argv[1], encoding="utf-8"))
+if selection.get("selection_version") != 2:
+    raise SystemExit("selection file is not serving_selection_v2.json")
+selected = selection.get("selected_tp")
+if selected not in (1, 2, 4):
+    raise SystemExit("selection v2 has invalid selected_tp")
+print(selected)
+PY
+)"
+if [ "$SELECTED_TP" != "$SELECTION_TP" ]; then
+  echo "FAILED: selected TP $SELECTED_TP does not match selection v2 $SELECTION_TP" >&2
+  exit 1
+fi
+PROMPT_CONTRACT_SHA256="$(python - <<'PY'
+from src.qwen38.turkish_questions import prompt_contract_sha256
+print(prompt_contract_sha256())
+PY
+)"
+
+append_ledger_event() {
+  local stage="$1" state="$2" exit_code="$3" run_manifest_sha256="${4:-}"
+  python - "$LEDGER_PATH" "$TURKISH_RUN_ID" "$ANALYSIS_ATTEMPT" "$DEPLOYMENT_ID" "$stage" "${SLURM_JOB_ID:-}" "$state" "$exit_code" "$SOURCE_COMMIT" "$PROMPT_CONTRACT_SHA256" "$run_manifest_sha256" "$SELECTED_TP" "${SUPERSEDES_JOB_IDS:-}" <<'PY'
+import json
+import os
+import sys
+import time
+
+(path, run_id, attempt, deployment_id, stage, job_id, state, exit_code,
+ source_commit, prompt_contract, manifest_hash, selected_tp, supersedes) = sys.argv[1:]
+record = {
+    "turkish_run_id": run_id,
+    "analysis_attempt": int(attempt),
+    "deployment_id": deployment_id,
+    "stage": stage,
+    "slurm_job_id": job_id,
+    "state": state,
+    "exit_code": exit_code,
+    "source_commit": source_commit,
+    "prompt_contract_sha256": prompt_contract,
+    "run_manifest_sha256": manifest_hash or None,
+    "selected_tp": int(selected_tp),
+    "supersedes_job_ids": [item for item in supersedes.split(",") if item],
+    "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+}
+with open(path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+PY
+}
+
+append_ledger_event "start" "STARTED" "unknown"
 python -VV
 python -c "import torch, vllm; print('torch', torch.__version__, '| vllm', vllm.__version__)"
 
 # --- GPU environment --------------------------------------------------------
-nvidia-smi --query-gpu=index,driver_version,memory.total,name --format=csv > "$RESTRICTED/gpu_info.txt"
-chmod 600 "$RESTRICTED/gpu_info.txt"
+nvidia-smi --query-gpu=index,driver_version,memory.total,name --format=csv > "$GPU_INFO_PATH"
+chmod 600 "$GPU_INFO_PATH"
 DRIVER_VERSION="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)"
 if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
   VISIBLE_COUNT="$(printf '%s' "$CUDA_VISIBLE_DEVICES" | tr ',' '\n' | grep -c . || true)"
@@ -82,8 +163,6 @@ else
 fi
 GPU_MODEL="$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
 GPU_MEMORY="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader | head -1)"
-GPU_RECORD_PATH="$RESTRICTED/gpu_record.json"
-
 python - <<PY
 import json
 import os
@@ -103,10 +182,10 @@ with open(path, "w", encoding="utf-8") as handle:
     json.dump(record, handle, indent=2)
     handle.write("\n")
 PY
-chmod 600 "$RESTRICTED/gpu_record.json"
+chmod 600 "$GPU_RECORD_PATH"
 
-if [ "$VISIBLE_COUNT" -lt "$SELECTED_TP" ]; then
-  echo "FAILED: expected at least $SELECTED_TP visible GPUs, found $VISIBLE_COUNT" >&2
+if [ "$VISIBLE_COUNT" -ne "$SELECTED_TP" ]; then
+  echo "FAILED: expected exactly $SELECTED_TP visible GPUs, found $VISIBLE_COUNT" >&2
   exit 1
 fi
 echo "visible GPUs: $VISIBLE_COUNT (CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset})"
@@ -217,14 +296,22 @@ wait_ready
 echo "[stage:prepare]"
 python scripts/qwen38_turkish_question_recovery.py prepare \
   --deployment-id "$DEPLOYMENT_ID" \
+  --turkish-run-id "$TURKISH_RUN_ID" \
   --run-dir "$RUN_ROOT" \
   --transcript "$TRANSCRIPT_PATH" \
   --source-commit "$SOURCE_COMMIT" \
-  --model-revision "$MODEL_REVISION"
+  --model-revision "$MODEL_REVISION" \
+  --selection-file "$SELECTION_FILE" \
+  --selected-tp "$SELECTED_TP" \
+  --analysis-attempt "$ANALYSIS_ATTEMPT" \
+  --supersedes-job-ids "${SUPERSEDES_JOB_IDS:-}"
+RUN_MANIFEST_SHA256="$(sha256sum "$RUN_ROOT/run_manifest.json" | awk '{print $1}')"
+append_ledger_event "prepare" "COMPLETED" "0:0" "$RUN_MANIFEST_SHA256"
 
 echo "[stage:infer-subjects]"
 python scripts/qwen38_turkish_question_recovery.py infer-subjects \
   --deployment-id "$DEPLOYMENT_ID" \
+  --turkish-run-id "$TURKISH_RUN_ID" \
   --run-dir "$RUN_ROOT" \
   --source-commit "$SOURCE_COMMIT" \
   --model-revision "$MODEL_REVISION" \
@@ -235,10 +322,12 @@ python scripts/qwen38_turkish_question_recovery.py infer-subjects \
   --concurrency 8 \
   --seed 42 \
   --max-tokens 2048
+append_ledger_event "infer-subjects" "COMPLETED" "0:0" "$RUN_MANIFEST_SHA256"
 
 echo "[stage:consolidate]"
 python scripts/qwen38_turkish_question_recovery.py consolidate \
   --deployment-id "$DEPLOYMENT_ID" \
+  --turkish-run-id "$TURKISH_RUN_ID" \
   --run-dir "$RUN_ROOT" \
   --source-commit "$SOURCE_COMMIT" \
   --model-revision "$MODEL_REVISION" \
@@ -248,16 +337,19 @@ python scripts/qwen38_turkish_question_recovery.py consolidate \
   --model qwen3.8-27b \
   --seed 42 \
   --max-tokens 2048
+append_ledger_event "consolidate" "COMPLETED" "0:0" "$RUN_MANIFEST_SHA256"
 
 echo "[stage:render]"
 python scripts/qwen38_turkish_question_recovery.py render \
   --deployment-id "$DEPLOYMENT_ID" \
+  --turkish-run-id "$TURKISH_RUN_ID" \
   --run-dir "$RUN_ROOT" \
   --source-commit "$SOURCE_COMMIT" \
   --model-revision "$MODEL_REVISION" \
   --inferences-dir "$RESTRICTED/subject_inferences" \
   --consolidation-dir "$RESTRICTED/consolidation_batches" \
   --final-merge "$RESTRICTED/consolidation_batches/final_merge.json"
+append_ledger_event "render" "COMPLETED" "0:0" "$RUN_MANIFEST_SHA256"
 
 stop_server
 
@@ -266,15 +358,18 @@ stop_server
 # the job; the launcher regenerates audit.json after sacct reports COMPLETED.
 python scripts/qwen38_audit.py turkish \
   --run-dir "$RUN_ROOT" \
+  --turkish-run-id "$TURKISH_RUN_ID" \
   --transcript "$TRANSCRIPT_PATH" \
   --deploy-dir "$DEPLOY_ROOT" \
   --deployment-id "$DEPLOYMENT_ID" \
   --model-dir "$MODEL_DIR" \
   --wheelhouse-dir "$WHEELHOUSE_DIR" \
   --source-commit "$SOURCE_COMMIT" \
-  --out "$RUN_ROOT/audit.json"
+  --selection-file "$SELECTION_FILE" \
+  --out "$RUN_ROOT/audit_pre_slurm.json"
 
-chmod 600 "$RUN_ROOT/audit.json"
+chmod 600 "$RUN_ROOT/audit_pre_slurm.json"
+append_ledger_event "audit-pre-slurm" "COMPLETED" "0:0" "$RUN_MANIFEST_SHA256"
 chmod 644 "$RUN_ROOT/turkish_inferred_questions.csv" "$RUN_ROOT/turkish_inferred_questions.json" "$RUN_ROOT/turkish_inferred_questions.md"
 
 echo "OK: Turkish question recovery finished for $DEPLOYMENT_ID"

@@ -30,6 +30,7 @@ import re
 import statistics
 import sys
 import time
+import unicodedata
 from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -39,6 +40,7 @@ from src.qwen38.contracts import (
     FINAL_TABLE_COLUMNS,
     MODEL_ID,
     MODEL_REVISION,
+    SUBJECT_INFERENCE_SCHEMA,
     SERVED_MODEL,
     TURKISH_CONSOLIDATION_BATCHES,
     TURKISH_EXPECTED_SEQUENCES,
@@ -50,6 +52,7 @@ from src.qwen38.contracts import (
     Label,
     WordingStatus,
     generation_settings_hash,
+    ngram_overlap_at_least,
     parse_filename_stem,
     request_settings,
     structured_output_schema,
@@ -81,6 +84,7 @@ SUBJECT_SYSTEM_PROMPT = (
     "evidence_basis must be a short, non-quoted description and must not copy any "
     "transcript text. When an answer does not support any question family, return the "
     "episode with empty question_tr and question_en and a short abstain_reason.\n"
+    "Do not use any quote, apostrophe, or backtick character in evidence_basis.\n"
     "Return exactly one JSON object, no prose, no markdown fences, with this exact "
     "shape:\n"
     '{\n'
@@ -157,7 +161,106 @@ SCHEMA_CORRECTION_MESSAGE = (
     "the single JSON object, no prose."
 )
 
-PROMPT_VERSION = "qwen38_turkish_v1"
+PROMPT_VERSION = "qwen38_turkish_v2"
+
+EVIDENCE_BASIS_FALLBACK = "Inferred from response topic and framing"
+_EVIDENCE_QUOTES = '"\'`“”‘’«»‹›„‟‚‛'
+_EVIDENCE_QUOTE_TRANSLATION = str.maketrans({character: None for character in _EVIDENCE_QUOTES})
+_PROMPT_WHITESPACE_RE = re.compile(r"\s+", re.UNICODE)
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def sanitize_evidence_basis(value: str) -> str:
+    """Normalize the model's evidence description before any validation/storage."""
+    if not isinstance(value, str):
+        raise TypeError("evidence_basis must be a string")
+    normalized = unicodedata.normalize("NFKC", value)
+    normalized = normalized.translate(_EVIDENCE_QUOTE_TRANSLATION)
+    normalized = normalized.replace("\n", " ").replace("\r", " ").replace("\t", " ")
+    normalized = _PROMPT_WHITESPACE_RE.sub(" ", normalized).strip()
+    if len(normalized) > 200:
+        truncated = normalized[:200]
+        boundary = truncated.rfind(" ")
+        normalized = truncated[:boundary].rstrip() if boundary > 0 else truncated.rstrip()
+    return normalized or EVIDENCE_BASIS_FALLBACK
+
+
+def prompt_contract_payload(
+    *,
+    model_revision: str = MODEL_REVISION,
+    max_tokens: int = TURKISH_MAX_TOKENS,
+    seed: int = 42,
+) -> dict[str, Any]:
+    """Return the stable prompt contract, excluding a subject's user prompt."""
+    settings = request_settings(max_tokens)
+    return {
+        "prompt_version": PROMPT_VERSION,
+        "SUBJECT_SYSTEM_PROMPT": SUBJECT_SYSTEM_PROMPT,
+        "SCHEMA_CORRECTION_MESSAGE": SCHEMA_CORRECTION_MESSAGE,
+        "subject_output_schema": SUBJECT_INFERENCE_SCHEMA,
+        "model_id": MODEL_ID,
+        "model_revision": model_revision,
+        "temperature": settings["temperature"],
+        "top_p": settings["top_p"],
+        "seed": seed,
+        "max_tokens": settings["max_tokens"],
+        "enable_thinking": settings["chat_template_kwargs"]["enable_thinking"],
+        "preserve_thinking": settings["chat_template_kwargs"]["preserve_thinking"],
+    }
+
+
+def prompt_contract_sha256(
+    *,
+    model_revision: str = MODEL_REVISION,
+    max_tokens: int = TURKISH_MAX_TOKENS,
+    seed: int = 42,
+) -> str:
+    return _sha256_text(_canonical_json(prompt_contract_payload(
+        model_revision=model_revision, max_tokens=max_tokens, seed=seed
+    )))
+
+
+def prompt_bundle_sha256(
+    user_prompt: str,
+    *,
+    model_revision: str = MODEL_REVISION,
+    max_tokens: int = TURKISH_MAX_TOKENS,
+    seed: int = 42,
+) -> str:
+    payload = prompt_contract_payload(
+        model_revision=model_revision, max_tokens=max_tokens, seed=seed
+    )
+    payload["user_prompt"] = user_prompt
+    return _sha256_text(_canonical_json(payload))
+
+
+def prompt_component_hashes(
+    user_prompt: str,
+    *,
+    model_revision: str = MODEL_REVISION,
+    max_tokens: int = TURKISH_MAX_TOKENS,
+    seed: int = 42,
+) -> dict[str, str]:
+    return {
+        "user_prompt_sha256": _sha256_text(user_prompt),
+        "system_prompt_sha256": _sha256_text(SUBJECT_SYSTEM_PROMPT),
+        "correction_message_sha256": _sha256_text(SCHEMA_CORRECTION_MESSAGE),
+        "subject_schema_sha256": _sha256_text(_canonical_json(SUBJECT_INFERENCE_SCHEMA)),
+        "generation_settings_hash": generation_settings_hash(max_tokens),
+        "prompt_contract_sha256": prompt_contract_sha256(
+            model_revision=model_revision, max_tokens=max_tokens, seed=seed
+        ),
+        "prompt_bundle_sha256": prompt_bundle_sha256(
+            user_prompt, model_revision=model_revision, max_tokens=max_tokens, seed=seed
+        ),
+    }
 
 
 def _sha256_file(path: str | Path) -> str:
@@ -196,6 +299,47 @@ def _restrict(path: str | Path, mode: int = 0o600) -> None:
         pass
 
 
+TURKISH_RUN_ID_RE = re.compile(r"^q38tr_[0-9a-f]{12}_attempt[0-9]+$")
+
+
+def validate_turkish_run_id(turkish_run_id: str) -> None:
+    if not isinstance(turkish_run_id, str) or TURKISH_RUN_ID_RE.fullmatch(turkish_run_id) is None:
+        raise ValueError(
+            "turkish_run_id must match q38tr_<12 lowercase source-SHA hex>_attempt<N>"
+        )
+
+
+def _selection_metadata(
+    selection_file: str | Path | None,
+    selected_tp: int | None,
+) -> dict[str, Any]:
+    if selection_file is None:
+        return {
+            "selection_file": None,
+            "selection_file_sha256": None,
+            "selected_tp": selected_tp,
+            "selection_version": None,
+        }
+    path = Path(selection_file)
+    if not path.is_file():
+        raise ValueError(f"selection file not found: {path}")
+    with path.open("r", encoding="utf-8") as handle:
+        selection = json.load(handle)
+    if selection.get("selection_version") != 2:
+        raise ValueError("Turkish analysis requires serving_selection_v2.json")
+    file_tp = selection.get("selected_tp")
+    if file_tp not in (1, 2, 4):
+        raise ValueError(f"selection v2 has invalid selected_tp: {file_tp!r}")
+    if selected_tp is not None and int(selected_tp) != int(file_tp):
+        raise ValueError(f"selected TP {selected_tp} does not match selection v2 {file_tp}")
+    return {
+        "selection_file": str(path),
+        "selection_file_sha256": _sha256_file(path),
+        "selected_tp": int(file_tp),
+        "selection_version": 2,
+    }
+
+
 # --------------------------------------------------------------------------
 # prepare
 # --------------------------------------------------------------------------
@@ -225,11 +369,29 @@ def prepare_sequences(
     deployment_id: str,
     model_revision: str,
     source_commit: str,
+    turkish_run_id: str | None = None,
+    analysis_attempt: int = 1,
+    selected_tp: int | None = None,
+    selection_file: str | Path | None = None,
+    supersedes_job_ids: Sequence[str] | None = None,
+    seed: int = 42,
     source_sha256: str = TURKISH_SOURCE_HASH,
     expected_sequences: int = TURKISH_EXPECTED_SEQUENCES,
     expected_windows: int = TURKISH_EXPECTED_WINDOWS,
 ) -> dict[str, Any]:
     """Parse, group, and verify the Turkish windows; write restricted packets."""
+    run_dir = Path(run_dir)
+    if run_dir.exists():
+        raise ValueError(f"refusing to reuse existing Turkish run root: {run_dir}")
+    if turkish_run_id is not None:
+        validate_turkish_run_id(turkish_run_id)
+    if analysis_attempt < 1:
+        raise ValueError("analysis_attempt must be positive")
+    selection = _selection_metadata(selection_file, selected_tp)
+    if selection["selected_tp"] is not None:
+        selected_tp = selection["selected_tp"]
+    turkish_run_id = turkish_run_id or deployment_id
+    supersedes_job_ids = [str(job_id) for job_id in (supersedes_job_ids or [])]
     transcript_path = Path(transcript_path)
     if not transcript_path.is_file():
         raise ValueError(f"transcript file not found: {transcript_path}")
@@ -277,6 +439,41 @@ def prepare_sequences(
 
     subject_map = {sequence_ids[subject]: subject for subject in subjects}
     generation_hash = generation_settings_hash(TURKISH_MAX_TOKENS)
+    contract_hash = prompt_contract_sha256(
+        model_revision=model_revision, max_tokens=TURKISH_MAX_TOKENS, seed=seed
+    )
+
+    run_dir.mkdir(parents=True, exist_ok=False)
+    restricted = run_dir / "restricted"
+    restricted.mkdir(parents=True, exist_ok=False)
+    manifest_payload = {
+        "turkish_run_id": turkish_run_id,
+        "analysis_attempt": int(analysis_attempt),
+        "deployment_id": deployment_id,
+        "source_sha256": actual_hash,
+        "source_commit": source_commit,
+        "model_id": MODEL_ID,
+        "model_revision": model_revision,
+        "prompt_version": PROMPT_VERSION,
+        "prompt_contract_sha256": contract_hash,
+        "system_prompt_sha256": _sha256_text(SUBJECT_SYSTEM_PROMPT),
+        "correction_message_sha256": _sha256_text(SCHEMA_CORRECTION_MESSAGE),
+        "subject_schema_sha256": _sha256_text(_canonical_json(SUBJECT_INFERENCE_SCHEMA)),
+        "generation_settings_hash": generation_hash,
+        "request_settings": request_settings(TURKISH_MAX_TOKENS),
+        "selected_tp": selected_tp,
+        "selection_version": selection["selection_version"],
+        "selection_file": selection["selection_file"],
+        "selection_file_sha256": selection["selection_file_sha256"],
+        "expected_windows": expected_windows,
+        "expected_sequences": expected_sequences,
+        "consolidation_batches": list(TURKISH_CONSOLIDATION_BATCHES),
+        "supersedes_job_ids": supersedes_job_ids,
+    }
+    manifest_path = run_dir / "run_manifest.json"
+    _atomic_write_json(manifest_payload, manifest_path)
+    _restrict(manifest_path)
+    run_manifest_sha256 = _sha256_file(manifest_path)
 
     sequences: list[dict[str, Any]] = []
     for subject in ordered_subjects:
@@ -284,14 +481,24 @@ def prepare_sequences(
         windows = sorted(windows_by_subject[subject], key=lambda item: item[0])
         blocks = [f"[WINDOW {window}]\n{text}" for window, text in windows]
         user_prompt = f"Sequence id: {sequence_id}\n\n" + "\n\n".join(blocks)
+        components = prompt_component_hashes(
+            user_prompt,
+            model_revision=model_revision,
+            max_tokens=TURKISH_MAX_TOKENS,
+            seed=seed,
+        )
         sequences.append(
             {
+                "turkish_run_id": turkish_run_id,
+                "analysis_attempt": int(analysis_attempt),
                 "sequence_id": sequence_id,
                 "subject_sha256": subject_hash[subject],
                 "window_count": len(windows),
                 "windows": [{"window": window, "text": text} for window, text in windows],
                 "user_prompt": user_prompt,
-                "prompt_hash": hashlib.sha256(user_prompt.encode("utf-8")).hexdigest(),
+                "prompt_hash": components["user_prompt_sha256"],
+                **components,
+                "run_manifest_sha256": run_manifest_sha256,
                 "source_sha256": actual_hash,
                 "source_commit": source_commit,
                 "model_id": MODEL_ID,
@@ -302,9 +509,6 @@ def prepare_sequences(
             }
         )
 
-    run_dir = Path(run_dir)
-    restricted = run_dir / "restricted"
-    restricted.mkdir(parents=True, exist_ok=True)
     map_path = restricted / "subject_map.json"
     packets_path = restricted / "prepared_sequences.jsonl"
     _atomic_write_json(subject_map, map_path)
@@ -316,12 +520,21 @@ def prepare_sequences(
 
     return {
         "deployment_id": deployment_id,
+        "turkish_run_id": turkish_run_id,
+        "analysis_attempt": int(analysis_attempt),
         "source_sha256": actual_hash,
         "windows": total_windows,
         "sequences": len(sequences),
         "subject_map_path": str(map_path),
         "prepared_sequences_path": str(packets_path),
         "prompt_version": PROMPT_VERSION,
+        "prompt_contract_sha256": contract_hash,
+        "run_manifest_path": str(manifest_path),
+        "run_manifest_sha256": run_manifest_sha256,
+        "selected_tp": selected_tp,
+        "selection_file": selection["selection_file"],
+        "selection_file_sha256": selection["selection_file_sha256"],
+        "supersedes_job_ids": supersedes_job_ids,
         "source_commit": source_commit,
     }
 
@@ -374,7 +587,15 @@ def _parse_json_object(text: str) -> dict[str, Any] | None:
     return None
 
 
-def _validate_episodes(payload: dict[str, Any], sequence_id: str) -> list[dict[str, Any]]:
+def _validate_episodes(
+    payload: dict[str, Any],
+    sequence_id: str,
+    transcript_windows: Sequence[str] = (),
+) -> list[dict[str, Any]]:
+    if isinstance(payload, dict) and isinstance(payload.get("episodes"), list):
+        for episode in payload["episodes"]:
+            if isinstance(episode, dict) and isinstance(episode.get("evidence_basis"), str):
+                episode["evidence_basis"] = sanitize_evidence_basis(episode["evidence_basis"])
     errors = validate_subject_inference(payload)
     if errors:
         raise ValueError(f"{sequence_id}: schema errors: {'; '.join(errors[:5])}")
@@ -395,23 +616,63 @@ def _validate_episodes(payload: dict[str, Any], sequence_id: str) -> list[dict[s
             raise ValueError(f"{sequence_id}: invalid wording_status {episode['wording_status']!r}")
         if episode["confidence"] not in (conf.value for conf in Confidence):
             raise ValueError(f"{sequence_id}: invalid confidence {episode['confidence']!r}")
-        if episode["evidence_basis"] and ('"' in episode["evidence_basis"] or "'" in episode["evidence_basis"]):
-            raise ValueError(f"{sequence_id}: evidence_basis must be non-quoted")
         if len(episode["evidence_basis"]) > 200:
             raise ValueError(f"{sequence_id}: evidence_basis too long")
         if not episode["abstain_reason"] and not episode["question_tr"].strip():
             raise ValueError(f"{sequence_id}: candidate episode without question_tr")
+        text_fields = (
+            episode["question_tr"],
+            episode["question_en"],
+            episode["evidence_basis"],
+            episode["abstain_reason"],
+        )
+        for text in text_fields:
+            if any(marker in text for marker in ("[WINDOW", "]", '"', "'", "`", sequence_id)):
+                raise ValueError(f"{sequence_id}: forbidden identifier, marker, or quote in response")
+            if transcript_windows and ngram_overlap_at_least(text, transcript_windows, 12):
+                raise ValueError(f"{sequence_id}: 12-token transcript overlap in response")
     return episodes
 
 
 def _episode_provenance(sequence: dict[str, Any]) -> dict[str, Any]:
+    components = prompt_component_hashes(
+        sequence["user_prompt"],
+        model_revision=sequence["model_revision"],
+        max_tokens=TURKISH_MAX_TOKENS,
+        seed=42,
+    )
     return {
+        "turkish_run_id": sequence.get("turkish_run_id"),
+        "analysis_attempt": sequence.get("analysis_attempt"),
+        "deployment_id": sequence.get("deployment_id"),
+        "model_id": sequence.get("model_id", MODEL_ID),
+        "prompt_version": sequence.get("prompt_version"),
+        "run_manifest_sha256": sequence.get("run_manifest_sha256"),
         "source_sha256": sequence["source_sha256"],
         "source_commit": sequence["source_commit"],
         "model_revision": sequence["model_revision"],
-        "generation_settings_hash": sequence["generation_settings_hash"],
-        "prompt_hash": sequence["prompt_hash"],
+        **components,
+        "prompt_hash": components["user_prompt_sha256"],
     }
+
+
+def _verify_current_prompt_contract(sequence: dict[str, Any], *, max_tokens: int, seed: int) -> None:
+    expected = prompt_component_hashes(
+        sequence["user_prompt"],
+        model_revision=sequence["model_revision"],
+        max_tokens=max_tokens,
+        seed=seed,
+    )
+    if sequence.get("prompt_version") != PROMPT_VERSION:
+        raise ValueError(
+            f"resume refused for {sequence.get('sequence_id')}: prompt version changed"
+        )
+    for key, value in expected.items():
+        if sequence.get(key) != value:
+            raise ValueError(
+                f"resume refused for {sequence.get('sequence_id')}: {key} changed "
+                f"(stored {sequence.get(key)!r} != current {value!r})"
+            )
 
 
 def _completed_inference(inference_path: Path) -> dict[str, Any] | None:
@@ -431,11 +692,30 @@ def infer_subjects(
     concurrency: int = TURKISH_INFERENCE_CONCURRENCY,
     seed: int = 42,
     max_tokens: int = TURKISH_MAX_TOKENS,
+    source_commit: str | None = None,
+    turkish_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Run one deterministic request per sequence; resumable by sequence ID."""
     sequences = load_prepared_sequences(prepared_path)
     inferences_dir = Path(inferences_dir)
     inferences_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = Path(prepared_path).parent.parent / "run_manifest.json"
+    if not manifest_path.is_file():
+        raise ValueError(f"run manifest missing: {manifest_path}")
+    manifest_hash = _sha256_file(manifest_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if turkish_run_id is not None and manifest.get("turkish_run_id") != turkish_run_id:
+        raise ValueError("resume refused: Turkish run identity changed")
+    if source_commit is not None and manifest.get("source_commit") != source_commit:
+        raise ValueError("resume refused: source commit changed")
+    if manifest.get("run_manifest_sha256") not in (None, manifest_hash):
+        raise ValueError("run manifest self-reference is invalid")
+    for sequence in sequences:
+        if sequence.get("run_manifest_sha256") != manifest_hash:
+            raise ValueError(f"{sequence.get('sequence_id')}: run manifest hash mismatch")
+        if sequence.get("source_commit") != manifest.get("source_commit"):
+            raise ValueError(f"{sequence.get('sequence_id')}: source commit mismatch")
+        _verify_current_prompt_contract(sequence, max_tokens=max_tokens, seed=seed)
     pending: list[dict[str, Any]] = []
     completed = 0
     for sequence in sequences:
@@ -497,7 +777,11 @@ def infer_subjects(
                     if attempt == 1:
                         continue
                     return sequence_id, False, "invalid JSON twice"
-                episodes = _validate_episodes(parsed, sequence_id)
+                episodes = _validate_episodes(
+                    parsed,
+                    sequence_id,
+                    [window["text"] for window in sequence.get("windows", [])],
+                )
                 record = dict(_episode_provenance(sequence))
                 record.update(
                     {

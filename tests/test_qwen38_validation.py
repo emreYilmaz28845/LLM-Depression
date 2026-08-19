@@ -60,6 +60,66 @@ class TestSyntheticFixture:
         assert payload["candidate_results"]["1"]["request_rate_c1"] == 2.0
         assert payload["candidate_results"]["2"]["request_rate_c1"] == 3.0
 
+    def test_select_v2_preserves_original_and_uses_tp4_attempt2(self, tmp_path):
+        from scripts.qwen38_validation_client import cmd_select_v2
+
+        deploy = tmp_path / "deploy"
+        root = deploy / "qwen38_test"
+        original = {
+            "deployment_id": "qwen38_test",
+            "model_id": "Qwen/Qwen3.8-27B",
+            "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+            "selected_tp": 2,
+            "decision_rule": "rule5_select_tp2",
+            "source_commit": "abc",
+        }
+        root.mkdir(parents=True)
+        original_path = root / "serving_selection.json"
+        original_path.write_text(json.dumps(original) + "\n", encoding="utf-8")
+        before = original_path.read_bytes()
+        for tp, attempt, passed, c1, c8 in (
+            (2, 1, True, 1.0, 1.0),
+            (4, 2, True, 1.1, 1.1),
+        ):
+            attempt_dir = root / "validation" / f"tp{tp}" / f"attempt{attempt}"
+            attempt_dir.mkdir(parents=True)
+            (attempt_dir / "results.json").write_text("{}", encoding="utf-8")
+            (attempt_dir / "acceptance.json").write_text(
+                json.dumps({
+                    "passed": passed,
+                    "source_commit": "abc",
+                    "summary": {
+                        "c1_pass_a": {"aggregate_requests_per_second": c1},
+                        "c8": {"aggregate_requests_per_second": c8},
+                    },
+                }),
+                encoding="utf-8",
+            )
+        tp1_dir = root / "validation" / "tp1" / "attempt1"
+        tp1_dir.mkdir(parents=True)
+        (tp1_dir / "capacity_ineligible.json").write_text(
+            json.dumps({"capacity_ineligible": True}), encoding="utf-8"
+        )
+
+        class Args:
+            deploy_dir = str(deploy)
+            deployment_id = "qwen38_test"
+            source_commit = "abc"
+            tp4_job_id = "999"
+            tp4_attempt = 2
+            tp2_job_id = "222"
+            tp1_job_ids = "111,112"
+            tp4_attempt1_job_ids = "113,114"
+            tp4_attempt1_source_commit = "old"
+            out = None
+
+        assert cmd_select_v2(Args()) == 0
+        assert original_path.read_bytes() == before
+        selection_v2 = json.loads((root / "serving_selection_v2.json").read_text(encoding="utf-8"))
+        assert selection_v2["selection_version"] == 2
+        assert selection_v2["tp4_attempt2"]["job_ids"] == ["999"]
+        assert selection_v2["old_tp4_attempt1"]["eligible"] is False
+
     def test_run_case_sends_plain_string_contents(self):
         import asyncio
 
@@ -479,6 +539,32 @@ class TestDeploymentAudit:
         )
         assert result["passed"], [c for c in result["checks"] if not c["passed"]]
 
+    def test_deployment_audit_accepts_recorded_comparison_failures(self, tmp_path):
+        deploy, deployment_id, model, wheelhouse, env_dir = self._build_deployment(tmp_path)
+        tp1 = deploy / deployment_id / "validation" / "tp1" / "attempt1"
+        (tp1 / "acceptance.json").write_text(
+            json.dumps({"passed": False, "capacity_ineligible": True}) + "\n",
+            encoding="utf-8",
+        )
+        (tp1 / "capacity_ineligible.json").write_text(
+            json.dumps({"capacity_ineligible": True}) + "\n", encoding="utf-8"
+        )
+        tp4 = deploy / deployment_id / "validation" / "tp4" / "attempt1" / "acceptance.json"
+        tp4.write_text(json.dumps({"passed": False}) + "\n", encoding="utf-8")
+        selection_path = deploy / deployment_id / "serving_selection.json"
+        selection = json.loads(selection_path.read_text(encoding="utf-8"))
+        selection["selected_tp"] = 2
+        selection_path.write_text(json.dumps(selection) + "\n", encoding="utf-8")
+        result = audit_deployment(
+            deploy,
+            deployment_id,
+            model_dir=model,
+            wheelhouse_dir=wheelhouse,
+            environment_dir=env_dir,
+            source_commit="abc123",
+        )
+        assert result["passed"], [c for c in result["checks"] if not c["passed"]]
+
     def test_deployment_audit_driver_fails(self, tmp_path):
         deploy, deployment_id, model, wheelhouse, env_dir = self._build_deployment(tmp_path)
         (env_dir / "driver_probe.json").write_text(
@@ -507,3 +593,55 @@ class TestDeploymentAudit:
             environment_dir=env_dir,
         )
         assert not result["passed"]
+
+    def test_deployment_audit_validates_selection_v2_evidence(self, tmp_path):
+        from scripts.qwen38_validation_client import cmd_select_v2
+
+        deploy, deployment_id, model, wheelhouse, env_dir = self._build_deployment(tmp_path)
+        tp1 = deploy / deployment_id / "validation" / "tp1" / "attempt1"
+        (tp1 / "acceptance.json").write_text(
+            json.dumps({"passed": False, "capacity_ineligible": True}) + "\n",
+            encoding="utf-8",
+        )
+        (tp1 / "capacity_ineligible.json").write_text(
+            json.dumps({"capacity_ineligible": True}) + "\n", encoding="utf-8"
+        )
+        tp4 = deploy / deployment_id / "validation" / "tp4" / "attempt2"
+        tp4.mkdir(parents=True)
+        (tp4 / "results.json").write_text("{}", encoding="utf-8")
+        (tp4 / "acceptance.json").write_text(
+            json.dumps({
+                "passed": True,
+                "source_commit": "abc123",
+                "summary": {
+                    "c1_pass_a": {"aggregate_requests_per_second": 1.0},
+                    "c8": {"aggregate_requests_per_second": 1.0},
+                },
+            }),
+            encoding="utf-8",
+        )
+
+        class Args:
+            deploy_dir = str(deploy)
+            deployment_id = "qwen38_test"
+            source_commit = "abc123"
+            tp4_job_id = "999"
+            tp4_attempt = 2
+            tp2_job_id = "222"
+            tp1_job_ids = "111,112"
+            tp4_attempt1_job_ids = "113,114"
+            tp4_attempt1_source_commit = "old"
+            out = None
+
+        assert cmd_select_v2(Args()) == 0
+        v2_path = deploy / deployment_id / "serving_selection_v2.json"
+        result = audit_deployment(
+            deploy,
+            deployment_id,
+            model_dir=model,
+            wheelhouse_dir=wheelhouse,
+            environment_dir=env_dir,
+            source_commit="abc123",
+            selection_file=v2_path,
+        )
+        assert result["passed"], [c for c in result["checks"] if not c["passed"]]
