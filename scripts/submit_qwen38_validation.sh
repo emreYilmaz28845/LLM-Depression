@@ -185,45 +185,111 @@ else
 fi
 
 # --- Stage 2: mandatory TP=2 acceptance smoke --------------------------------
-echo "[stage:q38-tp2-smoke]"
-run_with_transient_retry "q38-tp2-smoke" \
-  -A etur92 -q acc_ehpc -t 00:30:00 \
-  --cpus-per-task=40 --gres=gpu:2 --exclusive \
-  --export=ALL,DEPLOYMENT_ID="$DEPLOYMENT_ID",PROJECT_ROOT="$PROJECT_ROOT",DEPLOY_ROOT="$DEPLOY_ROOT",MODEL_DIR="$MODEL_DIR",WHEELHOUSE_DIR="$WHEELHOUSE_DIR",VENV_DIR="$VENV_DIR",MODEL_REVISION="$MODEL_REVISION",SOURCE_COMMIT="$SOURCE_COMMIT",TP_SIZE=2,ATTEMPT=1,RUN_LABEL=q38-tp2-smoke \
-  "$PROJECT_ROOT/scripts/run_qwen38_validation_slurm.sh"
-if [ "$DRY_RUN" = "0" ]; then
-  TP2_ACCEPTANCE="$DEPLOY_ROOT/$DEPLOYMENT_ID/validation/tp2/attempt1/acceptance.json"
-  if [ ! -f "$TP2_ACCEPTANCE" ] || ! python - "$TP2_ACCEPTANCE" <<'PY'
+TP2_ACCEPTANCE="$DEPLOY_ROOT/$DEPLOYMENT_ID/validation/tp2/attempt1/acceptance.json"
+if [ -f "$TP2_ACCEPTANCE" ] && python - "$TP2_ACCEPTANCE" <<'PY'
+import json
+import sys
+if json.load(open(sys.argv[1], encoding="utf-8")).get("passed"):
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+then
+  echo "[stage:q38-tp2-smoke] skipped (acceptance already passed)"
+else
+  echo "[stage:q38-tp2-smoke]"
+  run_with_transient_retry "q38-tp2-smoke" \
+    -A etur92 -q acc_ehpc -t 00:30:00 \
+    --cpus-per-task=40 --gres=gpu:2 --exclusive \
+    --export=ALL,DEPLOYMENT_ID="$DEPLOYMENT_ID",PROJECT_ROOT="$PROJECT_ROOT",DEPLOY_ROOT="$DEPLOY_ROOT",MODEL_DIR="$MODEL_DIR",WHEELHOUSE_DIR="$WHEELHOUSE_DIR",VENV_DIR="$VENV_DIR",MODEL_REVISION="$MODEL_REVISION",SOURCE_COMMIT="$SOURCE_COMMIT",TP_SIZE=2,ATTEMPT=1,RUN_LABEL=q38-tp2-smoke \
+    "$PROJECT_ROOT/scripts/run_qwen38_validation_slurm.sh"
+  if [ "$DRY_RUN" = "0" ]; then
+    if [ ! -f "$TP2_ACCEPTANCE" ] || ! python - "$TP2_ACCEPTANCE" <<'PY'
 import json
 import sys
 if not json.load(open(sys.argv[1], encoding="utf-8")).get("passed"):
     raise SystemExit(1)
 PY
-  then
-    echo "FAILED: TP=2 acceptance gate did not pass; TP=1/TP=4 and selection are blocked" >&2
-    exit 1
+    then
+      echo "FAILED: TP=2 acceptance gate did not pass; TP=1/TP=4 and selection are blocked" >&2
+      exit 1
+    fi
   fi
 fi
 
-# --- Stage 3: bounded TP=1 and TP=4 comparisons (concurrent) -----------------
+# --- Stage 3: bounded TP=1 and TP=4 comparisons ------------------------------
+# Per runbook section 16, a TP=1 capacity failure (OOM / insufficient memory /
+# architecture refusal) is CAPACITY_INELIGIBLE and a TP=4 failure is recorded
+# and excluded from selection; neither hard-stops the pipeline. Only TP=2 gates
+# the deployment. Failures are recorded in jobs.jsonl by the poll helper and a
+# capacity/ineligible marker is written when the worker log shows an OOM.
+
+record_capacity() {
+  local tp="$1" label="$2"
+  local marker="$DEPLOY_ROOT/$DEPLOYMENT_ID/validation/tp${tp}/attempt1/capacity_ineligible.json"
+  mkdir -p "$(dirname "$marker")"
+  python - "$marker" "$tp" "$label" <<'PY'
+import json
+import sys
+import time
+marker, tp, reason = sys.argv[1:]
+payload = {
+    "tp": int(tp),
+    "capacity_ineligible": True,
+    "reason": reason,
+    "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+}
+with open(marker, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2)
+    handle.write("\n")
+PY
+  echo "recorded $label as CAPACITY_INELIGIBLE ($marker)"
+}
+
 if [ "$SKIP_TP1" != "1" ]; then
-  echo "[stage:q38-tp1-compare]"
-  run_with_transient_retry "q38-tp1-compare" \
-    -A etur92 -q acc_ehpc -t 00:30:00 \
-    --cpus-per-task=20 --gres=gpu:1 --exclusive \
-    --export=ALL,DEPLOYMENT_ID="$DEPLOYMENT_ID",PROJECT_ROOT="$PROJECT_ROOT",DEPLOY_ROOT="$DEPLOY_ROOT",MODEL_DIR="$MODEL_DIR",WHEELHOUSE_DIR="$WHEELHOUSE_DIR",VENV_DIR="$VENV_DIR",MODEL_REVISION="$MODEL_REVISION",SOURCE_COMMIT="$SOURCE_COMMIT",TP_SIZE=1,ATTEMPT=1,RUN_LABEL=q38-tp1-compare \
-    "$PROJECT_ROOT/scripts/run_qwen38_validation_slurm.sh"
+  TP1_DONE="$DEPLOY_ROOT/$DEPLOYMENT_ID/validation/tp1/attempt1/acceptance.json"
+  TP1_CAP="$DEPLOY_ROOT/$DEPLOYMENT_ID/validation/tp1/attempt1/capacity_ineligible.json"
+  if [ -f "$TP1_DONE" ] || [ -f "$TP1_CAP" ]; then
+    echo "[stage:q38-tp1-compare] skipped (acceptance or capacity record exists)"
+  else
+    echo "[stage:q38-tp1-compare]"
+    if run_with_transient_retry "q38-tp1-compare" \
+      -A etur92 -q acc_ehpc -t 00:30:00 \
+      --cpus-per-task=20 --gres=gpu:1 --exclusive \
+      --export=ALL,DEPLOYMENT_ID="$DEPLOYMENT_ID",PROJECT_ROOT="$PROJECT_ROOT",DEPLOY_ROOT="$DEPLOY_ROOT",MODEL_DIR="$MODEL_DIR",WHEELHOUSE_DIR="$WHEELHOUSE_DIR",VENV_DIR="$VENV_DIR",MODEL_REVISION="$MODEL_REVISION",SOURCE_COMMIT="$SOURCE_COMMIT",TP_SIZE=1,ATTEMPT=1,RUN_LABEL=q38-tp1-compare \
+      "$PROJECT_ROOT/scripts/run_qwen38_validation_slurm.sh"; then
+      :
+    else
+      echo "TP=1 comparison did not pass; continuing to TP=4 and selection"
+      if [ "$DRY_RUN" = "0" ]; then
+        for LOG in "$DEPLOY_ROOT/$DEPLOYMENT_ID"/logs/validation_tp1_attempt1_*.log; do
+          if [ -f "$LOG" ] && grep -qE "CUDA out of memory|OutOfMemoryError|AcceleratorError" "$LOG"; then
+            record_capacity 1 "TP=1"
+            break
+          fi
+        done
+      fi
+    fi
+  fi
 else
   echo "[stage:q38-tp1-compare] skipped (SKIP_TP1=$SKIP_TP1)"
 fi
 
 if [ "$SKIP_TP4" != "1" ]; then
-  echo "[stage:q38-tp4-compare]"
-  run_with_transient_retry "q38-tp4-compare" \
-    -A etur92 -q acc_ehpc -t 00:30:00 \
-    --cpus-per-task=80 --gres=gpu:4 --exclusive \
-    --export=ALL,DEPLOYMENT_ID="$DEPLOYMENT_ID",PROJECT_ROOT="$PROJECT_ROOT",DEPLOY_ROOT="$DEPLOY_ROOT",MODEL_DIR="$MODEL_DIR",WHEELHOUSE_DIR="$WHEELHOUSE_DIR",VENV_DIR="$VENV_DIR",MODEL_REVISION="$MODEL_REVISION",SOURCE_COMMIT="$SOURCE_COMMIT",TP_SIZE=4,ATTEMPT=1,RUN_LABEL=q38-tp4-compare \
-    "$PROJECT_ROOT/scripts/run_qwen38_validation_slurm.sh"
+  TP4_DONE="$DEPLOY_ROOT/$DEPLOYMENT_ID/validation/tp4/attempt1/acceptance.json"
+  if [ -f "$TP4_DONE" ]; then
+    echo "[stage:q38-tp4-compare] skipped (acceptance exists)"
+  else
+    echo "[stage:q38-tp4-compare]"
+    if run_with_transient_retry "q38-tp4-compare" \
+      -A etur92 -q acc_ehpc -t 00:30:00 \
+      --cpus-per-task=80 --gres=gpu:4 --exclusive \
+      --export=ALL,DEPLOYMENT_ID="$DEPLOYMENT_ID",PROJECT_ROOT="$PROJECT_ROOT",DEPLOY_ROOT="$DEPLOY_ROOT",MODEL_DIR="$MODEL_DIR",WHEELHOUSE_DIR="$WHEELHOUSE_DIR",VENV_DIR="$VENV_DIR",MODEL_REVISION="$MODEL_REVISION",SOURCE_COMMIT="$SOURCE_COMMIT",TP_SIZE=4,ATTEMPT=1,RUN_LABEL=q38-tp4-compare \
+      "$PROJECT_ROOT/scripts/run_qwen38_validation_slurm.sh"; then
+      :
+    else
+      echo "TP=4 comparison did not pass; recording and continuing to selection"
+    fi
+  fi
 else
   echo "[stage:q38-tp4-compare] skipped (SKIP_TP4=$SKIP_TP4)"
 fi
