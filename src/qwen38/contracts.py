@@ -211,6 +211,75 @@ def generation_settings_hash(max_tokens: int) -> str:
 
 
 # --------------------------------------------------------------------------
+# Inference policy versions and fallback schemas (autonomous plan sections 6-7)
+# --------------------------------------------------------------------------
+
+STRICT_PROMPT_VERSION = "qwen38_turkish_v3"
+FALLBACK_PROMPT_VERSION = "qwen38_turkish_fallback_v1"
+INFERENCE_POLICY_VERSION = "qwen38_question_inference_ladder_v1"
+
+FALLBACK_QUESTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "question_tr": {"type": "string"},
+        "question_en": {"type": "string"},
+        "label": {"type": "string", "enum": [l.value for l in Label]},
+        "confidence": {"type": "string", "enum": [c.value for c in Confidence]},
+    },
+    "required": ["question_tr", "question_en", "label", "confidence"],
+    "additionalProperties": False,
+}
+
+FALLBACK_INFERENCE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "questions": {"type": "array", "items": FALLBACK_QUESTION_SCHEMA},
+    },
+    "required": ["questions"],
+    "additionalProperties": False,
+}
+
+# Simplified final consolidation fallback: families without deterministic IDs.
+CONSOLIDATION_FINAL_SIMPLIFIED_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "families": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "question_tr": {"type": "string"},
+                    "question_en": {"type": "string"},
+                    "member_cluster_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["question_tr", "question_en", "member_cluster_ids"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["families"],
+    "additionalProperties": False,
+}
+
+INFERENCE_POLICY = {
+    "version": INFERENCE_POLICY_VERSION,
+    "strict_prompt_version": STRICT_PROMPT_VERSION,
+    "fallback_prompt_version": FALLBACK_PROMPT_VERSION,
+    "strict_max_generations": 2,
+    "fallback_max_generations": 2,
+    "max_total_generations": 4,
+    "routes": ["STRICT", "SIMPLIFIED", "NONE"],
+    "consolidation": {
+        "max_correction_per_request": 1,
+        "max_split_depth": 2,
+        "final_simplified_fallback": True,
+    },
+}
+
+# --------------------------------------------------------------------------
 # Strict response schemas
 # --------------------------------------------------------------------------
 
@@ -370,12 +439,20 @@ def validate_subject_inference(value: Any) -> list[str]:
     return _type_errors(value, SUBJECT_INFERENCE_SCHEMA, "response")
 
 
+def validate_fallback_inference(value: Any) -> list[str]:
+    return _type_errors(value, FALLBACK_INFERENCE_SCHEMA, "response")
+
+
 def validate_consolidation_batch(value: Any) -> list[str]:
     return _type_errors(value, CONSOLIDATION_BATCH_SCHEMA, "response")
 
 
 def validate_consolidation_final(value: Any) -> list[str]:
     return _type_errors(value, CONSOLIDATION_FINAL_SCHEMA, "response")
+
+
+def validate_consolidation_final_simplified(value: Any) -> list[str]:
+    return _type_errors(value, CONSOLIDATION_FINAL_SIMPLIFIED_SCHEMA, "response")
 
 
 # --------------------------------------------------------------------------
