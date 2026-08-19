@@ -94,6 +94,23 @@ ENV_PINS = {
 }
 
 
+def _normalize_environment_versions(values: dict[str, Any]) -> dict[str, Any]:
+    """Compare CUDA-tagged torchvision/audio builds by their package version.
+
+    The deployment record stores the pinned package versions without a local
+    CUDA build tag, while the installed distributions may report values such
+    as ``0.26.0+cu130``.  The local tag is part of the wheel build identity,
+    not a different pinned package release, so strip it only for the two
+    packages that carry the CUDA suffix in this environment.
+    """
+    normalized = dict(values)
+    for key in ("torchvision", "torchaudio"):
+        value = normalized.get(key)
+        if isinstance(value, str):
+            normalized[key] = value.split("+", 1)[0]
+    return normalized
+
+
 def _sha256_file(path: str | Path) -> str:
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
@@ -356,7 +373,7 @@ def audit_deployment(
     else:
         with runtime_path.open("r", encoding="utf-8") as handle:
             runtime = json.load(handle)
-        actual = {
+        actual_raw = {
             "python_major": int(runtime.get("python_major")),
             "python_minor": int(runtime.get("python_minor")),
             "vllm": runtime.get("vllm"),
@@ -367,11 +384,12 @@ def audit_deployment(
             "openai": runtime.get("openai"),
             "huggingface_hub": runtime.get("huggingface_hub"),
         }
+        actual = _normalize_environment_versions(actual_raw)
         record(
             "environment_versions",
             "environment versions match the pinned set",
             actual == ENV_PINS,
-            {"actual": actual, "expected": ENV_PINS},
+            {"actual": actual, "raw_actual": actual_raw, "expected": ENV_PINS},
         )
         record(
             "model_identity",
@@ -948,7 +966,7 @@ def audit_turkish(
             "expected_revision": MODEL_REVISION,
         },
     )
-    actual_env = {
+    actual_env_raw = {
         "python_major": runtime.get("python_major"),
         "python_minor": runtime.get("python_minor"),
         "vllm": runtime.get("vllm"),
@@ -959,12 +977,13 @@ def audit_turkish(
         "openai": runtime.get("openai"),
         "huggingface_hub": runtime.get("huggingface_hub"),
     }
+    actual_env = _normalize_environment_versions(actual_env_raw)
     expected_env = {key: ENV_PINS[key] for key in actual_env}
     record(
         "environment_versions",
         "environment versions match the pinned set",
         actual_env == expected_env,
-        {"actual": actual_env, "expected": expected_env},
+        {"actual": actual_env, "raw_actual": actual_env_raw, "expected": expected_env},
     )
 
     model_manifest = Path(model_dir) / "SHA256SUMS"
