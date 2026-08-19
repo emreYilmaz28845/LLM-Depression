@@ -21,6 +21,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
 
+VALIDATION_SYSTEM_PROMPT = (
+    "You recover interviewer questions from answer-only transcripts. "
+    "For this synthetic validation case, infer the missing interviewer "
+    "question from the answer and return exactly one JSON object with "
+    "case_id, inferred_question, label (POSITIVE, NEGATIVE, NEUTRAL, or "
+    "MIXED), and confidence (HIGH, MEDIUM, or LOW). Classify the inferred "
+    "question's framing, not the emotional tone of the answer."
+)
+assert isinstance(VALIDATION_SYSTEM_PROMPT, str)
+
 from src.qwen38.contracts import (
     CONFIDENCE_WEIGHTS,
     CONCURRENCY_LEVELS,
@@ -262,14 +272,7 @@ async def _run_case(
         messages: list[dict[str, str]] = [
             {
                 "role": "system",
-                "content": (
-                    "You recover interviewer questions from answer-only transcripts. "
-                    "For this synthetic validation case, infer the missing interviewer "
-                    "question from the answer and return exactly one JSON object with "
-                    "case_id, inferred_question, label (POSITIVE, NEGATIVE, NEUTRAL, or "
-                    "MIXED), and confidence (HIGH, MEDIUM, or LOW). Classify the inferred "
-                    "question's framing, not the emotional tone of the answer.",
-                ),
+                "content": VALIDATION_SYSTEM_PROMPT,
             },
             {"role": "user", "content": case.answer_text},
         ]
