@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -112,14 +114,64 @@ class TestSyntheticFixture:
             tp1_job_ids = "111,112"
             tp4_attempt1_job_ids = "113,114"
             tp4_attempt1_source_commit = "old"
-            out = None
+            out = str(root / "selection_revalidation_abc123def456" / "serving_selection_v2.json")
 
         assert cmd_select_v2(Args()) == 0
         assert original_path.read_bytes() == before
-        selection_v2 = json.loads((root / "serving_selection_v2.json").read_text(encoding="utf-8"))
+        selection_v2 = json.loads(Path(Args.out).read_text(encoding="utf-8"))
         assert selection_v2["selection_version"] == 2
         assert selection_v2["tp4_attempt2"]["job_ids"] == ["999"]
         assert selection_v2["old_tp4_attempt1"]["eligible"] is False
+        assert selection_v2["selection_implementation_commit"] == "abc"
+        assert original_path.read_bytes() == before
+
+    def test_turkish_submitter_dry_run_propagates_attempt3_policy_source_and_tp2(self, tmp_path):
+        source_commit = "a" * 40
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / "scripts").symlink_to(Path(__file__).resolve().parents[1] / "scripts", target_is_directory=True)
+        (project / "src").symlink_to(Path(__file__).resolve().parents[1] / "src", target_is_directory=True)
+        provenance = project / ".provenance"
+        provenance.mkdir()
+        (provenance / "git_commit.txt").write_text(source_commit + "\n", encoding="utf-8")
+        selection = project / "selection_revalidation_aaaaaaaaaaaa" / "serving_selection_v2.json"
+        selection.parent.mkdir(parents=True)
+        selection.write_text(json.dumps({
+            "selection_version": 2,
+            "selected_tp": 2,
+            "source_commit": source_commit,
+        }) + "\n", encoding="utf-8")
+        env = os.environ.copy()
+        env.update({
+            "PROJECT_ROOT": str(project),
+            "DEPLOY_ROOT": str(project / "deploy"),
+            "DEPLOYMENT_ID": "qwen38_test",
+            "TURKISH_RUN_ID": f"q38tr_{source_commit[:12]}_attempt3",
+            "SOURCE_COMMIT": source_commit,
+            "SELECTION_FILE": str(selection),
+            "ANALYSIS_ATTEMPT": "3",
+            "DRY_RUN": "1",
+            "WAIT": "0",
+            "LOCAL_ORIGIN_MAIN_SHA": source_commit,
+        })
+        result = subprocess.run(
+            ["bash", str(Path(__file__).resolve().parents[1] / "scripts/submit_qwen38_turkish.sh")],
+            cwd=project,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        output = result.stdout
+        assert "attempt=3" in output
+        assert "prompt=qwen38_turkish_v3" in output
+        assert "policy=qwen38_episode_safety_v1" in output
+        assert "selected_tp=2" in output
+        assert "--cpus-per-task=40" in output
+        assert "--gres=gpu:2" in output
+        assert "44824690,44825023" in output
+        assert str(selection) in output
 
     def test_run_case_sends_plain_string_contents(self):
         import asyncio

@@ -9,7 +9,8 @@
 # Qwen3.8 private Turkish question-recovery job (runbook sections 18-21).
 #
 # Required env: DEPLOYMENT_ID, TURKISH_RUN_ID, ANALYSIS_ATTEMPT, SELECTED_TP,
-# SOURCE_COMMIT, SELECTION_FILE.
+# SOURCE_COMMIT, SELECTION_FILE. The source tree supplies the immutable prompt
+# and episode-safety policy identities; they are recorded in every ledger event.
 # Optional: PROJECT_ROOT, DEPLOY_ROOT, MODEL_DIR, WHEELHOUSE_DIR, VENV_DIR,
 # MODEL_REVISION, TRANSCRIPT_PATH.
 #
@@ -43,6 +44,10 @@ RESTRICTED="$RUN_ROOT/restricted"
 LOG_DIR="$DEPLOY_ROOT/$DEPLOYMENT_ID/logs"
 if [[ ! "$TURKISH_RUN_ID" =~ ^q38tr_[0-9a-f]{12}_attempt[0-9]+$ ]]; then
   echo "FAILED: invalid TURKISH_RUN_ID=$TURKISH_RUN_ID" >&2
+  exit 1
+fi
+if [[ "$TURKISH_RUN_ID" =~ _attempt([0-9]+)$ ]] && [ "${BASH_REMATCH[1]}" != "$ANALYSIS_ATTEMPT" ]; then
+  echo "FAILED: ANALYSIS_ATTEMPT=$ANALYSIS_ATTEMPT does not match TURKISH_RUN_ID=$TURKISH_RUN_ID" >&2
   exit 1
 fi
 if [ -e "$RUN_ROOT" ]; then
@@ -96,6 +101,10 @@ if [ "$SOURCE_COMMIT" != "$ORIGIN_MAIN_SHA" ] || [ "$SOURCE_COMMIT" != "$REMOTE_
   echo "FAILED: source identity mismatch (SOURCE_COMMIT=$SOURCE_COMMIT origin/main=$ORIGIN_MAIN_SHA provenance=$REMOTE_PROVENANCE_SHA)" >&2
   exit 1
 fi
+if [[ "$TURKISH_RUN_ID" != "q38tr_${SOURCE_COMMIT:0:12}_attempt${ANALYSIS_ATTEMPT}" ]]; then
+  echo "FAILED: TURKISH_RUN_ID is not source/attempt matched" >&2
+  exit 1
+fi
 SELECTION_TP="$(python - "$SELECTION_FILE" <<'PY'
 import json
 import sys
@@ -112,22 +121,39 @@ if [ "$SELECTED_TP" != "$SELECTION_TP" ]; then
   echo "FAILED: selected TP $SELECTED_TP does not match selection v2 $SELECTION_TP" >&2
   exit 1
 fi
-PROMPT_CONTRACT_SHA256="$(python - <<'PY'
-from src.qwen38.turkish_questions import prompt_contract_sha256
-print(prompt_contract_sha256())
+SELECTION_FILE_SHA256="$(sha256sum "$SELECTION_FILE" | awk '{print $1}')"
+mapfile -t PROMPT_METADATA_LINES < <(python - "$MODEL_REVISION" <<'PY'
+import sys
+from src.qwen38.turkish_questions import (
+    EPISODE_SAFETY_POLICY_SHA256,
+    EPISODE_SAFETY_POLICY_VERSION,
+    PROMPT_VERSION,
+    prompt_contract_sha256,
+)
+print(prompt_contract_sha256(model_revision=sys.argv[1]))
+print(PROMPT_VERSION)
+print(EPISODE_SAFETY_POLICY_VERSION)
+print(EPISODE_SAFETY_POLICY_SHA256)
 PY
-)"
+)
+PROMPT_CONTRACT_SHA256="${PROMPT_METADATA_LINES[0]}"
+PROMPT_VERSION="${PROMPT_METADATA_LINES[1]}"
+EPISODE_SAFETY_POLICY_VERSION="${PROMPT_METADATA_LINES[2]}"
+EPISODE_SAFETY_POLICY_SHA256="${PROMPT_METADATA_LINES[3]}"
+echo "Prompt: $PROMPT_VERSION"
+echo "Episode safety policy: $EPISODE_SAFETY_POLICY_VERSION ($EPISODE_SAFETY_POLICY_SHA256)"
 
 append_ledger_event() {
   local stage="$1" state="$2" exit_code="$3" run_manifest_sha256="${4:-}"
-  python - "$LEDGER_PATH" "$TURKISH_RUN_ID" "$ANALYSIS_ATTEMPT" "$DEPLOYMENT_ID" "$stage" "${SLURM_JOB_ID:-}" "$state" "$exit_code" "$SOURCE_COMMIT" "$PROMPT_CONTRACT_SHA256" "$run_manifest_sha256" "$SELECTED_TP" "${SUPERSEDES_JOB_IDS:-}" <<'PY'
+  python - "$LEDGER_PATH" "$TURKISH_RUN_ID" "$ANALYSIS_ATTEMPT" "$DEPLOYMENT_ID" "$stage" "${SLURM_JOB_ID:-}" "$state" "$exit_code" "$SOURCE_COMMIT" "$PROMPT_VERSION" "$EPISODE_SAFETY_POLICY_VERSION" "$EPISODE_SAFETY_POLICY_SHA256" "$PROMPT_CONTRACT_SHA256" "$run_manifest_sha256" "$SELECTED_TP" "$SELECTION_FILE" "$SELECTION_FILE_SHA256" "${SUPERSEDES_JOB_IDS:-}" <<'PY'
 import json
 import os
 import sys
 import time
 
 (path, run_id, attempt, deployment_id, stage, job_id, state, exit_code,
- source_commit, prompt_contract, manifest_hash, selected_tp, supersedes) = sys.argv[1:]
+source_commit, prompt_version, policy_version, policy_sha256, prompt_contract,
+ manifest_hash, selected_tp, selection_file, selection_sha256, supersedes) = sys.argv[1:]
 record = {
     "turkish_run_id": run_id,
     "analysis_attempt": int(attempt),
@@ -137,9 +163,14 @@ record = {
     "state": state,
     "exit_code": exit_code,
     "source_commit": source_commit,
+    "prompt_version": prompt_version,
+    "episode_safety_policy_version": policy_version,
+    "episode_safety_policy_sha256": policy_sha256,
     "prompt_contract_sha256": prompt_contract,
     "run_manifest_sha256": manifest_hash or None,
     "selected_tp": int(selected_tp),
+    "selection_file": selection_file,
+    "selection_file_sha256": selection_sha256,
     "supersedes_job_ids": [item for item in supersedes.split(",") if item],
     "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
 }

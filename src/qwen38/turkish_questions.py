@@ -61,6 +61,26 @@ from src.qwen38.contracts import (
     validate_subject_inference,
 )
 
+PROMPT_VERSION = "qwen38_turkish_v3"
+EPISODE_SAFETY_POLICY_VERSION = "qwen38_episode_safety_v1"
+EPISODE_TEXT_FIELDS = (
+    "question_tr",
+    "question_en",
+    "evidence_basis",
+    "abstain_reason",
+)
+EPISODE_SAFETY_REASON_CODES = (
+    "forbidden_marker_or_identifier",
+    "privacy_overlap_12_tokens",
+)
+CORRECTION_REASON_CODES = (
+    "invalid_json",
+    "invalid_schema",
+    *EPISODE_SAFETY_REASON_CODES,
+)
+EPISODE_SAFETY_FIELD_NAMES = EPISODE_TEXT_FIELDS
+_CANONICAL_SEQUENCE_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])S[0-9]{4}(?![A-Za-z0-9])")
+
 SUBJECT_SYSTEM_PROMPT = (
     "You infer recurring interviewer-question families from answer-only interview "
     "transcripts. You see only the participant's answers, each marked [WINDOW n] in "
@@ -85,6 +105,7 @@ SUBJECT_SYSTEM_PROMPT = (
     "transcript text. When an answer does not support any question family, return the "
     "episode with empty question_tr and question_en and a short abstain_reason.\n"
     "Do not use any quote, apostrophe, or backtick character in evidence_basis.\n"
+    "Do not include window markers, sequence identifiers, or copied answer text in any free-text field.\n"
     "Return exactly one JSON object, no prose, no markdown fences, with this exact "
     "shape:\n"
     '{\n'
@@ -157,18 +178,12 @@ CONSOLIDATION_FINAL_SYSTEM_PROMPT = (
 )
 
 SCHEMA_CORRECTION_MESSAGE = (
-    "Your previous answer failed validation. Return exactly one JSON object matching "
-    "the exact schema shown above, with only these field names and no additional "
-    "fields. Use the exact enum spellings POSITIVE, NEGATIVE, NEUTRAL, MIXED, "
-    "EXPLICIT_ECHO, INFERRED_PARAPHRASE, HIGH, MEDIUM, and LOW. Do not use any "
-    "quote, apostrophe, backtick, [WINDOW marker, closing bracket, subject or "
-    "sequence identifier in any text field. Do not copy any 12-token sequence from "
-    "the answer windows; paraphrase the evidence instead. If no supported family "
-    "exists, use empty question_tr and question_en with a short abstain_reason. "
-    "Return only the JSON object, with no prose or markdown."
+    "Correct the previous response. The permitted validation categories are "
+    "invalid_json, invalid_schema, forbidden_marker_or_identifier, and "
+    "privacy_overlap_12_tokens. Return exactly one JSON object matching the "
+    "subject schema from the original request, with no validation explanation "
+    "and no private content."
 )
-
-PROMPT_VERSION = "qwen38_turkish_v2"
 
 EVIDENCE_BASIS_FALLBACK = "Inferred from response topic and framing"
 _EVIDENCE_QUOTES = '"\'`“”‘’«»‹›„‟‚‛'
@@ -184,14 +199,42 @@ def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def sanitize_evidence_basis(value: str) -> str:
-    """Normalize the model's evidence description before any validation/storage."""
+EPISODE_SAFETY_POLICY = {
+    "version": EPISODE_SAFETY_POLICY_VERSION,
+    "text_fields": list(EPISODE_TEXT_FIELDS),
+    "normalization": {
+        "unicode": "NFKC",
+        "removed_quote_characters": list(_EVIDENCE_QUOTES),
+        "replace_with_space": ["newline", "carriage_return", "tab"],
+        "collapse_whitespace": "unicode",
+        "strip": True,
+        "evidence_basis_max_characters": 200,
+        "evidence_basis_fallback": EVIDENCE_BASIS_FALLBACK,
+    },
+    "forbidden_marker_or_identifier": {
+        "markers": ["[WINDOW", "]"],
+        "current_sequence_id": True,
+        "canonical_sequence_token_regex": r"S[0-9]{4}",
+    },
+    "privacy_overlap_tokens": 12,
+    "reason_codes": list(EPISODE_SAFETY_REASON_CODES),
+}
+EPISODE_SAFETY_POLICY_SHA256 = _sha256_text(_canonical_json(EPISODE_SAFETY_POLICY))
+
+
+def normalize_episode_text(value: str) -> str:
+    """Apply only the harmless formatting normalization allowed by the plan."""
     if not isinstance(value, str):
-        raise TypeError("evidence_basis must be a string")
+        raise TypeError("episode text fields must be strings")
     normalized = unicodedata.normalize("NFKC", value)
     normalized = normalized.translate(_EVIDENCE_QUOTE_TRANSLATION)
     normalized = normalized.replace("\n", " ").replace("\r", " ").replace("\t", " ")
-    normalized = _PROMPT_WHITESPACE_RE.sub(" ", normalized).strip()
+    return _PROMPT_WHITESPACE_RE.sub(" ", normalized).strip()
+
+
+def sanitize_evidence_basis(value: str) -> str:
+    """Normalize and bound only the evidence description."""
+    normalized = normalize_episode_text(value)
     if len(normalized) > 200:
         truncated = normalized[:200]
         boundary = truncated.rfind(" ")
@@ -209,6 +252,9 @@ def prompt_contract_payload(
     settings = request_settings(max_tokens)
     return {
         "prompt_version": PROMPT_VERSION,
+        "episode_safety_policy_version": EPISODE_SAFETY_POLICY_VERSION,
+        "episode_safety_policy_sha256": EPISODE_SAFETY_POLICY_SHA256,
+        "episode_safety_policy": EPISODE_SAFETY_POLICY,
         "SUBJECT_SYSTEM_PROMPT": SUBJECT_SYSTEM_PROMPT,
         "SCHEMA_CORRECTION_MESSAGE": SCHEMA_CORRECTION_MESSAGE,
         "subject_output_schema": SUBJECT_INFERENCE_SCHEMA,
@@ -261,6 +307,8 @@ def prompt_component_hashes(
         "correction_message_sha256": _sha256_text(SCHEMA_CORRECTION_MESSAGE),
         "subject_schema_sha256": _sha256_text(_canonical_json(SUBJECT_INFERENCE_SCHEMA)),
         "generation_settings_hash": generation_settings_hash(max_tokens),
+        "episode_safety_policy_version": EPISODE_SAFETY_POLICY_VERSION,
+        "episode_safety_policy_sha256": EPISODE_SAFETY_POLICY_SHA256,
         "prompt_contract_sha256": prompt_contract_sha256(
             model_revision=model_revision, max_tokens=max_tokens, seed=seed
         ),
@@ -462,6 +510,8 @@ def prepare_sequences(
         "model_id": MODEL_ID,
         "model_revision": model_revision,
         "prompt_version": PROMPT_VERSION,
+        "episode_safety_policy_version": EPISODE_SAFETY_POLICY_VERSION,
+        "episode_safety_policy_sha256": EPISODE_SAFETY_POLICY_SHA256,
         "prompt_contract_sha256": contract_hash,
         "system_prompt_sha256": _sha256_text(SUBJECT_SYSTEM_PROMPT),
         "correction_message_sha256": _sha256_text(SCHEMA_CORRECTION_MESSAGE),
@@ -512,6 +562,8 @@ def prepare_sequences(
                 "model_revision": model_revision,
                 "generation_settings_hash": generation_hash,
                 "prompt_version": PROMPT_VERSION,
+                "episode_safety_policy_version": EPISODE_SAFETY_POLICY_VERSION,
+                "episode_safety_policy_sha256": EPISODE_SAFETY_POLICY_SHA256,
                 "deployment_id": deployment_id,
             }
         )
@@ -535,6 +587,8 @@ def prepare_sequences(
         "subject_map_path": str(map_path),
         "prepared_sequences_path": str(packets_path),
         "prompt_version": PROMPT_VERSION,
+        "episode_safety_policy_version": EPISODE_SAFETY_POLICY_VERSION,
+        "episode_safety_policy_sha256": EPISODE_SAFETY_POLICY_SHA256,
         "prompt_contract_sha256": contract_hash,
         "run_manifest_path": str(manifest_path),
         "run_manifest_sha256": run_manifest_sha256,
@@ -594,50 +648,109 @@ def _parse_json_object(text: str) -> dict[str, Any] | None:
     return None
 
 
+def _normalize_episode_fields(episode: dict[str, Any]) -> dict[str, Any]:
+    """Normalize all four free-text fields before episode safety checks."""
+    for field_name in EPISODE_TEXT_FIELDS:
+        value = episode[field_name]
+        if field_name == "evidence_basis":
+            episode[field_name] = sanitize_evidence_basis(value)
+        else:
+            episode[field_name] = normalize_episode_text(value)
+    return episode
+
+
+def _validate_subject_schema(payload: Any, sequence_id: str) -> list[dict[str, Any]]:
+    """Parse-independent schema and semantic validation, without safety checks."""
+    errors = validate_subject_inference(payload)
+    if errors:
+        raise ValueError("invalid subject schema")
+    episodes = payload["episodes"]
+    orders: set[int] = set()
+    for episode in episodes:
+        _normalize_episode_fields(episode)
+        if episode["sequence_id"] != sequence_id:
+            raise ValueError("invalid subject schema")
+        order = episode["episode_order"]
+        if order in orders:
+            raise ValueError("invalid subject schema")
+        orders.add(order)
+        if not episode["abstain_reason"] and not episode["question_tr"].strip():
+            raise ValueError("invalid subject schema")
+    return episodes
+
+
+def classify_episode_safety(
+    episode: dict[str, Any],
+    sequence_id: str,
+    transcript_windows: Sequence[str] = (),
+) -> dict[str, list[str]]:
+    """Return safe reason codes and field names without retaining trigger text."""
+    marker_fields: list[str] = []
+    overlap_fields: list[str] = []
+    for field_name in EPISODE_SAFETY_FIELD_NAMES:
+        text = episode[field_name]
+        has_marker_or_identifier = (
+            "[window" in text.casefold()
+            or "]" in text
+            or sequence_id in text
+            or _CANONICAL_SEQUENCE_TOKEN_RE.search(text) is not None
+        )
+        if has_marker_or_identifier:
+            marker_fields.append(field_name)
+        if transcript_windows and ngram_overlap_at_least(text, transcript_windows, 12):
+            overlap_fields.append(field_name)
+
+    reason_codes: list[str] = []
+    field_names: list[str] = []
+    if marker_fields:
+        reason_codes.append("forbidden_marker_or_identifier")
+        field_names.extend(marker_fields)
+    if overlap_fields:
+        reason_codes.append("privacy_overlap_12_tokens")
+        field_names.extend(overlap_fields)
+    return {
+        "reason_codes": reason_codes,
+        "field_names": list(dict.fromkeys(field_names)),
+    }
+
+
+def filter_safe_episodes(
+    episodes: Sequence[dict[str, Any]],
+    sequence_id: str,
+    transcript_windows: Sequence[str] = (),
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Retain safe episodes and record only bounded exclusion metadata."""
+    retained: list[dict[str, Any]] = []
+    exclusions: list[dict[str, Any]] = []
+    for episode in episodes:
+        safety = classify_episode_safety(episode, sequence_id, transcript_windows)
+        if safety["reason_codes"]:
+            exclusions.append(
+                {
+                    "episode_order": episode["episode_order"],
+                    "reason_codes": safety["reason_codes"],
+                    "field_names": safety["field_names"],
+                }
+            )
+        else:
+            retained.append(episode)
+    return retained, exclusions
+
+
 def _validate_episodes(
     payload: dict[str, Any],
     sequence_id: str,
     transcript_windows: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
-    if isinstance(payload, dict) and isinstance(payload.get("episodes"), list):
-        for episode in payload["episodes"]:
-            if isinstance(episode, dict) and isinstance(episode.get("evidence_basis"), str):
-                episode["evidence_basis"] = sanitize_evidence_basis(episode["evidence_basis"])
-    errors = validate_subject_inference(payload)
-    if errors:
-        raise ValueError(f"{sequence_id}: schema errors: {'; '.join(errors[:5])}")
-    episodes = payload["episodes"]
-    orders: set[int] = set()
-    for index, episode in enumerate(episodes):
-        if episode["sequence_id"] != sequence_id:
-            raise ValueError(
-                f"{sequence_id}: episode {index} carries sequence {episode['sequence_id']!r}"
-            )
-        order = episode["episode_order"]
-        if order in orders:
-            raise ValueError(f"{sequence_id}: duplicate episode_order {order}")
-        orders.add(order)
-        if episode["label"] not in (label.value for label in Label):
-            raise ValueError(f"{sequence_id}: invalid label {episode['label']!r}")
-        if episode["wording_status"] not in (status.value for status in WordingStatus):
-            raise ValueError(f"{sequence_id}: invalid wording_status {episode['wording_status']!r}")
-        if episode["confidence"] not in (conf.value for conf in Confidence):
-            raise ValueError(f"{sequence_id}: invalid confidence {episode['confidence']!r}")
-        if len(episode["evidence_basis"]) > 200:
-            raise ValueError(f"{sequence_id}: evidence_basis too long")
-        if not episode["abstain_reason"] and not episode["question_tr"].strip():
-            raise ValueError(f"{sequence_id}: candidate episode without question_tr")
-        text_fields = (
-            episode["question_tr"],
-            episode["question_en"],
-            episode["evidence_basis"],
-            episode["abstain_reason"],
+    """Strictly validate a response, including episode safety."""
+    episodes = _validate_subject_schema(payload, sequence_id)
+    _, exclusions = filter_safe_episodes(episodes, sequence_id, transcript_windows)
+    if exclusions:
+        reasons = sorted(
+            {reason for exclusion in exclusions for reason in exclusion["reason_codes"]},
+            key=EPISODE_SAFETY_REASON_CODES.index,
         )
-        for text in text_fields:
-            if any(marker in text for marker in ("[WINDOW", "]", '"', "'", "`", sequence_id)):
-                raise ValueError(f"{sequence_id}: forbidden identifier, marker, or quote in response")
-            if transcript_windows and ngram_overlap_at_least(text, transcript_windows, 12):
-                raise ValueError(f"{sequence_id}: 12-token transcript overlap in response")
+        raise ValueError(f"{sequence_id}: {'; '.join(reasons)}")
     return episodes
 
 
@@ -654,6 +767,8 @@ def _episode_provenance(sequence: dict[str, Any]) -> dict[str, Any]:
         "deployment_id": sequence.get("deployment_id"),
         "model_id": sequence.get("model_id", MODEL_ID),
         "prompt_version": sequence.get("prompt_version"),
+        "episode_safety_policy_version": sequence.get("episode_safety_policy_version"),
+        "episode_safety_policy_sha256": sequence.get("episode_safety_policy_sha256"),
         "run_manifest_sha256": sequence.get("run_manifest_sha256"),
         "source_sha256": sequence["source_sha256"],
         "source_commit": sequence["source_commit"],
@@ -674,6 +789,14 @@ def _verify_current_prompt_contract(sequence: dict[str, Any], *, max_tokens: int
         raise ValueError(
             f"resume refused for {sequence.get('sequence_id')}: prompt version changed"
         )
+    if sequence.get("episode_safety_policy_version") != EPISODE_SAFETY_POLICY_VERSION:
+        raise ValueError(
+            f"resume refused for {sequence.get('sequence_id')}: episode safety policy version changed"
+        )
+    if sequence.get("episode_safety_policy_sha256") != EPISODE_SAFETY_POLICY_SHA256:
+        raise ValueError(
+            f"resume refused for {sequence.get('sequence_id')}: episode safety policy changed"
+        )
     for key, value in expected.items():
         if sequence.get(key) != value:
             raise ValueError(
@@ -688,6 +811,43 @@ def _completed_inference(inference_path: Path) -> dict[str, Any] | None:
     with inference_path.open("r", encoding="utf-8") as handle:
         data = json.load(handle)
     return data if isinstance(data, dict) and data.get("status") == "completed" else None
+
+
+def _ordered_reason_codes(reason_codes: Iterable[str]) -> list[str]:
+    present = set(reason_codes)
+    return [code for code in CORRECTION_REASON_CODES if code in present]
+
+
+def _response_validation(
+    content: str,
+    sequence_id: str,
+    transcript_windows: Sequence[str],
+) -> tuple[list[dict[str, Any]] | None, list[dict[str, Any]] | None, list[str]]:
+    """Parse, schema-check, normalize, and classify one model response."""
+    if not content.strip():
+        return None, None, ["invalid_json"]
+    parsed = _parse_json_object(content)
+    if parsed is None:
+        return None, None, ["invalid_json"]
+    try:
+        episodes = _validate_subject_schema(parsed, sequence_id)
+    except Exception:
+        return None, None, ["invalid_schema"]
+    retained, exclusions = filter_safe_episodes(episodes, sequence_id, transcript_windows)
+    reasons = _ordered_reason_codes(
+        reason
+        for exclusion in exclusions
+        for reason in exclusion["reason_codes"]
+    )
+    return retained, exclusions, reasons
+
+
+def correction_message(reason_codes: Sequence[str]) -> str:
+    """Build a category-only correction message without rejected content."""
+    categories = _ordered_reason_codes(reason_codes)
+    if not categories:
+        categories = list(CORRECTION_REASON_CODES)
+    return f"{SCHEMA_CORRECTION_MESSAGE} Categories observed: {', '.join(categories)}."
 
 
 def infer_subjects(
@@ -717,6 +877,19 @@ def infer_subjects(
         raise ValueError("resume refused: source commit changed")
     if manifest.get("run_manifest_sha256") not in (None, manifest_hash):
         raise ValueError("run manifest self-reference is invalid")
+    if manifest.get("prompt_version") != PROMPT_VERSION:
+        raise ValueError("resume refused: prompt version changed")
+    if manifest.get("episode_safety_policy_version") != EPISODE_SAFETY_POLICY_VERSION:
+        raise ValueError("resume refused: episode safety policy version changed")
+    if manifest.get("episode_safety_policy_sha256") != EPISODE_SAFETY_POLICY_SHA256:
+        raise ValueError("resume refused: episode safety policy changed")
+    expected_contract = prompt_contract_sha256(
+        model_revision=manifest.get("model_revision", MODEL_REVISION),
+        max_tokens=max_tokens,
+        seed=seed,
+    )
+    if manifest.get("prompt_contract_sha256") != expected_contract:
+        raise ValueError("resume refused: prompt contract changed")
     for sequence in sequences:
         if sequence.get("run_manifest_sha256") != manifest_hash:
             raise ValueError(f"{sequence.get('sequence_id')}: run manifest hash mismatch")
@@ -747,16 +920,22 @@ def infer_subjects(
 
     async def infer_one(sequence: dict[str, Any]) -> tuple[str, bool, str | None]:
         sequence_id = sequence["sequence_id"]
-        messages = [
+        base_messages = [
             {"role": "system", "content": SUBJECT_SYSTEM_PROMPT},
             {"role": "user", "content": sequence["user_prompt"]},
         ]
+        transcript_windows = [window["text"] for window in sequence.get("windows", [])]
+        first_failure_reasons: list[str] = []
         for attempt in (1, 2):
+            messages = list(base_messages)
+            if attempt == 2:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": correction_message(first_failure_reasons),
+                    }
+                )
             try:
-                if attempt > 1:
-                    messages = messages + [
-                        {"role": "user", "content": SCHEMA_CORRECTION_MESSAGE}
-                    ]
                 stream = await client.chat.completions.create(
                     model=model,
                     messages=messages,
@@ -775,39 +954,43 @@ def infer_subjects(
                         if content:
                             chunks.append(content)
                 content = "".join(chunks)
-                if not content.strip():
-                    if attempt == 1:
-                        continue
-                    return sequence_id, False, "empty response"
-                parsed = _parse_json_object(content)
-                if parsed is None:
-                    if attempt == 1:
-                        continue
-                    return sequence_id, False, "invalid JSON twice"
-                episodes = _validate_episodes(
-                    parsed,
-                    sequence_id,
-                    [window["text"] for window in sequence.get("windows", [])],
-                )
-                record = dict(_episode_provenance(sequence))
-                record.update(
-                    {
-                        "sequence_id": sequence_id,
-                        "status": "completed",
-                        "episodes": episodes,
-                        "episode_count": len(episodes),
-                        "completed_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    }
-                )
-                inference_path = inferences_dir / f"{sequence_id}.json"
-                _atomic_write_json(record, inference_path)
-                _restrict(inference_path)
-                return sequence_id, True, None
-            except Exception as exc:
+            except Exception:
+                # A request/stream failure is not a validation failure. Do not
+                # turn an infrastructure error into an unauthorized correction
+                # generation; the caller must reconcile the failed run.
+                return sequence_id, False, "request_failed"
+
+            retained, exclusions, reasons = _response_validation(
+                content, sequence_id, transcript_windows
+            )
+            if retained is None or exclusions is None:
                 if attempt == 1:
+                    first_failure_reasons = reasons
                     continue
-                return sequence_id, False, f"{type(exc).__name__}: {exc}"
-        return sequence_id, False, "unreachable"
+                return sequence_id, False, reasons[0] if reasons else "invalid_schema"
+            if attempt == 1 and reasons:
+                first_failure_reasons = reasons
+                continue
+            record = dict(_episode_provenance(sequence))
+            record.update(
+                {
+                    "sequence_id": sequence_id,
+                    "status": "completed",
+                    "generation_attempts": attempt,
+                    "correction_reason_codes": first_failure_reasons if attempt == 2 else [],
+                    "episodes_returned": len(retained) + len(exclusions),
+                    "episodes_retained": len(retained),
+                    "episode_exclusions": exclusions,
+                    "episodes": retained,
+                    "episode_count": len(retained),
+                    "completed_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                }
+            )
+            inference_path = inferences_dir / f"{sequence_id}.json"
+            _atomic_write_json(record, inference_path)
+            _restrict(inference_path)
+            return sequence_id, True, None
+        return sequence_id, False, "invalid_schema"
 
     client: Any = None
     import asyncio
@@ -832,7 +1015,7 @@ def infer_subjects(
         results = asyncio.run(orchestrate())
         for sequence_id, ok, error in results:
             if not ok:
-                failures.append(f"{sequence_id}: {error}")
+                failures.append(error or "invalid_schema")
 
     total_completed = completed + (len(pending) - len(failures))
     return {
@@ -842,6 +1025,9 @@ def infer_subjects(
         "completed_total": total_completed,
         "failed": failures,
         "complete": total_completed == len(sequences) and not failures,
+        "prompt_version": PROMPT_VERSION,
+        "episode_safety_policy_version": EPISODE_SAFETY_POLICY_VERSION,
+        "episode_safety_policy_sha256": EPISODE_SAFETY_POLICY_SHA256,
     }
 
 
@@ -895,6 +1081,8 @@ def _check_cluster_assignment(
     candidate_ids: list[str],
     batch_label: str,
 ) -> dict[str, Any]:
+    if not clusters and not candidate_ids:
+        return {}
     seen: set[str] = set()
     assignment: dict[str, str] = {}
     for cluster in clusters:
@@ -922,6 +1110,8 @@ def _check_family_assignment(
     families: list[dict[str, Any]],
     cluster_ids: list[str],
 ) -> dict[str, Any]:
+    if not families and not cluster_ids:
+        return {}
     seen: set[str] = set()
     assignment: dict[str, str] = {}
     for family in families:
@@ -1321,6 +1511,17 @@ def aggregate_families(
     return rows
 
 
+def aggregate_episode_exclusion_counts(records: Sequence[dict[str, Any]]) -> dict[str, int]:
+    """Return only safe aggregate exclusion counts for compact provenance."""
+    counts = Counter()
+    for record in records:
+        for exclusion in record.get("episode_exclusions", []):
+            for reason_code in exclusion.get("reason_codes", []):
+                if reason_code in EPISODE_SAFETY_REASON_CODES:
+                    counts[reason_code] += 1
+    return {reason_code: int(counts.get(reason_code, 0)) for reason_code in EPISODE_SAFETY_REASON_CODES}
+
+
 def render_tables(
     rows: list[dict[str, Any]],
     *,
@@ -1329,6 +1530,12 @@ def render_tables(
     model_id: str = MODEL_ID,
     model_revision: str = MODEL_REVISION,
     source_commit: str = "",
+    turkish_run_id: str | None = None,
+    analysis_attempt: int | None = None,
+    prompt_contract_hash: str | None = None,
+    run_manifest_sha256: str | None = None,
+    selection_file_sha256: str | None = None,
+    episode_exclusion_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Write the compact CSV, JSON, and Markdown tables atomically."""
     table_rows = []
@@ -1337,9 +1544,13 @@ def render_tables(
         table_rows.append(table_row)
         for column in ("question_tr", "question_en", "evidence_basis"):
             text = table_row[column]
-            for marker in ("[WINDOW", "[", "]", '"', "'", "subject_id", "filename"):
+            for marker in ("[WINDOW", "[", "]", "subject_id", "filename") + tuple(_EVIDENCE_QUOTES):
                 if marker in text:
                     raise ValueError(f"render refused: {column} contains forbidden marker {marker!r}")
+            if _CANONICAL_SEQUENCE_TOKEN_RE.search(text):
+                raise ValueError(
+                    f"render refused: {column} contains a sequence identifier marker"
+                )
 
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -1354,9 +1565,20 @@ def render_tables(
 
     payload = {
         "deployment_id": deployment_id,
+        "turkish_run_id": turkish_run_id,
+        "analysis_attempt": analysis_attempt,
         "model_id": model_id,
         "model_revision": model_revision,
         "source_commit": source_commit,
+        "prompt_version": PROMPT_VERSION,
+        "episode_safety_policy_version": EPISODE_SAFETY_POLICY_VERSION,
+        "episode_safety_policy_sha256": EPISODE_SAFETY_POLICY_SHA256,
+        "prompt_contract_sha256": prompt_contract_hash,
+        "generation_settings_hash": generation_settings_hash(TURKISH_MAX_TOKENS),
+        "run_manifest_sha256": run_manifest_sha256,
+        "selection_file_sha256": selection_file_sha256,
+        "episode_exclusion_counts": episode_exclusion_counts
+        or {reason_code: 0 for reason_code in EPISODE_SAFETY_REASON_CODES},
         "rows": table_rows,
     }
     json_path = run_dir / "turkish_inferred_questions.json"
@@ -1366,6 +1588,7 @@ def render_tables(
         "# Turkish inferred recurring question families",
         "",
         f"Deployment: `{deployment_id}` — model `{model_id}` revision `{model_revision}`.",
+        f"Prompt policy: `{PROMPT_VERSION}` / `{EPISODE_SAFETY_POLICY_VERSION}`.",
         "",
         "Model-inferred recurring interviewer-question families from answer-only ASR",
         "transcripts. Exact original wording is unavailable unless an answer explicitly",

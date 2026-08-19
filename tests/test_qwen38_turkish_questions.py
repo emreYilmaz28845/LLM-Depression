@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
+import types
 
 import pytest
 
 from src.qwen38.audit import (
     _compact_texts,
     _recompute_restricted_evidence,
+    _validate_exclusion_metadata,
     ENV_PINS,
     audit_turkish,
     ngram_overlap_at_least,
@@ -26,17 +29,28 @@ from src.qwen38.contracts import (
     request_settings,
 )
 from src.qwen38.turkish_questions import (
+    CORRECTION_REASON_CODES,
     EVIDENCE_BASIS_FALLBACK,
+    EPISODE_SAFETY_FIELD_NAMES,
+    EPISODE_SAFETY_POLICY_SHA256,
+    EPISODE_SAFETY_POLICY_VERSION,
+    EPISODE_SAFETY_REASON_CODES,
     PROMPT_VERSION,
     SCHEMA_CORRECTION_MESSAGE,
     _check_cluster_assignment,
     _check_family_assignment,
     _episode_provenance,
+    _normalize_episode_fields,
     _validate_episodes,
     aggregate_families,
+    aggregate_episode_exclusion_counts,
+    classify_episode_safety,
     collect_candidates,
+    correction_message,
+    filter_safe_episodes,
     load_prepared_sequences,
     load_table_rows,
+    normalize_episode_text,
     prepare_sequences,
     prompt_bundle_sha256,
     prompt_contract_sha256,
@@ -80,7 +94,9 @@ def _write_transcript(path, subjects_windows, transcripts=None):
     return _sha256_text(payload)
 
 
-def _make_inference_record(sequence_id, episodes, prompt_hash, source_sha256, source_commit, model_revision="1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0", sequence=None):
+def _make_inference_record(sequence_id, episodes, prompt_hash, source_sha256, source_commit, model_revision="1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0", sequence=None, *, exclusions=None, generation_attempts=1, correction_reason_codes=None):
+    exclusions = list(exclusions or [])
+    correction_reason_codes = list(correction_reason_codes or [])
     record = {
         "sequence_id": sequence_id,
         "status": "completed",
@@ -89,6 +105,14 @@ def _make_inference_record(sequence_id, episodes, prompt_hash, source_sha256, so
         "source_commit": source_commit,
         "model_revision": model_revision,
         "generation_settings_hash": generation_settings_hash(2048),
+        "prompt_version": PROMPT_VERSION,
+        "episode_safety_policy_version": EPISODE_SAFETY_POLICY_VERSION,
+        "episode_safety_policy_sha256": EPISODE_SAFETY_POLICY_SHA256,
+        "generation_attempts": generation_attempts,
+        "correction_reason_codes": correction_reason_codes,
+        "episodes_returned": len(episodes) + len(exclusions),
+        "episodes_retained": len(episodes),
+        "episode_exclusions": exclusions,
         "episode_count": len(episodes),
         "episodes": episodes,
     }
@@ -98,7 +122,8 @@ def _make_inference_record(sequence_id, episodes, prompt_hash, source_sha256, so
             "analysis_attempt",
             "deployment_id",
             "model_id",
-            "prompt_version",
+            "episode_safety_policy_version",
+            "episode_safety_policy_sha256",
             "run_manifest_sha256",
             "user_prompt_sha256",
             "system_prompt_sha256",
@@ -116,8 +141,8 @@ def _episode(sequence_id, order, label, confidence, wording=WordingStatus.INFERR
     return {
         "sequence_id": sequence_id,
         "episode_order": order,
-        "question_tr": f"tr soru {sequence_id} {order}",
-        "question_en": f"en question {sequence_id} {order}",
+        "question_tr": f"tr soru {order}",
+        "question_en": f"en question {order}",
         "label": label,
         "wording_status": wording,
         "confidence": confidence,
@@ -125,6 +150,68 @@ def _episode(sequence_id, order, label, confidence, wording=WordingStatus.INFERR
         "evidence_basis": f"kisa aciklama {order}",
         "abstain_reason": abstain,
     }
+
+
+def _install_fake_openai(monkeypatch, responses, captured_messages):
+    class Delta:
+        def __init__(self, content):
+            self.content = content
+
+    class Chunk:
+        def __init__(self, content):
+            self.choices = [types.SimpleNamespace(delta=Delta(content))]
+
+    class Stream:
+        def __init__(self, content):
+            midpoint = max(1, len(content) // 2)
+            self.chunks = [Chunk(content[:midpoint]), Chunk(content[midpoint:])]
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if not self.chunks:
+                raise StopAsyncIteration
+            return self.chunks.pop(0)
+
+    class Completions:
+        async def create(self, **kwargs):
+            captured_messages.append(kwargs["messages"])
+            return Stream(responses.pop(0))
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.chat = types.SimpleNamespace(completions=Completions())
+
+        async def close(self):
+            return None
+
+    fake_module = types.ModuleType("openai")
+    fake_module.AsyncOpenAI = Client
+    monkeypatch.setitem(sys.modules, "openai", fake_module)
+
+
+def _subject_response(sequence_id, episodes):
+    return json.dumps({"episodes": episodes}, ensure_ascii=False)
+
+
+def _prepare_single_subject(tmp_path):
+    transcript = tmp_path / "single.jsonl"
+    source_hash = _write_transcript(transcript, {"subA": [1]})
+    run_dir = tmp_path / "single_run"
+    prepare_sequences(
+        transcript,
+        run_dir=run_dir,
+        deployment_id="d",
+        model_revision="r",
+        source_commit="c" * 40,
+        turkish_run_id="q38tr_" + "c" * 12 + "_attempt3",
+        analysis_attempt=3,
+        source_sha256=source_hash,
+        expected_sequences=1,
+        expected_windows=1,
+    )
+    return run_dir
 
 
 class TestPrepare:
@@ -298,10 +385,12 @@ class TestPrepare:
 
 
 class TestPromptIdentityAndSanitization:
-    def test_prompt_version_is_v2(self):
+    def test_prompt_version_and_policy_are_v3(self):
         from src.qwen38.turkish_questions import PROMPT_VERSION
 
-        assert PROMPT_VERSION == "qwen38_turkish_v2"
+        assert PROMPT_VERSION == "qwen38_turkish_v3"
+        assert EPISODE_SAFETY_POLICY_VERSION == "qwen38_episode_safety_v1"
+        assert len(EPISODE_SAFETY_POLICY_SHA256) == 64
 
     def test_prompt_contract_and_bundle_are_deterministic(self):
         contract_a = prompt_contract_sha256(model_revision="r")
@@ -310,11 +399,18 @@ class TestPromptIdentityAndSanitization:
         assert prompt_bundle_sha256("same", model_revision="r") == prompt_bundle_sha256("same", model_revision="r")
         assert prompt_bundle_sha256("different", model_revision="r") != prompt_bundle_sha256("same", model_revision="r")
 
+    def test_policy_identity_changes_prompt_bundle(self, monkeypatch):
+        import src.qwen38.turkish_questions as questions
+
+        before = prompt_bundle_sha256("same", model_revision="r")
+        monkeypatch.setattr(questions, "EPISODE_SAFETY_POLICY_SHA256", "0" * 64)
+        after = questions.prompt_bundle_sha256("same", model_revision="r")
+        assert before != after
+
     def test_schema_correction_message_covers_observed_failures(self):
-        assert "INFERRED_PARAPHRASE" in SCHEMA_CORRECTION_MESSAGE
-        assert "no additional fields" in SCHEMA_CORRECTION_MESSAGE
-        assert "12-token sequence" in SCHEMA_CORRECTION_MESSAGE
-        assert "quote, apostrophe, backtick" in SCHEMA_CORRECTION_MESSAGE
+        for category in CORRECTION_REASON_CODES:
+            assert category in SCHEMA_CORRECTION_MESSAGE
+        assert "private content" in SCHEMA_CORRECTION_MESSAGE
 
     def test_sanitizer_removes_all_quotes_and_normalizes(self):
         value = '  A" B\' C` D“ E” F‘ G’ H« I» J‹ K› L„ M‟ N‚ O‛  '
@@ -327,6 +423,55 @@ class TestPromptIdentityAndSanitization:
         assert len(sanitized) <= 200
         assert not sanitized.endswith("kel")
         assert sanitize_evidence_basis("\n\t\r  ") == EVIDENCE_BASIS_FALLBACK
+
+    def test_normalizer_covers_all_four_fields(self):
+        quoted = '  A" B\' C` D“ E” F‘ G’ H« I» J‹ K› L„ M‟ N‚ O‛  '
+        episode = _episode("S0001", 1, "NEUTRAL", "LOW")
+        for field_name in EPISODE_SAFETY_FIELD_NAMES:
+            episode[field_name] = quoted
+        normalized = _normalize_episode_fields(episode)
+        for field_name in EPISODE_SAFETY_FIELD_NAMES:
+            assert normalized[field_name] == "A B C D E F G H I J K L M N O"
+
+    def test_normalizer_preserves_ordinary_punctuation(self):
+        value = "  Soru: nasılsın? (bugün); iyi-mi!  "
+        assert normalize_episode_text(value) == "Soru: nasılsın? (bugün); iyi-mi!"
+
+    def test_markers_and_sequence_ids_are_classified_not_sanitized(self):
+        episode = _episode("S0001", 1, "NEUTRAL", "LOW")
+        episode["question_tr"] = "[WINDOW 1] S0001"
+        assert normalize_episode_text(episode["question_tr"]) == "[WINDOW 1] S0001"
+        safety = classify_episode_safety(episode, "S0001")
+        assert safety["reason_codes"] == ["forbidden_marker_or_identifier"]
+        assert "question_tr" in safety["field_names"]
+
+    def test_both_safety_reasons_exclude_once_without_trigger_text(self):
+        overlap = "bir iki üç dört beş altı yedi sekiz dokuz on onbir oniki"
+        episode = _episode("S0001", 1, "NEUTRAL", "LOW")
+        episode["question_en"] = f"[WINDOW 1] {overlap}"
+        retained, exclusions = filter_safe_episodes(
+            [episode], "S0001", [overlap]
+        )
+        assert retained == []
+        assert len(exclusions) == 1
+        assert exclusions[0]["episode_order"] == 1
+        assert exclusions[0]["reason_codes"] == [
+            "forbidden_marker_or_identifier",
+            "privacy_overlap_12_tokens",
+        ]
+        assert exclusions[0]["field_names"] == ["question_en"]
+        serialized = json.dumps(exclusions, ensure_ascii=False)
+        assert "WINDOW" not in serialized
+        assert overlap not in serialized
+
+    @pytest.mark.parametrize("field_name", EPISODE_SAFETY_FIELD_NAMES)
+    def test_overlap_detection_applies_to_each_free_text_field(self, field_name):
+        overlap = "bir iki üç dört beş altı yedi sekiz dokuz on onbir oniki"
+        episode = _episode("S0001", 1, "NEUTRAL", "LOW")
+        episode[field_name] = overlap
+        safety = classify_episode_safety(episode, "S0001", [overlap])
+        assert safety["reason_codes"] == ["privacy_overlap_12_tokens"]
+        assert safety["field_names"] == [field_name]
 
     def test_sanitized_evidence_still_receives_privacy_check(self):
         payload = {
@@ -343,7 +488,7 @@ class TestPromptIdentityAndSanitization:
                 "abstain_reason": "",
             }]
         }
-        with pytest.raises(ValueError, match="12-token transcript overlap"):
+        with pytest.raises(ValueError, match="privacy_overlap_12_tokens"):
             _validate_episodes(
                 payload,
                 "S0001",
@@ -449,6 +594,201 @@ class TestInferenceResume:
                 source_commit="changed-source",
             )
 
+    def test_v2_manifest_refuses_resume(self, tmp_path):
+        from src.qwen38.turkish_questions import infer_subjects
+
+        run_dir, _ = self._prepared(tmp_path)
+        manifest_path = run_dir / "run_manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["prompt_version"] = "qwen38_turkish_v2"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        with pytest.raises(ValueError, match="prompt version changed"):
+            infer_subjects(
+                run_dir / "restricted" / "prepared_sequences.jsonl",
+                run_dir / "restricted" / "subject_inferences",
+                base_url="http://127.0.0.1:1/v1",
+            )
+
+    def test_missing_policy_record_refuses_resume(self, tmp_path):
+        from src.qwen38.turkish_questions import infer_subjects
+
+        run_dir, _ = self._prepared(tmp_path)
+        inferences = run_dir / "restricted" / "subject_inferences"
+        inferences.mkdir(exist_ok=True)
+        sequence = load_prepared_sequences(run_dir / "restricted" / "prepared_sequences.jsonl")[0]
+        record = _make_inference_record(
+            sequence["sequence_id"],
+            [_episode(sequence["sequence_id"], 1, "NEUTRAL", "LOW")],
+            prompt_hash=sequence["prompt_hash"],
+            source_sha256=sequence["source_sha256"],
+            source_commit=sequence["source_commit"],
+            sequence=sequence,
+        )
+        record.pop("episode_safety_policy_version")
+        (inferences / f"{sequence['sequence_id']}.json").write_text(
+            json.dumps(record), encoding="utf-8"
+        )
+        with pytest.raises(ValueError, match="episode_safety_policy_version changed"):
+            infer_subjects(
+                run_dir / "restricted" / "prepared_sequences.jsonl",
+                inferences,
+                base_url="http://127.0.0.1:1/v1",
+            )
+
+
+class TestEpisodeSafeInference:
+    def test_gen2_replaces_gen1_and_retains_safe_sibling(self, tmp_path, monkeypatch):
+        from src.qwen38.turkish_questions import infer_subjects
+
+        run_dir = _prepare_single_subject(tmp_path)
+        sequence_id = load_prepared_sequences(
+            run_dir / "restricted" / "prepared_sequences.jsonl"
+        )[0]["sequence_id"]
+        unsafe_first = _episode(sequence_id, 1, "NEUTRAL", "LOW")
+        unsafe_first["question_tr"] = "[WINDOW 1] first rejected wording"
+        safe = _episode(sequence_id, 1, "NEUTRAL", "LOW")
+        unsafe_second = _episode(sequence_id, 2, "POSITIVE", "MEDIUM")
+        unsafe_second["evidence_basis"] = "S0001"
+        calls = []
+        _install_fake_openai(
+            monkeypatch,
+            [
+                _subject_response(sequence_id, [unsafe_first]),
+                _subject_response(sequence_id, [safe, unsafe_second]),
+            ],
+            calls,
+        )
+        inference_dir = run_dir / "restricted" / "subject_inferences"
+        summary = infer_subjects(
+            run_dir / "restricted" / "prepared_sequences.jsonl",
+            inference_dir,
+            base_url="http://127.0.0.1:8000/v1",
+        )
+        assert summary["complete"]
+        assert len(calls) == 2
+        correction = calls[1][-1]["content"]
+        assert "forbidden_marker_or_identifier" in correction
+        assert "[WINDOW" not in correction
+        assert sequence_id not in correction
+        record = json.loads((inference_dir / f"{sequence_id}.json").read_text())
+        assert record["generation_attempts"] == 2
+        assert record["correction_reason_codes"] == ["forbidden_marker_or_identifier"]
+        assert record["episodes_returned"] == 2
+        assert record["episodes_retained"] == 1
+        assert [episode["episode_order"] for episode in record["episodes"]] == [1]
+        assert record["episode_exclusions"] == [{
+            "episode_order": 2,
+            "reason_codes": ["forbidden_marker_or_identifier"],
+            "field_names": ["evidence_basis"],
+        }]
+        serialized = json.dumps(record, ensure_ascii=False)
+        assert "first rejected wording" not in serialized
+
+    def test_schema_valid_gen2_can_complete_with_zero_retained(self, tmp_path, monkeypatch):
+        from src.qwen38.turkish_questions import infer_subjects
+
+        run_dir = _prepare_single_subject(tmp_path)
+        sequence_id = load_prepared_sequences(
+            run_dir / "restricted" / "prepared_sequences.jsonl"
+        )[0]["sequence_id"]
+        unsafe = _episode(sequence_id, 1, "NEUTRAL", "LOW")
+        unsafe["question_en"] = "] S0001"
+        calls = []
+        _install_fake_openai(
+            monkeypatch,
+            ["not json", _subject_response(sequence_id, [unsafe])],
+            calls,
+        )
+        inference_dir = run_dir / "restricted" / "subject_inferences"
+        summary = infer_subjects(
+            run_dir / "restricted" / "prepared_sequences.jsonl",
+            inference_dir,
+            base_url="http://127.0.0.1:8000/v1",
+        )
+        assert summary["complete"]
+        assert len(calls) == 2
+        record = json.loads((inference_dir / f"{sequence_id}.json").read_text())
+        assert record["generation_attempts"] == 2
+        assert record["correction_reason_codes"] == ["invalid_json"]
+        assert record["episodes"] == []
+        assert record["episode_count"] == 0
+        assert record["episodes_returned"] == record["episodes_retained"] + len(record["episode_exclusions"])
+        assert aggregate_episode_exclusion_counts([record]) == {
+            "forbidden_marker_or_identifier": 1,
+            "privacy_overlap_12_tokens": 0,
+        }
+
+    def test_invalid_gen2_schema_fails_without_third_generation(self, tmp_path, monkeypatch):
+        from src.qwen38.turkish_questions import infer_subjects
+
+        run_dir = _prepare_single_subject(tmp_path)
+        sequence_id = load_prepared_sequences(
+            run_dir / "restricted" / "prepared_sequences.jsonl"
+        )[0]["sequence_id"]
+        unsafe = _episode(sequence_id, 1, "NEUTRAL", "LOW")
+        unsafe["question_tr"] = "[WINDOW 1] unsafe"
+        calls = []
+        _install_fake_openai(
+            monkeypatch,
+            [_subject_response(sequence_id, [unsafe]), json.dumps({"episodes": [{"bad": 1}]})],
+            calls,
+        )
+        inference_dir = run_dir / "restricted" / "subject_inferences"
+        summary = infer_subjects(
+            run_dir / "restricted" / "prepared_sequences.jsonl",
+            inference_dir,
+            base_url="http://127.0.0.1:8000/v1",
+        )
+        assert not summary["complete"]
+        assert summary["failed"] == ["invalid_schema"]
+        assert len(calls) == 2
+        assert not list(inference_dir.glob("S*.json"))
+
+    def test_exclusion_metadata_has_only_safe_fields(self, tmp_path, monkeypatch):
+        from src.qwen38.turkish_questions import infer_subjects
+
+        run_dir = _prepare_single_subject(tmp_path)
+        sequence_id = load_prepared_sequences(
+            run_dir / "restricted" / "prepared_sequences.jsonl"
+        )[0]["sequence_id"]
+        unsafe = _episode(sequence_id, 1, "NEUTRAL", "LOW")
+        unsafe["question_tr"] = "S0001"
+        calls = []
+        _install_fake_openai(
+            monkeypatch,
+            ["not json", _subject_response(sequence_id, [unsafe])],
+            calls,
+        )
+        inference_dir = run_dir / "restricted" / "subject_inferences"
+        infer_subjects(
+            run_dir / "restricted" / "prepared_sequences.jsonl",
+            inference_dir,
+            base_url="http://127.0.0.1:8000/v1",
+        )
+        record = json.loads((inference_dir / f"{sequence_id}.json").read_text())
+        exclusion = record["episode_exclusions"][0]
+        assert set(exclusion) == {"episode_order", "reason_codes", "field_names"}
+        assert "response" not in json.dumps(exclusion)
+        assert "S0001" not in json.dumps(exclusion)
+
+    def test_exclusion_arithmetic_is_enforced(self):
+        record = _make_inference_record(
+            "S0001",
+            [],
+            "p",
+            "s",
+            "c",
+            exclusions=[{
+                "episode_order": 1,
+                "reason_codes": ["forbidden_marker_or_identifier"],
+                "field_names": ["question_tr"],
+            }],
+            generation_attempts=2,
+            correction_reason_codes=["invalid_json"],
+        )
+        record["episodes_returned"] = 0
+        with pytest.raises(ValueError, match="arithmetic"):
+            _validate_exclusion_metadata(record)
 
 class TestConsolidation:
     def test_cluster_assignment_exact_once(self):
@@ -590,6 +930,47 @@ def _family_setup():
 
 
 class TestAggregation:
+    def test_exclusions_and_zero_episode_subjects_do_not_add_candidates(self):
+        records = [
+            _make_inference_record(
+                "S0001",
+                [_episode("S0001", 1, "NEUTRAL", "LOW")],
+                "p",
+                "s",
+                "c",
+            ),
+            _make_inference_record(
+                "S0002",
+                [],
+                "p2",
+                "s",
+                "c",
+                exclusions=[{
+                    "episode_order": 1,
+                    "reason_codes": ["forbidden_marker_or_identifier"],
+                    "field_names": ["question_tr"],
+                }],
+                generation_attempts=2,
+                correction_reason_codes=["invalid_json"],
+            ),
+        ]
+        candidates = collect_candidates(records)
+        assert [candidate["candidate_id"] for candidate in candidates] == ["S0001-e1"]
+        families = [{
+            "family_id": "f1",
+            "question_tr": "q",
+            "question_en": "q",
+            "member_cluster_ids": ["c1"],
+        }]
+        rows = aggregate_families(
+            candidates,
+            records,
+            families,
+            {"c1": ["S0001-e1"]},
+            {"c1": "f1"},
+        )
+        assert rows[0]["supporting_subjects"] == 1
+
     def test_positive_winner_accepted(self):
         records, candidates, families, cluster_to_candidate, cluster_assignment = _family_setup()
         rows = aggregate_families(candidates, records, families, cluster_to_candidate, cluster_assignment)
@@ -785,6 +1166,14 @@ class TestRenderAndPrivacy:
             run_dir_b / "turkish_inferred_questions.csv"
         ).read_text(encoding="utf-8")
 
+    @pytest.mark.parametrize("bad_text", ["[WINDOW 1]", "S0001", 'bad"quote', "bad“quote"])
+    def test_render_rejects_compact_identifiers_and_quotes(self, tmp_path, bad_text):
+        records, candidates, families, cluster_to_candidate, cluster_assignment = _family_setup()
+        rows = aggregate_families(candidates, records, families, cluster_to_candidate, cluster_assignment)
+        rows[0]["question_tr"] = bad_text
+        with pytest.raises(ValueError, match="render refused"):
+            render_tables(rows, run_dir=tmp_path / "run", deployment_id="d", source_commit="c")
+
 
 class TestAuditPrivacy:
     def test_overlap_detection(self):
@@ -857,7 +1246,6 @@ class TestRemoteAuditReference:
         run_dir = tmp_path / "run"
         records, candidates, families, cluster_to_candidate, cluster_assignment = _family_setup()
         rows = aggregate_families(candidates, records, families, cluster_to_candidate, cluster_assignment)
-        render_tables(rows, run_dir=run_dir, deployment_id=deployment_id, source_commit=source_commit)
         manifest = {
             "turkish_run_id": run_id,
             "analysis_attempt": 1,
@@ -866,6 +1254,8 @@ class TestRemoteAuditReference:
             "model_id": MODEL_ID,
             "model_revision": MODEL_REVISION,
             "prompt_version": PROMPT_VERSION,
+            "episode_safety_policy_version": EPISODE_SAFETY_POLICY_VERSION,
+            "episode_safety_policy_sha256": EPISODE_SAFETY_POLICY_SHA256,
             "prompt_contract_sha256": prompt_contract_sha256(),
             "generation_settings_hash": generation_settings_hash(TURKISH_MAX_TOKENS),
             "request_settings": request_settings(TURKISH_MAX_TOKENS),
@@ -873,8 +1263,21 @@ class TestRemoteAuditReference:
             "selection_file_sha256": selection_hash,
         }
         manifest_path = run_dir / "run_manifest.json"
+        run_dir.mkdir(parents=True, exist_ok=True)
         manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
         manifest_hash = _sha256_file_for_test(manifest_path)
+        render_tables(
+            rows,
+            run_dir=run_dir,
+            deployment_id=deployment_id,
+            source_commit=source_commit,
+            turkish_run_id=run_id,
+            analysis_attempt=1,
+            prompt_contract_hash=manifest["prompt_contract_sha256"],
+            run_manifest_sha256=manifest_hash,
+            selection_file_sha256=selection_hash,
+            episode_exclusion_counts=aggregate_episode_exclusion_counts(records),
+        )
 
         compact_hashes = {
             name: _sha256_file_for_test(run_dir / name)
@@ -965,6 +1368,8 @@ def _small_restricted_run(tmp_path):
         "model_id": MODEL_ID,
         "model_revision": MODEL_REVISION,
         "prompt_version": PROMPT_VERSION,
+        "episode_safety_policy_version": EPISODE_SAFETY_POLICY_VERSION,
+        "episode_safety_policy_sha256": EPISODE_SAFETY_POLICY_SHA256,
         "prompt_contract_sha256": prompt_contract_sha256(),
         "generation_settings_hash": generation_settings_hash(TURKISH_MAX_TOKENS),
         "request_settings": request_settings(TURKISH_MAX_TOKENS),
@@ -1017,6 +1422,11 @@ def _small_restricted_run(tmp_path):
         record.update({
             "sequence_id": sequence_id,
             "status": "completed",
+            "generation_attempts": 1,
+            "correction_reason_codes": [],
+            "episodes_returned": 1,
+            "episodes_retained": 1,
+            "episode_exclusions": [],
             "episode_count": 1,
             "episodes": [episode],
         })
@@ -1074,7 +1484,18 @@ def _small_restricted_run(tmp_path):
         cluster_to_candidate,
         final_merge["cluster_assignment"],
     )
-    render_tables(rows, run_dir=run_dir, deployment_id="deployment", source_commit=commit)
+    render_tables(
+        rows,
+        run_dir=run_dir,
+        deployment_id="deployment",
+        source_commit=commit,
+        turkish_run_id=run_id,
+        analysis_attempt=1,
+        prompt_contract_hash=manifest["prompt_contract_sha256"],
+        run_manifest_sha256=manifest_hash,
+        selection_file_sha256=None,
+        episode_exclusion_counts=aggregate_episode_exclusion_counts(records),
+    )
     return run_dir, manifest
 
 
@@ -1100,6 +1521,54 @@ class TestRestrictedAggregationAudit:
         )
         with pytest.raises(ValueError, match="recomputed rows differ"):
             _recompute_restricted_evidence(run_dir, manifest, compact=altered)
+
+    def test_recomputation_detects_excluded_episode_in_consolidation(self, tmp_path):
+        run_dir, manifest = _small_restricted_run(tmp_path)
+        inference_path = run_dir / "restricted" / "subject_inferences" / "S0001.json"
+        record = json.loads(inference_path.read_text(encoding="utf-8"))
+        episode = record["episodes"].pop()
+        record["generation_attempts"] = 2
+        record["correction_reason_codes"] = ["forbidden_marker_or_identifier"]
+        record["episodes_returned"] = 1
+        record["episodes_retained"] = 0
+        record["episode_count"] = 0
+        record["episode_exclusions"] = [{
+            "episode_order": episode["episode_order"],
+            "reason_codes": ["forbidden_marker_or_identifier"],
+            "field_names": ["question_tr"],
+        }]
+        inference_path.write_text(json.dumps(record), encoding="utf-8")
+        compact_path = run_dir / "turkish_inferred_questions.json"
+        payload = json.loads(compact_path.read_text(encoding="utf-8"))
+        payload["episode_exclusion_counts"] = {
+            "forbidden_marker_or_identifier": 1,
+            "privacy_overlap_12_tokens": 0,
+        }
+        compact_path.write_text(json.dumps(payload), encoding="utf-8")
+        compact = _compact_texts(
+            run_dir / "turkish_inferred_questions.csv",
+            compact_path,
+            run_dir / "turkish_inferred_questions.md",
+        )
+        with pytest.raises(ValueError, match="candidate assigned to wrong batch"):
+            _recompute_restricted_evidence(run_dir, manifest, compact=compact)
+
+    def test_recomputation_detects_changed_aggregate_exclusion_counts(self, tmp_path):
+        run_dir, manifest = _small_restricted_run(tmp_path)
+        compact_path = run_dir / "turkish_inferred_questions.json"
+        payload = json.loads(compact_path.read_text(encoding="utf-8"))
+        payload["episode_exclusion_counts"] = {
+            "forbidden_marker_or_identifier": 1,
+            "privacy_overlap_12_tokens": 0,
+        }
+        compact_path.write_text(json.dumps(payload), encoding="utf-8")
+        compact = _compact_texts(
+            run_dir / "turkish_inferred_questions.csv",
+            compact_path,
+            run_dir / "turkish_inferred_questions.md",
+        )
+        with pytest.raises(ValueError, match="aggregate exclusion counts differ"):
+            _recompute_restricted_evidence(run_dir, manifest, compact=compact)
 
 
 class TestStemParsingRoundTrip:

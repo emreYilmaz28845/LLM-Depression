@@ -34,7 +34,7 @@ TURKISH_RUN_ID="${TURKISH_RUN_ID:?Set TURKISH_RUN_ID}"
 SOURCE_COMMIT="${SOURCE_COMMIT:?Set SOURCE_COMMIT}"
 SELECTION_FILE="${SELECTION_FILE:?Set SELECTION_FILE}"
 ANALYSIS_ATTEMPT="${ANALYSIS_ATTEMPT:-1}"
-SUPERSEDES_JOB_IDS="${SUPERSEDES_JOB_IDS:-44797563,44797605,44799622}"
+SUPERSEDES_JOB_IDS="${SUPERSEDES_JOB_IDS:-44824690,44825023}"
 TURKISH_LEDGER="$DEPLOY_ROOT/$DEPLOYMENT_ID/turkish_jobs.jsonl"
 VALIDATION_LEDGER="$DEPLOY_ROOT/$DEPLOYMENT_ID/jobs.jsonl"
 RECONCILIATION_FILE="$DEPLOY_ROOT/$DEPLOYMENT_ID/turkish_job_reconciliation_${TURKISH_RUN_ID}.json"
@@ -49,10 +49,18 @@ if [[ ! "$TURKISH_RUN_ID" =~ ^q38tr_[0-9a-f]{12}_attempt[0-9]+$ ]]; then
   echo "FAILED: invalid TURKISH_RUN_ID=$TURKISH_RUN_ID" >&2
   exit 1
 fi
+if [[ "$TURKISH_RUN_ID" =~ _attempt([0-9]+)$ ]] && [ "${BASH_REMATCH[1]}" != "$ANALYSIS_ATTEMPT" ]; then
+  echo "FAILED: ANALYSIS_ATTEMPT=$ANALYSIS_ATTEMPT does not match TURKISH_RUN_ID=$TURKISH_RUN_ID" >&2
+  exit 1
+fi
 ORIGIN_MAIN_SHA="${LOCAL_ORIGIN_MAIN_SHA:-$(git rev-parse origin/main 2>/dev/null || true)}"
 REMOTE_PROVENANCE_SHA="$(tr -d '[:space:]' < "$PROJECT_ROOT/.provenance/git_commit.txt" 2>/dev/null || true)"
 if [ "$SOURCE_COMMIT" != "$ORIGIN_MAIN_SHA" ] || [ "$SOURCE_COMMIT" != "$REMOTE_PROVENANCE_SHA" ]; then
   echo "FAILED: source identity mismatch (SOURCE_COMMIT=$SOURCE_COMMIT origin/main=$ORIGIN_MAIN_SHA provenance=$REMOTE_PROVENANCE_SHA)" >&2
+  exit 1
+fi
+if [[ "$TURKISH_RUN_ID" != "q38tr_${SOURCE_COMMIT:0:12}_attempt${ANALYSIS_ATTEMPT}" ]]; then
+  echo "FAILED: TURKISH_RUN_ID is not source/attempt matched" >&2
   exit 1
 fi
 
@@ -71,6 +79,7 @@ print(selected)
 PY
 )"
 echo "selected_tp=$SELECTED_TP from $SELECTION_FILE"
+SELECTION_FILE_SHA256="$(sha256sum "$SELECTION_FILE" | awk '{print $1}')"
 
 RUN_ROOT="$PROJECT_ROOT/outputs/turkish_question_recovery/$TURKISH_RUN_ID"
 if [ -e "$RUN_ROOT" ]; then
@@ -104,21 +113,35 @@ then
   echo "FAILED: Turkish ledger already contains TURKISH_RUN_ID=$TURKISH_RUN_ID" >&2
   exit 1
 fi
-PROMPT_CONTRACT_SHA256="$(python - <<'PY'
-from src.qwen38.turkish_questions import prompt_contract_sha256
-print(prompt_contract_sha256())
+mapfile -t PROMPT_METADATA_LINES < <(python - "$MODEL_REVISION" <<'PY'
+import sys
+from src.qwen38.turkish_questions import (
+    EPISODE_SAFETY_POLICY_SHA256,
+    EPISODE_SAFETY_POLICY_VERSION,
+    PROMPT_VERSION,
+    prompt_contract_sha256,
+)
+print(prompt_contract_sha256(model_revision=sys.argv[1]))
+print(PROMPT_VERSION)
+print(EPISODE_SAFETY_POLICY_VERSION)
+print(EPISODE_SAFETY_POLICY_SHA256)
 PY
-)"
+)
+PROMPT_CONTRACT_SHA256="${PROMPT_METADATA_LINES[0]}"
+PROMPT_VERSION="${PROMPT_METADATA_LINES[1]}"
+EPISODE_SAFETY_POLICY_VERSION="${PROMPT_METADATA_LINES[2]}"
+EPISODE_SAFETY_POLICY_SHA256="${PROMPT_METADATA_LINES[3]}"
 
 append_turkish_event() {
   local stage="$1" state="$2" exit_code="$3" job_id="$4" manifest_hash="${5:-}"
-  python - "$TURKISH_LEDGER" "$TURKISH_RUN_ID" "$ANALYSIS_ATTEMPT" "$DEPLOYMENT_ID" "$stage" "$job_id" "$state" "$exit_code" "$SOURCE_COMMIT" "$PROMPT_CONTRACT_SHA256" "$manifest_hash" "$SELECTED_TP" "$SUPERSEDES_JOB_IDS" <<'PY'
+  python - "$TURKISH_LEDGER" "$TURKISH_RUN_ID" "$ANALYSIS_ATTEMPT" "$DEPLOYMENT_ID" "$stage" "$job_id" "$state" "$exit_code" "$SOURCE_COMMIT" "$PROMPT_VERSION" "$EPISODE_SAFETY_POLICY_VERSION" "$EPISODE_SAFETY_POLICY_SHA256" "$PROMPT_CONTRACT_SHA256" "$manifest_hash" "$SELECTED_TP" "$SELECTION_FILE" "$SELECTION_FILE_SHA256" "$SUPERSEDES_JOB_IDS" <<'PY'
 import json
 import sys
 import time
 
 (path, run_id, attempt, deployment_id, stage, job_id, state, exit_code,
- source_commit, prompt_contract, manifest_hash, selected_tp, supersedes) = sys.argv[1:]
+source_commit, prompt_version, policy_version, policy_sha256, prompt_contract,
+ manifest_hash, selected_tp, selection_file, selection_sha256, supersedes) = sys.argv[1:]
 record = {
     "turkish_run_id": run_id,
     "analysis_attempt": int(attempt),
@@ -128,9 +151,14 @@ record = {
     "state": state,
     "exit_code": exit_code,
     "source_commit": source_commit,
+    "prompt_version": prompt_version,
+    "episode_safety_policy_version": policy_version,
+    "episode_safety_policy_sha256": policy_sha256,
     "prompt_contract_sha256": prompt_contract,
     "run_manifest_sha256": manifest_hash or None,
     "selected_tp": int(selected_tp),
+    "selection_file": selection_file,
+    "selection_file_sha256": selection_sha256,
     "supersedes_job_ids": [item for item in supersedes.split(",") if item],
     "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
 }
@@ -140,9 +168,9 @@ PY
 }
 
 write_reconciliation() {
-  local prior_ids="44786675,44787044,44787058,44787265,44787858,44788198,44788385,44788761,44789295,44789857,44790166,44790785,44791198,44791795,44792293,44792525,44792690,44793073,44793552,44793816,44794141,44794513,44794838,44795227,44795599,44796268,44796478,44797033,44797196,44797499,44797563,44797605,44798109,44798371,44798414,44798606,44798835,44798943,44799225,44799432,44799622"
+  local prior_ids="44786675,44787044,44787058,44787265,44787858,44788198,44788385,44788761,44789295,44789857,44790166,44790785,44790914,44790918,44791198,44791795,44792293,44792525,44792690,44793073,44793552,44793816,44794141,44794513,44794838,44795227,44795599,44796268,44796478,44797033,44797196,44797499,44797563,44797605,44798109,44798371,44798414,44798606,44798835,44798943,44799207,44799225,44799432,44799622,44824405,44824690,44825023"
   local current_job_id="${1:?current Turkish job ID is required}"
-  python - "$RECONCILIATION_FILE" "$prior_ids" "$current_job_id" "$TURKISH_RUN_ID" "$ANALYSIS_ATTEMPT" "$DEPLOYMENT_ID" "$SOURCE_COMMIT" "$SUPERSEDES_JOB_IDS" "$VALIDATION_LEDGER" "$TURKISH_LEDGER" <<'PY'
+  python - "$RECONCILIATION_FILE" "$prior_ids" "$current_job_id" "$TURKISH_RUN_ID" "$ANALYSIS_ATTEMPT" "$DEPLOYMENT_ID" "$SOURCE_COMMIT" "$SELECTED_TP" "$SELECTION_FILE" "$SELECTION_FILE_SHA256" "$PROMPT_VERSION" "$EPISODE_SAFETY_POLICY_VERSION" "$EPISODE_SAFETY_POLICY_SHA256" "$PROMPT_CONTRACT_SHA256" "$SUPERSEDES_JOB_IDS" "$VALIDATION_LEDGER" "$TURKISH_LEDGER" <<'PY'
 import json
 import os
 import subprocess
@@ -157,6 +185,13 @@ import time
     analysis_attempt,
     deployment_id,
     source_commit,
+    selected_tp,
+    selection_file,
+    selection_file_sha256,
+    prompt_version,
+    policy_version,
+    policy_sha256,
+    prompt_contract,
     supersedes_job_ids,
     *ledger_paths,
 ) = sys.argv[1:]
@@ -207,6 +242,13 @@ payload = {
     "analysis_attempt": int(analysis_attempt),
     "deployment_id": deployment_id,
     "source_commit": source_commit,
+    "selected_tp": int(selected_tp),
+    "selection_file": selection_file,
+    "selection_file_sha256": selection_file_sha256,
+    "prompt_version": prompt_version,
+    "episode_safety_policy_version": policy_version,
+    "episode_safety_policy_sha256": policy_sha256,
+    "prompt_contract_sha256": prompt_contract,
     "supersedes_job_ids": [item for item in supersedes_job_ids.split(",") if item],
     "prior_job_ids": ids,
     "current_turkish_job_id": current_job_id,
@@ -237,6 +279,8 @@ PY
 
 echo "Qwen3.8 Turkish launcher"
 echo "deployment_id=$DEPLOYMENT_ID source_commit=$SOURCE_COMMIT selected_tp=$SELECTED_TP"
+echo "attempt=$ANALYSIS_ATTEMPT run_id=$TURKISH_RUN_ID prompt=$PROMPT_VERSION policy=$EPISODE_SAFETY_POLICY_VERSION"
+echo "selection_file=$SELECTION_FILE selection_sha256=$SELECTION_FILE_SHA256 supersedes=$SUPERSEDES_JOB_IDS"
 echo "cpus=$CPUS gpus=$SELECTED_TP wall=02:00:00"
 echo "run_root=$RUN_ROOT"
 
@@ -296,7 +340,7 @@ echo "job $JOB_ID terminal: state=$STATE exit=$EXIT_CODE elapsed=$ELAPSED node=$
 if [ "$STATE" != "COMPLETED" ] || [ "$EXIT_CODE" != "0:0" ]; then
   case "$STATE" in
     NODE_FAIL|PREEMPTED|BOOT_FAIL)
-      echo "transient infrastructure failure; retry requires a manual attempt2 submission with the same deployment ID" >&2
+      echo "transient infrastructure failure; retry requires the single permitted attempt4 with the same source, policy, model, and selection" >&2
       ;;
     *)
       echo "FAILED: job $JOB_ID did not complete cleanly" >&2
@@ -308,12 +352,12 @@ fi
 # Attach the authoritative terminal Slurm accounting record without touching
 # any restricted intermediate.
 RUN_MANIFEST_SHA256="$(sha256sum "$RUN_ROOT/run_manifest.json" | awk '{print $1}')"
-python - "$RUN_ROOT/slurm_run_metadata.json" "$JOB_ID" "$STATE" "$EXIT_CODE" "$NODE" "$START_TIME" "$END_TIME" "$TURKISH_RUN_ID" "$ANALYSIS_ATTEMPT" "$SOURCE_COMMIT" "$SELECTED_TP" "$SELECTION_FILE" "$RUN_MANIFEST_SHA256" <<'PY'
+python - "$RUN_ROOT/slurm_run_metadata.json" "$JOB_ID" "$STATE" "$EXIT_CODE" "$NODE" "$START_TIME" "$END_TIME" "$TURKISH_RUN_ID" "$ANALYSIS_ATTEMPT" "$SOURCE_COMMIT" "$SELECTED_TP" "$SELECTION_FILE" "$SELECTION_FILE_SHA256" "$PROMPT_VERSION" "$EPISODE_SAFETY_POLICY_VERSION" "$EPISODE_SAFETY_POLICY_SHA256" "$PROMPT_CONTRACT_SHA256" "$RUN_MANIFEST_SHA256" <<'PY'
 import json
 import os
 import sys
 
-path, job_id, state, exit_code, node, start_time, end_time, run_id, attempt, source_commit, selected_tp, selection_file, manifest_hash = sys.argv[1:]
+path, job_id, state, exit_code, node, start_time, end_time, run_id, attempt, source_commit, selected_tp, selection_file, selection_sha256, prompt_version, policy_version, policy_sha256, prompt_contract, manifest_hash = sys.argv[1:]
 metadata = {
     "job_id": job_id,
     "state": state,
@@ -326,6 +370,11 @@ metadata = {
     "source_commit": source_commit,
     "selected_tp": int(selected_tp),
     "selection_file": selection_file,
+    "selection_file_sha256": selection_sha256,
+    "prompt_version": prompt_version,
+    "episode_safety_policy_version": policy_version,
+    "episode_safety_policy_sha256": policy_sha256,
+    "prompt_contract_sha256": prompt_contract,
     "run_manifest_sha256": manifest_hash,
 }
 tmp = path + ".tmp"
