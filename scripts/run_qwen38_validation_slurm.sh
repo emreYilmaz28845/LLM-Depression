@@ -38,10 +38,14 @@ DEPLOYMENT_ID="${DEPLOYMENT_ID:?Set DEPLOYMENT_ID}"
 TP_SIZE="${TP_SIZE:?Set TP_SIZE}"
 ATTEMPT="${ATTEMPT:?Set ATTEMPT}"
 RUN_LABEL="${RUN_LABEL:?Set RUN_LABEL}"
-SOURCE_COMMIT="${SOURCE_COMMIT:-unknown}"
+SOURCE_COMMIT="${SOURCE_COMMIT:?Set SOURCE_COMMIT to the full merged source SHA}"
 
 ATTEMPT_DIR="$DEPLOY_ROOT/$DEPLOYMENT_ID/validation/tp${TP_SIZE}/attempt${ATTEMPT}"
 LOG_DIR="$DEPLOY_ROOT/$DEPLOYMENT_ID/logs"
+if [ -e "$ATTEMPT_DIR" ]; then
+  echo "FAILED: refusing to reuse validation attempt directory $ATTEMPT_DIR" >&2
+  exit 1
+fi
 mkdir -p "$ATTEMPT_DIR" "$LOG_DIR"
 ART_LOG="$LOG_DIR/validation_tp${TP_SIZE}_attempt${ATTEMPT}_${SLURM_JOB_ID:-local}.log"
 SERVER_LOG="$ATTEMPT_DIR/vllm_server.log"
@@ -73,6 +77,12 @@ module load bsc/1.0
 module load miniforge/24.3.0-0
 source "$VENV_DIR/bin/activate"
 cd "$PROJECT_ROOT"
+ORIGIN_MAIN_SHA="${LOCAL_ORIGIN_MAIN_SHA:-$(git rev-parse origin/main 2>/dev/null || true)}"
+REMOTE_PROVENANCE_SHA="$(tr -d '[:space:]' < "$PROJECT_ROOT/.provenance/git_commit.txt" 2>/dev/null || true)"
+if [ "$SOURCE_COMMIT" != "$ORIGIN_MAIN_SHA" ] || [ "$SOURCE_COMMIT" != "$REMOTE_PROVENANCE_SHA" ]; then
+  echo "FAILED: source identity mismatch (SOURCE_COMMIT=$SOURCE_COMMIT origin/main=$ORIGIN_MAIN_SHA provenance=$REMOTE_PROVENANCE_SHA)" >&2
+  exit 1
+fi
 python -VV
 python -c "import torch, vllm; print('torch', torch.__version__, '| vllm', vllm.__version__)"
 
@@ -109,8 +119,8 @@ with open(path, "w", encoding="utf-8") as handle:
     handle.write("\n")
 PY
 
-if [ "$VISIBLE_COUNT" -lt "$TP_SIZE" ]; then
-  echo "FAILED: expected at least $TP_SIZE visible GPUs, found $VISIBLE_COUNT" >&2
+if [ "$VISIBLE_COUNT" -ne "$TP_SIZE" ]; then
+  echo "FAILED: expected exactly $TP_SIZE visible GPUs, found $VISIBLE_COUNT" >&2
   exit 1
 fi
 echo "visible GPUs: $VISIBLE_COUNT (CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset})"
@@ -351,6 +361,27 @@ python scripts/qwen38_validation_client.py summarize \
   --wheelhouse-manifest-sha256 "$WHEELHOUSE_MANIFEST_HASH" \
   --deployment-model-manifest-sha256 "$RECORDED_MODEL_MANIFEST_HASH" \
   --deployment-wheelhouse-manifest-sha256 "$RECORDED_WHEELHOUSE_MANIFEST_HASH"
+
+python - "$ATTEMPT_DIR/acceptance.json" "$SOURCE_COMMIT" "$TP_SIZE" "$ATTEMPT" "${SLURM_JOB_ID:-}" <<'PY'
+import json
+import os
+import sys
+
+path, source_commit, tp_size, attempt, job_id = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    payload = json.load(handle)
+payload.update({
+    "source_commit": source_commit,
+    "tp_size": int(tp_size),
+    "attempt": int(attempt),
+    "slurm_job_id": job_id,
+})
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2)
+    handle.write("\n")
+os.replace(tmp, path)
+PY
 
 echo "OK: validation finished for TP=$TP_SIZE attempt=$ATTEMPT"
 echo "Artifacts: $ATTEMPT_DIR"

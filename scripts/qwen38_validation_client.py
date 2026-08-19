@@ -18,8 +18,10 @@ printed.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +57,14 @@ def _atomic_write_json(data: Any, path: str | Path) -> None:
 def _read_json(path: str | Path) -> Any:
     with Path(path).open("r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -200,9 +210,153 @@ def cmd_select(args: argparse.Namespace) -> int:
         "source_commit": source_commit,
     }
     out_path = deploy_dir / deployment_id / "serving_selection.json"
+    if out_path.exists():
+        print(f"refusing to overwrite existing serving_selection.json: {out_path}", file=sys.stderr)
+        return 1
     _atomic_write_json(payload, out_path)
     print(f"selected_tp={payload['selected_tp']} rule={payload['decision_rule']}")
     print(f"serving_selection.json written to {out_path}")
+    return 0
+
+
+def _job_id_list(value: str) -> list[str]:
+    return [item for item in (part.strip() for part in value.split(",")) if item]
+
+
+def _selection_candidate(
+    deploy_dir: Path,
+    deployment_id: str,
+    tp: int,
+    attempt: int,
+    *,
+    job_ids: list[str],
+    source_commit: str,
+) -> dict[str, Any]:
+    attempt_dir = deploy_dir / deployment_id / "validation" / f"tp{tp}" / f"attempt{attempt}"
+    acceptance_path = attempt_dir / "acceptance.json"
+    capacity_path = attempt_dir / "capacity_ineligible.json"
+    acceptance = _read_json(acceptance_path) if acceptance_path.is_file() else {}
+    capacity = _read_json(capacity_path) if capacity_path.is_file() else {}
+    metrics_path = attempt_dir / "results.json"
+    summary = acceptance.get("summary", {})
+    return {
+        "tp": tp,
+        "attempt": attempt,
+        "passed": bool(acceptance.get("passed")),
+        "capacity_ineligible": bool(capacity.get("capacity_ineligible")),
+        "request_rate_c1": summary.get("c1_pass_a", {}).get("aggregate_requests_per_second"),
+        "request_rate_c8": summary.get("c8", {}).get("aggregate_requests_per_second"),
+        "acceptance_path": str(acceptance_path),
+        "capacity_path": str(capacity_path) if capacity_path.is_file() else None,
+        "metrics_path": str(metrics_path) if metrics_path.is_file() else None,
+        "job_ids": job_ids,
+        "source_commit": acceptance.get("source_commit") or source_commit,
+        "artifact_exists": acceptance_path.is_file() or capacity_path.is_file(),
+    }
+
+
+def cmd_select_v2(args: argparse.Namespace) -> int:
+    deploy_dir = Path(args.deploy_dir)
+    deployment_root = deploy_dir / args.deployment_id
+    original_path = deployment_root / "serving_selection.json"
+    if not original_path.is_file():
+        print(f"original serving selection missing: {original_path}", file=sys.stderr)
+        return 1
+    output_path = Path(args.out) if args.out else deployment_root / "serving_selection_v2.json"
+    if output_path.exists():
+        print(f"refusing to overwrite existing selection v2: {output_path}", file=sys.stderr)
+        return 1
+    original = _read_json(original_path)
+    original_sha256 = _sha256_file(original_path)
+    original_source = original.get("source_commit")
+    if not isinstance(original_source, str) or not original_source:
+        print("original serving selection has no source commit", file=sys.stderr)
+        return 1
+
+    tp2 = _selection_candidate(
+        deploy_dir, args.deployment_id, 2, 1,
+        job_ids=[args.tp2_job_id], source_commit=original_source,
+    )
+    tp1 = _selection_candidate(
+        deploy_dir, args.deployment_id, 1, 1,
+        job_ids=_job_id_list(args.tp1_job_ids), source_commit=original_source,
+    )
+    tp4 = _selection_candidate(
+        deploy_dir, args.deployment_id, 4, args.tp4_attempt,
+        job_ids=[args.tp4_job_id] if args.tp4_job_id else [],
+        source_commit=args.source_commit,
+    )
+    candidates = {
+        1: CandidateResult(1, tp1["passed"], tp1["request_rate_c1"], tp1["request_rate_c8"], tp1["metrics_path"]),
+        2: CandidateResult(2, tp2["passed"], tp2["request_rate_c1"], tp2["request_rate_c8"], tp2["metrics_path"]),
+        4: CandidateResult(4, tp4["passed"], tp4["request_rate_c1"], tp4["request_rate_c8"], tp4["metrics_path"]),
+    }
+    selection = select_serving_configuration(candidates)
+    if selection.selected_tp is None:
+        print("no serving configuration selected (TP=2 did not pass)", file=sys.stderr)
+        return 1
+
+    payload = {
+        "selection_version": 2,
+        "deployment_id": args.deployment_id,
+        "model_id": MODEL_ID,
+        "model_revision": MODEL_REVISION,
+        "selected_tp": selection.selected_tp,
+        "decision_rule": selection.decision_rule,
+        "fixed_section_17_decision_rule": {
+            "rule": "TP1 <= 2h; else TP4 replaces TP2 only when TP2 > 4h and TP4 is at least 30% faster; otherwise TP2; <=10% ties prefer fewer GPUs",
+            "result": selection.decision_rule,
+        },
+        "candidate_results": {
+            str(tp): data for tp, data in ((1, tp1), (2, tp2), (4, tp4))
+        },
+        "projected_requests": selection.projected_requests,
+        "projected_wall_seconds": {
+            str(tp): round(value, 3) for tp, value in sorted(selection.projected_wall_seconds.items())
+        },
+        "measured_metrics_paths": {
+            str(tp): candidate.metrics_path
+            for tp, candidate in sorted(selection.candidate_results.items())
+            if candidate.passed and candidate.metrics_path
+        },
+        "selection_implementation_commit": args.source_commit,
+        "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "source_commit": args.source_commit,
+        "supersedes_selection": {
+            "path": str(original_path),
+            "sha256": original_sha256,
+            "selected_tp": original.get("selected_tp"),
+            "source_commit": original_source,
+        },
+        "original_tp2_acceptance": {
+            "path": tp2["acceptance_path"],
+            "job_ids": tp2["job_ids"],
+            "source_commit": tp2["source_commit"],
+        },
+        "tp1_capacity_evidence": {
+            "acceptance_path": tp1["acceptance_path"],
+            "capacity_path": tp1["capacity_path"],
+            "job_ids": tp1["job_ids"],
+            "source_commit": tp1["source_commit"],
+        },
+        "tp4_attempt2": {
+            "acceptance_path": tp4["acceptance_path"],
+            "metrics_path": tp4["metrics_path"],
+            "job_ids": tp4["job_ids"],
+            "source_commit": tp4["source_commit"],
+            "passed": tp4["passed"],
+        },
+        "old_tp4_attempt1": {
+            "path": str(deployment_root / "validation" / "tp4" / "attempt1"),
+            "job_ids": _job_id_list(args.tp4_attempt1_job_ids),
+            "source_commit": args.tp4_attempt1_source_commit or original_source,
+            "eligible": False,
+            "reason": "attempt1 ran before the corrected CUDA_VISIBLE_DEVICES GPU-counting fix and is not valid comparison evidence",
+        },
+    }
+    _atomic_write_json(payload, output_path)
+    print(f"selected_tp={payload['selected_tp']} rule={payload['decision_rule']}")
+    print(f"serving_selection_v2.json written to {output_path}")
     return 0
 
 
@@ -240,6 +394,19 @@ def build_parser() -> argparse.ArgumentParser:
     select_parser.add_argument("--deployment-id", required=True)
     select_parser.add_argument("--source-commit", required=True)
     select_parser.set_defaults(func=cmd_select)
+
+    select_v2_parser = subparsers.add_parser("select-v2", help="create immutable serving_selection_v2.json")
+    select_v2_parser.add_argument("--deploy-dir", required=True, help="REMOTE_DEPLOY root")
+    select_v2_parser.add_argument("--deployment-id", required=True)
+    select_v2_parser.add_argument("--source-commit", required=True)
+    select_v2_parser.add_argument("--tp4-job-id", required=True)
+    select_v2_parser.add_argument("--tp4-attempt", type=int, default=2)
+    select_v2_parser.add_argument("--tp2-job-id", default="44796268")
+    select_v2_parser.add_argument("--tp1-job-ids", default="44796478,44797033")
+    select_v2_parser.add_argument("--tp4-attempt1-job-ids", default="44797196,44797499")
+    select_v2_parser.add_argument("--tp4-attempt1-source-commit", default=None)
+    select_v2_parser.add_argument("--out", default=None)
+    select_v2_parser.set_defaults(func=cmd_select_v2)
     return parser
 
 

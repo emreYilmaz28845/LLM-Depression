@@ -9,24 +9,39 @@ import pytest
 
 from src.qwen38.audit import (
     _compact_texts,
+    _recompute_restricted_evidence,
+    ENV_PINS,
     audit_turkish,
     ngram_overlap_at_least,
 )
 from src.qwen38.contracts import (
     FINAL_TABLE_COLUMNS,
+    MODEL_ID,
+    MODEL_REVISION,
+    TURKISH_MAX_TOKENS,
+    TURKISH_SOURCE_HASH,
     WordingStatus,
     generation_settings_hash,
     parse_filename_stem,
+    request_settings,
 )
 from src.qwen38.turkish_questions import (
+    EVIDENCE_BASIS_FALLBACK,
+    PROMPT_VERSION,
     _check_cluster_assignment,
     _check_family_assignment,
+    _episode_provenance,
+    _validate_episodes,
     aggregate_families,
     collect_candidates,
     load_prepared_sequences,
     load_table_rows,
     prepare_sequences,
+    prompt_bundle_sha256,
+    prompt_contract_sha256,
+    prompt_component_hashes,
     render_tables,
+    sanitize_evidence_basis,
 )
 
 FIXTURE = "tests/fixtures/qwen38_synthetic_cases.jsonl"
@@ -34,6 +49,10 @@ FIXTURE = "tests/fixtures/qwen38_synthetic_cases.jsonl"
 
 def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _sha256_file_for_test(path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _write_transcript(path, subjects_windows, transcripts=None):
@@ -60,8 +79,8 @@ def _write_transcript(path, subjects_windows, transcripts=None):
     return _sha256_text(payload)
 
 
-def _make_inference_record(sequence_id, episodes, prompt_hash, source_sha256, source_commit, model_revision="1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"):
-    return {
+def _make_inference_record(sequence_id, episodes, prompt_hash, source_sha256, source_commit, model_revision="1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0", sequence=None):
+    record = {
         "sequence_id": sequence_id,
         "status": "completed",
         "prompt_hash": prompt_hash,
@@ -72,6 +91,24 @@ def _make_inference_record(sequence_id, episodes, prompt_hash, source_sha256, so
         "episode_count": len(episodes),
         "episodes": episodes,
     }
+    if sequence is not None:
+        for key in (
+            "turkish_run_id",
+            "analysis_attempt",
+            "deployment_id",
+            "model_id",
+            "prompt_version",
+            "run_manifest_sha256",
+            "user_prompt_sha256",
+            "system_prompt_sha256",
+            "correction_message_sha256",
+            "subject_schema_sha256",
+            "prompt_contract_sha256",
+            "prompt_bundle_sha256",
+        ):
+            record[key] = sequence[key]
+        record["prompt_hash"] = sequence["prompt_hash"]
+    return record
 
 
 def _episode(sequence_id, order, label, confidence, wording=WordingStatus.INFERRED_PARAPHRASE.value, abstain=""):
@@ -232,6 +269,80 @@ class TestPrepare:
                 expected_windows=1,
             )
 
+    def test_run_root_collision_refused(self, tmp_path):
+        transcript = tmp_path / "t.jsonl"
+        source_hash = _write_transcript(transcript, {"subA": [1]})
+        run_dir = tmp_path / "run"
+        prepare_sequences(
+            transcript,
+            run_dir=run_dir,
+            deployment_id="d",
+            model_revision="r",
+            source_commit="c",
+            source_sha256=source_hash,
+            expected_sequences=1,
+            expected_windows=1,
+        )
+        with pytest.raises(ValueError, match="reuse existing"):
+            prepare_sequences(
+                transcript,
+                run_dir=run_dir,
+                deployment_id="d",
+                model_revision="r",
+                source_commit="c",
+                source_sha256=source_hash,
+                expected_sequences=1,
+                expected_windows=1,
+            )
+
+
+class TestPromptIdentityAndSanitization:
+    def test_prompt_version_is_v2(self):
+        from src.qwen38.turkish_questions import PROMPT_VERSION
+
+        assert PROMPT_VERSION == "qwen38_turkish_v2"
+
+    def test_prompt_contract_and_bundle_are_deterministic(self):
+        contract_a = prompt_contract_sha256(model_revision="r")
+        contract_b = prompt_contract_sha256(model_revision="r")
+        assert contract_a == contract_b
+        assert prompt_bundle_sha256("same", model_revision="r") == prompt_bundle_sha256("same", model_revision="r")
+        assert prompt_bundle_sha256("different", model_revision="r") != prompt_bundle_sha256("same", model_revision="r")
+
+    def test_sanitizer_removes_all_quotes_and_normalizes(self):
+        value = '  A" B\' C` D“ E” F‘ G’ H« I» J‹ K› L„ M‟ N‚ O‛  '
+        sanitized = sanitize_evidence_basis(value)
+        assert sanitized == "A B C D E F G H I J K L M N O"
+
+    def test_sanitizer_uses_word_boundary_and_fallback(self):
+        long_value = "kelime " * 80
+        sanitized = sanitize_evidence_basis(long_value)
+        assert len(sanitized) <= 200
+        assert not sanitized.endswith("kel")
+        assert sanitize_evidence_basis("\n\t\r  ") == EVIDENCE_BASIS_FALLBACK
+
+    def test_sanitized_evidence_still_receives_privacy_check(self):
+        payload = {
+            "episodes": [{
+                "sequence_id": "S0001",
+                "episode_order": 1,
+                "question_tr": "Soru nedir?",
+                "question_en": "What is the question?",
+                "label": "NEUTRAL",
+                "wording_status": "INFERRED_PARAPHRASE",
+                "confidence": "LOW",
+                "evidence_window_indices": [1],
+                "evidence_basis": 'Bugün sabah erkenden pazara gittim ve taze meyve aldım sonra eve döndüm',
+                "abstain_reason": "",
+            }]
+        }
+        with pytest.raises(ValueError, match="12-token transcript overlap"):
+            _validate_episodes(
+                payload,
+                "S0001",
+                ["Bugün sabah erkenden pazara gittim ve taze meyve aldım sonra eve döndüm"],
+            )
+
 
 class TestInferenceResume:
     def _prepared(self, tmp_path):
@@ -265,6 +376,7 @@ class TestInferenceResume:
                 source_sha256=sequence["source_sha256"],
                 source_commit=sequence["source_commit"],
                 model_revision=sequence["model_revision"],
+                sequence=sequence,
             )
             (inferences / f"{sequence['sequence_id']}.json").write_text(
                 json.dumps(record, ensure_ascii=False), encoding="utf-8"
@@ -301,6 +413,33 @@ class TestInferenceResume:
                 run_dir / "restricted" / "prepared_sequences.jsonl",
                 inferences,
                 base_url="http://127.0.0.1:1/v1",
+            )
+
+    def test_changed_system_prompt_refuses_resume(self, tmp_path, monkeypatch):
+        from src.qwen38.turkish_questions import infer_subjects
+
+        run_dir, _ = self._prepared(tmp_path)
+        monkeypatch.setattr(
+            "src.qwen38.turkish_questions.SUBJECT_SYSTEM_PROMPT",
+            "changed system prompt",
+        )
+        with pytest.raises(ValueError, match="resume refused"):
+            infer_subjects(
+                run_dir / "restricted" / "prepared_sequences.jsonl",
+                run_dir / "restricted" / "subject_inferences",
+                base_url="http://127.0.0.1:1/v1",
+            )
+
+    def test_changed_source_commit_refuses_resume(self, tmp_path):
+        from src.qwen38.turkish_questions import infer_subjects
+
+        run_dir, _ = self._prepared(tmp_path)
+        with pytest.raises(ValueError, match="source commit changed"):
+            infer_subjects(
+                run_dir / "restricted" / "prepared_sequences.jsonl",
+                run_dir / "restricted" / "subject_inferences",
+                base_url="http://127.0.0.1:1/v1",
+                source_commit="changed-source",
             )
 
 
@@ -662,6 +801,298 @@ class TestAuditPrivacy:
         for text in compact["texts"]:
             assert "S0001" not in text
             assert "[WINDOW" not in text
+
+
+class TestRemoteAuditReference:
+    def test_local_audit_requires_matching_remote_audit_sidecar(self, tmp_path, monkeypatch):
+        import src.qwen38.audit as audit_module
+
+        transcript = tmp_path / "transcript.jsonl"
+        transcript_payload = json.dumps({
+            "audio_path": "/private/subA-1-1-ank.wav",
+            "transcript": "short source text",
+        }, ensure_ascii=False) + "\n"
+        transcript.write_text(transcript_payload, encoding="utf-8")
+        source_hash = _sha256_text(transcript_payload)
+        monkeypatch.setattr(audit_module, "TURKISH_SOURCE_HASH", source_hash)
+
+        deploy = tmp_path / "deploy"
+        deployment_id = "deployment"
+        env_dir = deploy / deployment_id / "environment"
+        env_dir.mkdir(parents=True)
+        runtime = dict(ENV_PINS)
+        runtime.update({"model_id": MODEL_ID, "model_revision": MODEL_REVISION})
+        (env_dir / "runtime_versions.json").write_text(json.dumps(runtime) + "\n", encoding="utf-8")
+
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        (model_dir / "config.json").write_bytes(b"model")
+        model_hash = _sha256_text("model")
+        (model_dir / "SHA256SUMS").write_text(f"{model_hash}  config.json\n", encoding="utf-8")
+        wheelhouse_dir = tmp_path / "wheelhouse"
+        wheelhouse_dir.mkdir()
+        (wheelhouse_dir / "package.whl").write_bytes(b"wheel")
+        wheel_hash = _sha256_text("wheel")
+        (wheelhouse_dir / "SHA256SUMS").write_text(f"{wheel_hash}  package.whl\n", encoding="utf-8")
+
+        source_commit = "d" * 40
+        selection_path = deploy / deployment_id / "serving_selection_v2.json"
+        selection_path.parent.mkdir(parents=True, exist_ok=True)
+        selection_path.write_text(json.dumps({
+            "selection_version": 2,
+            "selected_tp": 2,
+            "source_commit": source_commit,
+            "selection_implementation_commit": source_commit,
+        }) + "\n", encoding="utf-8")
+        selection_hash = _sha256_file_for_test(selection_path)
+
+        run_id = "q38tr_dddddddddddd_attempt1"
+        run_dir = tmp_path / "run"
+        records, candidates, families, cluster_to_candidate, cluster_assignment = _family_setup()
+        rows = aggregate_families(candidates, records, families, cluster_to_candidate, cluster_assignment)
+        render_tables(rows, run_dir=run_dir, deployment_id=deployment_id, source_commit=source_commit)
+        manifest = {
+            "turkish_run_id": run_id,
+            "analysis_attempt": 1,
+            "source_sha256": source_hash,
+            "source_commit": source_commit,
+            "model_id": MODEL_ID,
+            "model_revision": MODEL_REVISION,
+            "prompt_version": PROMPT_VERSION,
+            "prompt_contract_sha256": prompt_contract_sha256(),
+            "generation_settings_hash": generation_settings_hash(TURKISH_MAX_TOKENS),
+            "request_settings": request_settings(TURKISH_MAX_TOKENS),
+            "selected_tp": 2,
+            "selection_file_sha256": selection_hash,
+        }
+        manifest_path = run_dir / "run_manifest.json"
+        manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+        manifest_hash = _sha256_file_for_test(manifest_path)
+
+        compact_hashes = {
+            name: _sha256_file_for_test(run_dir / name)
+            for name in (
+                "turkish_inferred_questions.csv",
+                "turkish_inferred_questions.json",
+                "turkish_inferred_questions.md",
+            )
+        }
+        remote_audit = tmp_path / "remote_audit.json"
+        remote_audit.write_text(json.dumps({
+            "passed": True,
+            "compact_artifact_hashes": compact_hashes,
+            "run_manifest_sha256": manifest_hash,
+            "selection_file_sha256": selection_hash,
+        }) + "\n", encoding="utf-8")
+        remote_sidecar = tmp_path / "remote_audit.json.sha256"
+        remote_sidecar.write_text(
+            f"{_sha256_file_for_test(remote_audit)}  remote_audit.json\n", encoding="utf-8"
+        )
+        slurm = {
+            "job_id": "123",
+            "state": "COMPLETED",
+            "exit_code": "0:0",
+            "node": "node",
+            "start_time": "2026-08-19T00:00:00",
+            "end_time": "2026-08-19T00:01:00",
+            "turkish_run_id": run_id,
+            "source_commit": source_commit,
+        }
+        result = audit_turkish(
+            run_dir,
+            turkish_run_id=run_id,
+            transcript_path=transcript,
+            deploy_dir=deploy,
+            deployment_id=deployment_id,
+            model_dir=model_dir,
+            wheelhouse_dir=wheelhouse_dir,
+            source_commit=source_commit,
+            selection_file=selection_path,
+            slurm_metadata=slurm,
+            remote_reference=remote_audit,
+            remote_audit_sha256_path=remote_sidecar,
+        )
+        checks = {check["check_id"]: check for check in result["checks"]}
+        assert checks["remote_audit_reference"]["passed"] is True
+        assert checks["remote_compact_hashes"]["passed"] is True
+        assert checks["remote_manifest_hash"]["passed"] is True
+        assert checks["remote_selection_hash"]["passed"] is True
+
+        remote_sidecar.write_text("0" * 64 + "  remote_audit.json\n", encoding="utf-8")
+        failed = audit_turkish(
+            run_dir,
+            turkish_run_id=run_id,
+            transcript_path=transcript,
+            deploy_dir=deploy,
+            deployment_id=deployment_id,
+            model_dir=model_dir,
+            wheelhouse_dir=wheelhouse_dir,
+            source_commit=source_commit,
+            selection_file=selection_path,
+            slurm_metadata=slurm,
+            remote_reference=remote_audit,
+            remote_audit_sha256_path=remote_sidecar,
+        )
+        failed_checks = {check["check_id"]: check for check in failed["checks"]}
+        assert failed_checks["remote_audit_reference"]["passed"] is False
+
+
+def _small_restricted_run(tmp_path):
+    """Build a two-sequence restricted bundle for aggregation-audit tests."""
+    from src.qwen38.turkish_questions import _sha256_file
+
+    run_dir = tmp_path / "restricted_run"
+    restricted = run_dir / "restricted"
+    inferences = restricted / "subject_inferences"
+    consolidation = restricted / "consolidation_batches"
+    inferences.mkdir(parents=True)
+    consolidation.mkdir(parents=True)
+    commit = "c" * 40
+    run_id = "q38tr_cccccccccccc_attempt1"
+    manifest = {
+        "turkish_run_id": run_id,
+        "analysis_attempt": 1,
+        "deployment_id": "deployment",
+        "source_sha256": TURKISH_SOURCE_HASH,
+        "source_commit": commit,
+        "model_id": MODEL_ID,
+        "model_revision": MODEL_REVISION,
+        "prompt_version": PROMPT_VERSION,
+        "prompt_contract_sha256": prompt_contract_sha256(),
+        "generation_settings_hash": generation_settings_hash(TURKISH_MAX_TOKENS),
+        "request_settings": request_settings(TURKISH_MAX_TOKENS),
+        "expected_windows": 2,
+        "expected_sequences": 2,
+        "consolidation_batches": [1, 1],
+    }
+    manifest_path = run_dir / "run_manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    manifest_hash = _sha256_file(manifest_path)
+
+    sequences = []
+    records = []
+    for index in (1, 2):
+        sequence_id = f"S{index:04d}"
+        user_prompt = f"Sequence id: {sequence_id}\n\n[WINDOW 1]\nanswer {index}"
+        components = prompt_component_hashes(user_prompt)
+        sequence = {
+            "turkish_run_id": run_id,
+            "analysis_attempt": 1,
+            "deployment_id": "deployment",
+            "sequence_id": sequence_id,
+            "window_count": 1,
+            "windows": [{"window": 1, "text": f"answer {index}"}],
+            "user_prompt": user_prompt,
+            "source_sha256": TURKISH_SOURCE_HASH,
+            "source_commit": commit,
+            "model_id": MODEL_ID,
+            "model_revision": MODEL_REVISION,
+            "prompt_version": PROMPT_VERSION,
+            "generation_settings_hash": generation_settings_hash(TURKISH_MAX_TOKENS),
+            "run_manifest_sha256": manifest_hash,
+            **components,
+        }
+        sequences.append(sequence)
+        episode = {
+            "sequence_id": sequence_id,
+            "episode_order": 1,
+            "question_tr": "Hangi konu hakkinda konusuldu?",
+            "question_en": "What topic was discussed?",
+            "label": "NEUTRAL",
+            "wording_status": "INFERRED_PARAPHRASE",
+            "confidence": "LOW",
+            "evidence_window_indices": [1],
+            "evidence_basis": "topic framing",
+            "abstain_reason": "",
+        }
+        record = dict(_episode_provenance(sequence))
+        record.update({
+            "sequence_id": sequence_id,
+            "status": "completed",
+            "episode_count": 1,
+            "episodes": [episode],
+        })
+        records.append(record)
+
+    (restricted / "prepared_sequences.jsonl").write_text(
+        "".join(json.dumps(sequence, ensure_ascii=False) + "\n" for sequence in sequences),
+        encoding="utf-8",
+    )
+    for record in records:
+        (inferences / f"{record['sequence_id']}.json").write_text(
+            json.dumps(record, ensure_ascii=False), encoding="utf-8"
+        )
+
+    clusters = []
+    cluster_to_candidate = {}
+    for index in (1, 2):
+        sequence_id = f"S{index:04d}"
+        cluster_id = f"c{index}"
+        candidate_id = f"{sequence_id}-e1"
+        clusters.append(cluster_id)
+        cluster_to_candidate[cluster_id] = [candidate_id]
+        batch = {
+            "batch_index": index,
+            "sequence_ids": [sequence_id],
+            "candidate_count": 1,
+            "clusters": [{
+                "cluster_id": cluster_id,
+                "canonical_question_tr": "Hangi konu hakkinda konusuldu?",
+                "canonical_question_en": "What topic was discussed?",
+                "member_candidate_ids": [candidate_id],
+            }],
+            "assignment": {candidate_id: cluster_id},
+        }
+        (consolidation / f"batch_{index:02d}.json").write_text(
+            json.dumps(batch, ensure_ascii=False), encoding="utf-8"
+        )
+    final_merge = {
+        "families": [{
+            "family_id": "f1",
+            "question_tr": "Hangi konu hakkinda konusuldu?",
+            "question_en": "What topic was discussed?",
+            "member_cluster_ids": clusters,
+        }],
+        "cluster_assignment": {cluster_id: "f1" for cluster_id in clusters},
+    }
+    (consolidation / "final_merge.json").write_text(
+        json.dumps(final_merge, ensure_ascii=False), encoding="utf-8"
+    )
+    candidates = collect_candidates(records)
+    rows = aggregate_families(
+        candidates,
+        records,
+        final_merge["families"],
+        cluster_to_candidate,
+        final_merge["cluster_assignment"],
+    )
+    render_tables(rows, run_dir=run_dir, deployment_id="deployment", source_commit=commit)
+    return run_dir, manifest
+
+
+class TestRestrictedAggregationAudit:
+    def test_recomputation_detects_altered_final_cell(self, tmp_path):
+        run_dir, manifest = _small_restricted_run(tmp_path)
+        compact = _compact_texts(
+            run_dir / "turkish_inferred_questions.csv",
+            run_dir / "turkish_inferred_questions.json",
+            run_dir / "turkish_inferred_questions.md",
+        )
+        result = _recompute_restricted_evidence(run_dir, manifest, compact=compact)
+        assert result["completed_subject_files"] == 2
+        payload = json.loads((run_dir / "turkish_inferred_questions.json").read_text(encoding="utf-8"))
+        payload["rows"][0]["question_en"] = "altered"
+        (run_dir / "turkish_inferred_questions.json").write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+        )
+        altered = _compact_texts(
+            run_dir / "turkish_inferred_questions.csv",
+            run_dir / "turkish_inferred_questions.json",
+            run_dir / "turkish_inferred_questions.md",
+        )
+        with pytest.raises(ValueError, match="recomputed rows differ"):
+            _recompute_restricted_evidence(run_dir, manifest, compact=altered)
 
 
 class TestStemParsingRoundTrip:
