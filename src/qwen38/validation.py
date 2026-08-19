@@ -282,7 +282,7 @@ async def _run_case(
                     "role": "user",
                     "content": (
                         "Your previous answer was not valid JSON matching the required "
-                        "schema. Return only the single JSON object, no prose.",
+                        "schema. Return only the single JSON object, no prose."
                     ),
                 }
             )
@@ -347,9 +347,9 @@ async def _run_case(
                     "empty_output": not attempt_result["content"].strip(),
                     "request_error": None,
                     "repair_used": attempts > 1,
-                    "ttft_seconds": ttft,
-                    "e2e_seconds": e2e,
-                    "completion_tokens": tokens,
+                    "ttft_seconds": _ttft,
+                    "e2e_seconds": _e2e,
+                    "completion_tokens": _tokens,
                 }
             last_error = "; ".join(schema_errors or ["invalid JSON"])
         except Exception as exc:
