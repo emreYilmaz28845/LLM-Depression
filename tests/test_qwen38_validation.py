@@ -22,6 +22,12 @@ FIXTURE = "tests/fixtures/qwen38_synthetic_cases.jsonl"
 
 
 class TestSyntheticFixture:
+    def test_system_prompt_is_plain_string(self):
+        from src.qwen38.validation import VALIDATION_SYSTEM_PROMPT
+
+        assert isinstance(VALIDATION_SYSTEM_PROMPT, str)
+        assert VALIDATION_SYSTEM_PROMPT.strip()
+
     def test_fixture_distribution(self):
         cases = load_synthetic_cases(FIXTURE)
         assert len(cases) == 64
