@@ -28,6 +28,7 @@ from src.qwen38.contracts import (
 from src.qwen38.turkish_questions import (
     EVIDENCE_BASIS_FALLBACK,
     PROMPT_VERSION,
+    SCHEMA_CORRECTION_MESSAGE,
     _check_cluster_assignment,
     _check_family_assignment,
     _episode_provenance,
@@ -308,6 +309,12 @@ class TestPromptIdentityAndSanitization:
         assert contract_a == contract_b
         assert prompt_bundle_sha256("same", model_revision="r") == prompt_bundle_sha256("same", model_revision="r")
         assert prompt_bundle_sha256("different", model_revision="r") != prompt_bundle_sha256("same", model_revision="r")
+
+    def test_schema_correction_message_covers_observed_failures(self):
+        assert "INFERRED_PARAPHRASE" in SCHEMA_CORRECTION_MESSAGE
+        assert "no additional fields" in SCHEMA_CORRECTION_MESSAGE
+        assert "12-token sequence" in SCHEMA_CORRECTION_MESSAGE
+        assert "quote, apostrophe, backtick" in SCHEMA_CORRECTION_MESSAGE
 
     def test_sanitizer_removes_all_quotes_and_normalizes(self):
         value = '  A" B\' C` D“ E” F‘ G’ H« I» J‹ K› L„ M‟ N‚ O‛  '
