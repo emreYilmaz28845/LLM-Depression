@@ -539,6 +539,25 @@ class TestDeploymentAudit:
         )
         assert result["passed"], [c for c in result["checks"] if not c["passed"]]
 
+    def test_deployment_audit_accepts_cuda_local_version_suffixes(self, tmp_path):
+        deploy, deployment_id, model, wheelhouse, env_dir = self._build_deployment(tmp_path)
+        runtime_path = env_dir / "runtime_versions.json"
+        runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+        runtime["torchvision"] = "0.26.0+cu130"
+        runtime["torchaudio"] = "2.11.0+cu130"
+        runtime_path.write_text(json.dumps(runtime) + "\n", encoding="utf-8")
+
+        result = audit_deployment(
+            deploy,
+            deployment_id,
+            model_dir=model,
+            wheelhouse_dir=wheelhouse,
+            environment_dir=env_dir,
+            source_commit="abc123",
+        )
+
+        assert result["passed"], [c for c in result["checks"] if not c["passed"]]
+
     def test_deployment_audit_accepts_recorded_comparison_failures(self, tmp_path):
         deploy, deployment_id, model, wheelhouse, env_dir = self._build_deployment(tmp_path)
         tp1 = deploy / deployment_id / "validation" / "tp1" / "attempt1"
