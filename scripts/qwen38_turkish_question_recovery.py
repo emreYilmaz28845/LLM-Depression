@@ -32,6 +32,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.qwen38.contracts import MODEL_ID, MODEL_REVISION, SERVED_MODEL
 from src.qwen38.turkish_questions import (
+    _sha256_file,
+    aggregate_episode_exclusion_counts,
     aggregate_families,
     consolidate as consolidate_stage,
     infer_subjects as infer_subjects_stage,
@@ -155,6 +157,8 @@ def cmd_render(args: argparse.Namespace) -> int:
     from src.qwen38.turkish_questions import collect_candidates
 
     records = _load_records(args.inferences_dir)
+    manifest_path = Path(args.run_dir) / "run_manifest.json"
+    manifest = _read_json(manifest_path)
     candidates = collect_candidates(records)
     final_merge = _read_json(args.final_merge)
     families = final_merge["families"]
@@ -178,6 +182,12 @@ def cmd_render(args: argparse.Namespace) -> int:
         model_id=MODEL_ID,
         model_revision=args.model_revision,
         source_commit=args.source_commit,
+        turkish_run_id=manifest.get("turkish_run_id"),
+        analysis_attempt=manifest.get("analysis_attempt"),
+        prompt_contract_hash=manifest.get("prompt_contract_sha256"),
+        run_manifest_sha256=_sha256_file(manifest_path),
+        selection_file_sha256=manifest.get("selection_file_sha256"),
+        episode_exclusion_counts=aggregate_episode_exclusion_counts(records),
     )
     _atomic_write_json(result, Path(args.run_dir) / "render_summary.json")
     print(

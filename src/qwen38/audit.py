@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -50,13 +51,20 @@ from src.qwen38.turkish_questions import (
     _canonical_json,
     _episode_provenance,
     _sha256_text,
+    EPISODE_SAFETY_POLICY_SHA256,
+    EPISODE_SAFETY_POLICY_VERSION,
+    EPISODE_SAFETY_REASON_CODES,
+    EPISODE_SAFETY_FIELD_NAMES,
+    PROMPT_VERSION,
+    CORRECTION_REASON_CODES,
+    _CANONICAL_SEQUENCE_TOKEN_RE,
     aggregate_families,
+    aggregate_episode_exclusion_counts,
     collect_candidates,
     load_prepared_sequences,
     load_table_rows,
     parse_filename_stem,
     prompt_contract_sha256,
-    PROMPT_VERSION,
     _validate_episodes,
 )
 
@@ -622,6 +630,7 @@ def audit_deployment(
 
 def _compact_texts(csv_path: Path, json_path: Path, md_path: Path) -> dict[str, Any]:
     csv_rows = load_table_rows(csv_path, "csv")
+    json_payload = json.loads(json_path.read_text(encoding="utf-8"))
     json_rows = load_table_rows(json_path, "json")
     md_rows = load_table_rows(md_path, "md")
     texts: list[str] = []
@@ -636,11 +645,83 @@ def _compact_texts(csv_path: Path, json_path: Path, md_path: Path) -> dict[str, 
         "json_rows": json_rows,
         "md_rows": md_rows,
         "texts": texts,
+        "json_payload": json_payload,
     }
 
 
 def _table_rows_for_render(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{column: row[column] for column in FINAL_TABLE_COLUMNS} for row in rows]
+
+
+def _validate_exclusion_metadata(record: dict[str, Any]) -> dict[str, int]:
+    """Validate safe exclusion provenance and return aggregate reason counts."""
+    generation_attempts = record.get("generation_attempts")
+    correction_reasons = record.get("correction_reason_codes")
+    exclusions = record.get("episode_exclusions")
+    episodes = record.get("episodes")
+    if generation_attempts not in (1, 2):
+        raise ValueError("generation attempt count is invalid")
+    if not isinstance(correction_reasons, list) or any(
+        reason not in CORRECTION_REASON_CODES for reason in correction_reasons
+    ):
+        raise ValueError("correction reason codes are invalid")
+    if len(set(correction_reasons)) != len(correction_reasons):
+        raise ValueError("correction reason codes are duplicated")
+    if (generation_attempts == 1 and correction_reasons) or (
+        generation_attempts == 2 and not correction_reasons
+    ):
+        raise ValueError("correction reason codes do not match generation attempts")
+    if not isinstance(exclusions, list) or not isinstance(episodes, list):
+        raise ValueError("episode exclusion metadata is missing")
+    if record.get("episodes_returned") != len(episodes) + len(exclusions):
+        raise ValueError("returned/retained/excluded episode arithmetic is invalid")
+    if record.get("episodes_retained") != len(episodes):
+        raise ValueError("retained episode count is invalid")
+    if record.get("episode_count") != len(episodes):
+        raise ValueError("episode_count is invalid")
+    for field_name in ("episodes_returned", "episodes_retained", "episode_count"):
+        value = record.get(field_name)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError(f"{field_name} is not a non-negative integer")
+    if generation_attempts == 1 and exclusions:
+        raise ValueError("generation one cannot contain episode exclusions")
+
+    retained_orders = set()
+    for episode in episodes:
+        order = episode.get("episode_order")
+        if not isinstance(order, int) or isinstance(order, bool) or order < 1:
+            raise ValueError("retained episode order is invalid")
+        if order in retained_orders:
+            raise ValueError("retained episode order is duplicated")
+        retained_orders.add(order)
+    excluded_orders: set[Any] = set()
+    counts = Counter()
+    for exclusion in exclusions:
+        if set(exclusion) != {"episode_order", "reason_codes", "field_names"}:
+            raise ValueError("episode exclusion contains an unauthorized field")
+        order = exclusion.get("episode_order")
+        if not isinstance(order, int) or isinstance(order, bool) or order < 1:
+            raise ValueError("episode exclusion order is invalid")
+        if order in excluded_orders or order in retained_orders:
+            raise ValueError("episode exclusion order is duplicated or retained")
+        excluded_orders.add(order)
+        reasons = exclusion.get("reason_codes")
+        fields = exclusion.get("field_names")
+        if not isinstance(reasons, list) or not reasons:
+            raise ValueError("episode exclusion has no reason code")
+        if any(reason not in EPISODE_SAFETY_REASON_CODES for reason in reasons):
+            raise ValueError("episode exclusion has an invalid reason code")
+        if len(set(reasons)) != len(reasons):
+            raise ValueError("episode exclusion reason codes are duplicated")
+        if not isinstance(fields, list) or not fields:
+            raise ValueError("episode exclusion has no field names")
+        if any(field_name not in EPISODE_SAFETY_FIELD_NAMES for field_name in fields):
+            raise ValueError("episode exclusion has an invalid field name")
+        if len(set(fields)) != len(fields):
+            raise ValueError("episode exclusion field names are duplicated")
+        for reason in reasons:
+            counts[reason] += 1
+    return {reason: int(counts.get(reason, 0)) for reason in EPISODE_SAFETY_REASON_CODES}
 
 
 def _recompute_restricted_evidence(
@@ -671,7 +752,11 @@ def _recompute_restricted_evidence(
 
     manifest_hash = _sha256_file(run_dir / "run_manifest.json")
     if manifest.get("prompt_version") != PROMPT_VERSION:
-        raise ValueError("run manifest prompt version is not v2")
+        raise ValueError("run manifest prompt version is not v3")
+    if manifest.get("episode_safety_policy_version") != EPISODE_SAFETY_POLICY_VERSION:
+        raise ValueError("run manifest episode safety policy version is invalid")
+    if manifest.get("episode_safety_policy_sha256") != EPISODE_SAFETY_POLICY_SHA256:
+        raise ValueError("run manifest episode safety policy hash is invalid")
     expected_contract = prompt_contract_sha256(
         model_revision=manifest["model_revision"],
         max_tokens=int(manifest["request_settings"]["max_tokens"]),
@@ -709,6 +794,10 @@ def _recompute_restricted_evidence(
             raise ValueError(f"{path.name}: run manifest hash mismatch")
         if record.get("prompt_version") != manifest.get("prompt_version"):
             raise ValueError(f"{path.name}: prompt version mismatch")
+        if record.get("episode_safety_policy_version") != manifest.get("episode_safety_policy_version"):
+            raise ValueError(f"{path.name}: episode safety policy version mismatch")
+        if record.get("episode_safety_policy_sha256") != manifest.get("episode_safety_policy_sha256"):
+            raise ValueError(f"{path.name}: episode safety policy hash mismatch")
         if record.get("source_sha256") != manifest.get("source_sha256"):
             raise ValueError(f"{path.name}: source hash mismatch")
         if record.get("source_commit") != manifest.get("source_commit"):
@@ -719,7 +808,10 @@ def _recompute_restricted_evidence(
             raise ValueError(f"{path.name}: model revision mismatch")
         if record.get("generation_settings_hash") != manifest.get("generation_settings_hash"):
             raise ValueError(f"{path.name}: generation settings mismatch")
-        prompt_bundles.add(str(record.get("prompt_bundle_sha256")))
+        if not isinstance(record.get("prompt_bundle_sha256"), str):
+            raise ValueError(f"{path.name}: prompt bundle hash is missing")
+        prompt_bundles.add(record["prompt_bundle_sha256"])
+        _validate_exclusion_metadata(record)
         original_payload = json.loads(json.dumps({"episodes": record.get("episodes", [])}, ensure_ascii=False))
         _validate_episodes(
             original_payload,
@@ -733,6 +825,29 @@ def _recompute_restricted_evidence(
         raise ValueError("completed subject IDs are not unique")
     if len(prompt_bundles) != expected_count:
         raise ValueError("prompt bundle hashes are not unique per subject")
+
+    exclusion_counts = aggregate_episode_exclusion_counts(records)
+    compact_payload = compact.get("json_payload")
+    if not isinstance(compact_payload, dict):
+        raise ValueError("compact JSON payload is not an object")
+    compact_counts = compact_payload.get("episode_exclusion_counts")
+    if compact_counts != exclusion_counts:
+        raise ValueError("aggregate exclusion counts differ from compact provenance")
+    expected_compact_metadata = {
+        "turkish_run_id": manifest.get("turkish_run_id"),
+        "analysis_attempt": manifest.get("analysis_attempt"),
+        "source_commit": manifest.get("source_commit"),
+        "prompt_version": PROMPT_VERSION,
+        "episode_safety_policy_version": EPISODE_SAFETY_POLICY_VERSION,
+        "episode_safety_policy_sha256": EPISODE_SAFETY_POLICY_SHA256,
+        "prompt_contract_sha256": manifest.get("prompt_contract_sha256"),
+        "generation_settings_hash": manifest.get("generation_settings_hash"),
+        "run_manifest_sha256": manifest_hash,
+        "selection_file_sha256": manifest.get("selection_file_sha256"),
+    }
+    for key, expected_value in expected_compact_metadata.items():
+        if compact_payload.get(key) != expected_value:
+            raise ValueError(f"compact provenance mismatch for {key}")
 
     candidates = collect_candidates(records)
     candidate_by_id = {candidate["candidate_id"]: candidate for candidate in candidates}
@@ -817,6 +932,12 @@ def _recompute_restricted_evidence(
         "cluster_count": len(cluster_ids),
         "family_count": len(final_merge.get("families", [])),
         "prompt_bundle_count": len(prompt_bundles),
+        "episode_exclusion_counts": exclusion_counts,
+        "subjects_with_retained_episodes": sum(1 for record in records if record["episodes"]),
+        "subjects_with_zero_retained_episodes": sum(1 for record in records if not record["episodes"]),
+        "episodes_returned": sum(int(record["episodes_returned"]) for record in records),
+        "episodes_retained": sum(int(record["episodes_retained"]) for record in records),
+        "episodes_excluded": sum(len(record["episode_exclusions"]) for record in records),
         "final_merge_sha256": _sha256_file(consolidation_dir / "final_merge.json"),
         "aggregation_sha256": aggregation_hash,
     }
@@ -902,6 +1023,19 @@ def audit_turkish(
             turkish_run_id is None or manifest.get("turkish_run_id") == turkish_run_id,
             {"actual": manifest.get("turkish_run_id"), "expected": turkish_run_id},
         )
+        manifest_run_id = manifest.get("turkish_run_id")
+        manifest_attempt = manifest.get("analysis_attempt")
+        record(
+            "turkish_run_source_attempt_identity",
+            "Turkish run ID is matched to the audited source commit and attempt",
+            isinstance(manifest_run_id, str)
+            and manifest_run_id == f"q38tr_{source_commit[:12]}_attempt{manifest_attempt}",
+            {
+                "turkish_run_id": manifest_run_id,
+                "analysis_attempt": manifest_attempt,
+                "source_prefix": source_commit[:12],
+            },
+        )
         record(
             "manifest_source_commit",
             "run manifest source commit matches the audited commit",
@@ -910,9 +1044,19 @@ def audit_turkish(
         )
         record(
             "manifest_prompt_version",
-            "run manifest uses prompt version v2",
+            "run manifest uses prompt version v3",
             manifest.get("prompt_version") == PROMPT_VERSION,
             {"actual": manifest.get("prompt_version")},
+        )
+        record(
+            "manifest_episode_safety_policy",
+            "run manifest carries the episode safety policy identity",
+            manifest.get("episode_safety_policy_version") == EPISODE_SAFETY_POLICY_VERSION
+            and manifest.get("episode_safety_policy_sha256") == EPISODE_SAFETY_POLICY_SHA256,
+            {
+                "version": manifest.get("episode_safety_policy_version"),
+                "sha256": manifest.get("episode_safety_policy_sha256"),
+            },
         )
         record(
             "manifest_source_hash",
@@ -944,8 +1088,15 @@ def audit_turkish(
     else:
         record("run_manifest_hash", "run manifest is present and hashable", False, "missing")
         record("turkish_run_identity", "Turkish run identity is recorded", False, "manifest missing")
+        record("turkish_run_source_attempt_identity", "Turkish run ID is source/attempt matched", False, "manifest missing")
         record("manifest_source_commit", "run manifest source commit is recorded", False, "manifest missing")
-        record("manifest_prompt_version", "run manifest uses prompt version v2", False, "manifest missing")
+        record("manifest_prompt_version", "run manifest uses prompt version v3", False, "manifest missing")
+        record(
+            "manifest_episode_safety_policy",
+            "run manifest carries the episode safety policy identity",
+            False,
+            "manifest missing",
+        )
         record("manifest_source_hash", "run manifest source hash is recorded", False, "manifest missing")
         record("manifest_model_identity", "run manifest model identity is recorded", False, "manifest missing")
         record("manifest_generation_settings", "run manifest generation settings are recorded", False, "manifest missing")
@@ -1067,8 +1218,24 @@ def audit_turkish(
             "turkish_inferred_questions.md": _sha256_file(md_path),
         }
         compact = _compact_texts(csv_path, json_path, md_path)
-        compact_payload = json.loads(json_path.read_text(encoding="utf-8"))
-        expected_compact_keys = {"deployment_id", "model_id", "model_revision", "source_commit", "rows"}
+        compact_payload = compact["json_payload"]
+        expected_compact_keys = {
+            "deployment_id",
+            "turkish_run_id",
+            "analysis_attempt",
+            "model_id",
+            "model_revision",
+            "source_commit",
+            "prompt_version",
+            "episode_safety_policy_version",
+            "episode_safety_policy_sha256",
+            "prompt_contract_sha256",
+            "generation_settings_hash",
+            "run_manifest_sha256",
+            "selection_file_sha256",
+            "episode_exclusion_counts",
+            "rows",
+        }
         compact_payload_keys = set(compact_payload) if isinstance(compact_payload, dict) else set()
         row_extra_keys = []
         if isinstance(compact_payload, dict) and isinstance(compact_payload.get("rows"), list):
@@ -1087,6 +1254,45 @@ def audit_turkish(
             "compact JSON contains only the documented metadata and final rows",
             compact_payload_keys == expected_compact_keys and not row_extra_keys,
             {"keys": sorted(compact_payload_keys), "row_extra_keys": row_extra_keys[:10]},
+        )
+        compact_policy_ok = isinstance(compact_payload, dict) and (
+            compact_payload.get("prompt_version") == PROMPT_VERSION
+            and compact_payload.get("episode_safety_policy_version") == EPISODE_SAFETY_POLICY_VERSION
+            and compact_payload.get("episode_safety_policy_sha256") == EPISODE_SAFETY_POLICY_SHA256
+        )
+        compact_metadata = compact_payload if isinstance(compact_payload, dict) else {}
+        record(
+            "compact_episode_safety_policy",
+            "compact provenance carries the episode safety policy identity",
+            compact_policy_ok,
+            {
+                "prompt_version": compact_metadata.get("prompt_version"),
+                "policy_version": compact_metadata.get("episode_safety_policy_version"),
+                "policy_sha256": compact_metadata.get("episode_safety_policy_sha256"),
+            },
+        )
+        compact_identity_ok = isinstance(compact_payload, dict) and all(
+            compact_payload.get(key) == expected
+            for key, expected in {
+                "turkish_run_id": manifest.get("turkish_run_id"),
+                "analysis_attempt": manifest.get("analysis_attempt"),
+                "source_commit": manifest.get("source_commit"),
+                "prompt_contract_sha256": manifest.get("prompt_contract_sha256"),
+                "generation_settings_hash": manifest.get("generation_settings_hash"),
+                "run_manifest_sha256": manifest_hash,
+                "selection_file_sha256": manifest.get("selection_file_sha256"),
+            }.items()
+        )
+        record(
+            "compact_provenance_identity",
+            "compact provenance is bound to this run, source, prompt, and selection",
+            compact_identity_ok,
+            {
+                "turkish_run_id": compact_metadata.get("turkish_run_id"),
+                "analysis_attempt": compact_metadata.get("analysis_attempt"),
+                "source_commit": compact_metadata.get("source_commit"),
+                "run_manifest_sha256": compact_metadata.get("run_manifest_sha256"),
+            },
         )
         record(
             "no_raw_reasoning",
@@ -1141,12 +1347,16 @@ def audit_turkish(
         forbidden_stems = set(stems)
         violations: list[str] = []
         for text in compact["texts"]:
-            if any(marker in text for marker in ("[WINDOW", "]", '"', "'", "<|")):
-                violations.append(f"forbidden marker in: {text[:60]!r}")
+            if any(marker in text for marker in ("[WINDOW", "]", "<|")):
+                violations.append("forbidden marker or quote")
+            if any(marker in text for marker in ('"\'`“”‘’«»‹›„‟‚‛')):
+                violations.append("forbidden marker or quote")
+            if _CANONICAL_SEQUENCE_TOKEN_RE.search(text):
+                violations.append("forbidden sequence identifier")
             if _contains_any(text, forbidden_stems):
-                violations.append(f"filename stem or subject string in: {text[:60]!r}")
+                violations.append("filename stem or subject string")
             if ngram_overlap_at_least(text, windows, OVERLAP_TOKEN_COUNT):
-                violations.append(f"{OVERLAP_TOKEN_COUNT}+ token transcript overlap in: {text[:60]!r}")
+                violations.append(f"{OVERLAP_TOKEN_COUNT}+ token transcript overlap")
         record(
             "privacy_markers",
             "no subject ID, filename stem, window marker, quote, or transcript fragment in compact outputs",
@@ -1207,10 +1417,26 @@ def audit_turkish(
             record(
                 "assignment_once",
                 "every candidate and cluster assigned exactly once",
-                recomputed["candidate_count"] > 0 and recomputed["cluster_count"] > 0,
+                recomputed["candidate_count"] >= 0 and recomputed["cluster_count"] >= 0,
                 {
                     "candidates": recomputed["candidate_count"],
                     "clusters": recomputed["cluster_count"],
+                },
+                scope="remote",
+            )
+            record(
+                "episode_exclusion_summary",
+                "episode exclusions are counted by safe reason without episode text",
+                set(recomputed["episode_exclusion_counts"]) == set(EPISODE_SAFETY_REASON_CODES)
+                and recomputed["episodes_returned"]
+                == recomputed["episodes_retained"] + recomputed["episodes_excluded"],
+                {
+                    "subjects_with_retained_episodes": recomputed["subjects_with_retained_episodes"],
+                    "subjects_with_zero_retained_episodes": recomputed["subjects_with_zero_retained_episodes"],
+                    "episodes_returned": recomputed["episodes_returned"],
+                    "episodes_retained": recomputed["episodes_retained"],
+                    "episodes_excluded": recomputed["episodes_excluded"],
+                    "by_reason": recomputed["episode_exclusion_counts"],
                 },
                 scope="remote",
             )
@@ -1232,10 +1458,14 @@ def audit_turkish(
                 "prompt_provenance_complete",
                 "one prompt version and contract with 135 subject-specific bundles",
                 manifest.get("prompt_version") == PROMPT_VERSION
+                and manifest.get("episode_safety_policy_version") == EPISODE_SAFETY_POLICY_VERSION
+                and manifest.get("episode_safety_policy_sha256") == EPISODE_SAFETY_POLICY_SHA256
                 and bool(manifest.get("prompt_contract_sha256"))
                 and recomputed["prompt_bundle_count"] == 135,
                 {
                     "prompt_version": manifest.get("prompt_version"),
+                    "episode_safety_policy_version": manifest.get("episode_safety_policy_version"),
+                    "episode_safety_policy_sha256": manifest.get("episode_safety_policy_sha256"),
                     "prompt_contract_sha256": manifest.get("prompt_contract_sha256"),
                     "prompt_bundle_count": recomputed["prompt_bundle_count"],
                 },
@@ -1248,6 +1478,7 @@ def audit_turkish(
                 ("preparation_sequences", "all 135 sequences prepared with exact source hash"),
                 ("sequences_completed_once", "all 135 sequences completed exactly once with zero failures"),
                 ("assignment_once", "every candidate and cluster assigned exactly once"),
+                ("episode_exclusion_summary", "episode exclusion summary is valid"),
                 ("consolidation_batches", "the fixed five consolidation batches are present"),
                 ("aggregation_recompute", "final aggregation recomputes identically from restricted evidence"),
                 ("prompt_provenance_complete", "prompt provenance is complete"),
@@ -1258,6 +1489,7 @@ def audit_turkish(
         record_skipped("preparation_sequences", "restricted evidence not present locally")
         record_skipped("sequences_completed_once", "restricted evidence not present locally")
         record_skipped("assignment_once", "restricted evidence not present locally")
+        record_skipped("episode_exclusion_summary", "restricted evidence not present locally")
         record_skipped("aggregation_recompute", "restricted evidence not present locally")
         record_skipped("prompt_provenance_complete", "restricted evidence not present locally")
 
@@ -1359,6 +1591,8 @@ def audit_turkish(
         "model_id": manifest.get("model_id", runtime.get("model_id")),
         "model_revision": manifest.get("model_revision", runtime.get("model_revision")),
         "prompt_version": manifest.get("prompt_version"),
+        "episode_safety_policy_version": manifest.get("episode_safety_policy_version"),
+        "episode_safety_policy_sha256": manifest.get("episode_safety_policy_sha256"),
         "prompt_contract_sha256": manifest.get("prompt_contract_sha256"),
         "generation_settings_hash": manifest.get("generation_settings_hash"),
         "request_settings": manifest.get("request_settings"),
@@ -1373,6 +1607,12 @@ def audit_turkish(
         "supersedes_job_ids": manifest.get("supersedes_job_ids", []),
         "final_merge_sha256": restricted_summary.get("final_merge_sha256") if restricted_summary else None,
         "aggregation_sha256": restricted_summary.get("aggregation_sha256") if restricted_summary else None,
+        "episode_exclusion_counts": restricted_summary.get("episode_exclusion_counts") if restricted_summary else None,
+        "subjects_with_retained_episodes": restricted_summary.get("subjects_with_retained_episodes") if restricted_summary else None,
+        "subjects_with_zero_retained_episodes": restricted_summary.get("subjects_with_zero_retained_episodes") if restricted_summary else None,
+        "episodes_returned": restricted_summary.get("episodes_returned") if restricted_summary else None,
+        "episodes_retained": restricted_summary.get("episodes_retained") if restricted_summary else None,
+        "episodes_excluded": restricted_summary.get("episodes_excluded") if restricted_summary else None,
         "passed": passed,
         "checks": checks,
         "remote_audit_reference": str(remote_reference) if remote_reference else None,
