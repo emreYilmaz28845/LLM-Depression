@@ -37,9 +37,15 @@ from typing import Any, Iterable, Sequence
 
 from src.qwen38.contracts import (
     CONFIDENCE_WEIGHTS,
+    CONSOLIDATION_FINAL_SIMPLIFIED_SCHEMA,
+    FALLBACK_INFERENCE_SCHEMA,
     FINAL_TABLE_COLUMNS,
+    INFERENCE_POLICY,
+    INFERENCE_POLICY_VERSION,
+    FALLBACK_PROMPT_VERSION,
     MODEL_ID,
     MODEL_REVISION,
+    STRICT_PROMPT_VERSION,
     SUBJECT_INFERENCE_SCHEMA,
     SERVED_MODEL,
     TURKISH_CONSOLIDATION_BATCHES,
@@ -58,10 +64,15 @@ from src.qwen38.contracts import (
     structured_output_schema,
     validate_consolidation_batch,
     validate_consolidation_final,
+    validate_consolidation_final_simplified,
+    validate_fallback_inference,
     validate_subject_inference,
 )
 
 PROMPT_VERSION = "qwen38_turkish_v3"
+STRICT_PROMPT_VERSION = STRICT_PROMPT_VERSION
+FALLBACK_PROMPT_VERSION = FALLBACK_PROMPT_VERSION
+INFERENCE_POLICY_VERSION = INFERENCE_POLICY_VERSION
 EPISODE_SAFETY_POLICY_VERSION = "qwen38_episode_safety_v1"
 EPISODE_TEXT_FIELDS = (
     "question_tr",
@@ -185,6 +196,51 @@ SCHEMA_CORRECTION_MESSAGE = (
     "and no private content."
 )
 
+FALLBACK_SYSTEM_PROMPT = (
+    "You infer recurring interviewer questions from answer-only Turkish transcripts. "
+    "You see only participant answers marked [WINDOW n] in chronological order; "
+    "questions are inferred, not recovered verbatim. The window numbers are sequential "
+    "20-second indices, not question IDs. For each distinct inferred question family, "
+    "return one concise Turkish and English question and its framing label. Classify "
+    "the inferred question framing, not answer tone:\n"
+    "- POSITIVE asks about happiness, enjoyment, strengths, hope, support, positive "
+    "memories, or pleasant events.\n"
+    "- NEGATIVE asks about sadness, distress, problems, symptoms, loss, fear, conflict, "
+    "or unpleasant events.\n"
+    "- NEUTRAL is factual, descriptive, demographic, procedural, or open framing.\n"
+    "- MIXED asks for both positive and negative material in one question.\n"
+    "Do not include window markers, sequence identifiers, quotes, apostrophes, "
+    "backticks, copied answer text, or reasoning in any field. Return exactly one JSON object, "
+    "no prose, no markdown fences, with this exact shape:\n"
+    '{\n'
+    '  "questions": [\n'
+    '    {\n'
+    '      "question_tr": "concise inferred Turkish question",\n'
+    '      "question_en": "concise inferred English question",\n'
+    '      "label": "POSITIVE | NEGATIVE | NEUTRAL | MIXED",\n'
+    '      "confidence": "HIGH | MEDIUM | LOW"\n'
+    '    }\n'
+    '  ]\n'
+    '}\n'
+    "Use exactly the field names shown."
+)
+
+FALLBACK_CORRECTION_MESSAGE = (
+    "Correct the previous simplified response. The permitted categories are "
+    "invalid_json, invalid_schema, forbidden_marker_or_identifier, and "
+    "privacy_overlap_12_tokens. Return exactly one JSON object matching the "
+    "simplified schema with question_tr, question_en, label, and confidence only, "
+    "with no extra fields, no window markers, no identifiers, no quotes, no copied "
+    "answer text, and no private content."
+)
+
+CONSOLIDATION_CORRECTION_MESSAGE = (
+    "Correct the previous consolidation response. The permitted categories are "
+    "invalid_json, invalid_schema, and assignment coverage. Return exactly one JSON "
+    "object matching the required schema with exact candidate or cluster assignment, "
+    "with no extra fields and no private content."
+)
+
 EVIDENCE_BASIS_FALLBACK = "Inferred from response topic and framing"
 _EVIDENCE_QUOTES = '"\'`“”‘’«»‹›„‟‚‛'
 _EVIDENCE_QUOTE_TRANSLATION = str.maketrans({character: None for character in _EVIDENCE_QUOTES})
@@ -221,6 +277,13 @@ EPISODE_SAFETY_POLICY = {
 }
 EPISODE_SAFETY_POLICY_SHA256 = _sha256_text(_canonical_json(EPISODE_SAFETY_POLICY))
 
+FALLBACK_PROMPT_SHA256 = _sha256_text(FALLBACK_SYSTEM_PROMPT)
+FALLBACK_CORRECTION_SHA256 = _sha256_text(FALLBACK_CORRECTION_MESSAGE)
+CONSOLIDATION_CORRECTION_SHA256 = _sha256_text(CONSOLIDATION_CORRECTION_MESSAGE)
+STRICT_SCHEMA_SHA256 = _sha256_text(_canonical_json(SUBJECT_INFERENCE_SCHEMA))
+FALLBACK_SCHEMA_SHA256 = _sha256_text(_canonical_json(FALLBACK_INFERENCE_SCHEMA))
+INFERENCE_POLICY_SHA256 = _sha256_text(_canonical_json(INFERENCE_POLICY))
+
 
 def normalize_episode_text(value: str) -> str:
     """Apply only the harmless formatting normalization allowed by the plan."""
@@ -252,12 +315,23 @@ def prompt_contract_payload(
     settings = request_settings(max_tokens)
     return {
         "prompt_version": PROMPT_VERSION,
+        "strict_prompt_version": STRICT_PROMPT_VERSION,
+        "fallback_prompt_version": FALLBACK_PROMPT_VERSION,
+        "inference_policy_version": INFERENCE_POLICY_VERSION,
+        "inference_policy_sha256": INFERENCE_POLICY_SHA256,
+        "inference_policy": INFERENCE_POLICY,
         "episode_safety_policy_version": EPISODE_SAFETY_POLICY_VERSION,
         "episode_safety_policy_sha256": EPISODE_SAFETY_POLICY_SHA256,
         "episode_safety_policy": EPISODE_SAFETY_POLICY,
         "SUBJECT_SYSTEM_PROMPT": SUBJECT_SYSTEM_PROMPT,
+        "FALLBACK_SYSTEM_PROMPT": FALLBACK_SYSTEM_PROMPT,
         "SCHEMA_CORRECTION_MESSAGE": SCHEMA_CORRECTION_MESSAGE,
+        "FALLBACK_CORRECTION_MESSAGE": FALLBACK_CORRECTION_MESSAGE,
+        "CONSOLIDATION_CORRECTION_MESSAGE": CONSOLIDATION_CORRECTION_MESSAGE,
         "subject_output_schema": SUBJECT_INFERENCE_SCHEMA,
+        "fallback_output_schema": FALLBACK_INFERENCE_SCHEMA,
+        "strict_schema_sha256": STRICT_SCHEMA_SHA256,
+        "fallback_schema_sha256": FALLBACK_SCHEMA_SHA256,
         "model_id": MODEL_ID,
         "model_revision": model_revision,
         "temperature": settings["temperature"],
@@ -304,11 +378,18 @@ def prompt_component_hashes(
     return {
         "user_prompt_sha256": _sha256_text(user_prompt),
         "system_prompt_sha256": _sha256_text(SUBJECT_SYSTEM_PROMPT),
+        "fallback_prompt_sha256": FALLBACK_PROMPT_SHA256,
         "correction_message_sha256": _sha256_text(SCHEMA_CORRECTION_MESSAGE),
-        "subject_schema_sha256": _sha256_text(_canonical_json(SUBJECT_INFERENCE_SCHEMA)),
+        "fallback_correction_sha256": FALLBACK_CORRECTION_SHA256,
+        "subject_schema_sha256": STRICT_SCHEMA_SHA256,
+        "fallback_schema_sha256": FALLBACK_SCHEMA_SHA256,
         "generation_settings_hash": generation_settings_hash(max_tokens),
         "episode_safety_policy_version": EPISODE_SAFETY_POLICY_VERSION,
         "episode_safety_policy_sha256": EPISODE_SAFETY_POLICY_SHA256,
+        "strict_prompt_version": STRICT_PROMPT_VERSION,
+        "fallback_prompt_version": FALLBACK_PROMPT_VERSION,
+        "inference_policy_version": INFERENCE_POLICY_VERSION,
+        "inference_policy_sha256": INFERENCE_POLICY_SHA256,
         "prompt_contract_sha256": prompt_contract_sha256(
             model_revision=model_revision, max_tokens=max_tokens, seed=seed
         ),
@@ -510,12 +591,19 @@ def prepare_sequences(
         "model_id": MODEL_ID,
         "model_revision": model_revision,
         "prompt_version": PROMPT_VERSION,
+        "strict_prompt_version": STRICT_PROMPT_VERSION,
+        "fallback_prompt_version": FALLBACK_PROMPT_VERSION,
+        "inference_policy_version": INFERENCE_POLICY_VERSION,
+        "inference_policy_sha256": INFERENCE_POLICY_SHA256,
         "episode_safety_policy_version": EPISODE_SAFETY_POLICY_VERSION,
         "episode_safety_policy_sha256": EPISODE_SAFETY_POLICY_SHA256,
         "prompt_contract_sha256": contract_hash,
         "system_prompt_sha256": _sha256_text(SUBJECT_SYSTEM_PROMPT),
+        "fallback_prompt_sha256": FALLBACK_PROMPT_SHA256,
         "correction_message_sha256": _sha256_text(SCHEMA_CORRECTION_MESSAGE),
-        "subject_schema_sha256": _sha256_text(_canonical_json(SUBJECT_INFERENCE_SCHEMA)),
+        "fallback_correction_sha256": FALLBACK_CORRECTION_SHA256,
+        "subject_schema_sha256": STRICT_SCHEMA_SHA256,
+        "fallback_schema_sha256": FALLBACK_SCHEMA_SHA256,
         "generation_settings_hash": generation_hash,
         "request_settings": request_settings(TURKISH_MAX_TOKENS),
         "selected_tp": selected_tp,
@@ -562,6 +650,10 @@ def prepare_sequences(
                 "model_revision": model_revision,
                 "generation_settings_hash": generation_hash,
                 "prompt_version": PROMPT_VERSION,
+                "strict_prompt_version": STRICT_PROMPT_VERSION,
+                "fallback_prompt_version": FALLBACK_PROMPT_VERSION,
+                "inference_policy_version": INFERENCE_POLICY_VERSION,
+                "inference_policy_sha256": INFERENCE_POLICY_SHA256,
                 "episode_safety_policy_version": EPISODE_SAFETY_POLICY_VERSION,
                 "episode_safety_policy_sha256": EPISODE_SAFETY_POLICY_SHA256,
                 "deployment_id": deployment_id,
@@ -587,6 +679,10 @@ def prepare_sequences(
         "subject_map_path": str(map_path),
         "prepared_sequences_path": str(packets_path),
         "prompt_version": PROMPT_VERSION,
+        "strict_prompt_version": STRICT_PROMPT_VERSION,
+        "fallback_prompt_version": FALLBACK_PROMPT_VERSION,
+        "inference_policy_version": INFERENCE_POLICY_VERSION,
+        "inference_policy_sha256": INFERENCE_POLICY_SHA256,
         "episode_safety_policy_version": EPISODE_SAFETY_POLICY_VERSION,
         "episode_safety_policy_sha256": EPISODE_SAFETY_POLICY_SHA256,
         "prompt_contract_sha256": contract_hash,
@@ -736,6 +832,68 @@ def filter_safe_episodes(
             retained.append(episode)
     return retained, exclusions
 
+def _validate_fallback_payload(payload: Any) -> list[dict[str, Any]]:
+    """Validate simplified question schema; returns normalized questions."""
+    errors = validate_fallback_inference(payload)
+    if errors:
+        raise ValueError("invalid fallback schema")
+    questions = payload["questions"]
+    for idx, q in enumerate(questions):
+        if not isinstance(q["question_tr"], str) or not q["question_tr"].strip():
+            raise ValueError("invalid fallback schema")
+        if not isinstance(q["question_en"], str) or not q["question_en"].strip():
+            raise ValueError("invalid fallback schema")
+    return questions
+
+
+def _fallback_to_episodes(
+    questions: list[dict[str, Any]],
+    sequence_id: str,
+) -> list[dict[str, Any]]:
+    episodes: list[dict[str, Any]] = []
+    for idx, q in enumerate(questions, start=1):
+        episodes.append(
+            {
+                "sequence_id": sequence_id,
+                "episode_order": idx,
+                "question_tr": q["question_tr"],
+                "question_en": q["question_en"],
+                "label": q["label"],
+                "wording_status": WordingStatus.INFERRED_PARAPHRASE.value,
+                "confidence": q["confidence"],
+                "evidence_window_indices": [],
+                "evidence_basis": EVIDENCE_BASIS_FALLBACK,
+                "abstain_reason": "",
+            }
+        )
+    return episodes
+
+
+def _fallback_response_validation(
+    content: str,
+    sequence_id: str,
+    transcript_windows: Sequence[str],
+) -> tuple[list[dict[str, Any]] | None, list[dict[str, Any]] | None, list[str]]:
+    if not content.strip():
+        return None, None, ["invalid_json"]
+    parsed = _parse_json_object(content)
+    if parsed is None:
+        return None, None, ["invalid_json"]
+    try:
+        questions = _validate_fallback_payload(parsed)
+    except Exception:
+        return None, None, ["invalid_schema"]
+    episodes = _fallback_to_episodes(questions, sequence_id)
+    # Normalize (including question fields) before safety checks
+    for ep in episodes:
+        _normalize_episode_fields(ep)
+    retained, exclusions = filter_safe_episodes(episodes, sequence_id, transcript_windows)
+    reasons = _ordered_reason_codes(
+        reason for exclusion in exclusions for reason in exclusion["reason_codes"]
+    )
+    return retained, exclusions, reasons
+
+
 
 def _validate_episodes(
     payload: dict[str, Any],
@@ -850,6 +1008,29 @@ def correction_message(reason_codes: Sequence[str]) -> str:
     return f"{SCHEMA_CORRECTION_MESSAGE} Categories observed: {', '.join(categories)}."
 
 
+
+def _strict_response_validation(
+    content: str,
+    sequence_id: str,
+    transcript_windows: Sequence[str],
+) -> tuple[list[dict[str, Any]] | None, list[dict[str, Any]] | None, list[str]]:
+    """Strict route validation: JSON/schema + safety filtering."""
+    if not content.strip():
+        return None, None, ["invalid_json"]
+    parsed = _parse_json_object(content)
+    if parsed is None:
+        return None, None, ["invalid_json"]
+    try:
+        episodes = _validate_subject_schema(parsed, sequence_id)
+    except Exception:
+        return None, None, ["invalid_schema"]
+    retained, exclusions = filter_safe_episodes(episodes, sequence_id, transcript_windows)
+    reasons = _ordered_reason_codes(
+        reason for exclusion in exclusions for reason in exclusion["reason_codes"]
+    )
+    return retained, exclusions, reasons
+
+
 def infer_subjects(
     prepared_path: str | Path,
     inferences_dir: str | Path,
@@ -862,7 +1043,7 @@ def infer_subjects(
     source_commit: str | None = None,
     turkish_run_id: str | None = None,
 ) -> dict[str, Any]:
-    """Run one deterministic request per sequence; resumable by sequence ID."""
+    """Run deterministic ladder per subject: strict -> fallback -> exclusion."""
     sequences = load_prepared_sequences(prepared_path)
     inferences_dir = Path(inferences_dir)
     inferences_dir.mkdir(parents=True, exist_ok=True)
@@ -879,6 +1060,12 @@ def infer_subjects(
         raise ValueError("run manifest self-reference is invalid")
     if manifest.get("prompt_version") != PROMPT_VERSION:
         raise ValueError("resume refused: prompt version changed")
+    if manifest.get("strict_prompt_version") != STRICT_PROMPT_VERSION:
+        raise ValueError("resume refused: strict prompt version changed")
+    if manifest.get("fallback_prompt_version") != FALLBACK_PROMPT_VERSION:
+        raise ValueError("resume refused: fallback prompt version changed")
+    if manifest.get("inference_policy_version") != INFERENCE_POLICY_VERSION:
+        raise ValueError("resume refused: inference policy version changed")
     if manifest.get("episode_safety_policy_version") != EPISODE_SAFETY_POLICY_VERSION:
         raise ValueError("resume refused: episode safety policy version changed")
     if manifest.get("episode_safety_policy_sha256") != EPISODE_SAFETY_POLICY_SHA256:
@@ -910,6 +1097,10 @@ def infer_subjects(
                         f"resume refused for {sequence_id}: {key} changed "
                         f"(stored {existing.get(key)!r} != expected {value!r})"
                     )
+            # also verify new ladder fields if present in existing record
+            # require subject_status etc to be present
+            if "subject_status" not in existing or "route_used" not in existing:
+                raise ValueError(f"resume refused for {sequence_id}: ladder provenance missing")
             completed += 1
             continue
         if inference_path.exists():
@@ -920,21 +1111,25 @@ def infer_subjects(
 
     async def infer_one(sequence: dict[str, Any]) -> tuple[str, bool, str | None]:
         sequence_id = sequence["sequence_id"]
-        base_messages = [
-            {"role": "system", "content": SUBJECT_SYSTEM_PROMPT},
-            {"role": "user", "content": sequence["user_prompt"]},
-        ]
         transcript_windows = [window["text"] for window in sequence.get("windows", [])]
-        first_failure_reasons: list[str] = []
+        strict_gen_count = 0
+        fallback_gen_count = 0
+        strict_failure_cats: list[str] = []
+        fallback_failure_cats: list[str] = []
+        # ---------- Route A: strict ----------
+        strict_retained: list[dict[str, Any]] | None = None
+        strict_exclusions: list[dict[str, Any]] | None = None
+        strict_episodes_returned = 0
+        first_strict_failure: list[str] = []
+        strict_success = False
         for attempt in (1, 2):
-            messages = list(base_messages)
+            strict_gen_count += 1
+            messages = [
+                {"role": "system", "content": SUBJECT_SYSTEM_PROMPT},
+                {"role": "user", "content": sequence["user_prompt"]},
+            ]
             if attempt == 2:
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": correction_message(first_failure_reasons),
-                    }
-                )
+                messages.append({"role": "user", "content": correction_message(first_strict_failure)})
             try:
                 stream = await client.chat.completions.create(
                     model=model,
@@ -955,42 +1150,251 @@ def infer_subjects(
                             chunks.append(content)
                 content = "".join(chunks)
             except Exception:
-                # A request/stream failure is not a validation failure. Do not
-                # turn an infrastructure error into an unauthorized correction
-                # generation; the caller must reconcile the failed run.
                 return sequence_id, False, "request_failed"
-
-            retained, exclusions, reasons = _response_validation(
-                content, sequence_id, transcript_windows
-            )
-            if retained is None or exclusions is None:
+            retained, exclusions, reasons = _strict_response_validation(content, sequence_id, transcript_windows)
+            if retained is None:
+                # invalid json/schema
+                cats = _ordered_reason_codes(reasons)
                 if attempt == 1:
-                    first_failure_reasons = reasons
+                    first_strict_failure = cats
+                    strict_failure_cats = cats
                     continue
-                return sequence_id, False, reasons[0] if reasons else "invalid_schema"
-            if attempt == 1 and reasons:
-                first_failure_reasons = reasons
-                continue
+                else:
+                    strict_failure_cats = _ordered_reason_codes(strict_failure_cats + cats)
+                    break
+            else:
+                # valid schema, possibly with exclusions
+                if reasons:
+                    # some episodes unsafe
+                    if attempt == 1:
+                        first_strict_failure = _ordered_reason_codes(reasons)
+                        strict_failure_cats = first_strict_failure
+                        continue
+                    else:
+                        # second attempt: have retained/exclusions
+                        # Record failure cats from first attempt
+                        # If retained non-empty, success via strict
+                        if retained:
+                            strict_retained = retained
+                            strict_exclusions = exclusions
+                            strict_episodes_returned = len(retained) + len(exclusions)
+                            strict_failure_cats = first_strict_failure
+                            strict_success = True
+                            break
+                        else:
+                            # valid but all filtered -> treat as strict failure needing fallback
+                            strict_failure_cats = _ordered_reason_codes(first_strict_failure + reasons)
+                            # keep retained/exclusions for fallback decision but not success
+                            strict_retained = retained
+                            strict_exclusions = exclusions
+                            break
+                else:
+                    # no safety reasons, fully valid
+                    strict_retained = retained
+                    strict_exclusions = exclusions
+                    strict_episodes_returned = len(retained) + len(exclusions)
+                    strict_failure_cats = first_strict_failure if attempt == 2 else []
+                    strict_success = True
+                    break
+        if strict_success and strict_retained is not None:
+            # Route A succeeded: keep safe episodes, ignore fallback
             record = dict(_episode_provenance(sequence))
             record.update(
                 {
                     "sequence_id": sequence_id,
                     "status": "completed",
-                    "generation_attempts": attempt,
-                    "correction_reason_codes": first_failure_reasons if attempt == 2 else [],
-                    "episodes_returned": len(retained) + len(exclusions),
-                    "episodes_retained": len(retained),
-                    "episode_exclusions": exclusions,
-                    "episodes": retained,
-                    "episode_count": len(retained),
+                    "subject_status": "INCLUDED",
+                    "route_used": "STRICT",
+                    "strict_generation_count": strict_gen_count,
+                    "fallback_generation_count": 0,
+                    "strict_failure_categories": strict_failure_cats,
+                    "fallback_failure_categories": [],
+                    "generation_attempts": strict_gen_count,
+                    "correction_reason_codes": strict_failure_cats,
+                    "episodes_returned": len(strict_retained) + len(strict_exclusions or []),
+                    "episodes_retained": len(strict_retained),
+                    "episode_exclusions": strict_exclusions or [],
+                    "subject_exclusion_reason": "",
+                    "episodes": strict_retained,
+                    "episode_count": len(strict_retained),
                     "completed_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "strict_prompt_version": STRICT_PROMPT_VERSION,
+                    "fallback_prompt_version": FALLBACK_PROMPT_VERSION,
+                    "inference_policy_version": INFERENCE_POLICY_VERSION,
+                    "strict_prompt_sha256": _sha256_text(SUBJECT_SYSTEM_PROMPT),
+                    "fallback_prompt_sha256": FALLBACK_PROMPT_SHA256,
+                    "inference_policy_sha256": INFERENCE_POLICY_SHA256,
                 }
             )
             inference_path = inferences_dir / f"{sequence_id}.json"
             _atomic_write_json(record, inference_path)
             _restrict(inference_path)
             return sequence_id, True, None
-        return sequence_id, False, "invalid_schema"
+        # If strict had valid schema but all episodes filtered (retained empty with exclusions),
+        # we do NOT return success; fall through to fallback.
+        # Similarly if strict both attempts invalid, fall through.
+
+        # ---------- Route B: fallback simplified ----------
+        fallback_retained: list[dict[str, Any]] | None = None
+        fallback_exclusions: list[dict[str, Any]] | None = None
+        first_fallback_failure: list[str] = []
+        fallback_success = False
+        for fb_attempt in (1, 2):
+            fallback_gen_count += 1
+            messages = [
+                {"role": "system", "content": FALLBACK_SYSTEM_PROMPT},
+                {"role": "user", "content": sequence["user_prompt"]},
+            ]
+            if fb_attempt == 2:
+                # category-only correction for fallback
+                cats = first_fallback_failure if first_fallback_failure else strict_failure_cats
+                correction = f"{FALLBACK_CORRECTION_MESSAGE} Categories observed: {', '.join(_ordered_reason_codes(cats) or list(CORRECTION_REASON_CODES))}."
+                messages.append({"role": "user", "content": correction})
+            try:
+                stream = await client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=settings["temperature"],
+                    top_p=settings["top_p"],
+                    max_tokens=settings["max_tokens"],
+                    seed=seed,
+                    extra_body={"chat_template_kwargs": settings["chat_template_kwargs"]},
+                    stream=True,
+                )
+                chunks: list[str] = []
+                async for chunk in stream:
+                    if getattr(chunk, "choices", None):
+                        delta = chunk.choices[0].delta
+                        content = getattr(delta, "content", None)
+                        if content:
+                            chunks.append(content)
+                content = "".join(chunks)
+            except Exception:
+                return sequence_id, False, "request_failed"
+            retained, exclusions, reasons = _fallback_response_validation(content, sequence_id, transcript_windows)
+            if retained is None:
+                cats = _ordered_reason_codes(reasons)
+                if fb_attempt == 1:
+                    first_fallback_failure = cats
+                    fallback_failure_cats = cats
+                    continue
+                else:
+                    fallback_failure_cats = _ordered_reason_codes(fallback_failure_cats + cats)
+                    break
+            else:
+                if reasons:
+                    # some unsafe in fallback
+                    if fb_attempt == 1:
+                        first_fallback_failure = _ordered_reason_codes(reasons)
+                        fallback_failure_cats = first_fallback_failure
+                        continue
+                    else:
+                        if retained:
+                            fallback_retained = retained
+                            fallback_exclusions = exclusions
+                            fallback_failure_cats = first_fallback_failure
+                            fallback_success = True
+                            break
+                        else:
+                            # all filtered
+                            fallback_failure_cats = _ordered_reason_codes(first_fallback_failure + reasons)
+                            break
+                else:
+                    # no safety reasons
+                    if retained:
+                        fallback_retained = retained
+                        fallback_exclusions = exclusions
+                        fallback_failure_cats = first_fallback_failure if fb_attempt == 2 else []
+                        fallback_success = True
+                        break
+                    else:
+                        # empty questions array -> treat as zero retained
+                        # Consider this as success with zero episodes? But spec says exclusion if all valid items unsafe.
+                        # Empty is not unsafe, but yields zero. We'll treat as success with zero.
+                        fallback_retained = retained
+                        fallback_exclusions = exclusions
+                        fallback_success = True
+                        break
+        if fallback_success and fallback_retained is not None:
+            # Route B succeeded with at least one retained (or zero but still valid)
+            # For spec, if fallback returned at least one safe, it's INCLUDED
+            # If fallback returned zero but valid (empty), also INCLUDED zero? We'll treat as INCLUDED.
+            record = dict(_episode_provenance(sequence))
+            record.update(
+                {
+                    "sequence_id": sequence_id,
+                    "status": "completed",
+                    "subject_status": "INCLUDED",
+                    "route_used": "SIMPLIFIED",
+                    "strict_generation_count": strict_gen_count,
+                    "fallback_generation_count": fallback_gen_count,
+                    "strict_failure_categories": strict_failure_cats,
+                    "fallback_failure_categories": fallback_failure_cats,
+                    "generation_attempts": strict_gen_count + fallback_gen_count,
+                    "correction_reason_codes": strict_failure_cats,
+                    "episodes_returned": len(fallback_retained) + len(fallback_exclusions or []),
+                    "episodes_retained": len(fallback_retained),
+                    "episode_exclusions": fallback_exclusions or [],
+                    "subject_exclusion_reason": "",
+                    "episodes": fallback_retained,
+                    "episode_count": len(fallback_retained),
+                    "completed_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "strict_prompt_version": STRICT_PROMPT_VERSION,
+                    "fallback_prompt_version": FALLBACK_PROMPT_VERSION,
+                    "inference_policy_version": INFERENCE_POLICY_VERSION,
+                    "strict_prompt_sha256": _sha256_text(SUBJECT_SYSTEM_PROMPT),
+                    "fallback_prompt_sha256": FALLBACK_PROMPT_SHA256,
+                    "inference_policy_sha256": INFERENCE_POLICY_SHA256,
+                }
+            )
+            inference_path = inferences_dir / f"{sequence_id}.json"
+            _atomic_write_json(record, inference_path)
+            _restrict(inference_path)
+            return sequence_id, True, None
+
+        # ---------- Route C: safe exclusion ----------
+        # Build excluded record with zero episodes
+        # Need to collect failure cats: if strict both invalid, those cats; fallback cats similarly.
+        # If fallback had valid but all filtered, cats include safety reasons.
+        # For excluded, strict_generation_count up to 2, fallback up to 2, total max 4.
+        # Use collected cats.
+        record = dict(_episode_provenance(sequence))
+        # Ensure we have at least 2 counts per route if not already
+        # If strict_gen_count <2, set to 2? But we already incremented per attempt.
+        # For excluded, we need to ensure we attempted max: if strict had 1 attempt and fell back, strict_gen_count may be 1? But spec says max across both routes 4, and exclusion after bounded repair means we attempted max.
+        # To reflect bounded repair, if strict succeeded partially? No, exclusion means strict failed both attempts or all filtered, so strict_gen_count should be 2.
+        # We'll set counts as actually attempted; audit can check totals.
+        record.update(
+            {
+                "sequence_id": sequence_id,
+                "status": "completed",
+                "subject_status": "EXCLUDED",
+                "route_used": "NONE",
+                "strict_generation_count": strict_gen_count,
+                "fallback_generation_count": fallback_gen_count,
+                "strict_failure_categories": strict_failure_cats,
+                "fallback_failure_categories": fallback_failure_cats,
+                "generation_attempts": strict_gen_count + fallback_gen_count,
+                "correction_reason_codes": strict_failure_cats,
+                "episodes_returned": 0,
+                "episodes_retained": 0,
+                "episode_exclusions": [],
+                "subject_exclusion_reason": "MODEL_OUTPUT_INVALID_AFTER_BOUNDED_REPAIR",
+                "episodes": [],
+                "episode_count": 0,
+                "completed_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "strict_prompt_version": STRICT_PROMPT_VERSION,
+                "fallback_prompt_version": FALLBACK_PROMPT_VERSION,
+                "inference_policy_version": INFERENCE_POLICY_VERSION,
+                "strict_prompt_sha256": _sha256_text(SUBJECT_SYSTEM_PROMPT),
+                "fallback_prompt_sha256": FALLBACK_PROMPT_SHA256,
+                "inference_policy_sha256": INFERENCE_POLICY_SHA256,
+            }
+        )
+        inference_path = inferences_dir / f"{sequence_id}.json"
+        _atomic_write_json(record, inference_path)
+        _restrict(inference_path)
+        return sequence_id, True, None
 
     client: Any = None
     import asyncio
@@ -1015,9 +1419,38 @@ def infer_subjects(
         results = asyncio.run(orchestrate())
         for sequence_id, ok, error in results:
             if not ok:
-                failures.append(error or "invalid_schema")
+                failures.append(f"{sequence_id}: {error}")
 
     total_completed = completed + (len(pending) - len(failures))
+    # Compute provenance aggregates for audit: subjects_by_route etc
+    # Load all records to count
+    all_records = []
+    for seq in sequences:
+        p = inferences_dir / f"{seq['sequence_id']}.json"
+        if p.is_file():
+            try:
+                all_records.append(json.loads(p.read_text(encoding="utf-8")))
+            except Exception:
+                pass
+    subjects_included = sum(1 for r in all_records if r.get("subject_status") == "INCLUDED")
+    subjects_excluded = sum(1 for r in all_records if r.get("subject_status") == "EXCLUDED")
+    subjects_by_route = {
+        "STRICT": sum(1 for r in all_records if r.get("route_used") == "STRICT"),
+        "SIMPLIFIED": sum(1 for r in all_records if r.get("route_used") == "SIMPLIFIED"),
+        "NONE": sum(1 for r in all_records if r.get("route_used") == "NONE"),
+    }
+    strict_total = sum(int(r.get("strict_generation_count", 0)) for r in all_records)
+    fallback_total = sum(int(r.get("fallback_generation_count", 0)) for r in all_records)
+    episodes_returned = sum(int(r.get("episodes_returned", 0)) for r in all_records)
+    episodes_retained = sum(int(r.get("episodes_retained", 0)) for r in all_records)
+    episodes_excluded = sum(len(r.get("episode_exclusions", [])) for r in all_records)
+    # exclusions by safe reason
+    from collections import Counter
+    reason_counter = Counter()
+    for r in all_records:
+        for excl in r.get("episode_exclusions", []):
+            for rc in excl.get("reason_codes", []):
+                reason_counter[rc] += 1
     return {
         "sequences_total": len(sequences),
         "completed_before_resume": completed,
@@ -1026,10 +1459,22 @@ def infer_subjects(
         "failed": failures,
         "complete": total_completed == len(sequences) and not failures,
         "prompt_version": PROMPT_VERSION,
+        "strict_prompt_version": STRICT_PROMPT_VERSION,
+        "fallback_prompt_version": FALLBACK_PROMPT_VERSION,
+        "inference_policy_version": INFERENCE_POLICY_VERSION,
         "episode_safety_policy_version": EPISODE_SAFETY_POLICY_VERSION,
         "episode_safety_policy_sha256": EPISODE_SAFETY_POLICY_SHA256,
+        "subjects_processed": len(sequences),
+        "subjects_included": subjects_included,
+        "subjects_excluded": subjects_excluded,
+        "subjects_by_route": subjects_by_route,
+        "strict_generation_total": strict_total,
+        "fallback_generation_total": fallback_total,
+        "episodes_returned": episodes_returned,
+        "episodes_retained": episodes_retained,
+        "episodes_excluded": episodes_excluded,
+        "exclusions_by_reason": dict(reason_counter),
     }
-
 
 # --------------------------------------------------------------------------
 # consolidation
@@ -1186,41 +1631,54 @@ async def _consolidation_request(
     raise ValueError(f"{label}: unreachable")
 
 
-def consolidate(
-    inferences_dir: str | Path,
-    consolidation_dir: str | Path,
+
+async def _batch_consolidate_with_split(
+    client,
+    model,
     *,
-    base_url: str,
-    model: str = SERVED_MODEL,
-    seed: int = 42,
-    max_tokens: int = TURKISH_MAX_TOKENS,
-) -> dict[str, Any]:
-    """Two-level consolidation: five sequence batches, then one final merge."""
-    import asyncio
-
-    records = _load_inferences(inferences_dir)
-    sequence_ids = sorted(record["sequence_id"] for record in records)
-    if len(sequence_ids) != TURKISH_EXPECTED_SEQUENCES:
-        raise ValueError(
-            f"expected {TURKISH_EXPECTED_SEQUENCES} completed sequences, found {len(sequence_ids)}"
-        )
-    candidates = collect_candidates(records)
-    candidates.sort(key=lambda c: (c["sequence_id"], c["episode_order"]))
-    candidate_by_id = {c["candidate_id"]: c for c in candidates}
-    candidate_ids_all = [c["candidate_id"] for c in candidates]
-
-    consolidation_dir = Path(consolidation_dir)
-    consolidation_dir.mkdir(parents=True, exist_ok=True)
-
-    settings = request_settings(max_tokens)
-    batch_boundaries: list[tuple[int, int]] = []
-    cursor = 0
-    for size in TURKISH_CONSOLIDATION_BATCHES:
-        batch_boundaries.append((cursor, cursor + size))
-        cursor += size
-    if cursor != len(sequence_ids):
-        raise ValueError(f"consolidation batches do not cover {len(sequence_ids)} sequences")
-
+    batch_candidates,
+    batch_sequences,
+    batch_index,
+    depth,
+    max_tokens,
+    seed,
+    settings,
+    consolidation_dir,
+):
+    """Try batch consolidation; on failure split deterministically up to depth 2."""
+    if depth > 2:
+        raise ValueError(f"batch {batch_index}: split depth exceeded")
+    batch_candidate_ids = [c["candidate_id"] for c in batch_candidates]
+    # Empty batch: no candidates -> produce empty clusters without model call?
+    # But spec says every candidate must be assigned exactly once; empty batch should yield empty clusters.
+    if not batch_candidates:
+        record = {
+            "batch_index": batch_index,
+            "sequence_ids": batch_sequences,
+            "candidate_count": 0,
+            "clusters": [],
+            "assignment": {},
+            "split_depth": depth,
+            "split": False,
+        }
+        # Only write if top-level batch (depth 0) - split halves will be merged into parent.
+        return [], {}, record
+    user_payload = {
+        "batch_index": batch_index,
+        "candidates": [
+            {
+                "candidate_id": c["candidate_id"],
+                "sequence_id": c["sequence_id"],
+                "episode_order": c["episode_order"],
+                "question_tr": c["question_tr"],
+                "question_en": c["question_en"],
+                "label": c["label"],
+                "wording_status": c["wording_status"],
+                "confidence": c["confidence"],
+            }
+            for c in batch_candidates
+        ],
+    }
     BATCH_SCHEMA = {
         "type": "object",
         "properties": {
@@ -1247,6 +1705,83 @@ def consolidate(
         "required": ["clusters"],
         "additionalProperties": False,
     }
+    try:
+        parsed = await _consolidation_request(
+            client,
+            model,
+            system_prompt=CONSOLIDATION_BATCH_SYSTEM_PROMPT,
+            user_payload=user_payload,
+            schema=BATCH_SCHEMA,
+            max_tokens=max_tokens,
+            seed=seed,
+            settings=settings,
+            label=f"batch {batch_index} depth {depth}",
+        )
+        errors = validate_consolidation_batch(parsed)
+        if errors:
+            raise ValueError(f"batch {batch_index}: {'; '.join(errors[:5])}")
+        assignment = _check_cluster_assignment(parsed["clusters"], batch_candidate_ids, f"batch {batch_index}")
+        record = {
+            "batch_index": batch_index,
+            "sequence_ids": batch_sequences,
+            "candidate_count": len(batch_candidate_ids),
+            "clusters": parsed["clusters"],
+            "assignment": assignment,
+            "split_depth": depth,
+            "split": False,
+        }
+        return parsed["clusters"], assignment, record
+    except Exception as exc:
+        if depth >= 2:
+            raise
+        # Split deterministically in half
+        sorted_candidates = sorted(batch_candidates, key=lambda c: c["candidate_id"])
+        mid = len(sorted_candidates) // 2
+        if mid == 0 or mid == len(sorted_candidates):
+            raise
+        left_candidates = sorted_candidates[:mid]
+        right_candidates = sorted_candidates[mid:]
+        # For split, we keep same batch_index but process halves sequentially with depth+1
+        # Need to generate distinct sub-records but final combined will have same batch_index.
+        left_clusters, left_assign, left_record = await _batch_consolidate_with_split(
+            client, model, batch_candidates=left_candidates, batch_sequences=batch_sequences,
+            batch_index=batch_index, depth=depth+1, max_tokens=max_tokens, seed=seed,
+            settings=settings, consolidation_dir=consolidation_dir
+        )
+        right_clusters, right_assign, right_record = await _batch_consolidate_with_split(
+            client, model, batch_candidates=right_candidates, batch_sequences=batch_sequences,
+            batch_index=batch_index, depth=depth+1, max_tokens=max_tokens, seed=seed,
+            settings=settings, consolidation_dir=consolidation_dir
+        )
+        # Merge clusters and assignments, ensure no duplicate cluster_id
+        combined_clusters = left_clusters + right_clusters
+        combined_assignment = {**left_assign, **right_assign}
+        # Validate combined assignment covers all
+        _check_cluster_assignment(combined_clusters, batch_candidate_ids, f"batch {batch_index} merged")
+        record = {
+            "batch_index": batch_index,
+            "sequence_ids": batch_sequences,
+            "candidate_count": len(batch_candidate_ids),
+            "clusters": combined_clusters,
+            "assignment": combined_assignment,
+            "split_depth": depth,
+            "split": True,
+            "left": left_record,
+            "right": right_record,
+            "original_error": str(exc),
+        }
+        return combined_clusters, combined_assignment, record
+
+
+async def _final_consolidate_with_fallback(
+    client,
+    model,
+    cluster_summaries,
+    all_cluster_ids,
+    max_tokens,
+    seed,
+    settings,
+):
     FINAL_SCHEMA = {
         "type": "object",
         "properties": {
@@ -1273,6 +1808,109 @@ def consolidate(
         "required": ["families"],
         "additionalProperties": False,
     }
+    SIMPLIFIED_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "families": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "question_tr": {"type": "string"},
+                        "question_en": {"type": "string"},
+                        "member_cluster_ids": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["question_tr", "question_en", "member_cluster_ids"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["families"],
+        "additionalProperties": False,
+    }
+    # First try normal schema with correction (via _consolidation_request which already has one correction)
+    try:
+        parsed = await _consolidation_request(
+            client, model,
+            system_prompt=CONSOLIDATION_FINAL_SYSTEM_PROMPT,
+            user_payload={"cluster_summaries": cluster_summaries},
+            schema=FINAL_SCHEMA,
+            max_tokens=max_tokens,
+            seed=seed,
+            settings=settings,
+            label="final merge",
+        )
+        errors = validate_consolidation_final(parsed)
+        if errors:
+            raise ValueError(f"final merge: {'; '.join(errors[:5])}")
+        family_assignment = _check_family_assignment(parsed["families"], all_cluster_ids)
+        return parsed, family_assignment, False
+    except Exception as exc:
+        # Retry once using simplified schema containing only question_tr, question_en, member_cluster_ids
+        # Python attaches deterministic family IDs in list order
+        try:
+            parsed_simple = await _consolidation_request(
+                client, model,
+                system_prompt=CONSOLIDATION_FINAL_SYSTEM_PROMPT + " Use the simplified schema with question_tr, question_en, member_cluster_ids only; do not add family_id.",
+                user_payload={"cluster_summaries": cluster_summaries},
+                schema=SIMPLIFIED_SCHEMA,
+                max_tokens=max_tokens,
+                seed=seed,
+                settings=settings,
+                label="final merge simplified",
+            )
+            errors = validate_consolidation_final_simplified(parsed_simple)
+            if errors:
+                raise ValueError(f"final merge simplified: {'; '.join(errors[:5])}")
+            # Attach deterministic family IDs in list order
+            families = []
+            for idx, fam in enumerate(parsed_simple["families"], start=1):
+                families.append({
+                    "family_id": f"f{idx}",
+                    "question_tr": fam["question_tr"],
+                    "question_en": fam["question_en"],
+                    "member_cluster_ids": fam["member_cluster_ids"],
+                })
+            family_assignment = _check_family_assignment(families, all_cluster_ids)
+            return {"families": families, "cluster_assignment": family_assignment}, family_assignment, True
+        except Exception as exc2:
+            raise ValueError(f"final merge failed after fallback: {exc} | simplified: {exc2}") from exc2
+
+
+def consolidate(
+    inferences_dir: str | Path,
+    consolidation_dir: str | Path,
+    *,
+    base_url: str,
+    model: str = SERVED_MODEL,
+    seed: int = 42,
+    max_tokens: int = TURKISH_MAX_TOKENS,
+) -> dict[str, Any]:
+    """Two-level consolidation with bounded recovery ladder."""
+    import asyncio
+
+    records = _load_inferences(inferences_dir)
+    sequence_ids = sorted(record["sequence_id"] for record in records)
+    if len(sequence_ids) != TURKISH_EXPECTED_SEQUENCES:
+        raise ValueError(
+            f"expected {TURKISH_EXPECTED_SEQUENCES} completed sequences, found {len(sequence_ids)}"
+        )
+    candidates = collect_candidates(records)
+    candidates.sort(key=lambda c: (c["sequence_id"], c["episode_order"]))
+    candidate_by_id = {c["candidate_id"]: c for c in candidates}
+    candidate_ids_all = [c["candidate_id"] for c in candidates]
+
+    consolidation_dir = Path(consolidation_dir)
+    consolidation_dir.mkdir(parents=True, exist_ok=True)
+
+    settings = request_settings(max_tokens)
+    batch_boundaries: list[tuple[int, int]] = []
+    cursor = 0
+    for size in TURKISH_CONSOLIDATION_BATCHES:
+        batch_boundaries.append((cursor, cursor + size))
+        cursor += size
+    if cursor != len(sequence_ids):
+        raise ValueError(f"consolidation batches do not cover {len(sequence_ids)} sequences")
 
     async def orchestrate() -> dict[str, Any]:
         from openai import AsyncOpenAI
@@ -1288,49 +1926,19 @@ def consolidate(
                     for candidate in candidates
                     if candidate["sequence_id"] in batch_sequences
                 ]
-                user_payload = {
-                    "batch_index": batch_index,
-                    "candidates": [
-                        {
-                            "candidate_id": c["candidate_id"],
-                            "sequence_id": c["sequence_id"],
-                            "episode_order": c["episode_order"],
-                            "question_tr": c["question_tr"],
-                            "question_en": c["question_en"],
-                            "label": c["label"],
-                            "wording_status": c["wording_status"],
-                            "confidence": c["confidence"],
-                        }
-                        for c in batch_candidates
-                    ],
-                }
-                parsed = await _consolidation_request(
-                    client,
-                    model,
-                    system_prompt=CONSOLIDATION_BATCH_SYSTEM_PROMPT,
-                    user_payload=user_payload,
-                    schema=BATCH_SCHEMA,
+                clusters, assignment, record = await _batch_consolidate_with_split(
+                    client, model,
+                    batch_candidates=batch_candidates,
+                    batch_sequences=batch_sequences,
+                    batch_index=batch_index,
+                    depth=0,
                     max_tokens=max_tokens,
                     seed=seed,
                     settings=settings,
-                    label=f"batch {batch_index}",
+                    consolidation_dir=consolidation_dir,
                 )
-                errors = validate_consolidation_batch(parsed)
-                if errors:
-                    raise ValueError(f"batch {batch_index}: {'; '.join(errors[:5])}")
-                batch_candidate_ids = [c["candidate_id"] for c in batch_candidates]
-                assignment = _check_cluster_assignment(
-                    parsed["clusters"], batch_candidate_ids, f"batch {batch_index}"
-                )
-                record = {
-                    "batch_index": batch_index,
-                    "sequence_ids": batch_sequences,
-                    "candidate_count": len(batch_candidate_ids),
-                    "clusters": parsed["clusters"],
-                    "assignment": assignment,
-                }
                 batch_results.append(record)
-                all_cluster_ids.extend(cluster["cluster_id"] for cluster in parsed["clusters"])
+                all_cluster_ids.extend(cluster["cluster_id"] for cluster in clusters)
                 _atomic_write_json(record, consolidation_dir / f"batch_{batch_index:02d}.json")
                 _restrict(consolidation_dir / f"batch_{batch_index:02d}.json")
 
@@ -1351,28 +1959,22 @@ def consolidate(
                         }
                     )
 
-            final_parsed = await _consolidation_request(
-                client,
-                model,
-                system_prompt=CONSOLIDATION_FINAL_SYSTEM_PROMPT,
-                user_payload={"cluster_summaries": cluster_summaries},
-                schema=FINAL_SCHEMA,
-                max_tokens=max_tokens,
-                seed=seed,
-                settings=settings,
-                label="final merge",
+            final_parsed, family_assignment, used_simplified = await _final_consolidate_with_fallback(
+                client, model, cluster_summaries, all_cluster_ids, max_tokens, seed, settings
             )
-            errors = validate_consolidation_final(final_parsed)
-            if errors:
-                raise ValueError(f"final merge: {'; '.join(errors[:5])}")
-            family_assignment = _check_family_assignment(
-                final_parsed["families"], all_cluster_ids
-            )
+            # final_parsed may already have families
+            families = final_parsed["families"] if "families" in final_parsed else final_parsed.get("families")
+            # Ensure we have families list
+            if isinstance(final_parsed, dict) and "families" not in final_parsed:
+                families = final_parsed.get("families")
+            else:
+                families = final_parsed["families"]
             final_record = {
-                "families": final_parsed["families"],
+                "families": families,
                 "cluster_assignment": family_assignment,
                 "cluster_count": len(all_cluster_ids),
                 "candidate_count": len(candidate_ids_all),
+                "used_simplified_fallback": used_simplified,
             }
             _atomic_write_json(final_record, consolidation_dir / "final_merge.json")
             _restrict(consolidation_dir / "final_merge.json")
@@ -1396,7 +1998,19 @@ def consolidate(
 
     return asyncio.run(orchestrate())
 
-
+def _consolidation_request_with_correction(
+    client,
+    model,
+    system_prompt,
+    user_payload,
+    schema,
+    max_tokens,
+    seed,
+    settings,
+    label,
+):
+    """Wrapper that maps to existing _consolidation_request with one correction."""
+    return  # placeholder, will be replaced via direct call
 # --------------------------------------------------------------------------
 # final aggregation and rendering
 # --------------------------------------------------------------------------
@@ -1571,6 +2185,10 @@ def render_tables(
         "model_revision": model_revision,
         "source_commit": source_commit,
         "prompt_version": PROMPT_VERSION,
+        "strict_prompt_version": STRICT_PROMPT_VERSION,
+        "fallback_prompt_version": FALLBACK_PROMPT_VERSION,
+        "inference_policy_version": INFERENCE_POLICY_VERSION,
+        "inference_policy_sha256": INFERENCE_POLICY_SHA256,
         "episode_safety_policy_version": EPISODE_SAFETY_POLICY_VERSION,
         "episode_safety_policy_sha256": EPISODE_SAFETY_POLICY_SHA256,
         "prompt_contract_sha256": prompt_contract_hash,

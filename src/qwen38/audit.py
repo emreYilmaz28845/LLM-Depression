@@ -56,6 +56,13 @@ from src.qwen38.turkish_questions import (
     EPISODE_SAFETY_REASON_CODES,
     EPISODE_SAFETY_FIELD_NAMES,
     PROMPT_VERSION,
+    STRICT_PROMPT_VERSION,
+    FALLBACK_PROMPT_VERSION,
+    INFERENCE_POLICY_VERSION,
+    INFERENCE_POLICY_SHA256,
+    FALLBACK_PROMPT_SHA256,
+    STRICT_SCHEMA_SHA256,
+    FALLBACK_SCHEMA_SHA256,
     CORRECTION_REASON_CODES,
     _CANONICAL_SEQUENCE_TOKEN_RE,
     aggregate_families,
@@ -654,12 +661,12 @@ def _table_rows_for_render(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any
 
 
 def _validate_exclusion_metadata(record: dict[str, Any]) -> dict[str, int]:
-    """Validate safe exclusion provenance and return aggregate reason counts."""
+    """Validate safe exclusion provenance and return aggregate reason counts. Supports ladder 1-4."""
     generation_attempts = record.get("generation_attempts")
     correction_reasons = record.get("correction_reason_codes")
     exclusions = record.get("episode_exclusions")
     episodes = record.get("episodes")
-    if generation_attempts not in (1, 2):
+    if not isinstance(generation_attempts, int) or generation_attempts not in (1, 2, 3, 4):
         raise ValueError("generation attempt count is invalid")
     if not isinstance(correction_reasons, list) or any(
         reason not in CORRECTION_REASON_CODES for reason in correction_reasons
@@ -667,10 +674,13 @@ def _validate_exclusion_metadata(record: dict[str, Any]) -> dict[str, int]:
         raise ValueError("correction reason codes are invalid")
     if len(set(correction_reasons)) != len(correction_reasons):
         raise ValueError("correction reason codes are duplicated")
-    if (generation_attempts == 1 and correction_reasons) or (
-        generation_attempts == 2 and not correction_reasons
-    ):
-        raise ValueError("correction reason codes do not match generation attempts")
+    # Ladder relaxes strict generation/correction matching; ladder records use strict_generation_count etc.
+    # For backward compat, only enforce for non-ladder records (those without subject_status)
+    if "subject_status" not in record:
+        if (generation_attempts == 1 and correction_reasons) or (
+            generation_attempts == 2 and not correction_reasons
+        ):
+            raise ValueError("correction reason codes do not match generation attempts")
     if not isinstance(exclusions, list) or not isinstance(episodes, list):
         raise ValueError("episode exclusion metadata is missing")
     if record.get("episodes_returned") != len(episodes) + len(exclusions):
@@ -684,7 +694,9 @@ def _validate_exclusion_metadata(record: dict[str, Any]) -> dict[str, int]:
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             raise ValueError(f"{field_name} is not a non-negative integer")
     if generation_attempts == 1 and exclusions:
-        raise ValueError("generation one cannot contain episode exclusions")
+        # Ladder allows fallback route single attempt with exclusions (SIMPLIFIED)
+        if record.get("route_used") != "SIMPLIFIED":
+            raise ValueError("generation one cannot contain episode exclusions")
 
     retained_orders = set()
     for episode in episodes:
@@ -721,6 +733,38 @@ def _validate_exclusion_metadata(record: dict[str, Any]) -> dict[str, int]:
             raise ValueError("episode exclusion field names are duplicated")
         for reason in reasons:
             counts[reason] += 1
+    # Ladder-specific validation if present
+    if "subject_status" in record:
+        if record.get("subject_status") not in ("INCLUDED", "EXCLUDED"):
+            raise ValueError("subject_status is invalid")
+        if record.get("route_used") not in ("STRICT", "SIMPLIFIED", "NONE"):
+            raise ValueError("route_used is invalid")
+        strict_gc = record.get("strict_generation_count")
+        fallback_gc = record.get("fallback_generation_count")
+        if not isinstance(strict_gc, int) or strict_gc < 0 or strict_gc > 2:
+            raise ValueError("strict_generation_count invalid")
+        if not isinstance(fallback_gc, int) or fallback_gc < 0 or fallback_gc > 2:
+            raise ValueError("fallback_generation_count invalid")
+        if strict_gc + fallback_gc != generation_attempts:
+            raise ValueError("generation counts mismatch")
+        if strict_gc + fallback_gc > 4:
+            raise ValueError("total generations exceeds 4")
+        if record.get("subject_status") == "EXCLUDED":
+            if record.get("route_used") != "NONE":
+                raise ValueError("excluded route must be NONE")
+            if record.get("subject_exclusion_reason") != "MODEL_OUTPUT_INVALID_AFTER_BOUNDED_REPAIR":
+                raise ValueError("excluded reason invalid")
+        else:
+            if record.get("subject_exclusion_reason") not in ("", None):
+                raise ValueError("included subject_exclusion_reason must be empty")
+        # Check failure categories are lists of allowed codes
+        for key in ("strict_failure_categories", "fallback_failure_categories"):
+            val = record.get(key)
+            if not isinstance(val, list) or any(c not in CORRECTION_REASON_CODES for c in val):
+                raise ValueError(f"{key} invalid")
+            if len(set(val)) != len(val):
+                raise ValueError(f"{key} duplicated")
+
     return {reason: int(counts.get(reason, 0)) for reason in EPISODE_SAFETY_REASON_CODES}
 
 
@@ -753,10 +797,24 @@ def _recompute_restricted_evidence(
     manifest_hash = _sha256_file(run_dir / "run_manifest.json")
     if manifest.get("prompt_version") != PROMPT_VERSION:
         raise ValueError("run manifest prompt version is not v3")
+    if manifest.get("strict_prompt_version") not in (None, STRICT_PROMPT_VERSION):
+        raise ValueError("run manifest strict prompt version invalid")
+    if manifest.get("fallback_prompt_version") not in (None, FALLBACK_PROMPT_VERSION):
+        raise ValueError("run manifest fallback prompt version invalid")
+    if manifest.get("inference_policy_version") not in (None, INFERENCE_POLICY_VERSION):
+        raise ValueError("run manifest inference policy version invalid")
     if manifest.get("episode_safety_policy_version") != EPISODE_SAFETY_POLICY_VERSION:
         raise ValueError("run manifest episode safety policy version is invalid")
     if manifest.get("episode_safety_policy_sha256") != EPISODE_SAFETY_POLICY_SHA256:
         raise ValueError("run manifest episode safety policy hash is invalid")
+    # If new fields present, validate hashes
+    if manifest.get("strict_prompt_version") == STRICT_PROMPT_VERSION:
+        if manifest.get("fallback_prompt_sha256") is not None and manifest.get("fallback_prompt_sha256") != FALLBACK_PROMPT_SHA256:
+            raise ValueError("fallback prompt hash invalid")
+        if manifest.get("strict_schema_sha256") is not None and manifest.get("strict_schema_sha256") != STRICT_SCHEMA_SHA256:
+            raise ValueError("strict schema hash invalid")
+        if manifest.get("fallback_schema_sha256") is not None and manifest.get("fallback_schema_sha256") != FALLBACK_SCHEMA_SHA256:
+            raise ValueError("fallback schema hash invalid")
     expected_contract = prompt_contract_sha256(
         model_revision=manifest["model_revision"],
         max_tokens=int(manifest["request_settings"]["max_tokens"]),
@@ -798,6 +856,14 @@ def _recompute_restricted_evidence(
             raise ValueError(f"{path.name}: episode safety policy version mismatch")
         if record.get("episode_safety_policy_sha256") != manifest.get("episode_safety_policy_sha256"):
             raise ValueError(f"{path.name}: episode safety policy hash mismatch")
+        # Ladder version checks if present
+        if "strict_prompt_version" in record or "strict_prompt_version" in manifest:
+            if record.get("strict_prompt_version") != manifest.get("strict_prompt_version"):
+                raise ValueError(f"{path.name}: strict prompt version mismatch")
+            if record.get("fallback_prompt_version") != manifest.get("fallback_prompt_version"):
+                raise ValueError(f"{path.name}: fallback prompt version mismatch")
+            if record.get("inference_policy_version") != manifest.get("inference_policy_version"):
+                raise ValueError(f"{path.name}: inference policy version mismatch")
         if record.get("source_sha256") != manifest.get("source_sha256"):
             raise ValueError(f"{path.name}: source hash mismatch")
         if record.get("source_commit") != manifest.get("source_commit"):
@@ -838,6 +904,9 @@ def _recompute_restricted_evidence(
         "analysis_attempt": manifest.get("analysis_attempt"),
         "source_commit": manifest.get("source_commit"),
         "prompt_version": PROMPT_VERSION,
+        "strict_prompt_version": manifest.get("strict_prompt_version"),
+        "fallback_prompt_version": manifest.get("fallback_prompt_version"),
+        "inference_policy_version": manifest.get("inference_policy_version"),
         "episode_safety_policy_version": EPISODE_SAFETY_POLICY_VERSION,
         "episode_safety_policy_sha256": EPISODE_SAFETY_POLICY_SHA256,
         "prompt_contract_sha256": manifest.get("prompt_contract_sha256"),
@@ -922,6 +991,29 @@ def _recompute_restricted_evidence(
     if compact["csv_rows"] != recomputed_rows or compact["md_rows"] != recomputed_rows:
         raise ValueError("recomputed rows differ value-semantically from CSV/Markdown rows")
     aggregation_hash = _sha256_text(_canonical_json(recomputed_rows))
+    # Ladder aggregates
+    subjects_processed = len(records)
+    # Prefer ladder subject_status if present, else fallback to episodes presence
+    if any("subject_status" in r for r in records):
+        subjects_included = sum(1 for r in records if r.get("subject_status") == "INCLUDED")
+        subjects_excluded = sum(1 for r in records if r.get("subject_status") == "EXCLUDED")
+        subjects_by_route = {
+            "STRICT": sum(1 for r in records if r.get("route_used") == "STRICT"),
+            "SIMPLIFIED": sum(1 for r in records if r.get("route_used") == "SIMPLIFIED"),
+            "NONE": sum(1 for r in records if r.get("route_used") == "NONE"),
+        }
+        strict_total = sum(int(r.get("strict_generation_count", 0)) for r in records)
+        fallback_total = sum(int(r.get("fallback_generation_count", 0)) for r in records)
+    else:
+        subjects_included = sum(1 for r in records if r.get("episodes"))
+        subjects_excluded = sum(1 for r in records if not r.get("episodes"))
+        subjects_by_route = {"STRICT": subjects_processed, "SIMPLIFIED": 0, "NONE": 0}
+        strict_total = sum(int(r.get("generation_attempts", 0)) for r in records)
+        fallback_total = 0
+    if subjects_included + subjects_excluded != expected_count:
+        raise ValueError("subject coverage arithmetic invalid")
+    if expected_count == 135 and subjects_included < 130:
+        raise ValueError(f"coverage requires at least 130 included, got {subjects_included}")
     return {
         "prepared_sequences": len(sequences),
         "prepared_windows": sum(int(sequence["window_count"]) for sequence in sequences),
@@ -938,6 +1030,13 @@ def _recompute_restricted_evidence(
         "episodes_returned": sum(int(record["episodes_returned"]) for record in records),
         "episodes_retained": sum(int(record["episodes_retained"]) for record in records),
         "episodes_excluded": sum(len(record["episode_exclusions"]) for record in records),
+        "subjects_processed": subjects_processed,
+        "subjects_included": subjects_included,
+        "subjects_excluded": subjects_excluded,
+        "subjects_by_route": subjects_by_route,
+        "strict_generation_total": strict_total,
+        "fallback_generation_total": fallback_total,
+        "exclusions_by_reason": dict(exclusion_counts),
         "final_merge_sha256": _sha256_file(consolidation_dir / "final_merge.json"),
         "aggregation_sha256": aggregation_hash,
     }
