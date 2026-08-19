@@ -27,7 +27,15 @@ VALIDATION_SYSTEM_PROMPT = (
     "question from the answer and return exactly one JSON object with "
     "case_id, inferred_question, label (POSITIVE, NEGATIVE, NEUTRAL, or "
     "MIXED), and confidence (HIGH, MEDIUM, or LOW). Classify the inferred "
-    "question's framing, not the emotional tone of the answer."
+    "question's framing, not the emotional tone of the answer:\n"
+    "- POSITIVE asks about happiness, enjoyment, strengths, hope, support, "
+    "positive memories, or pleasant events.\n"
+    "- NEGATIVE asks about sadness, distress, problems, symptoms, loss, fear, "
+    "conflict, or unpleasant events.\n"
+    "- NEUTRAL is factual, descriptive, demographic, procedural, or open "
+    "framing that does not ask for positive or negative valence.\n"
+    "- MIXED asks for both positive and negative material, or combines "
+    "opposing valences in one question."
 )
 assert isinstance(VALIDATION_SYSTEM_PROMPT, str)
 
