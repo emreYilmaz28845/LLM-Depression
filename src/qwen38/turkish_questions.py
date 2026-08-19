@@ -1599,7 +1599,9 @@ async def _consolidation_request(
     for attempt in (1, 2):
         try:
             if attempt > 1:
-                messages = messages + [{"role": "user", "content": SCHEMA_CORRECTION_MESSAGE}]
+                # Use consolidation-specific correction for batches/final, else generic
+                correction = CONSOLIDATION_CORRECTION_MESSAGE if "batch" in label or "final" in label else SCHEMA_CORRECTION_MESSAGE
+                messages = messages + [{"role": "user", "content": correction}]
             stream = await client.chat.completions.create(
                 model=model,
                 messages=messages,
@@ -1620,9 +1622,23 @@ async def _consolidation_request(
             content = "".join(chunks)
             parsed = _parse_json_object(content)
             if parsed is None:
-                if attempt == 1:
-                    continue
-                raise ValueError(f"{label}: invalid JSON twice")
+                # Try to repair truncated JSON by closing brackets
+                repaired = content.strip()
+                # Count open braces/brackets
+                open_braces = repaired.count("{") - repaired.count("}")
+                open_brackets = repaired.count("[") - repaired.count("]")
+                repaired += "}" * max(0, open_braces) + "]" * max(0, open_brackets)
+                # Also try to extract from first { to last }
+                start, end = repaired.find("{"), repaired.rfind("}")
+                if start >= 0 and end > start:
+                    try:
+                        parsed = json.loads(repaired[start:end+1])
+                    except Exception:
+                        parsed = None
+                if parsed is None:
+                    if attempt == 1:
+                        continue
+                    raise ValueError(f"{label}: invalid JSON twice")
             return parsed
         except Exception as exc:
             if attempt == 1 and not isinstance(exc, ValueError):
@@ -1705,6 +1721,10 @@ async def _batch_consolidate_with_split(
         "required": ["clusters"],
         "additionalProperties": False,
     }
+    # Use smaller output budget for batches to stay within 8192 context (input often >6000 tokens)
+    batch_max_tokens = 1024
+    batch_settings = dict(settings)
+    batch_settings["max_tokens"] = batch_max_tokens
     try:
         parsed = await _consolidation_request(
             client,
@@ -1712,9 +1732,9 @@ async def _batch_consolidate_with_split(
             system_prompt=CONSOLIDATION_BATCH_SYSTEM_PROMPT,
             user_payload=user_payload,
             schema=BATCH_SCHEMA,
-            max_tokens=max_tokens,
+            max_tokens=batch_max_tokens,
             seed=seed,
-            settings=settings,
+            settings=batch_settings,
             label=f"batch {batch_index} depth {depth}",
         )
         errors = validate_consolidation_batch(parsed)
