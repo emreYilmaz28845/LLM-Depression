@@ -1662,7 +1662,7 @@ async def _batch_consolidate_with_split(
     consolidation_dir,
 ):
     """Try batch consolidation; on failure split deterministically up to depth 2."""
-    if depth > 2:
+    if depth > 3:
         raise ValueError(f"batch {batch_index}: split depth exceeded")
     batch_candidate_ids = [c["candidate_id"] for c in batch_candidates]
     # Empty batch: no candidates -> produce empty clusters without model call?
@@ -1752,8 +1752,34 @@ async def _batch_consolidate_with_split(
         }
         return parsed["clusters"], assignment, record
     except Exception as exc:
-        if depth >= 2:
-            raise
+        if depth >= 3:
+            # Ultimate fallback: each candidate becomes its own cluster (deterministic, no semantic merging)
+            # This preserves assignment coverage without requiring model
+            clusters = []
+            assignment = {}
+            for cand in batch_candidates:
+                cid = f"b{batch_index}-c{cand['candidate_id']}"
+                # Use candidate's own wording as canonical (already normalized, safe)
+                clusters.append({
+                    "cluster_id": cid,
+                    "canonical_question_tr": cand["question_tr"],
+                    "canonical_question_en": cand["question_en"],
+                    "member_candidate_ids": [cand["candidate_id"]],
+                })
+                assignment[cand["candidate_id"]] = cid
+            record = {
+                "batch_index": batch_index,
+                "sequence_ids": batch_sequences,
+                "candidate_count": len(batch_candidate_ids),
+                "clusters": clusters,
+                "assignment": assignment,
+                "split_depth": depth,
+                "split": depth > 0,
+                "fallback_trivial": True,
+                "original_error": str(exc),
+            }
+            return clusters, assignment, record
+        # Split deterministically in half
         # Split deterministically in half
         sorted_candidates = sorted(batch_candidates, key=lambda c: c["candidate_id"])
         mid = len(sorted_candidates) // 2
