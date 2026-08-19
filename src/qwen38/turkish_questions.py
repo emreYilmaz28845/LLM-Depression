@@ -86,7 +86,7 @@ SUBJECT_SYSTEM_PROMPT = (
     '{\n'
     '  "episodes": [\n'
     '    {\n'
-    '      "sequence_id": "the sequence id provided above",\n'
+    '      "sequence_id": "S0001 (the exact value shown at the top of the input as \'Sequence id: ...\')",\n'
     '      "episode_order": 1,\n'
     '      "question_tr": "concise Turkish question",\n'
     '      "question_en": "concise English question",\n'
@@ -283,7 +283,7 @@ def prepare_sequences(
         sequence_id = sequence_ids[subject]
         windows = sorted(windows_by_subject[subject], key=lambda item: item[0])
         blocks = [f"[WINDOW {window}]\n{text}" for window, text in windows]
-        user_prompt = "\n\n".join(blocks)
+        user_prompt = f"Sequence id: {sequence_id}\n\n" + "\n\n".join(blocks)
         sequences.append(
             {
                 "sequence_id": sequence_id,
