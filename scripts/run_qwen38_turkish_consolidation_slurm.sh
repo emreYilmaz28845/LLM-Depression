@@ -55,16 +55,41 @@ export HF_HUB_DISABLE_TELEMETRY=1 DO_NOT_TRACK=1 WANDB_DISABLED=true
 export TOKENIZERS_PARALLELISM=false VLLM_TORCH_COMPILE_OVERRIDE=0
 export PYTHONPATH="$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
-ORIGIN_MAIN_SHA="$(git rev-parse origin/main)"
 REMOTE_PROVENANCE_SHA="$(tr -d '[:space:]' < .provenance/git_commit.txt)"
-if [ "$SOURCE_COMMIT" != "$ORIGIN_MAIN_SHA" ] || [ "$SOURCE_COMMIT" != "$REMOTE_PROVENANCE_SHA" ]; then
+if [ "$SOURCE_COMMIT" != "$REMOTE_PROVENANCE_SHA" ]; then
   echo "FAILED: consolidation source mismatch" >&2
   exit 1
 fi
-if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-  echo "FAILED: tracked remote source is dirty" >&2
+if [ -s .provenance/uncommitted.patch ]; then
+  echo "FAILED: deployed provenance contains tracked source changes" >&2
   exit 1
 fi
+python - .provenance/source_manifest.json <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+root = pathlib.Path.cwd()
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+files = manifest.get("files")
+if manifest.get("schema_version") != "audiollm.source_manifest.v1" or not isinstance(files, list):
+    raise SystemExit("invalid deployed source manifest")
+errors = []
+for record in files:
+    path = root / record["path"]
+    if not path.is_file():
+        errors.append(f"missing:{record['path']}")
+        continue
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != record.get("sha256") or path.stat().st_size != record.get("size_bytes"):
+        errors.append(f"mismatch:{record['path']}")
+if len(files) != manifest.get("file_count"):
+    errors.append("file_count")
+if errors:
+    raise SystemExit("deployed source manifest verification failed: " + ", ".join(errors[:10]))
+print(f"verified {len(files)} tracked source files against deployed manifest")
+PY
 
 mapfile -t VERIFIED < <(python - "$PARENT_RUN_ROOT" "$PARENT_RUN_ID" "$PARENT_SOURCE_COMMIT" "$PARENT_SELECTION_FILE" "$SELECTION_FILE" "$SOURCE_COMMIT" <<'PY'
 import hashlib
