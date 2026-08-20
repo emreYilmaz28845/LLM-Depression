@@ -75,20 +75,33 @@ manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 files = manifest.get("files")
 if manifest.get("schema_version") != "audiollm.source_manifest.v1" or not isinstance(files, list):
     raise SystemExit("invalid deployed source manifest")
+records = {record["path"]: record for record in files}
+required = (
+    "scripts/qwen38_turkish_question_recovery.py",
+    "scripts/run_qwen38_turkish_consolidation_slurm.sh",
+    "scripts/submit_qwen38_turkish_consolidation.sh",
+    "src/qwen38/__init__.py",
+    "src/qwen38/contracts.py",
+    "src/qwen38/turkish_questions.py",
+)
 errors = []
-for record in files:
-    path = root / record["path"]
+for relative in required:
+    record = records.get(relative)
+    if record is None:
+        errors.append(f"unmanifested:{relative}")
+        continue
+    path = root / relative
     if not path.is_file():
-        errors.append(f"missing:{record['path']}")
+        errors.append(f"missing:{relative}")
         continue
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     if digest != record.get("sha256") or path.stat().st_size != record.get("size_bytes"):
-        errors.append(f"mismatch:{record['path']}")
+        errors.append(f"mismatch:{relative}")
 if len(files) != manifest.get("file_count"):
     errors.append("file_count")
 if errors:
     raise SystemExit("deployed source manifest verification failed: " + ", ".join(errors[:10]))
-print(f"verified {len(files)} tracked source files against deployed manifest")
+print(f"verified {len(required)} execution-closure files against deployed manifest")
 PY
 
 mapfile -t VERIFIED < <(python - "$PARENT_RUN_ROOT" "$PARENT_RUN_ID" "$PARENT_SOURCE_COMMIT" "$PARENT_SELECTION_FILE" "$SELECTION_FILE" "$SOURCE_COMMIT" <<'PY'
