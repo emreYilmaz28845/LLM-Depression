@@ -549,6 +549,46 @@ created_at_utc: {datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
     return 0
 
 
+
+def _cmd_status(args) -> int:
+    print(f"status for {args.slug or 'all'}: checking sidecars, squeue, sacct (stub)")
+    return 0
+
+def _cmd_collect(args) -> int:
+    slug = args.slug
+    dry_run = getattr(args, 'dry_run', False)
+    execute = getattr(args, 'execute', False)
+    if dry_run and execute:
+        print("ERROR: specify either --dry-run or --execute", file=sys.stderr)
+        return 1
+    if not dry_run and not execute:
+        dry_run = True
+    print(f"collect for {slug}: dry_run={dry_run} execute={execute}")
+    print("filter order: include run_config.yaml, metadata.json, status.json, jobs.jsonl, artifacts.json, evaluations.json, logs/*.json, best_model/standalone_eval/***, eval/***, final_summary.json; exclude best_model/***, last_model/***")
+    print(f"would rsync compact evidence for {slug} excluding adapters but including standalone_eval")
+    return 0
+
+def _cmd_validate(args) -> int:
+    slug = args.slug
+    print(f"validate for {slug}: verifying hashes, recomputing headline metrics, checking qualifiers, advancing through SYNCED_LOCALLY -> LOCALLY_VALIDATED -> REPORTABLE if gates pass (stub)")
+    return 0
+
+def _cmd_compare(args) -> int:
+    required = [args.group, args.attempts, args.dataset, args.metric, args.namespace, args.backend, args.view, args.aggregation]
+    if not all(required):
+        print("ERROR: all qualifiers required for compare", file=sys.stderr)
+        return 1
+    attempts = [a.strip() for a in args.attempts.split(",") if a.strip()]
+    print(f"compare group={args.group} attempts={attempts} dataset={args.dataset} metric={args.metric} namespace={args.namespace} backend={args.backend} view={args.view} aggregation={args.aggregation}")
+    print("group comparison: checking for mixed folds/seeds/protocols, missing evaluation views, mixed aggregations, tie rules (stub)")
+    return 0
+
+def _cmd_finish(args) -> int:
+    slug = args.slug
+    print(f"finish for {slug}: enforcing lifecycle gates PLANNED->DEPLOYED->SUBMITTED->RUNNING->COMPLETED_ON_MN5->SYNCED_LOCALLY->LOCALLY_VALIDATED->REPORTABLE (stub)")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Query the local experiment registry.")
     parser.add_argument(
@@ -603,6 +643,35 @@ def main() -> int:
     create_parser.add_argument("--from", dest="from_ref", default=None, help="parent branch or SHA for stacked lanes")
     create_parser.add_argument("--dry-run", action="store_true", help="show what would be done without mutation")
     create_parser.set_defaults(func=_cmd_create)
+
+    status_parser = subparsers.add_parser("status", help="show experiment status (sidecars + squeue/sacct)")
+    status_parser.add_argument("slug", nargs="?", default=None, help="experiment slug")
+    status_parser.set_defaults(func=_cmd_status)
+
+    collect_parser = subparsers.add_parser("collect", help="collect compact evidence from MN5 (dry-run first)")
+    collect_parser.add_argument("slug", help="experiment slug")
+    collect_parser.add_argument("--dry-run", action="store_true", help="dry-run only")
+    collect_parser.add_argument("--execute", action="store_true", help="execute collection")
+    collect_parser.set_defaults(func=_cmd_collect)
+
+    validate_parser = subparsers.add_parser("validate", help="validate local evidence and reportability")
+    validate_parser.add_argument("slug", help="experiment slug")
+    validate_parser.set_defaults(func=_cmd_validate)
+
+    compare_parser = subparsers.add_parser("compare", help="group-scoped comparison with full qualifiers")
+    compare_parser.add_argument("--group", required=True, help="group ID")
+    compare_parser.add_argument("--attempts", required=True, help="comma-separated attempt IDs")
+    compare_parser.add_argument("--dataset", required=True)
+    compare_parser.add_argument("--metric", required=True)
+    compare_parser.add_argument("--namespace", required=True)
+    compare_parser.add_argument("--backend", required=True)
+    compare_parser.add_argument("--view", required=True)
+    compare_parser.add_argument("--aggregation", required=True)
+    compare_parser.set_defaults(func=_cmd_compare)
+
+    finish_parser = subparsers.add_parser("finish", help="advance lifecycle to REPORTABLE if gates pass")
+    finish_parser.add_argument("slug", help="experiment slug")
+    finish_parser.set_defaults(func=_cmd_finish)
 
     args = parser.parse_args()
     return args.func(args)
