@@ -93,6 +93,60 @@ def audit_state(state_path: pathlib.Path, allow_incomplete: bool = False) -> tup
                         missing.append(pat)
                 if missing:
                     errors.append(f"phase 0 PASSED but missing evidence patterns: {missing}")
+            elif i == 1:
+                patterns = ["tag", "inventories", "mn5", "archive", "snapshot", "validation"]
+                lower = [e.lower() for e in ph["evidence"]]
+                missing = [pat for pat in patterns if not any(pat.lower() in ev for ev in lower)]
+                if missing:
+                    errors.append(f"phase 1 PASSED but missing evidence patterns: {missing}")
+            elif i == 2:
+                patterns = ["pin", "worktree", "test", "PR"]
+                lower = [e.lower() for e in ph["evidence"]]
+                missing = [pat for pat in patterns if not any(pat.lower() in ev for ev in lower)]
+                if missing:
+                    errors.append(f"phase 2 PASSED but missing evidence patterns: {missing}")
+            elif i == 3:
+                patterns = ["deployment", "dry-run", "test", "PR"]
+                lower = [e.lower() for e in ph["evidence"]]
+                missing = [pat for pat in patterns if not any(pat.lower() in ev for ev in lower)]
+                if missing:
+                    errors.append(f"phase 3 PASSED but missing evidence patterns: {missing}")
+            elif i == 4:
+                patterns = ["resolved", "wrapper", "PR"]
+                lower = [e.lower() for e in ph["evidence"]]
+                missing = [pat for pat in patterns if not any(pat.lower() in ev for ev in lower)]
+                if missing:
+                    errors.append(f"phase 4 PASSED but missing evidence patterns: {missing}")
+            elif i == 5:
+                patterns = ["monitoring", "test"]
+                lower = [e.lower() for e in ph["evidence"]]
+                missing = [pat for pat in patterns if not any(pat.lower() in ev for ev in lower)]
+                if missing:
+                    errors.append(f"phase 5 PASSED but missing evidence patterns: {missing}")
+            elif i == 6:
+                patterns = ["collection", "test"]
+                lower = [e.lower() for e in ph["evidence"]]
+                missing = [pat for pat in patterns if not any(pat.lower() in ev for ev in lower)]
+                if missing:
+                    errors.append(f"phase 6 PASSED but missing evidence patterns: {missing}")
+            elif i == 7:
+                patterns = ["comparison", "test"]
+                lower = [e.lower() for e in ph["evidence"]]
+                missing = [pat for pat in patterns if not any(pat.lower() in ev for ev in lower)]
+                if missing:
+                    errors.append(f"phase 7 PASSED but missing evidence patterns: {missing}")
+            elif i == 8:
+                patterns = ["validation", "test"]
+                lower = [e.lower() for e in ph["evidence"]]
+                missing = [pat for pat in patterns if not any(pat.lower() in ev for ev in lower)]
+                if missing:
+                    errors.append(f"phase 8 PASSED but missing evidence patterns: {missing}")
+            elif i == 9:
+                patterns = ["pilot", "deployment", "stacked"]
+                lower = [e.lower() for e in ph["evidence"]]
+                missing = [pat for pat in patterns if not any(pat.lower() in ev for ev in lower)]
+                if missing:
+                    errors.append(f"phase 9 PASSED but missing evidence patterns: {missing}")
     # Hard stop checks
     if status == "HARD_STOP" and state.get("hard_stop") is None:
         errors.append("status HARD_STOP but hard_stop is null")
