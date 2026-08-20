@@ -299,6 +299,55 @@ def cmd_complete(args):
     print(f"execution {state['execution_id']} marked COMPLETE")
     return 0
 
+def cmd_reopen(args):
+    state_path = pathlib.Path(args.state)
+    state = load_state(state_path)
+    phase = args.phase
+    if phase not in PHASES:
+        print(f"ERROR: invalid phase {phase}", file=sys.stderr)
+        return 1
+    if state.get("status") not in ("COMPLETE", "HARD_STOP", "ACTIVE"):
+        print(f"ERROR: cannot reopen from status {state.get('status')}", file=sys.stderr)
+        return 1
+    import copy
+    snapshot = copy.deepcopy(state)
+    invalidations = state.get("invalidations", [])
+    invalidations.append({
+        "at_utc": utc_now_str(),
+        "reopened_phase": phase,
+        "reason": args.reason,
+        "evidence": args.evidence,
+        "previous_status": snapshot.get("status"),
+        "previous_current_phase": snapshot.get("current_phase"),
+        "previous_phases_snapshot": {k: v.get("status") for k, v in snapshot.get("phases", {}).items()},
+    })
+    state["invalidations"] = invalidations
+    for i in PHASES:
+        key = str(i)
+        if i < phase:
+            if state["phases"][key]["status"] != "PASSED":
+                print(f"WARNING: phase {i} is {state['phases'][key]['status']}, expected PASSED for reopen to {phase}", file=sys.stderr)
+        elif i == phase:
+            state["phases"][key]["status"] = "IN_PROGRESS"
+            state["phases"][key]["evidence"] = []
+            state["phases"][key]["next_action"] = f"Re-enter Phase {phase} after invalidation: {args.reason}"
+        else:
+            state["phases"][key]["status"] = "PENDING"
+            state["phases"][key]["evidence"] = []
+            state["phases"][key]["next_action"] = f"Enter Phase {i} after Phase {i-1} PASSED (reopened)"
+    state["current_phase"] = phase
+    state["status"] = "ACTIVE"
+    state["hard_stop"] = None
+    state["updated_at_utc"] = utc_now_str()
+    errors = validate_state_schema(state)
+    if errors:
+        print(f"ERROR: schema validation failed after reopen: {errors}", file=sys.stderr)
+        return 1
+    atomic_write_json(state_path, state)
+    print(f"reopened to phase {phase} due to: {args.reason}")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="Manage parallel workflow execution ledger")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -344,6 +393,13 @@ def main():
     p_complete.add_argument("--state", required=True)
     p_complete.add_argument("--audit", required=True)
     p_complete.set_defaults(func=cmd_complete)
+
+    p_reopen = sub.add_parser("reopen", help="invalidate false completion and reopen to earliest affected phase (preserves history)")
+    p_reopen.add_argument("--state", required=True)
+    p_reopen.add_argument("--phase", type=int, required=True, help="earliest affected phase to reopen (e.g., 5)")
+    p_reopen.add_argument("--reason", required=True, help="reason for invalidation")
+    p_reopen.add_argument("--evidence", required=True, help="evidence path or ID for invalidation")
+    p_reopen.set_defaults(func=cmd_reopen)
 
     args = parser.parse_args()
     # Additional immutability checks before func?
