@@ -130,6 +130,7 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
         model=args.model,
         seed=args.seed,
         max_tokens=args.max_tokens,
+        tokenizer_path=args.tokenizer_path,
     )
     _restrict_run_dir(Path(args.run_dir))
     _atomic_write_json(summary, Path(args.run_dir) / "consolidation_summary.json")
@@ -228,13 +229,14 @@ def build_parser() -> argparse.ArgumentParser:
     infer.add_argument("--max-tokens", type=int, default=2048)
     infer.set_defaults(func=cmd_infer_subjects)
 
-    consolidate = subparsers.add_parser("consolidate", parents=[common], help="two-level consolidation")
+    consolidate = subparsers.add_parser("consolidate", parents=[common], help="token-bounded hierarchical consolidation")
     consolidate.add_argument("--inferences-dir", required=True)
     consolidate.add_argument("--consolidation-dir", required=True)
     consolidate.add_argument("--base-url", default="http://127.0.0.1:8000/v1")
     consolidate.add_argument("--model", default=SERVED_MODEL)
     consolidate.add_argument("--seed", type=int, default=42)
     consolidate.add_argument("--max-tokens", type=int, default=2048)
+    consolidate.add_argument("--tokenizer-path", required=True, help="offline model/tokenizer directory")
     consolidate.set_defaults(func=cmd_consolidate)
 
     render = subparsers.add_parser("render", parents=[common], help="render compact tables")

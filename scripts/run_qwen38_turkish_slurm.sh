@@ -367,7 +367,8 @@ python scripts/qwen38_turkish_question_recovery.py consolidate \
   --base-url http://127.0.0.1:8000/v1 \
   --model qwen3.8-27b \
   --seed 42 \
-  --max-tokens 2048
+  --max-tokens 2048 \
+  --tokenizer-path "$MODEL_DIR"
 append_ledger_event "consolidate" "COMPLETED" "0:0" "$RUN_MANIFEST_SHA256"
 
 echo "[stage:render]"
