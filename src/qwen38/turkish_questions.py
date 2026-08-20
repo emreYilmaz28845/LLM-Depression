@@ -1557,6 +1557,29 @@ def _check_cluster_assignment(
     return assignment
 
 
+def _namespace_batch_clusters(
+    clusters: list[dict[str, Any]],
+    candidate_ids: list[str],
+    batch_index: int,
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """Replace model-local cluster IDs with deterministic run-global IDs."""
+    namespaced: list[dict[str, Any]] = []
+    for cluster_index, cluster in enumerate(clusters, start=1):
+        namespaced.append(
+            {
+                **cluster,
+                "cluster_id": f"b{batch_index:02d}-c{cluster_index:04d}",
+                "member_candidate_ids": list(cluster["member_candidate_ids"]),
+            }
+        )
+    assignment = _check_cluster_assignment(
+        namespaced,
+        candidate_ids,
+        f"batch {batch_index} namespaced",
+    )
+    return namespaced, assignment
+
+
 def _check_family_assignment(
     families: list[dict[str, Any]],
     cluster_ids: list[str],
@@ -2189,6 +2212,14 @@ def consolidate(
                     settings=settings,
                     consolidation_dir=consolidation_dir,
                 )
+                clusters, assignment = _namespace_batch_clusters(
+                    clusters,
+                    [candidate["candidate_id"] for candidate in batch_candidates],
+                    batch_index,
+                )
+                record["clusters"] = clusters
+                record["assignment"] = assignment
+                record["cluster_id_namespace"] = "batch_index_and_cluster_order_v1"
                 batch_results.append(record)
                 all_cluster_ids.extend(cluster["cluster_id"] for cluster in clusters)
                 _atomic_write_json(record, consolidation_dir / f"batch_{batch_index:02d}.json")

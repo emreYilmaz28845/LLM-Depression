@@ -50,6 +50,7 @@ from src.qwen38.turkish_questions import (
     _check_cluster_assignment,
     _check_family_assignment,
     _hierarchical_final_consolidate,
+    _namespace_batch_clusters,
     _partition_final_nodes,
     _episode_provenance,
     _normalize_episode_fields,
@@ -849,6 +850,32 @@ class TestEpisodeSafeInference:
             _validate_exclusion_metadata(record)
 
 class TestConsolidation:
+    def test_batch_cluster_ids_are_globally_namespaced(self):
+        model_clusters = [
+            {
+                "cluster_id": "c1",
+                "canonical_question_tr": "Soru bir",
+                "canonical_question_en": "Question one",
+                "member_candidate_ids": ["S0001-e1"],
+            },
+            {
+                "cluster_id": "c1",
+                "canonical_question_tr": "Soru iki",
+                "canonical_question_en": "Question two",
+                "member_candidate_ids": ["S0002-e1"],
+            },
+        ]
+        batch1, assignment1 = _namespace_batch_clusters(
+            model_clusters, ["S0001-e1", "S0002-e1"], 1
+        )
+        batch2, assignment2 = _namespace_batch_clusters(
+            model_clusters, ["S0001-e1", "S0002-e1"], 2
+        )
+        assert [cluster["cluster_id"] for cluster in batch1] == ["b01-c0001", "b01-c0002"]
+        assert [cluster["cluster_id"] for cluster in batch2] == ["b02-c0001", "b02-c0002"]
+        assert set(assignment1.values()).isdisjoint(set(assignment2.values()))
+        assert [cluster["canonical_question_tr"] for cluster in batch1] == ["Soru bir", "Soru iki"]
+
     @staticmethod
     def _summary(cluster_id):
         return {
