@@ -147,12 +147,57 @@ def audit_state(state_path: pathlib.Path, allow_incomplete: bool = False) -> tup
                 missing = [pat for pat in patterns if not any(pat.lower() in ev for ev in lower)]
                 if missing:
                     errors.append(f"phase 9 PASSED but missing evidence patterns: {missing}")
+    # Structured ledger checks for completed runs
+    if status == "COMPLETE":
+        # Check prs, deployments, attempts, jobs are not empty
+        if not state.get("prs"):
+            errors.append("COMPLETE but prs is empty (must record merged PRs)")
+        if not state.get("deployments"):
+            errors.append("COMPLETE but deployments is empty (must record isolated deployments)")
+        if not state.get("attempts"):
+            errors.append("COMPLETE but attempts is empty (must record smoke attempt)")
+        if not state.get("jobs"):
+            errors.append("COMPLETE but jobs is empty (must record Slurm job IDs and terminal states)")
+        # Check that jobs have terminal COMPLETED states
+        jobs = state.get("jobs", [])
+        if jobs:
+            has_completed_train = any(j.get("job_key") == "train" and j.get("status") == "COMPLETED" for j in jobs)
+            has_completed_eval = any(j.get("job_key") in ("best_eval", "evaluation") and j.get("status") == "COMPLETED" for j in jobs)
+            if not has_completed_train:
+                errors.append("COMPLETE but no train job with status COMPLETED found in ledger")
+            if not has_completed_eval:
+                errors.append("COMPLETE but no eval job with status COMPLETED found in ledger (required standalone eval, not train-time eval/best_checkpoint)")
+        # Check evidence paths/hashes for smoke
+        # For Phase 10, check that smoke attempt has standalone_eval artifacts
+        # This will be checked via the smoke's evaluations and artifacts, but we can also check ledger attempts
+        # Check that prs have valid SHAs
+        for pr in state.get("prs", []):
+            if not pr.get("pr_url") or not pr.get("head_sha") or not pr.get("merge_sha"):
+                errors.append(f"prs entry missing pr_url/head_sha/merge_sha: {pr}")
+
     # Hard stop checks
     if status == "HARD_STOP" and state.get("hard_stop") is None:
         errors.append("status HARD_STOP but hard_stop is null")
     if status != "HARD_STOP" and state.get("hard_stop") is not None:
         # Could be ACTIVE with hard_stop still set incorrectly; warn
         warnings.append("hard_stop is set but status is not HARD_STOP")
+    # Check for standalone_eval artifacts for smoke (Phase 10)
+    if status == "COMPLETE":
+        # Check that at least one attempt has standalone_eval evidence
+        # This is via the smoke's output, but we can check ledger attempts for smoke
+        smoke_attempts = [a for a in state.get("attempts", []) if "smoke" in a.get("attempt_id", "").lower() or "parallel_workflow" in a.get("attempt_id", "").lower()]
+        if not smoke_attempts:
+            # Also check deployments for smoke
+            smoke_deps = [d for d in state.get("deployments", []) if "smoke" in d.get("deployment_id", "").lower()]
+            if not smoke_deps:
+                errors.append("COMPLETE but no smoke deployment/attempt found in ledger (must record smoke deployment and attempt)")
+        # Check that evidence for Phase 10 includes standalone_eval
+        phase10 = state.get("phases", {}).get("10", {})
+        if phase10.get("status") == "PASSED":
+            evs = [e.lower() for e in phase10.get("evidence", [])]
+            if not any("standalone_eval" in ev for ev in evs):
+                errors.append("Phase 10 PASSED but evidence does not contain standalone_eval (required standalone eval, not train-time eval/best_checkpoint)")
+
     # Evidence existence on filesystem for paths that look like file paths
     # For skeleton, just ensure evidence strings non-empty
     return (len(errors) == 0), errors + warnings, state

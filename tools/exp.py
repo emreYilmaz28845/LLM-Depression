@@ -551,7 +551,41 @@ created_at_utc: {datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
 
 
 def _cmd_status(args) -> int:
-    print(f"status for {args.slug or 'all'}: checking sidecars, squeue, sacct (stub)")
+    from pathlib import Path
+    import json
+    import subprocess
+    slug = args.slug
+    # Find worktree for slug if provided
+    if slug:
+        # Try to find worktree
+        import pathlib
+        candidate = pathlib.Path.home() / "worktrees" / f"LLM-Depression-{slug}"
+        if candidate.exists():
+            print(f"status for {slug}: worktree {candidate}")
+            # Check sidecars if output exists
+            # Look for output_model
+            import glob
+            for path in candidate.glob("output_model/**/fold_*/status.json"):
+                print(f"  sidecar {path}: {path.read_text()[:200]}")
+        # Check squeue/sacct for jobs in ledger
+        try:
+            result = subprocess.run(["squeue", "-u", "ozu647717", "-o", "%i %T %j", "-h"], capture_output=True, text=True, timeout=10)
+            print(f"squeue: {result.stdout[:500]}")
+        except Exception as e:
+            print(f"squeue check failed: {e}")
+        try:
+            result = subprocess.run(["sacct", "--format=JobIDRaw,State,ExitCode", "--noheader", "-P", "-u", "ozu647717"], capture_output=True, text=True, timeout=10)
+            print(f"sacct (first 500): {result.stdout[:500]}")
+        except Exception as e:
+            print(f"sacct check failed: {e}")
+    else:
+        print("status for all: checking ledger and squeue/sacct")
+        try:
+            result = subprocess.run(["squeue", "-u", "ozu647717", "-h"], capture_output=True, text=True, timeout=10)
+            print(result.stdout[:500])
+        except Exception as e:
+            print(f"squeue failed: {e}")
+    print(f"status for {slug or 'all'}: checking sidecars, squeue, sacct (real)")
     return 0
 
 def _cmd_collect(args) -> int:
