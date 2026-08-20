@@ -2005,8 +2005,8 @@ def consolidate(
                         }
                     )
 
-            # Use smaller output budget for final merge to stay within 8192 context (7169 input + 512 <8192)
-            final_max_tokens = 512
+            # Use smaller output budget for final merge to stay within 8192 context (7681 input + 256 <8192)
+            final_max_tokens = 256
             final_settings = dict(settings)
             final_settings["max_tokens"] = final_max_tokens
             final_parsed, family_assignment, used_simplified = await _final_consolidate_with_fallback(
