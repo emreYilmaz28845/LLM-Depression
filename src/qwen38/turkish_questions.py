@@ -10,9 +10,9 @@ Stages:
 - ``infer-subjects``: one deterministic request per complete sequence,
   resumable by sequence ID, refusing resume when any provenance hash differs.
 - ``consolidate``: five fixed sequence batches (32, 32, 32, 32, 7), each
-  merged by the model into clusters, then one final merge request; Python
-  enforces that every candidate lands in exactly one cluster and every
-  cluster in exactly one family.
+  merged by the model into clusters, followed by token-bounded hierarchical
+  merges; Python enforces that every candidate lands in exactly one cluster
+  and every cluster in exactly one family.
 - ``render``: deterministic CSV/JSON/Markdown tables from the final families
   with the exact runbook column order.
 
@@ -33,7 +33,7 @@ import time
 import unicodedata
 from collections import Counter, OrderedDict
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 from src.qwen38.contracts import (
     CONFIDENCE_WEIGHTS,
@@ -240,6 +240,12 @@ CONSOLIDATION_CORRECTION_MESSAGE = (
     "object matching the required schema with exact candidate or cluster assignment, "
     "with no extra fields and no private content."
 )
+
+CONSOLIDATION_CONTEXT_TOKENS = 8192
+CONSOLIDATION_SAFETY_TOKENS = 256
+CONSOLIDATION_GROUP_MAX_ITEMS = 48
+CONSOLIDATION_GROUP_OUTPUT_TOKENS = 2048
+CONSOLIDATION_MAX_LEVELS = 8
 
 EVIDENCE_BASIS_FALLBACK = "Inferred from response topic and framing"
 _EVIDENCE_QUOTES = '"\'`“”‘’«»‹›„‟‚‛'
@@ -1923,6 +1929,202 @@ async def _final_consolidate_with_fallback(
             raise ValueError(f"final merge failed after fallback: {exc} | simplified: {exc2}") from exc2
 
 
+def _load_chat_token_counter(tokenizer_path: str | Path) -> Callable[[list[dict[str, str]]], int]:
+    """Load the pinned local tokenizer and count the exact rendered chat tokens."""
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_path), local_files_only=True)
+
+    def count(messages: list[dict[str, str]]) -> int:
+        token_ids = tokenizer.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            enable_thinking=False,
+            preserve_thinking=False,
+        )
+        return len(token_ids)
+
+    return count
+
+
+def _final_messages(cluster_summaries: list[dict[str, Any]], *, correction: bool) -> list[dict[str, str]]:
+    messages = [
+        {"role": "system", "content": CONSOLIDATION_FINAL_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": json.dumps({"cluster_summaries": cluster_summaries}, ensure_ascii=False),
+        },
+    ]
+    if correction:
+        messages.append({"role": "user", "content": CONSOLIDATION_CORRECTION_MESSAGE})
+    return messages
+
+
+def _partition_final_nodes(
+    nodes: list[dict[str, Any]],
+    *,
+    token_counter: Callable[[list[dict[str, str]]], int],
+    output_tokens: int = CONSOLIDATION_GROUP_OUTPUT_TOKENS,
+) -> list[list[dict[str, Any]]]:
+    """Deterministically partition nodes so even a correction request fits."""
+    input_limit = CONSOLIDATION_CONTEXT_TOKENS - CONSOLIDATION_SAFETY_TOKENS - output_tokens
+    groups: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    for node in nodes:
+        proposed = current + [node]
+        rendered = [item["summary"] for item in proposed]
+        tokens = token_counter(_final_messages(rendered, correction=True))
+        if current and (len(proposed) > CONSOLIDATION_GROUP_MAX_ITEMS or tokens > input_limit):
+            groups.append(current)
+            current = [node]
+            single_tokens = token_counter(_final_messages([node["summary"]], correction=True))
+            if single_tokens > input_limit:
+                raise ValueError(
+                    f"single consolidation node exceeds token budget: {single_tokens}>{input_limit}"
+                )
+        else:
+            if tokens > input_limit:
+                raise ValueError(
+                    f"single consolidation node exceeds token budget: {tokens}>{input_limit}"
+                )
+            current = proposed
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _sum_label_counts(nodes: list[dict[str, Any]]) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for node in nodes:
+        counts.update(node["summary"].get("label_counts", {}))
+    return dict(counts)
+
+
+async def _hierarchical_final_consolidate(
+    client: Any,
+    model: str,
+    cluster_summaries: list[dict[str, Any]],
+    all_cluster_ids: list[str],
+    *,
+    seed: int,
+    settings: dict[str, Any],
+    token_counter: Callable[[list[dict[str, str]]], int],
+) -> tuple[list[dict[str, Any]], dict[str, str], list[dict[str, Any]]]:
+    """Merge bounded groups and preserve exact leaf-cluster lineage.
+
+    If a complete level does not reduce its input, its model-produced nodes become
+    the final families. This avoids an oversized root call without inventing a
+    semantic merge in Python.
+    """
+    if len(set(all_cluster_ids)) != len(all_cluster_ids):
+        raise ValueError("duplicate cluster IDs before hierarchical consolidation")
+    summary_by_id = {item["cluster_id"]: item for item in cluster_summaries}
+    if set(summary_by_id) != set(all_cluster_ids):
+        raise ValueError("cluster summary IDs do not match batch cluster IDs")
+    nodes = [
+        {"node_id": cluster_id, "leaf_cluster_ids": [cluster_id], "summary": summary_by_id[cluster_id]}
+        for cluster_id in all_cluster_ids
+    ]
+    level_records: list[dict[str, Any]] = []
+
+    for level in range(1, CONSOLIDATION_MAX_LEVELS + 1):
+        groups = _partition_final_nodes(nodes, token_counter=token_counter)
+        next_nodes: list[dict[str, Any]] = []
+        group_records: list[dict[str, Any]] = []
+        for group_index, group in enumerate(groups, start=1):
+            group_ids = [node["node_id"] for node in group]
+            summaries = [node["summary"] for node in group]
+            input_tokens = token_counter(_final_messages(summaries, correction=True))
+            group_settings = dict(settings)
+            group_settings["max_tokens"] = CONSOLIDATION_GROUP_OUTPUT_TOKENS
+            parsed, _assignment, used_simplified = await _final_consolidate_with_fallback(
+                client,
+                model,
+                summaries,
+                group_ids,
+                CONSOLIDATION_GROUP_OUTPUT_TOKENS,
+                seed,
+                group_settings,
+            )
+            source_by_id = {node["node_id"]: node for node in group}
+            for family_index, family in enumerate(parsed["families"], start=1):
+                members = [source_by_id[item] for item in family["member_cluster_ids"]]
+                leaf_ids = [leaf for member in members for leaf in member["leaf_cluster_ids"]]
+                node_id = f"h{level:02d}g{group_index:03d}f{family_index:03d}"
+                next_nodes.append(
+                    {
+                        "node_id": node_id,
+                        "leaf_cluster_ids": leaf_ids,
+                        "summary": {
+                            "cluster_id": node_id,
+                            "batch_index": 0,
+                            "canonical_question_tr": family["question_tr"],
+                            "canonical_question_en": family["question_en"],
+                            "member_count": sum(
+                                int(member["summary"].get("member_count", 0)) for member in members
+                            ),
+                            "label_counts": _sum_label_counts(members),
+                        },
+                    }
+                )
+            group_records.append(
+                {
+                    "group_index": group_index,
+                    "input_node_count": len(group),
+                    "output_node_count": len(parsed["families"]),
+                    "input_tokens_with_correction": input_tokens,
+                    "max_output_tokens": CONSOLIDATION_GROUP_OUTPUT_TOKENS,
+                    "context_tokens": CONSOLIDATION_CONTEXT_TOKENS,
+                    "safety_tokens": CONSOLIDATION_SAFETY_TOKENS,
+                    "used_simplified_fallback": used_simplified,
+                    "input_node_ids": group_ids,
+                    "output_node_ids": [
+                        node["node_id"] for node in next_nodes[-len(parsed["families"]):]
+                    ],
+                }
+            )
+        leaf_ids = [leaf for node in next_nodes for leaf in node["leaf_cluster_ids"]]
+        if len(leaf_ids) != len(set(leaf_ids)) or set(leaf_ids) != set(all_cluster_ids):
+            raise ValueError(f"hierarchical level {level} lost or duplicated cluster lineage")
+        reduced = len(next_nodes) < len(nodes)
+        level_records.append(
+            {
+                "level": level,
+                "input_node_count": len(nodes),
+                "output_node_count": len(next_nodes),
+                "group_count": len(groups),
+                "reduced": reduced,
+                "groups": group_records,
+            }
+        )
+        nodes = next_nodes
+        if len(nodes) == 1 or not reduced:
+            break
+    else:
+        raise ValueError(f"hierarchical consolidation exceeded {CONSOLIDATION_MAX_LEVELS} levels")
+
+    families: list[dict[str, Any]] = []
+    cluster_assignment: dict[str, str] = {}
+    for index, node in enumerate(nodes, start=1):
+        family_id = f"f{index:04d}"
+        leaf_ids = node["leaf_cluster_ids"]
+        families.append(
+            {
+                "family_id": family_id,
+                "question_tr": node["summary"]["canonical_question_tr"],
+                "question_en": node["summary"]["canonical_question_en"],
+                "member_cluster_ids": leaf_ids,
+            }
+        )
+        for cluster_id in leaf_ids:
+            if cluster_id in cluster_assignment:
+                raise ValueError(f"cluster {cluster_id!r} assigned to two final families")
+            cluster_assignment[cluster_id] = family_id
+    _check_family_assignment(families, all_cluster_ids)
+    return families, cluster_assignment, level_records
+
+
 def consolidate(
     inferences_dir: str | Path,
     consolidation_dir: str | Path,
@@ -1931,8 +2133,10 @@ def consolidate(
     model: str = SERVED_MODEL,
     seed: int = 42,
     max_tokens: int = TURKISH_MAX_TOKENS,
+    tokenizer_path: str | Path,
+    token_counter: Callable[[list[dict[str, str]]], int] | None = None,
 ) -> dict[str, Any]:
-    """Two-level consolidation with bounded recovery ladder."""
+    """Batch and hierarchical consolidation with exact chat-token bounds."""
     import asyncio
 
     records = _load_inferences(inferences_dir)
@@ -1950,6 +2154,8 @@ def consolidate(
     consolidation_dir.mkdir(parents=True, exist_ok=True)
 
     settings = request_settings(max_tokens)
+    if token_counter is None:
+        token_counter = _load_chat_token_counter(tokenizer_path)
     batch_boundaries: list[tuple[int, int]] = []
     cursor = 0
     for size in TURKISH_CONSOLIDATION_BATCHES:
@@ -2005,26 +2211,25 @@ def consolidate(
                         }
                     )
 
-            # Use smaller output budget for final merge to stay within 8192 context (7681 input + 256 <8192)
-            final_max_tokens = 256
-            final_settings = dict(settings)
-            final_settings["max_tokens"] = final_max_tokens
-            final_parsed, family_assignment, used_simplified = await _final_consolidate_with_fallback(
-                client, model, cluster_summaries, all_cluster_ids, final_max_tokens, seed, final_settings
+            families, family_assignment, hierarchy = await _hierarchical_final_consolidate(
+                client,
+                model,
+                cluster_summaries,
+                all_cluster_ids,
+                seed=seed,
+                settings=settings,
+                token_counter=token_counter,
             )
-            # final_parsed may already have families
-            families = final_parsed["families"] if "families" in final_parsed else final_parsed.get("families")
-            # Ensure we have families list
-            if isinstance(final_parsed, dict) and "families" not in final_parsed:
-                families = final_parsed.get("families")
-            else:
-                families = final_parsed["families"]
             final_record = {
                 "families": families,
                 "cluster_assignment": family_assignment,
                 "cluster_count": len(all_cluster_ids),
                 "candidate_count": len(candidate_ids_all),
-                "used_simplified_fallback": used_simplified,
+                "hierarchy": hierarchy,
+                "context_tokens": CONSOLIDATION_CONTEXT_TOKENS,
+                "safety_tokens": CONSOLIDATION_SAFETY_TOKENS,
+                "group_max_items": CONSOLIDATION_GROUP_MAX_ITEMS,
+                "group_output_tokens": CONSOLIDATION_GROUP_OUTPUT_TOKENS,
             }
             _atomic_write_json(final_record, consolidation_dir / "final_merge.json")
             _restrict(consolidation_dir / "final_merge.json")
@@ -2040,27 +2245,13 @@ def consolidate(
             "candidates": len(candidate_ids_all),
             "batches": len(batch_results),
             "clusters": len(all_cluster_ids),
-            "families": len(final_parsed["families"]),
+            "families": len(families),
             "cluster_assignment": family_assignment,
             "cluster_to_candidate": cluster_to_candidate,
             "final_record_path": str(consolidation_dir / "final_merge.json"),
         }
 
     return asyncio.run(orchestrate())
-
-def _consolidation_request_with_correction(
-    client,
-    model,
-    system_prompt,
-    user_payload,
-    schema,
-    max_tokens,
-    seed,
-    settings,
-    label,
-):
-    """Wrapper that maps to existing _consolidation_request with one correction."""
-    return  # placeholder, will be replaced via direct call
 # --------------------------------------------------------------------------
 # final aggregation and rendering
 # --------------------------------------------------------------------------

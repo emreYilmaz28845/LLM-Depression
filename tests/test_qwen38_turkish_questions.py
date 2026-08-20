@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import asyncio
 import sys
 import types
 
@@ -48,6 +49,8 @@ from src.qwen38.turkish_questions import (
     SCHEMA_CORRECTION_MESSAGE,
     _check_cluster_assignment,
     _check_family_assignment,
+    _hierarchical_final_consolidate,
+    _partition_final_nodes,
     _episode_provenance,
     _normalize_episode_fields,
     _validate_episodes,
@@ -846,6 +849,89 @@ class TestEpisodeSafeInference:
             _validate_exclusion_metadata(record)
 
 class TestConsolidation:
+    @staticmethod
+    def _summary(cluster_id):
+        return {
+            "cluster_id": cluster_id,
+            "batch_index": 1,
+            "canonical_question_tr": f"Soru {cluster_id}",
+            "canonical_question_en": f"Question {cluster_id}",
+            "member_count": 1,
+            "label_counts": {"NEUTRAL": 1},
+        }
+
+    @staticmethod
+    def _counter(messages):
+        return max(1, len(json.dumps(messages, ensure_ascii=False)) // 4)
+
+    def test_partition_is_bounded_and_counts_correction(self):
+        nodes = [
+            {"node_id": f"c{i}", "leaf_cluster_ids": [f"c{i}"], "summary": self._summary(f"c{i}")}
+            for i in range(120)
+        ]
+        groups = _partition_final_nodes(nodes, token_counter=self._counter)
+        assert len(groups) == 3
+        assert all(1 <= len(group) <= 48 for group in groups)
+        assert [node["node_id"] for group in groups for node in group] == [f"c{i}" for i in range(120)]
+
+    def test_hierarchy_reduces_and_preserves_leaf_lineage(self, monkeypatch):
+        import src.qwen38.turkish_questions as module
+
+        async def fake_merge(client, model, summaries, ids, max_tokens, seed, settings):
+            families = []
+            for index in range(0, len(ids), 8):
+                members = ids[index:index + 8]
+                families.append({
+                    "family_id": f"temporary-{index}",
+                    "question_tr": f"Birleşik soru {index}",
+                    "question_en": f"Merged question {index}",
+                    "member_cluster_ids": members,
+                })
+            assignment = {
+                member: family["family_id"]
+                for family in families
+                for member in family["member_cluster_ids"]
+            }
+            return {"families": families}, assignment, False
+
+        monkeypatch.setattr(module, "_final_consolidate_with_fallback", fake_merge)
+        summaries = [self._summary(f"c{i}") for i in range(120)]
+        families, assignment, levels = asyncio.run(_hierarchical_final_consolidate(
+            object(), "model", summaries, [f"c{i}" for i in range(120)], seed=42,
+            settings=request_settings(2048), token_counter=self._counter,
+        ))
+        assert len(levels) >= 2
+        assert set(assignment) == {f"c{i}" for i in range(120)}
+        leaves = [item for family in families for item in family["member_cluster_ids"]]
+        assert len(leaves) == len(set(leaves)) == 120
+        assert set(leaves) == set(assignment)
+
+    def test_nonreducing_level_finishes_without_oversized_root(self, monkeypatch):
+        import src.qwen38.turkish_questions as module
+
+        calls = []
+
+        async def fake_nonreducing(client, model, summaries, ids, max_tokens, seed, settings):
+            calls.append(list(ids))
+            families = [{
+                "family_id": f"temporary-{index}",
+                "question_tr": summary["canonical_question_tr"],
+                "question_en": summary["canonical_question_en"],
+                "member_cluster_ids": [node_id],
+            } for index, (summary, node_id) in enumerate(zip(summaries, ids))]
+            return {"families": families}, {node_id: family["family_id"] for node_id, family in zip(ids, families)}, False
+
+        monkeypatch.setattr(module, "_final_consolidate_with_fallback", fake_nonreducing)
+        summaries = [self._summary(f"c{i}") for i in range(120)]
+        families, assignment, levels = asyncio.run(_hierarchical_final_consolidate(
+            object(), "model", summaries, [f"c{i}" for i in range(120)], seed=42,
+            settings=request_settings(2048), token_counter=self._counter,
+        ))
+        assert len(calls) == 3
+        assert len(levels) == 1
+        assert levels[0]["reduced"] is False
+        assert len(families) == len(assignment) == 120
+
     def test_cluster_assignment_exact_once(self):
         assignment = _check_cluster_assignment(
             [
@@ -1913,4 +1999,3 @@ class TestLadderStrictAndFallback:
         assert summary["source_commit"] == commit
         manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
         assert manifest["source_commit"] == commit
-
