@@ -230,7 +230,7 @@ def _cmd_deploy(args) -> int:
     # Pin check: verify worktree pin if exists
     if worktree_path and (worktree_path / ".agent-pin.json").exists():
         # Use check_worktree_pin logic via subprocess
-        result = subprocess.run([str(project_root / "tools" / "check_worktree_pin.py")], cwd=str(worktree_path), capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(project_root / "tools" / "check_worktree_pin.py")], cwd=str(worktree_path), capture_output=True, text=True)
         if result.returncode != 0 and not allow_dirty:
             print(f"ERROR: pin check failed: {result.stderr}", file=sys.stderr)
             return 1
