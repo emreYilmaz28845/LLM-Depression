@@ -280,23 +280,44 @@ def cmd_complete(args):
     if state.get("hard_stop") is not None:
         print(f"ERROR: cannot complete while HARD_STOP is active", file=sys.stderr)
         return 1
-    # Check all phases PASSED
-    not_passed = [str(i) for i in PHASES if state["phases"][str(i)]["status"] != "PASSED"]
-    if not_passed:
-        print(f"ERROR: cannot mark COMPLETE: phases not PASSED: {not_passed}", file=sys.stderr)
+    if state.get("status") == "COMPLETE":
+        print("ERROR: execution already COMPLETE", file=sys.stderr)
         return 1
-    # Check execution_id and runbook immutability is already validated
-    # If audit provided, ensure it exists and status is passed
-    if audit_path and not audit_path.exists():
-        print(f"ERROR: audit file not found: {audit_path}", file=sys.stderr)
+    # Phase 13 must be the active phase; 0-12 PASSED.
+    for i in range(13):
+        if state["phases"][str(i)]["status"] != "PASSED":
+            print(f"ERROR: cannot mark COMPLETE: phase {i} not PASSED", file=sys.stderr)
+            return 1
+    if state["phases"]["13"]["status"] != "IN_PROGRESS":
+        print("ERROR: cannot mark COMPLETE: Phase 13 must be IN_PROGRESS (preterminal gate)", file=sys.stderr)
         return 1
+    # An approved preterminal audit is mandatory and consumed atomically.
+    if audit_path is None or not audit_path.is_file():
+        print(f"ERROR: approved preterminal audit file required: {audit_path}", file=sys.stderr)
+        return 1
+    try:
+        audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"ERROR: preterminal audit unreadable: {e}", file=sys.stderr)
+        return 1
+    if audit.get("passed") is not True or audit.get("mode") != "preterminal":
+        print("ERROR: audit is not a passing preterminal audit (mode=preterminal, passed=true)", file=sys.stderr)
+        return 1
+    audit_sha = sha256_file(audit_path)
+    state["completion"] = {
+        "preterminal_audit_path": str(audit_path.resolve()),
+        "preterminal_audit_sha256": audit_sha,
+        "completed_at_utc": utc_now_str(),
+    }
+    state["phases"]["13"]["status"] = "PASSED"
     state["status"] = "COMPLETE"
     state["updated_at_utc"] = utc_now_str()
-    if audit_path:
-        # store audit path as evidence? Not needed, but could record
-        pass
+    errors = validate_state_schema(state)
+    if errors:
+        print(f"ERROR: schema validation failed after complete: {errors}", file=sys.stderr)
+        return 1
     atomic_write_json(state_path, state)
-    print(f"execution {state['execution_id']} marked COMPLETE")
+    print(f"execution {state['execution_id']} marked COMPLETE (preterminal audit {audit_sha[:12]} consumed)")
     return 0
 
 def cmd_reopen(args):
