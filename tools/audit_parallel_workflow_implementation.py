@@ -154,10 +154,14 @@ def check_live_jobs(state: dict, scheduler_host: str = "ozu647717@alogin2.bsc.es
 
 def check_structured_records(state: dict, repo_root: pathlib.Path) -> list[str]:
     errors = []
-    prs = state.get("prs", [])
-    if not prs:
+    all_prs = state.get("prs", [])
+    if not all_prs:
         errors.append("structured prs records are empty")
-    for pr in prs:
+    # Latest record per PR URL is authoritative (corrections are appended).
+    latest: dict[str, dict[str, Any]] = {}
+    for pr in all_prs:
+        latest[pr.get("pr_url", "")] = pr
+    for url, pr in sorted(latest.items()):
         url = pr.get("pr_url", "")
         if not re.match(r"^https://github\.com/[^/]+/[^/]+/pull/\d+$", url):
             errors.append(f"malformed pr_url: {url!r}")

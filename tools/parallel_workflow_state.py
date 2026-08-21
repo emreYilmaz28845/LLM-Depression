@@ -419,6 +419,33 @@ def cmd_record_pr(args):
     return 0
 
 
+def cmd_correct_pr(args):
+    """Append a corrected head/merge SHA for a PR; latest record wins."""
+    state_path = pathlib.Path(args.state)
+    state = load_state(state_path)
+    prs = state.setdefault("prs", [])
+    prior = [p for p in prs if p.get("pr_url") == args.pr_url]
+    if not prior:
+        print(f"ERROR: no prior record for {args.pr_url}", file=sys.stderr)
+        return 1
+    prs.append({
+        "pr_url": args.pr_url,
+        "phase": args.phase if args.phase is not None else prior[-1].get("phase"),
+        "head_sha": args.head_sha,
+        "merge_sha": args.merge_sha,
+        "corrects_recorded_at_utc": prior[-1].get("recorded_at_utc"),
+        "recorded_at_utc": utc_now_str(),
+    })
+    state["updated_at_utc"] = utc_now_str()
+    errors = validate_state_schema(state)
+    if errors:
+        print(f"ERROR: schema validation failed after correct-pr: {errors}", file=sys.stderr)
+        return 1
+    atomic_write_json(state_path, state)
+    print(f"corrected pr record for {args.pr_url}")
+    return 0
+
+
 def cmd_record_deployment(args):
     state_path = pathlib.Path(args.state)
     state = load_state(state_path)
@@ -534,6 +561,14 @@ def main():
     p_pr.add_argument("--head-sha", required=True)
     p_pr.add_argument("--merge-sha", required=True)
     p_pr.set_defaults(func=cmd_record_pr)
+
+    p_cpr = sub.add_parser("correct-pr", help="append a corrected head/merge SHA for a previously recorded PR")
+    p_cpr.add_argument("--state", required=True)
+    p_cpr.add_argument("--pr-url", required=True)
+    p_cpr.add_argument("--phase", type=int, default=None)
+    p_cpr.add_argument("--head-sha", required=True)
+    p_cpr.add_argument("--merge-sha", required=True)
+    p_cpr.set_defaults(func=cmd_correct_pr)
 
     p_dep = sub.add_parser("record-deployment", help="append a structured deployment record")
     p_dep.add_argument("--state", required=True)
