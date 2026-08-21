@@ -917,6 +917,7 @@ def _cmd_collect(args) -> int:
 
     fold_dir = getattr(args, "fold_dir", None)
     attempt_id = getattr(args, "attempt_id", None)
+    contract_holder: dict = {}
     if not fold_dir:
         # Resolve the exact remote fold path from recorded submission evidence.
         submit_root = PROJECT_ROOT / "outputs" / "exp_submit"
@@ -948,15 +949,19 @@ def _cmd_collect(args) -> int:
             print("ERROR: no recorded submission contract found; pass --fold-dir or run exp submit first", file=sys.stderr)
             return 1
         fold_dir = chosen["fold_dir"]
+        contract_holder = chosen
         if attempt_id is None:
             attempt_id = chosen.get("attempt_id")
 
     local_fold = getattr(args, "output", None)
     if not local_fold:
-        if not attempt_id:
-            print("ERROR: --output required when the attempt id cannot be resolved", file=sys.stderr)
+        if contract_holder.get("local_fold_rel"):
+            local_fold = str(PROJECT_ROOT / contract_holder["local_fold_rel"])
+        elif attempt_id:
+            local_fold = str(PROJECT_ROOT / "output_model" / "collected" / attempt_id / Path(fold_dir).name)
+        else:
+            print("ERROR: --output required when the local destination cannot be resolved", file=sys.stderr)
             return 1
-        local_fold = str(PROJECT_ROOT / "output_model" / "collected" / attempt_id / Path(fold_dir).name)
 
     try:
         validate_fold_path(fold_dir)
@@ -1000,9 +1005,112 @@ def _cmd_collect(args) -> int:
     print(f"collected and hash-verified: {result['inventory']['matched']} files -> {result['local_fold']}")
     return 0
 
+def _resolve_attempt_fold_dir(args):
+    """Resolve (fold_dir, contract) from --attempt-id/--fold-dir or latest contract."""
+    from src.experiment_tracking.collect import CollectionError, validate_fold_path
+
+    fold_dir = getattr(args, "fold_dir", None)
+    attempt_id = getattr(args, "attempt_id", None)
+    contract = None
+    if not fold_dir:
+        submit_root = PROJECT_ROOT / "outputs" / "exp_submit"
+        candidates = []
+        if attempt_id:
+            p = submit_root / attempt_id / "contract.json"
+            if p.is_file():
+                candidates.append(p)
+        elif submit_root.exists():
+            candidates = sorted(submit_root.glob("*/contract.json"))
+        for contract_path in reversed(candidates):
+            try:
+                contract = json.loads(contract_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if attempt_id and contract.get("attempt_id") != attempt_id:
+                continue
+            break
+        if contract is None:
+            return None, None, "no recorded submission contract found; pass --attempt-id or --fold-dir"
+        fold_dir = str(PROJECT_ROOT / contract["local_fold_rel"])
+        attempt_id = contract.get("attempt_id")
+    try:
+        validate_fold_path(str(fold_dir))
+    except CollectionError:
+        pass  # local dirs may legitimately differ; remote check happens in collect
+    return fold_dir, contract, None
+
+
 def _cmd_validate(args) -> int:
-    slug = args.slug
-    print(f"validate for {slug}: verifying hashes, recomputing headline metrics, checking qualifiers, advancing through SYNCED_LOCALLY -> LOCALLY_VALIDATED -> REPORTABLE if gates pass (stub)")
+    from src.experiment_tracking.validate import (
+        ValidationError,
+        advance_lifecycle,
+        read_state,
+        validate_attempt,
+    )
+
+    fold_dir, contract, err = _resolve_attempt_fold_dir(args)
+    if err:
+        print(f"ERROR: {err}", file=sys.stderr)
+        return 1
+    qualifiers = (contract or {}).get("qualifiers", {})
+    try:
+        result = validate_attempt(
+            fold_dir,
+            expected_attempt_id=(contract or {}).get("attempt_id"),
+            expected_dataset=(contract or {}).get("dataset"),
+            expected_evaluation_view=qualifiers.get("evaluation_view"),
+            expected_backend=qualifiers.get("backend"),
+            expected_aggregation=qualifiers.get("aggregation"),
+            require_standalone_eval=True,
+        )
+    except ValidationError as e:
+        print(f"VALIDATE FAILED: {e}", file=sys.stderr)
+        return 1
+    state, _ = read_state(fold_dir)
+    print(json.dumps(result, indent=2, sort_keys=True))
+    if not result["ok"]:
+        print("VALIDATE FAILED", file=sys.stderr)
+        return 1
+    # Stepwise official advancement: COMPLETED_ON_MN5 -> SYNCED_LOCALLY -> LOCALLY_VALIDATED
+    advanced = []
+    try:
+        if state == "COMPLETED_ON_MN5":
+            advanced.append(advance_lifecycle(fold_dir, "SYNCED_LOCALLY"))
+            state = "SYNCED_LOCALLY"
+        if state == "SYNCED_LOCALLY":
+            advanced.append(advance_lifecycle(fold_dir, "LOCALLY_VALIDATED"))
+            state = "LOCALLY_VALIDATED"
+    except ValidationError as e:
+        print(f"VALIDATE FAILED: {e}", file=sys.stderr)
+        return 1
+    if advanced:
+        print(f"lifecycle advanced: {' -> '.join([state.split('->')[0].strip()] + advanced)}")
+    print(f"VALIDATE OK (state: {state})")
+    return 0
+
+
+def _cmd_finish(args) -> int:
+    from src.experiment_tracking.validate import finish_gates
+
+    fold_dir, contract, err = _resolve_attempt_fold_dir(args)
+    if err:
+        print(f"ERROR: {err}", file=sys.stderr)
+        return 1
+    qualifiers = (contract or {}).get("qualifiers", {})
+    result = finish_gates(
+        fold_dir,
+        expected_attempt_id=(contract or {}).get("attempt_id"),
+        expected_dataset=(contract or {}).get("dataset"),
+        expected_evaluation_view=qualifiers.get("evaluation_view"),
+        expected_backend=qualifiers.get("backend"),
+        expected_aggregation=qualifiers.get("aggregation"),
+        required_jobs_terminal_success=not getattr(args, "skip_job_gate", False),
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    if not result["ok"]:
+        print(f"FINISH INCOMPLETE — next action: {result['next_action']}", file=sys.stderr)
+        return 1
+    print(f"FINISH OK: {result['state']}")
     return 0
 
 def _cmd_compare(args) -> int:
@@ -1014,12 +1122,6 @@ def _cmd_compare(args) -> int:
     print(f"compare group={args.group} attempts={attempts} dataset={args.dataset} metric={args.metric} namespace={args.namespace} backend={args.backend} view={args.view} aggregation={args.aggregation}")
     print("group comparison: checking for mixed folds/seeds/protocols, missing evaluation views, mixed aggregations, tie rules (stub)")
     return 0
-
-def _cmd_finish(args) -> int:
-    slug = args.slug
-    print(f"finish for {slug}: enforcing lifecycle gates PLANNED->DEPLOYED->SUBMITTED->RUNNING->COMPLETED_ON_MN5->SYNCED_LOCALLY->LOCALLY_VALIDATED->REPORTABLE (stub)")
-    return 0
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Query the local experiment registry.")
@@ -1109,8 +1211,10 @@ def main() -> int:
     collect_parser.add_argument("--execute", action="store_true", help="execute collection")
     collect_parser.set_defaults(func=_cmd_collect)
 
-    validate_parser = subparsers.add_parser("validate", help="validate local evidence and reportability")
-    validate_parser.add_argument("slug", help="experiment slug")
+    validate_parser = subparsers.add_parser("validate", help="verify local evidence hashes, recompute headline metrics, check qualifiers, advance lifecycle stepwise")
+    validate_parser.add_argument("slug", nargs="?", default=None)
+    validate_parser.add_argument("--attempt-id", default=None)
+    validate_parser.add_argument("--fold-dir", default=None, help="local fold dir with collected evidence")
     validate_parser.set_defaults(func=_cmd_validate)
 
     compare_parser = subparsers.add_parser("compare", help="group-scoped comparison with full qualifiers")
@@ -1124,8 +1228,11 @@ def main() -> int:
     compare_parser.add_argument("--aggregation", required=True)
     compare_parser.set_defaults(func=_cmd_compare)
 
-    finish_parser = subparsers.add_parser("finish", help="advance lifecycle to REPORTABLE if gates pass")
-    finish_parser.add_argument("slug", help="experiment slug")
+    finish_parser = subparsers.add_parser("finish", help="gate orchestrator: advance to REPORTABLE only when every gate passes")
+    finish_parser.add_argument("slug", nargs="?", default=None)
+    finish_parser.add_argument("--attempt-id", default=None)
+    finish_parser.add_argument("--fold-dir", default=None, help="local fold dir with collected evidence")
+    finish_parser.add_argument("--skip-job-gate", action="store_true", help="test-only: bypass TERMINAL job-event gate")
     finish_parser.set_defaults(func=_cmd_finish)
 
     args = parser.parse_args()
