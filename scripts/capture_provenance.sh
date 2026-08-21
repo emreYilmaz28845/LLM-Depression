@@ -10,7 +10,9 @@
 # Everything here is offline: git reads the local repo, no network is touched.
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Honor an explicit target so lane worktrees can capture their own provenance
+# (tools/exp.py deploy sets PROJECT_ROOT to the pinned worktree).
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 PROV_DIR="$PROJECT_ROOT/.provenance"
 mkdir -p "$PROV_DIR"
 

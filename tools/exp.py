@@ -221,7 +221,10 @@ def _check_pin(worktree_path: Path) -> tuple[bool, str]:
 
 def _capture_provenance(worktree_path: Path) -> tuple[bool, str]:
     script = PROJECT_ROOT / "scripts" / "capture_provenance.sh"
-    result = subprocess.run(["bash", str(script)], cwd=str(worktree_path), capture_output=True, text=True)
+    env = dict(os.environ)
+    env["PROJECT_ROOT"] = str(worktree_path)
+    result = subprocess.run(["bash", str(script)], cwd=str(worktree_path),
+                            capture_output=True, text=True, env=env)
     return result.returncode == 0, (result.stdout + result.stderr).strip()
 
 
@@ -307,7 +310,10 @@ def _cmd_deploy(args) -> int:
         + dry_proc.stdout + ("\n[stderr]\n" + dry_proc.stderr if dry_proc.stderr else ""),
         encoding="utf-8",
     )
-    transferred = sum(1 for line in dry_proc.stdout.splitlines() if line.startswith(">f"))
+    transferred = sum(
+        1 for line in dry_proc.stdout.splitlines()
+        if len(line) > 9 and line[1] == "f" and "+" in line
+    )
     print(f"rsync dry-run through {plan['transfer_host']}: {transferred} files would transfer "
           f"(itemized log: {dry_run_log})")
 
@@ -333,7 +339,7 @@ def _cmd_deploy(args) -> int:
     return 0
 
 
-def _find_deployment_record(experiment_id: str, deployment_id: str | None = None):
+def _find_deployment_record(experiment_id: str, deployment_id: str | None = None, allow_plan: bool = False):
     deploy_root = PROJECT_ROOT / "outputs" / "exp_deploy"
     if not deploy_root.exists():
         return None, f"no local deployment evidence under {deploy_root}"
@@ -348,6 +354,21 @@ def _find_deployment_record(experiment_id: str, deployment_id: str | None = None
         if deployment_id and record.get("deployment_id") != deployment_id:
             continue
         candidates.append((record_path, record))
+    if not candidates and allow_plan:
+        # Dry-run mode may plan against a reviewed deploy plan (no execution yet).
+        for plan_path in sorted(deploy_root.glob("*/plan.json")):
+            try:
+                plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            record = plan.get("record")
+            if not isinstance(record, dict):
+                continue
+            if record.get("experiment_id") != experiment_id:
+                continue
+            if deployment_id and record.get("deployment_id") != deployment_id:
+                continue
+            candidates.append((plan_path, record))
     if not candidates:
         return None, f"no deployment record for experiment {experiment_id}"
     return candidates[-1]
@@ -389,7 +410,7 @@ def _cmd_submit(args) -> int:
         print(f"ERROR: pin check failed: {message}", file=sys.stderr)
         return 1
 
-    found = _find_deployment_record(experiment_id, getattr(args, "deployment_id", None))
+    found = _find_deployment_record(experiment_id, getattr(args, "deployment_id", None), allow_plan=not execute)
     if isinstance(found, tuple) and len(found) == 2 and isinstance(found[0], Path):
         _record_path, deployment = found
     else:
@@ -648,16 +669,7 @@ def _cmd_create(args) -> int:
     if parent_branch:
         # Check if it's a sha (40 hex) then not branch
         if len(parent_branch) == 40 and all(c in "0123456789abcdef" for c in parent_branch.lower()):
-            parent_branch = None  # sha not branch
-        else:
-            # Verify branch exists, else treat as sha
-            check = _run_git(["show-ref", "--verify", f"refs/heads/{parent_branch}"], cwd=project_root)
-            if check.returncode != 0:
-                # Might be origin/main
-                check2 = _run_git(["show-ref", "--verify", f"refs/remotes/{parent_branch}"], cwd=project_root)
-                if check2.returncode != 0 and parent_branch != "HEAD":
-                    # Could be sha, ignore
-                    pass
+            parent_branch = None  # sha not branch; parent_sha still recorded below
 
     # Determine experiment_id
     # Use slug + date, e.g., exp-rotary-20260821
@@ -772,6 +784,10 @@ created_at_utc: {datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
     }
     if parent_branch:
         pin_data["parent_branch"] = parent_branch
+        pin_data["parent_sha"] = parent_sha
+    elif from_ref:
+        # --from was a raw SHA: record the exact stacked parent commit.
+        pin_data["parent_branch"] = None
         pin_data["parent_sha"] = parent_sha
 
     pin_path = worktree_path / ".agent-pin.json"
@@ -1150,9 +1166,10 @@ def _cmd_compare(args) -> int:
 def _cmd_plan_integration(args) -> int:
     from src.experiment_tracking.compare import ComparisonError, plan_integration
 
+    repo = Path(args.repo) if getattr(args, "repo", None) else PROJECT_ROOT
     try:
         plan = plan_integration(
-            PROJECT_ROOT,
+            repo,
             branch_a=args.branch_a,
             branch_b=args.branch_b,
             base=args.base,
@@ -1281,6 +1298,7 @@ def main() -> int:
     planint_parser.add_argument("--branch-a", required=True)
     planint_parser.add_argument("--branch-b", required=True)
     planint_parser.add_argument("--base", default="origin/main")
+    planint_parser.add_argument("--repo", default=None, help="repository path (default: this repo)")
     planint_parser.add_argument("--output", default=None)
     planint_parser.set_defaults(func=_cmd_plan_integration)
 
