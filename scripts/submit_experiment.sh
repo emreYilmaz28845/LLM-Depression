@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Local, read-only experiment planning and authorization-gated deploy/submit/collect.
-# Only the `plan` action and dry-run command generation are implemented; every
-# mutating action requires --authorized and is refused otherwise.
+# Deprecated local planner retained for compatibility with the original
+# experiment-tracking implementation. Mutating actions always fail: use the
+# managed tools/exp.py lifecycle instead.
 
 set -euo pipefail
 
@@ -13,9 +13,7 @@ usage() {
 usage: submit_experiment.sh plan \
          --group <group-definition.yaml> --config <config.yaml> \
          --seeds 7 1337 2024 --folds 0 --issue 86 --pr 91 [--workspace <id>]
-       submit_experiment.sh deploy --plan <plan.json> [--authorized]
-       submit_experiment.sh submit --plan <plan.json> [--authorized]
-       submit_experiment.sh collect --group <group-id> [--authorized]
+       submit_experiment.sh deploy|submit|collect ...  # deprecated; always fails
 EOF
     exit 1
 }
@@ -25,7 +23,6 @@ if [ "$ACTION" != "plan" ] && [ "$ACTION" != "deploy" ] && [ "$ACTION" != "submi
 fi
 
 shift || true
-AUTHORIZED=0
 GROUP_DEF=""
 CONFIG=""
 SEEDS=""
@@ -44,7 +41,7 @@ while [ $# -gt 0 ]; do
         --pr) PR="$2"; shift 2 ;;
         --workspace) WORKSPACE="$2"; shift 2 ;;
         --plan) PLAN_FILE="$2"; shift 2 ;;
-        --authorized) AUTHORIZED=1; shift ;;
+        --authorized) shift ;;
         *) echo "unknown argument: $1"; usage ;;
     esac
 done
@@ -94,9 +91,9 @@ if [ "$ACTION" = "plan" ]; then
     echo "total_jobs: $TOTAL_JOBS"
     echo "resources_per_train_job: 1 node, 4 GPUs, 20 CPUs/task, 72h (run_train_slurm.sh)"
     echo "resources_per_eval_job: 1 node, 1 GPU, 20 CPUs/task, 24h (run_eval_slurm.sh)"
-    echo "workspace: ${WORKSPACE:-<default shared workspace>}"
+    echo "workspace: ${WORKSPACE:-<managed lane required for execution>}"
     echo "endpoint_split: transfer=ozu647717@transfer1.bsc.es scheduler=ozu647717@alogin2.bsc.es"
-    echo "checkpoint_policy: best_model selected by inner_val_positive_f1; last_model never substituted"
+    echo "checkpoint_policy: harmonized configs select best_model by inner_val_macro_f1; E-DAIC selposf1 configs are explicit legacy exceptions; last_model is never substituted"
     echo "rsync_policy: no --delete; dry-run first; review every destination change"
     echo "attempt_ids: minted at deploy time (<UTC>-<logical-run>-<git8>-<8hex>); collision is an error"
     exit 0
@@ -107,10 +104,7 @@ if [ "$ACTION" = "deploy" ] || [ "$ACTION" = "submit" ] || [ "$ACTION" = "collec
         echo "$ACTION requires --plan <plan.json>" >&2
         exit 1
     fi
-    if [ "$AUTHORIZED" != "1" ]; then
-        echo "refusing $ACTION without explicit --authorized (Tasks 0-8 are local-only; MN5 mutation requires user authorization)" >&2
-        exit 2
-    fi
-    echo "authorized $ACTION would run here; Task 9 gates the real remote mutation" >&2
-    exit 0
+    echo "refusing deprecated '$ACTION' action: this script never performs remote mutation" >&2
+    echo "use 'python tools/exp.py $ACTION --help' and the managed lane workflow" >&2
+    exit 2
 fi

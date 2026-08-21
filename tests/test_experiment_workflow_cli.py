@@ -157,7 +157,7 @@ def test_plan_action_prints_matrix_and_endpoints() -> None:
     assert "total_jobs: 4" in result.stdout
     assert "transfer=ozu647717@transfer1.bsc.es" in result.stdout
     assert "alogin2" in result.stdout
-    assert "best_model selected by inner_val_positive_f1" in result.stdout
+    assert "harmonized configs select best_model by inner_val_macro_f1" in result.stdout
     assert "attempt_ids: minted at deploy time" in result.stdout
 
 
@@ -171,6 +171,12 @@ def test_mutating_actions_refuse_without_authorization() -> None:
 def test_deploy_requires_plan_file() -> None:
     result = _run_script("submit_experiment.sh", "deploy", "--authorized")
     assert result.returncode != 0
+
+
+def test_deprecated_mutating_action_never_reports_success_when_authorized() -> None:
+    result = _run_script("submit_experiment.sh", "deploy", "--plan", "x.json", "--authorized")
+    assert result.returncode != 0
+    assert "never performs remote mutation" in result.stderr
 
 
 def test_collect_dry_run_prints_compact_evidence_command() -> None:

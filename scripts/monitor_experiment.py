@@ -195,7 +195,11 @@ def format_plan(cells: list[dict[str, Any]], *, git_commit: str, git_dirty: bool
             "scheduler": "ozu647717@alogin2.bsc.es",
         },
         "rsync_policy": "no --delete; dry-run first; review every destination change",
-        "checkpoint_policy": "best_model selected by inner_val_positive_f1; last_model never substituted",
+        "checkpoint_policy": (
+            "harmonized configs select best_model by inner_val_macro_f1; "
+            "E-DAIC selposf1 configs are explicit legacy exceptions; "
+            "last_model is never substituted"
+        ),
     }
 
 
