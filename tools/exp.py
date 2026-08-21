@@ -15,12 +15,21 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.experiment_tracking import registry
 try:
     from src.experiment_tracking.deployment import (
+        DeploymentError,
+        RemoteRunner,
         build_deployment_record,
         generate_deployment_id,
         get_source_manifest_hash,
         is_clean,
         build_rsync_command,
         validate_deployment_paths,
+        load_source_manifest,
+        sha256_of_json,
+        plan_deployment,
+        execute_deployment,
+        verify_deployment,
+        DEFAULT_TRANSFER_HOST,
+        REMOTE_BASE,
     )
 except ImportError:
     build_deployment_record = generate_deployment_id = get_source_manifest_hash = is_clean = build_rsync_command = validate_deployment_paths = None
@@ -168,171 +177,186 @@ def _get_git_branch_sha(ref, cwd=None):
     return None
 
 
-def _cmd_deploy(args) -> int:
-    # Minimal deploy implementation for Phase 3
-    import subprocess
-    from pathlib import Path
-    slug = args.slug
-    dry_run = not args.execute if hasattr(args, 'execute') else args.dry_run
-    if hasattr(args, 'dry_run') and hasattr(args, 'execute'):
-        if args.dry_run and args.execute:
-            print('ERROR: specify either --dry-run or --execute, not both', file=sys.stderr)
-            return 1
-        if not args.dry_run and not args.execute:
-            dry_run = True  # default to dry-run
-    allow_dirty = getattr(args, "allow_dirty", False)
-    # Find pin file
-    project_root = PROJECT_ROOT.resolve()
-    # Try to find pin based on slug or current worktree
-    # Search for worktree via git worktree list
-    worktree_path = None
-    branch = None
-    experiment_id = None
-    # Try to locate worktree by slug
-    # Worktree naming: LLM-Depression-<suffix>
-    suffix = slug if slug.startswith("exp-") or slug.startswith("feat-") else f"exp-{slug}"
-    candidate = Path.home() / "worktrees" / f"LLM-Depression-{suffix}"
-    if candidate.exists():
-        worktree_path = candidate.resolve()
-        pin_path = worktree_path / ".agent-pin.json"
-        if pin_path.exists():
+def _resolve_lane(slug: str):
+    """Resolve a lane slug to (worktree, pin_data) by scanning managed pins."""
+    worktrees_root = Path.home() / "worktrees"
+    candidates = []
+    direct = worktrees_root / f"LLM-Depression-{slug}"
+    if direct.exists():
+        candidates.append(direct)
+    if worktrees_root.exists():
+        for entry in sorted(worktrees_root.glob("LLM-Depression-*")):
+            pin_path = entry / ".agent-pin.json"
+            if not pin_path.exists():
+                continue
             try:
-                import json
-                pin_data = json.loads(pin_path.read_text())
-                experiment_id = pin_data.get("experiment_id", slug)
-                branch = pin_data.get("branch", f"agent/{suffix}")
+                pin = json.loads(pin_path.read_text(encoding="utf-8"))
             except Exception:
-                experiment_id = slug
-                branch = f"agent/{suffix}"
-        else:
-            experiment_id = slug
-            branch = f"agent/{suffix}"
-    else:
-        # Fallback to current worktree pin
+                continue
+            if pin.get("experiment_id") == slug or pin.get("branch") == f"agent/{slug}":
+                candidates.append(entry)
+    for candidate in candidates:
+        pin_path = candidate / ".agent-pin.json"
+        if not pin_path.exists():
+            continue
         try:
-            result = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True)
-            worktree_path = Path(result.stdout.strip()).resolve()
-            pin_path = worktree_path / ".agent-pin.json"
-            if pin_path.exists():
-                import json
-                pin_data = json.loads(pin_path.read_text())
-                experiment_id = pin_data.get("experiment_id", slug)
-                branch = pin_data.get("branch", f"agent/{suffix}")
-            else:
-                worktree_path = project_root
-                experiment_id = slug
-                branch = f"agent/{suffix}"
+            pin = json.loads(pin_path.read_text(encoding="utf-8"))
         except Exception:
-            worktree_path = project_root
-            experiment_id = slug
-            branch = f"agent/{suffix}"
+            continue
+        return candidate.resolve(), pin
+    return None, None
 
-    # Pin check: verify worktree pin if exists
-    if worktree_path and (worktree_path / ".agent-pin.json").exists():
-        # Use check_worktree_pin logic via subprocess
-        result = subprocess.run([sys.executable, str(project_root / "tools" / "check_worktree_pin.py")], cwd=str(worktree_path), capture_output=True, text=True)
-        if result.returncode != 0 and not allow_dirty:
-            print(f"ERROR: pin check failed: {result.stderr}", file=sys.stderr)
-            return 1
 
-    # Check clean for production
-    try:
-        dirty = not is_clean(worktree_path) if is_clean else False
-    except Exception:
-        dirty = False
-    if dirty and not allow_dirty:
-        print(f"ERROR: dirty production source not allowed for deployment; commit or use --allow-dirty for smoke/debug (non-reportable)", file=sys.stderr)
-        return 1
-    if dirty and allow_dirty:
-        print(f"WARNING: deploying dirty source as non-reportable smoke/debug")
+def _check_pin(worktree_path: Path) -> tuple[bool, str]:
+    result = subprocess.run(
+        [sys.executable, str(PROJECT_ROOT / "tools" / "check_worktree_pin.py"),
+         "--pin", str(worktree_path / ".agent-pin.json"),
+         "--cwd", str(worktree_path),
+         "--target", str(worktree_path)],
+        capture_output=True, text=True,
+    )
+    output = (result.stdout + result.stderr).strip()
+    return result.returncode == 0, output
 
-    # Get git commit and manifest hash
-    try:
-        result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(worktree_path), capture_output=True, text=True, check=True)
-        git_commit = result.stdout.strip()
-    except Exception:
-        git_commit = "0"*40
-    try:
-        manifest_hash = get_source_manifest_hash(worktree_path) if get_source_manifest_hash else "0"*64
-    except Exception:
-        manifest_hash = "0"*64
 
-    # Generate deployment ID
-    try:
-        deployment_id = generate_deployment_id(experiment_id, git_commit) if generate_deployment_id else f"{experiment_id}-deploy"
-    except Exception:
-        deployment_id = f"{experiment_id}-deploy"
+def _capture_provenance(worktree_path: Path) -> tuple[bool, str]:
+    script = PROJECT_ROOT / "scripts" / "capture_provenance.sh"
+    result = subprocess.run(["bash", str(script)], cwd=str(worktree_path), capture_output=True, text=True)
+    return result.returncode == 0, (result.stdout + result.stderr).strip()
 
-    # Define remote paths (simulated GPFS)
-    remote_deployment_code = Path(f"/gpfs/projects/etur92/ozu647717/AudioLLM/deployments/{deployment_id}/code")
-    runtime_root = Path(f"/gpfs/projects/etur92/ozu647717/AudioLLM/experiment_runtime/{experiment_id}")
 
-    # Validate runtime not inside deployment
-    try:
-        errs = validate_deployment_paths(remote_deployment_code, runtime_root) if validate_deployment_paths else []
-        if errs:
-            for e in errs:
-                print(f"ERROR: {e}", file=sys.stderr)
-            return 1
-    except Exception as e:
-        print(f"ERROR: path validation: {e}", file=sys.stderr)
+def _deploy_evidence_dir(deployment_id: str) -> Path:
+    evidence_dir = PROJECT_ROOT / "outputs" / "exp_deploy" / deployment_id
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    return evidence_dir
+
+
+def _cmd_deploy(args) -> int:
+    slug = args.slug
+    allow_dirty = getattr(args, "allow_dirty", False)
+    execute = bool(getattr(args, "execute", False))
+    dry_run_flag = bool(getattr(args, "dry_run", False))
+    if execute and dry_run_flag:
+        print("ERROR: specify either --dry-run or --execute, not both", file=sys.stderr)
         return 1
 
-    # Check target not exists (simulate via local check for test: if path exists locally, fail)
-    # For dry-run, we just check via rsync dry-run artifact
-    # Build rsync command
+    worktree_path, pin = _resolve_lane(slug)
+    if worktree_path is None or pin is None:
+        print(f"ERROR: no managed lane with pin found for slug {slug!r} under ~/worktrees/", file=sys.stderr)
+        return 1
+    experiment_id = pin.get("experiment_id") or slug
+    branch = pin.get("branch") or f"agent/{slug}"
+
+    ok, message = _check_pin(worktree_path)
+    if not ok:
+        print(f"ERROR: pin check failed: {message}", file=sys.stderr)
+        return 1
+
+    ok, message = _capture_provenance(worktree_path)
+    if not ok:
+        print(f"ERROR: provenance capture failed: {message}", file=sys.stderr)
+        return 1
+
     try:
-        cmd = build_rsync_command(worktree_path, "ozu647717@transfer1.bsc.es", remote_deployment_code, dry_run=True) if build_rsync_command else ["rsync", "-avh", "-n", str(worktree_path)+"/", f"ozu647717@transfer1.bsc.es:{remote_deployment_code}/"]
-    except Exception as e:
-        print(f"ERROR: failed to build rsync command: {e}", file=sys.stderr)
-        return 1
-    if "--delete" in cmd or "--delete" in " ".join(cmd):
-        print(f"ERROR: rsync command contains --delete which is forbidden", file=sys.stderr)
+        plan = plan_deployment(
+            worktree=worktree_path,
+            experiment_id=experiment_id,
+            branch=branch,
+            allow_dirty=allow_dirty,
+            transfer_host=DEFAULT_TRANSFER_HOST,
+            remote_base=REMOTE_BASE,
+        )
+    except DeploymentError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
         return 1
 
-    # Dry-run output
-    print("=== exp deploy dry-run ===")
-    print(f"experiment_id: {experiment_id}")
-    print(f"deployment_id: {deployment_id}")
-    print(f"git_commit: {git_commit}")
-    print(f"git_branch: {branch}")
-    print(f"git_dirty: {dirty}")
-    print(f"source_manifest_sha256: {manifest_hash}")
-    print(f"deployed_code_path: {remote_deployment_code}")
-    print(f"runtime_root: {runtime_root}")
-    print(f"rsync dry-run: {' '.join(cmd)}")
-    print(f"deployment record preview: {deployment_id} {git_commit[:8]} {manifest_hash[:8]}")
+    evidence_dir = _deploy_evidence_dir(plan["deployment_id"])
+    plan_path = evidence_dir / "plan.json"
+    plan_path.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    # Check for existing deployment (simulate)
-    # In real, would ssh to check remote path existence; for now, we assume not exists for dry-run
-    # If dry_run, we just print and exit
-    if dry_run:
-        print("dry-run: no mutation, would verify remote hashes and write deployment.json")
+    runner = RemoteRunner(host=plan["transfer_host"])
+
+    print("=== exp deploy plan ===")
+    for key in (
+        "experiment_id", "deployment_id", "git_commit", "branch", "git_dirty",
+        "reportable_allowed", "source_manifest_sha256", "source_manifest_file_count",
+        "deployed_code_path", "deployment_record_path", "runtime_root",
+        "estimated_transfer_bytes",
+    ):
+        print(f"{key}: {plan[key]}")
+    print(f"rsync dry-run argv: {' '.join(plan['rsync_dry_run_argv'])}")
+    print(f"rsync execute argv: {' '.join(plan['rsync_execute_argv'])}")
+
+    from src.experiment_tracking.deployment import (
+        require_remote_absent, run_local_rsync,
+    )
+    from pathlib import Path as _P
+
+    try:
+        require_remote_absent(runner, _P(plan["deployment_dir"]), "deployment directory")
+        dry_proc = run_local_rsync(list(plan["rsync_dry_run_argv"]))
+    except DeploymentError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
+    if dry_proc.returncode != 0:
+        print(f"ERROR: rsync dry-run failed: {dry_proc.stderr.strip()}", file=sys.stderr)
+        return 1
+    dry_run_log = evidence_dir / "rsync_dry_run.txt"
+    dry_run_log.write_text(
+        "$ " + " ".join(plan["rsync_dry_run_argv"]) + "\n"
+        + dry_proc.stdout + ("\n[stderr]\n" + dry_proc.stderr if dry_proc.stderr else ""),
+        encoding="utf-8",
+    )
+    transferred = sum(1 for line in dry_proc.stdout.splitlines() if line.startswith(">f"))
+    print(f"rsync dry-run through {plan['transfer_host']}: {transferred} files would transfer "
+          f"(itemized log: {dry_run_log})")
+
+    if not execute:
+        print("dry-run complete; review the itemized log, then run --execute")
         return 0
 
-    # For execute, we would do real rsync; for Phase 3 we refuse to test execute without proper environment
-    # Simulate writing deployment.json locally for test
-    print(f"execute: would rsync to {remote_deployment_code} and write deployment.json")
-    # In real, write deployment.json via build_deployment_record
     try:
-        record = build_deployment_record(
-            deployment_id=deployment_id,
-            experiment_id=experiment_id,
-            git_commit=git_commit,
-            git_branch_at_deploy=branch,
-            git_dirty=dirty,
-            source_manifest_sha256=manifest_hash,
-            deployed_code_path=str(remote_deployment_code),
-        )
-        print(json.dumps(record, indent=2))
-    except Exception as e:
-        print(f"ERROR: failed to build deployment record: {e}", file=sys.stderr)
+        result = execute_deployment(plan, runner, rsync_executor=run_local_rsync)
+    except DeploymentError as e:
+        print(f"ERROR: deployment aborted, no deployment record was written: {e}", file=sys.stderr)
         return 1
 
+    record_path = evidence_dir / "deployment.json"
+    record_path.write_text(json.dumps(result["record"], indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    verify_log = evidence_dir / "verify_tree.json"
+    verify_log.write_text(json.dumps(result["verification"], indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print("=== exp deploy executed ===")
+    print(f"verified_files: {result['verification']['verified_files']}/{result['verification']['expected_files']}")
+    print(f"deployment record written once at: {plan['deployment_record_path']}")
+    print(f"local evidence: {evidence_dir}")
+    print(json.dumps(result["record"], indent=2, sort_keys=True))
     return 0
 
+
 def _cmd_verify_deployment(args) -> int:
-    print("verify-deployment: would recompute hashes and detect drift")
+    deployment_id = args.deployment_id
+    expected_commit = getattr(args, "expected_git_commit", None)
+    expected_manifest = getattr(args, "expected_source_manifest_sha256", None)
+    runner = RemoteRunner(host=DEFAULT_TRANSFER_HOST)
+    try:
+        result = verify_deployment(
+            runner,
+            deployment_id,
+            remote_base=REMOTE_BASE,
+            expected_git_commit=expected_commit,
+            expected_source_manifest_sha256=expected_manifest,
+        )
+    except DeploymentError as e:
+        print(f"VERIFY-DEPLOYMENT FAILED: {e}", file=sys.stderr)
+        return 1
+    tree = result["tree_verification"]
+    print("=== verify-deployment ===")
+    print(f"deployment_id: {deployment_id}")
+    print(f"git_commit: {result['record'].get('git_commit')}")
+    print(f"source_manifest_sha256: {result['source_manifest_sha256']}")
+    print(f"verified_files: {tree['verified_files']}/{tree['expected_files']}")
+    print(f"unexpected_files: {len(tree['unexpected'])}")
+    print("VERIFIED: deployment matches its record and manifest")
     return 0
 
 
@@ -667,8 +691,10 @@ def main() -> int:
     deploy_parser.add_argument("--allow-dirty", action="store_true", help="allow dirty source for smoke/debug (non-reportable)")
     deploy_parser.set_defaults(func=_cmd_deploy)
 
-    verify_parser = subparsers.add_parser("verify-deployment", help="verify deployment hashes and drift")
+    verify_parser = subparsers.add_parser("verify-deployment", help="verify deployment identity, manifest hash, and tree drift (read-only)")
     verify_parser.add_argument("deployment_id", help="deployment ID")
+    verify_parser.add_argument("--expected-git-commit", default=None, help="fail if record commit differs")
+    verify_parser.add_argument("--expected-source-manifest-sha256", default=None, help="fail if manifest hash differs")
     verify_parser.set_defaults(func=_cmd_verify_deployment)
 
     create_parser = subparsers.add_parser("create", help="create new experiment lane (worktree/branch/pin/definition)")
