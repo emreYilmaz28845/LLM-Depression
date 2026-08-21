@@ -69,11 +69,12 @@ E-DAIC was outside the harmonization scope and was not inspected, moved, or rewr
 
 ## Current coverage
 
-`main/` contains 21 configs:
+Count the current inventory with `find configs/main -maxdepth 1 -type f -name '*.yaml' | wc -l`; do not copy an old total into plans or reports. The active families include:
 
-- 15 harmonized configs: five datasets × three modalities.
-- 3 Gemma 4 DAIC configs (see the Gemma 4 DAIC family section above).
-- 3 unchanged E-DAIC configs outside the harmonized family.
+- the 15 core harmonized Qwen configs: five datasets × three modalities;
+- the 3 Gemma 4 DAIC configs described above;
+- 3 unchanged E-DAIC configs outside the harmonized family;
+- additional active, explicitly named comparison families. Inspect their YAML instead of inferring semantics from the total count.
 
 See `docs/harmonized_dataset_baseline.md` for the methodology and dataset-specific adapters.
 
