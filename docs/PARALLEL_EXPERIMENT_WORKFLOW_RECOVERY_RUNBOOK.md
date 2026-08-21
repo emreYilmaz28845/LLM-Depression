@@ -479,7 +479,9 @@ Tests that only check command existence, return code, or printed words are inval
 2. Search for `(stub)`, “would run here”, execute paths that only print, fake success tests, missing commands, and the stale 64-H100 ceiling. Preserve legitimate dry-run and archived history.
 3. Make the auditor validate structured evidence, not keywords.
 4. Verify local file existence/hashes, full PR SHAs/ancestry, deployments/manifests, attempts/jobs, live terminal accounting, expected artifacts, standalone evaluation, lifecycle/reportability, local registry provenance, tests tied to a clean SHA, CLI/docs agreement, and no active task jobs.
-5. Make dirty auditor source and unrelated staged changes fail.
+5. Make every dirty verification-worktree entry fail, including unstaged tracked
+   modifications/deletions, staged changes, and untracked files. Dirty auditor
+   or state-tool source should also produce a specific tampering error.
 6. Fix audit circularity:
    - preterminal audit runs while Phase 13 is active and status is `ACTIVE`;
    - it requires Phases 0–12 and every substantive gate;
@@ -571,12 +573,28 @@ Also run documentation/CLI consistency and skill validation. Record command, exi
 
 1. Use a clean verification worktree at exact merged `origin/main`.
 2. Rerun syntax, targeted/full tests, CLI snapshots, registry rebuild/import, smoke provenance, docs/skills checks, and protected-path checks.
-3. Reconcile every branch, PR, deployment, attempt, job, failure, retry, artifact, report, and journal entry into structured ledger fields.
+3. Reconcile every branch, PR, deployment, attempt, job, failure, retry, artifact, report, and journal entry into structured ledger fields. The final REPORTABLE attempt record must include `local_fold_path` pointing to its compact local fold evidence; implicit discovery through ignored worktree directories is not accepted.
 4. Store paths, IDs, full hashes, commands, exit codes, and source SHAs. Prose is explanation only.
 5. Run preterminal audit. On failure, reopen the earliest affected phase and continue; never edit evidence to pass.
 6. On pass, atomically complete Phase 13 through the state tool using preterminal audit path/hash.
 7. Run final read-only terminal audit over `COMPLETE`, hash it, and store it beside the ledger.
 8. Append final journal entry and send Section 12 handoff.
+
+Both substantive audits must receive the exact merged `origin/main` SHA and the
+clean verification worktree explicitly:
+
+```bash
+python tools/audit_parallel_workflow_implementation.py \
+  --state <state.json> \
+  --mode <preterminal-or-terminal> \
+  --expected-final-sha <full-origin-main-sha> \
+  --repo-root <clean-verification-worktree> \
+  --verify-live-jobs \
+  --output <audit.json>
+```
+
+The auditor must verify that both `HEAD` and the local `origin/main` ref equal
+that SHA. Fetch before auditing if the remote-tracking ref is stale.
 
 **VALIDATE:** Auditor exits zero from clean merged code; ledger is `COMPLETE`; all phases/evidence verify; source equals `origin/main`; all jobs are accounted for; docs/skills/CLI agree; user changes remain untouched.
 

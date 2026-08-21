@@ -1756,23 +1756,31 @@ Document tests must fail on:
    - final instruction/skill consistency audit.
 
 3. Reconcile every branch, PR, deployment, attempt, Slurm job, failure, retry, artifact, report, and journal entry in `state.json`.
-4. Run the final auditor without `--allow-incomplete`:
+4. Run the preterminal auditor without `--allow-incomplete`, using the exact
+   merged `origin/main` SHA and clean verification worktree:
 
    ```bash
    python tools/audit_parallel_workflow_implementation.py \
      --state <state.json> \
-     --output <state-root>/final_audit.json
+     --mode preterminal \
+     --expected-final-sha <full-origin-main-sha> \
+     --repo-root <clean-verification-worktree> \
+     --verify-live-jobs \
+     --output <state-root>/final_audit_preterminal.json
    ```
 
 5. The auditor must fail closed on any missing phase, evidence path, hash, job terminal state, reportability gate, merged source identity, instruction update, protected-path rule, or test result.
 6. If the auditor fails, return to the earliest affected phase, fix it, and rerun from there. Do not edit the audit artifact to pass.
-7. When the auditor exits zero, mark the execution `COMPLETE` through the state tool.
-8. Append the final journal entry. Do not copy secrets, raw transcripts, subject identifiers, or bare metrics.
-9. Send the final handoff using the exact template below.
+7. When the preterminal auditor exits zero, mark the execution `COMPLETE`
+   through the state tool while supplying that approved audit.
+8. Run the same auditor in `--mode terminal` with the same final SHA, clean
+   worktree, and live-job check. Store it as `final_audit_terminal.json`.
+9. Append the final journal entry. Do not copy secrets, raw transcripts, subject identifiers, or bare metrics.
+10. Send the final handoff using the exact template below.
 
 **VALIDATE**
 
-- Final auditor exits zero.
+- Preterminal and terminal auditors exit zero.
 - `state.json.status == COMPLETE` and every phase is `PASSED`.
 - Final source equals the recorded merged `origin/main` SHA.
 - No task-owned jobs remain active.

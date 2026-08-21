@@ -500,14 +500,17 @@ def cmd_record_deployment(args):
 def cmd_record_attempt(args):
     state_path = pathlib.Path(args.state)
     state = load_state(state_path)
-    state.setdefault("attempts", []).append({
+    record = {
         "attempt_id": args.attempt_id,
         "deployment_id": args.deployment_id,
         "experiment_id": args.experiment_id,
         "fold": args.fold,
         "status": args.status,
         "created_at_utc": utc_now_str(),
-    })
+    }
+    if args.local_fold_path:
+        record["local_fold_path"] = str(pathlib.Path(args.local_fold_path).resolve())
+    state.setdefault("attempts", []).append(record)
     state["updated_at_utc"] = utc_now_str()
     errors = validate_state_schema(state)
     if errors:
@@ -624,6 +627,11 @@ def main():
     p_att.add_argument("--experiment-id", required=True)
     p_att.add_argument("--fold", type=int, default=0)
     p_att.add_argument("--status", default="PLANNED")
+    p_att.add_argument(
+        "--local-fold-path",
+        default=None,
+        help="absolute local fold evidence path; required by the terminal smoke gate",
+    )
     p_att.set_defaults(func=cmd_record_attempt)
 
     args = parser.parse_args()

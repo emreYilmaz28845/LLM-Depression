@@ -20,6 +20,7 @@ import pathlib
 import re
 import subprocess
 import sys
+from typing import Any
 
 SCHEMA_VERSION = "audiollm.parallel_workflow_execution.v1"
 PHASES = list(range(14))
@@ -87,17 +88,37 @@ def _git(args: list[str], cwd: pathlib.Path) -> subprocess.CompletedProcess:
 
 def check_clean_source(repo_root: pathlib.Path) -> list[str]:
     errors = []
-    status = _git(["status", "--porcelain"], repo_root)
+    status = _git(["status", "--porcelain=v1", "--untracked-files=all"], repo_root)
     if status.returncode != 0:
         return [f"git status failed: {status.stderr.strip()}"]
     for line in status.stdout.splitlines():
         if len(line) < 4:
             continue
         x, y, path = line[0], line[1], line[3:].strip()
+        errors.append(f"verification worktree is dirty: {path} ({x}{y})")
         if any(path == f or path.startswith(f) for f in AUDITOR_FILES):
             errors.append(f"auditor/state-tool source is dirty: {path} ({x}{y})")
         if x not in (" ", "?", ""):
             errors.append(f"staged change present during audit: {path}")
+    return errors
+
+
+def check_source_revision(repo_root: pathlib.Path, expected_final_sha: str | None) -> list[str]:
+    """Require the verification worktree and local integration ref at one exact SHA."""
+    if not expected_final_sha:
+        return ["expected final SHA is required for a substantive completion audit"]
+    if not HEX40.match(expected_final_sha):
+        return [f"expected final SHA is not a full 40-char SHA: {expected_final_sha!r}"]
+
+    errors = []
+    for ref, label in (("HEAD", "verification HEAD"), ("origin/main", "origin/main")):
+        resolved = _git(["rev-parse", "--verify", ref], repo_root)
+        if resolved.returncode != 0:
+            errors.append(f"cannot resolve {label}: {resolved.stderr.strip()}")
+            continue
+        actual = resolved.stdout.strip()
+        if actual != expected_final_sha:
+            errors.append(f"{label} {actual} does not match expected final SHA {expected_final_sha}")
     return errors
 
 
@@ -108,13 +129,19 @@ def check_cli_docs_agreement(repo_root: pathlib.Path) -> list[str]:
         capture_output=True, text=True,
     )
     help_text = help_proc.stdout + help_proc.stderr
+    if help_proc.returncode != 0:
+        errors.append(f"exp.py --help failed with exit code {help_proc.returncode}")
     for cmd in WORKFLOW_COMMANDS:
         if f"{cmd}" not in help_text:
             errors.append(f"exp.py --help does not advertise command: {cmd}")
-    cmd_help = subprocess.run(
-        [sys.executable, str(repo_root / "tools" / "exp.py"), cmd, "--help"],
-        capture_output=True, text=True,
-    )
+        cmd_help = subprocess.run(
+            [sys.executable, str(repo_root / "tools" / "exp.py"), cmd, "--help"],
+            capture_output=True, text=True,
+        )
+        if cmd_help.returncode != 0:
+            errors.append(f"exp.py {cmd} --help failed with exit code {cmd_help.returncode}")
+        elif "usage:" not in (cmd_help.stdout + cmd_help.stderr).lower():
+            errors.append(f"exp.py {cmd} --help did not emit usage text")
     agents = repo_root / "AGENTS.md"
     if agents.is_file():
         agents_text = agents.read_text(encoding="utf-8", errors="replace")
@@ -152,7 +179,11 @@ def check_live_jobs(state: dict, scheduler_host: str = "ozu647717@alogin2.bsc.es
     return errors
 
 
-def check_structured_records(state: dict, repo_root: pathlib.Path) -> list[str]:
+def check_structured_records(
+    state: dict,
+    repo_root: pathlib.Path,
+    expected_final_sha: str | None = None,
+) -> list[str]:
     errors = []
     all_prs = state.get("prs", [])
     if not all_prs:
@@ -169,6 +200,30 @@ def check_structured_records(state: dict, repo_root: pathlib.Path) -> list[str]:
             errors.append(f"pr head_sha is not a full 40-char SHA: {pr.get('head_sha')!r}")
         if not HEX40.match(pr.get("merge_sha", "")):
             errors.append(f"pr merge_sha is not a full 40-char SHA: {pr.get('merge_sha')!r}")
+        head_sha = pr.get("head_sha", "")
+        merge_sha = pr.get("merge_sha", "")
+        if HEX40.match(head_sha) and HEX40.match(merge_sha):
+            for sha, role in ((head_sha, "head"), (merge_sha, "merge")):
+                resolved = _git(["cat-file", "-e", f"{sha}^{{commit}}"], repo_root)
+                if resolved.returncode != 0:
+                    errors.append(f"PR {url} {role} SHA is not a local commit: {sha}")
+            parents = _git(["rev-list", "--parents", "-n", "1", merge_sha], repo_root)
+            # A normal merge commit must contain the recorded PR head. Squash and
+            # rebase merges have one parent, so Git alone cannot prove the head
+            # relationship; integration of their recorded merge SHA is still
+            # checked below.
+            if parents.returncode == 0 and len(parents.stdout.split()) > 2:
+                ancestry = _git(["merge-base", "--is-ancestor", head_sha, merge_sha], repo_root)
+                if ancestry.returncode != 0:
+                    errors.append(f"PR {url} head SHA is not an ancestor of merge commit")
+            if expected_final_sha and HEX40.match(expected_final_sha):
+                integrated = _git(
+                    ["merge-base", "--is-ancestor", merge_sha, expected_final_sha], repo_root
+                )
+                if integrated.returncode != 0:
+                    errors.append(
+                        f"PR {url} merge SHA is not integrated into expected final SHA"
+                    )
 
     deployments = state.get("deployments", [])
     if not deployments:
@@ -228,56 +283,87 @@ def check_structured_records(state: dict, repo_root: pathlib.Path) -> list[str]:
 
 def check_smoke_artifacts(state: dict, repo_root: pathlib.Path) -> list[str]:
     errors = []
-    phase10 = state.get("phases", {}).get("10", {})
-    standalone_paths = []
-    for ev in phase10.get("evidence", []):
-        if isinstance(ev, str) and "standalone_eval" in ev and _looks_like_path(ev):
-            standalone_paths.append(ev)
-    local_standalone = None
-    for ev in standalone_paths:
-        p = pathlib.Path(ev)
-        if not p.is_absolute():
-            p = repo_root / ev
-        # evidence entries may be logs describing artifacts; search for real dirs
-        if p.is_dir():
-            local_standalone = p
-            break
-        if p.is_file():
-            candidate = p.parent
-            while candidate != candidate.parent:
-                if candidate.name == "standalone_eval":
-                    local_standalone = candidate
-                    break
-                candidate = candidate.parent
-            if local_standalone:
-                break
-    if local_standalone is None:
-        # fall back to the known supported layout from attempt contracts
-        submit_root = repo_root / "outputs" / "exp_submit"
-        candidates = sorted(submit_root.glob("*/contract.json"))
-        for contract_path in reversed(candidates):
-            try:
-                contract = json.loads(contract_path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            fold = repo_root / contract.get("local_fold_rel", "")
-            se = fold / "best_model" / "standalone_eval"
-            if (se / "metrics_original_teacher_forced.json").is_file() and \
-               (se / "predictions_subject_level.csv").is_file():
-                local_standalone = se
-                break
-    if local_standalone is None:
+    deployments = state.get("deployments", [])
+    if not deployments:
+        return ["cannot select final smoke evidence without a deployment record"]
+    final_deployment_id = deployments[-1].get("deployment_id")
+
+    # Corrections are append-only; the latest record for an attempt ID wins.
+    latest_attempts: dict[str, dict[str, Any]] = {}
+    for attempt in state.get("attempts", []):
+        latest_attempts[attempt.get("attempt_id", "")] = attempt
+    candidates = [
+        attempt for attempt in latest_attempts.values()
+        if attempt.get("deployment_id") == final_deployment_id
+        and attempt.get("status") == "REPORTABLE"
+    ]
+    if len(candidates) != 1:
+        return [
+            f"expected exactly one REPORTABLE attempt for final deployment "
+            f"{final_deployment_id}, found {len(candidates)}"
+        ]
+    attempt = candidates[0]
+    fold_value = attempt.get("local_fold_path")
+    if not fold_value:
+        return [
+            f"final REPORTABLE attempt {attempt.get('attempt_id')} lacks local_fold_path"
+        ]
+    fold = pathlib.Path(fold_value)
+    if not fold.is_absolute():
+        fold = repo_root / fold
+    if not fold.is_dir():
+        return [f"final smoke local_fold_path is not a directory: {fold}"]
+
+    sidecars = {}
+    for name in ("metadata.json", "status.json", "artifacts.json", "evaluations.json"):
+        path = fold / name
+        if not path.is_file() or path.stat().st_size == 0:
+            errors.append(f"final smoke sidecar missing/empty: {path}")
+            continue
+        try:
+            sidecars[name] = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            errors.append(f"final smoke sidecar is invalid JSON: {path}: {exc}")
+    if errors:
+        return errors
+
+    attempt_id = attempt.get("attempt_id")
+    if sidecars["metadata.json"].get("attempt_id") != attempt_id:
+        errors.append("final smoke metadata attempt_id does not match ledger")
+    if sidecars["status.json"].get("attempt_id") != attempt_id:
+        errors.append("final smoke status attempt_id does not match ledger")
+    if sidecars["status.json"].get("state") != "REPORTABLE":
+        errors.append("final smoke status sidecar is not REPORTABLE")
+
+    evaluations = sidecars["evaluations.json"].get("evaluations", [])
+    reportable = [ev for ev in evaluations if ev.get("reportable") is True]
+    if len(reportable) != 1:
         errors.append(
-            "local compact standalone evaluation evidence "
-            "(best_model/standalone_eval/{metrics,predictions_subject_level}) not found"
+            f"final smoke requires exactly one reportable evaluation, found {len(reportable)}"
         )
-    else:
-        metrics = local_standalone / "metrics_original_teacher_forced.json"
-        preds = local_standalone / "predictions_subject_level.csv"
-        if not metrics.is_file() or metrics.stat().st_size == 0:
-            errors.append(f"standalone metrics missing/empty: {metrics}")
-        if not preds.is_file() or preds.stat().st_size == 0:
-            errors.append(f"standalone subject predictions missing/empty: {preds}")
+        return errors
+    evaluation = reportable[0]
+    artifact_records = {
+        item.get("path"): item for item in sidecars["artifacts.json"].get("artifacts", [])
+    }
+    for key, label in (
+        ("metrics_artifact_path", "standalone metrics"),
+        ("predictions_artifact_path", "standalone subject predictions"),
+    ):
+        relative = evaluation.get(key)
+        if not relative:
+            errors.append(f"reportable evaluation lacks {key}")
+            continue
+        path = fold / relative
+        record = artifact_records.get(relative)
+        if not path.is_file() or path.stat().st_size == 0:
+            errors.append(f"{label} missing/empty: {path}")
+        elif record is None:
+            errors.append(f"{label} lacks artifacts.json record: {relative}")
+        elif record.get("locally_verified") is not True:
+            errors.append(f"{label} is not marked locally verified: {relative}")
+        elif record.get("sha256") != sha256_file(path):
+            errors.append(f"{label} hash does not match artifacts.json: {relative}")
     return errors
 
 
@@ -302,16 +388,21 @@ def check_full_suite_evidence(state: dict, repo_root: pathlib.Path, final_sha: s
     content = log_path.read_text(encoding="utf-8", errors="replace")
     if log_path.stat().st_size == 0:
         errors.append(f"full-suite log is empty: {log_path}")
-    if "passed" not in content.lower():
+    if not re.search(r"\b\d+ passed\b", content.lower()):
         errors.append(f"full-suite log does not record a passing run: {log_path}")
     if final_sha and final_sha not in content:
         errors.append(
             f"full-suite log is not tied to the final merged SHA {final_sha}: {log_path}"
         )
-    exitcode_file = log_path.with_suffix("") .with_suffix("")  # noop guard
     ec = log_path.parent / (log_path.stem + ".exitcode")
-    if ec.exists() and ec.read_text().strip() not in ("0", ""):
-        errors.append(f"full-suite exit code nonzero: {ec.read_text().strip()}")
+    if not ec.is_file():
+        errors.append(f"full-suite exit-code evidence is missing: {ec}")
+    else:
+        exit_code = ec.read_text(encoding="utf-8", errors="replace").strip()
+        if exit_code != "0":
+            errors.append(f"full-suite exit code is not exactly zero: {exit_code!r}")
+    if "pytest_exit=0" not in content:
+        errors.append(f"full-suite log lacks explicit pytest_exit=0 marker: {log_path}")
     return errors
 
 
@@ -398,7 +489,8 @@ def audit_state(
                     errors.append(f"preterminal audit requires phase {i} PASSED")
             if state["phases"]["13"].get("status") != "IN_PROGRESS":
                 errors.append("preterminal audit requires Phase 13 IN_PROGRESS")
-            errors.extend(check_structured_records(state, repo_root))
+            errors.extend(check_source_revision(repo_root, expected_final_sha))
+            errors.extend(check_structured_records(state, repo_root, expected_final_sha))
             errors.extend(check_smoke_artifacts(state, repo_root))
             errors.extend(check_full_suite_evidence(state, repo_root, expected_final_sha))
             errors.extend(check_cli_docs_agreement(repo_root))
@@ -429,7 +521,8 @@ def audit_state(
                         errors.append("stored preterminal audit was not a passing preterminal audit")
                 except Exception as e:
                     errors.append(f"stored preterminal audit unreadable: {e}")
-        errors.extend(check_structured_records(state, repo_root))
+        errors.extend(check_source_revision(repo_root, expected_final_sha))
+        errors.extend(check_structured_records(state, repo_root, expected_final_sha))
         errors.extend(check_smoke_artifacts(state, repo_root))
         errors.extend(check_full_suite_evidence(state, repo_root, expected_final_sha))
         errors.extend(check_cli_docs_agreement(repo_root))
