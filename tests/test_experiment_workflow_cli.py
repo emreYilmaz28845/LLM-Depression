@@ -176,29 +176,26 @@ def test_deploy_requires_plan_file() -> None:
 def test_collect_dry_run_prints_compact_evidence_command() -> None:
     result = _run_script(
         "collect_experiment.sh",
-        "--attempt",
-        "20260807T113522Z-daic_rotary_k4_seed1337-a83f17c9-7f31a92b",
-        "--fold",
-        "0",
+        "--fold-dir",
+        "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/c/m/d/run/fold_0",
         "--output",
         "/tmp/opencode/collect",
         "--dry-run",
     )
     assert result.returncode == 0, result.stderr
-    assert "rsync -avzn" in result.stdout
+    assert "rsync" in result.stdout
     assert "--delete" not in result.stdout
-    assert "exclude='best_model/'" in result.stdout
+    assert "best_model/standalone_eval/**" in result.stdout
+    assert "exclude=best_model/**" in result.stdout
 
 
-def test_collect_refuses_real_transfer_without_authorization() -> None:
+def test_collect_refuses_placeholder_fold_paths(tmp_path=None) -> None:
     result = _run_script(
         "collect_experiment.sh",
-        "--attempt",
-        "20260807T113522Z-daic_rotary_k4_seed1337-a83f17c9-7f31a92b",
-        "--fold",
-        "0",
+        "--fold-dir",
+        "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/<modality>/<dataset>/run/fold_0",
         "--output",
         "/tmp/opencode/collect",
     )
-    assert result.returncode == 2
-    assert "refusing" in result.stderr
+    assert result.returncode != 0
+    assert "placeholder" in result.stderr

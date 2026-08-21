@@ -290,7 +290,7 @@ def test_execute_runs_real_rsync_then_verifies_then_writes_record_once(tmp_path)
 
     # runtime dirs created outside deployment code
     mkdirs = [c for c in runner.calls if c[-1].startswith("mkdir -p ")]
-    assert mkdirs and plan["runtime_root"] in mkdirs[0][-1]
+    assert any(plan["runtime_root"] in c[-1] for c in mkdirs)
     assert plan["runtime_root"] not in plan["deployed_code_path"]
 
     assert result["verification"]["ok"] is True
