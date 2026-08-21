@@ -264,8 +264,12 @@ def test_execute_runs_real_rsync_then_verifies_then_writes_record_once(tmp_path)
     for argv in (dry_argv, exec_argv):
         assert "--delete" not in argv
         assert argv[0] == "rsync"
-        assert any(a == "--filter=:- .gitignore" for a in argv)
-        assert any(a == "--exclude=.git/" for a in argv)
+        ff_tokens = [x for x in argv if x.startswith("--files-from=")]
+        assert len(ff_tokens) == 1
+        files_from = Path(ff_tokens[0][len("--files-from="):])
+        assert files_from.is_file()
+        listed = files_from.read_text().splitlines()
+        assert "README.md" in listed and ".provenance/source_manifest.json" in listed
         assert argv[-1].endswith(f"{plan['deployed_code_path']}/")
         assert argv[-1].startswith("ozu647717@transfer1.bsc.es:")
 

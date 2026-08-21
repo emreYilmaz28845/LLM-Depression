@@ -115,7 +115,10 @@ def validate_attempt(
 
     # Resolved config identity vs expected qualifiers.
     import yaml as _yaml
-    run_config = _yaml.safe_load((fold / "run_config.yaml").read_text(encoding="utf-8"))
+    raw_config = _yaml.safe_load((fold / "run_config.yaml").read_text(encoding="utf-8")) or {}
+    # src/train.py writes the fully resolved config under the "config" key;
+    # older layouts keep values at the top level.
+    run_config = raw_config.get("config") if isinstance(raw_config.get("config"), dict) else raw_config
     evaluation_cfg = (run_config or {}).get("evaluation", {}) or {}
     if expected_dataset and (run_config or {}).get("dataset") != expected_dataset:
         issues.append(
