@@ -452,6 +452,8 @@ def _cmd_submit(args) -> int:
     evidence_dir = PROJECT_ROOT / "outputs" / "exp_submit" / contract["attempt_id"]
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
+    (evidence_dir / "contract.json").write_text(json.dumps(contract, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
     print("=== exp submit contract ===")
     printable = {k: v for k, v in contract.items() if k not in ("context", "overrides_b64")}
     print(json.dumps(printable, indent=2, sort_keys=True))
@@ -898,17 +900,104 @@ def _cmd_status(args) -> int:
     return 0
 
 def _cmd_collect(args) -> int:
+    from src.experiment_tracking.collect import (
+        CollectionError,
+        RemoteRunner,
+        execute_collection,
+        plan_collection,
+        validate_fold_path,
+    )
+
     slug = args.slug
-    dry_run = getattr(args, 'dry_run', False)
-    execute = getattr(args, 'execute', False)
-    if dry_run and execute:
-        print("ERROR: specify either --dry-run or --execute", file=sys.stderr)
+    dry_run_flag = bool(getattr(args, "dry_run", False))
+    execute = bool(getattr(args, "execute", False))
+    if dry_run_flag and execute:
+        print("ERROR: specify either --dry-run or --execute, not both", file=sys.stderr)
         return 1
-    if not dry_run and not execute:
-        dry_run = True
-    print(f"collect for {slug}: dry_run={dry_run} execute={execute}")
-    print("filter order: include run_config.yaml, metadata.json, status.json, jobs.jsonl, artifacts.json, evaluations.json, logs/*.json, best_model/standalone_eval/***, eval/***, final_summary.json; exclude best_model/***, last_model/***")
-    print(f"would rsync compact evidence for {slug} excluding adapters but including standalone_eval")
+
+    fold_dir = getattr(args, "fold_dir", None)
+    attempt_id = getattr(args, "attempt_id", None)
+    if not fold_dir:
+        # Resolve the exact remote fold path from recorded submission evidence.
+        submit_root = PROJECT_ROOT / "outputs" / "exp_submit"
+        candidates = []
+        if attempt_id:
+            contract_path = submit_root / attempt_id / "contract.json"
+            if contract_path.is_file():
+                candidates.append(contract_path)
+        elif submit_root.exists():
+            for contract_path in sorted(submit_root.glob("*/contract.json")):
+                candidates.append(contract_path)
+        lane_pin_experiment = None
+        if slug:
+            _, pin = _resolve_lane(slug)
+            lane_pin_experiment = pin.get("experiment_id") if pin else None
+        chosen = None
+        for contract_path in reversed(candidates):
+            try:
+                contract = json.loads(contract_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if attempt_id and contract.get("attempt_id") != attempt_id:
+                continue
+            if lane_pin_experiment and contract.get("experiment_id") != lane_pin_experiment:
+                continue
+            chosen = contract
+            break
+        if chosen is None:
+            print("ERROR: no recorded submission contract found; pass --fold-dir or run exp submit first", file=sys.stderr)
+            return 1
+        fold_dir = chosen["fold_dir"]
+        if attempt_id is None:
+            attempt_id = chosen.get("attempt_id")
+
+    local_fold = getattr(args, "output", None)
+    if not local_fold:
+        if not attempt_id:
+            print("ERROR: --output required when the attempt id cannot be resolved", file=sys.stderr)
+            return 1
+        local_fold = str(PROJECT_ROOT / "output_model" / "collected" / attempt_id / Path(fold_dir).name)
+
+    try:
+        validate_fold_path(fold_dir)
+    except CollectionError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
+
+    plan = plan_collection(fold_dir, local_fold)
+    evidence_dir = PROJECT_ROOT / "outputs" / "exp_collect" / (attempt_id or "adhoc")
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    (evidence_dir / "plan.json").write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    print("=== exp collect plan ===")
+    print(f"remote_fold: {plan['remote_fold']}")
+    print(f"local_fold:  {plan['local_fold']}")
+    print(f"rsync dry-run argv: {' '.join(plan['rsync_dry_run_argv'])}")
+    print(f"rsync execute argv: {' '.join(plan['rsync_execute_argv'])}")
+
+    runner = RemoteRunner()
+    from src.experiment_tracking.collect import remote_inventory
+    try:
+        inv = remote_inventory(runner, plan["remote_fold"])
+    except CollectionError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
+    (evidence_dir / "remote_inventory.json").write_text(
+        json.dumps(inv, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"remote compact inventory: {len(inv)} files")
+
+    if not execute:
+        print("dry-run complete; review the plan, then run --execute")
+        return 0
+
+    try:
+        result = execute_collection(plan, runner)
+    except CollectionError as e:
+        print(f"ERROR: collection failed: {e}", file=sys.stderr)
+        return 1
+    (evidence_dir / "collection_result.json").write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"collected and hash-verified: {result['inventory']['matched']} files -> {result['local_fold']}")
     return 0
 
 def _cmd_validate(args) -> int:
@@ -1012,7 +1101,10 @@ def main() -> int:
     submit_parser.set_defaults(func=_cmd_submit)
 
     collect_parser = subparsers.add_parser("collect", help="collect compact evidence from MN5 (dry-run first)")
-    collect_parser.add_argument("slug", help="experiment slug")
+    collect_parser.add_argument("slug", nargs="?", default=None, help="experiment slug")
+    collect_parser.add_argument("--attempt-id", default=None, help="resolve fold path from this attempt's recorded contract")
+    collect_parser.add_argument("--fold-dir", default=None, help="explicit remote fold dir (must end in fold_<n>)")
+    collect_parser.add_argument("--output", default=None, help="local destination dir")
     collect_parser.add_argument("--dry-run", action="store_true", help="dry-run only")
     collect_parser.add_argument("--execute", action="store_true", help="execute collection")
     collect_parser.set_defaults(func=_cmd_collect)
