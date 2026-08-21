@@ -173,6 +173,7 @@ def build_rsync_command(
             "--include=.provenance/***",
             "--filter=:- .gitignore",
             "--exclude=.git/",
+            "--exclude=.git",
             str(local_project) + "/",
             f"{remote_host}:{remote_deployment_path}/",
         ]
