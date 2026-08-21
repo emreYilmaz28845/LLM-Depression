@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 import subprocess
 from pathlib import Path
@@ -38,6 +39,16 @@ PROTECTED_PATHS = [
     Path("/home/emre/Projects/AudioLLM/Teacher-System"),
     Path("/home/emre/Projects/AudioLLM/LLM-Depression-teacher"),
 ]
+
+# The execution ledger lives in the canonical main checkout, not in whichever
+# worktree invokes this tool. Override with PARALLEL_WORKFLOW_STATE if needed.
+EXECUTION_LEDGER_PATH = Path(
+    os.environ.get(
+        "PARALLEL_WORKFLOW_STATE",
+        "/home/emre/Projects/AudioLLM/LLM-Depression/outputs/"
+        "parallel_workflow_implementation/20260820T205735Z-parallel-workflow-2d995f4c/state.json",
+    )
+)
 
 def _print_rows(rows, columns: tuple[str, ...]) -> None:
     print("\t".join(columns))
@@ -534,7 +545,7 @@ def _cmd_submit(args) -> int:
         return 1
     print(f"submitted jobs: {job_ids}")
 
-    STATE_PATH = PROJECT_ROOT / "outputs/parallel_workflow_implementation/20260820T205735Z-parallel-workflow-2d995f4c/state.json"
+    STATE_PATH = EXECUTION_LEDGER_PATH
     q = shlex.quote
     qualifiers = contract["qualifiers"]
     dep_ids = []
@@ -823,7 +834,7 @@ def _cmd_status(args) -> int:
             return 1
         experiment_id = pin.get("experiment_id") or slug
 
-    state_path = PROJECT_ROOT / "outputs/parallel_workflow_implementation/20260820T205735Z-parallel-workflow-2d995f4c/state.json"
+    state_path = EXECUTION_LEDGER_PATH
     ledger = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
     lane_deployments = {
         d.get("deployment_id")

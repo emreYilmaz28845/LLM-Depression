@@ -155,18 +155,24 @@ def verify_required_evidence(local_fold: Path) -> None:
 
 
 def _rule_matches(rule: str, rel: str) -> bool:
-    """Approximate rsync pattern matching for our fixed rule set."""
+    """rsync-faithful pattern matching for our fixed rule set.
+
+    ``*`` does not cross ``/``; ``**`` does (matching rsync filter semantics).
+    """
+    import fnmatch
+    import re as _re
+
     pattern = rule.split("=", 1)[1]
     if pattern == "*":
         return True
     if pattern.endswith("/**"):
         base = pattern[:-3]
         return rel == base or rel.startswith(base + "/")
-    if "/" in pattern:
-        import fnmatch
-        return fnmatch.fnmatch(rel, pattern)
-    import fnmatch
-    return fnmatch.fnmatch(rel.rsplit("/", 1)[-1], pattern)
+    # Translate to regex: ** -> anything, * -> anything except /
+    regex = _re.escape(pattern).replace(r"\*\*", ".*").replace(r"\*", "[^/]*")
+    return _re.fullmatch(regex, rel) is not None or fnmatch.fnmatch(
+        rel.rsplit("/", 1)[-1], pattern
+    ) and "/" not in pattern
 
 
 def compact_expected(rel: str) -> bool:

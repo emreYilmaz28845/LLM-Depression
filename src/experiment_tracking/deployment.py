@@ -164,20 +164,30 @@ def build_rsync_command(
     remote_host: str,
     remote_deployment_path: Path,
     dry_run: bool = True,
+    files_from: Path | None = None,
 ) -> list[str]:
+    """Manifest-driven transfer command.
+
+    When ``files_from`` is given (a newline-separated list of relative paths),
+    rsync copies exactly those files so the deployed tree matches the source
+    manifest by construction. Otherwise it falls back to gitignore filtering.
+    """
     cmd = ["rsync", "-avh", "--itemize-changes"]
     if dry_run:
         cmd.append("-n")
-    cmd.extend(
-        [
-            "--include=.provenance/***",
-            "--filter=:- .gitignore",
-            "--exclude=.git/",
-            "--exclude=.git",
-            str(local_project) + "/",
-            f"{remote_host}:{remote_deployment_path}/",
-        ]
-    )
+    if files_from is not None:
+        cmd.extend(["--files-from=" + str(files_from), str(local_project) + "/"])
+    else:
+        cmd.extend(
+            [
+                "--include=.provenance/***",
+                "--filter=:- .gitignore",
+                "--exclude=.git/",
+                "--exclude=.git",
+                str(local_project) + "/",
+            ]
+        )
+    cmd.append(f"{remote_host}:{remote_deployment_path}/")
     assert_no_delete(cmd)
     return cmd
 
@@ -368,6 +378,19 @@ def plan_deployment(
     path_errors = validate_deployment_paths(code_path, runtime_root)
     if path_errors:
         raise DeploymentError("; ".join(path_errors))
+    # Manifest-driven file list: every tracked file plus the .provenance
+    # snapshot, so the deployed tree matches the manifest exactly.
+    provenance_dir = worktree / ".provenance"
+    if not provenance_dir.is_dir():
+        raise DeploymentError(f"missing {provenance_dir}; run scripts/capture_provenance.sh first")
+    transfer_list = [f["path"] for f in manifest.get("files", [])]
+    transfer_list += sorted(
+        str(p.relative_to(worktree)) for p in provenance_dir.rglob("*") if p.is_file()
+    )
+    if not transfer_list:
+        raise DeploymentError("empty transfer list")
+    files_from = worktree / ".provenance" / "deployment_files_from.txt"
+    files_from.write_text("\n".join(transfer_list) + "\n", encoding="utf-8")
     record = build_deployment_record(
         deployment_id=deployment_id,
         experiment_id=experiment_id,
@@ -395,8 +418,8 @@ def plan_deployment(
         "deployment_record_path": str(record_path),
         "runtime_root": str(runtime_root),
         "transfer_host": transfer_host,
-        "rsync_dry_run_argv": build_rsync_command(worktree, transfer_host, code_path, dry_run=True),
-        "rsync_execute_argv": build_rsync_command(worktree, transfer_host, code_path, dry_run=False),
+        "rsync_dry_run_argv": build_rsync_command(worktree, transfer_host, code_path, dry_run=True, files_from=files_from),
+        "rsync_execute_argv": build_rsync_command(worktree, transfer_host, code_path, dry_run=False, files_from=files_from),
         "estimated_transfer_bytes": estimate_transfer_bytes(manifest),
         "record": record,
     }
@@ -422,6 +445,12 @@ def execute_deployment(
     require_remote_absent(runner, deployment_dir, "deployment directory")
     worktree = Path(plan["worktree"])
     manifest = load_source_manifest(worktree)
+
+    # rsync cannot create multiple missing path components; create the
+    # deployment directory itself, then let rsync build code/ inside it.
+    mk = runner.run(f"mkdir -p {shlex.quote(str(deployment_dir))}")
+    if mk.returncode != 0:
+        raise DeploymentError(f"failed to create deployment directory: {mk.stderr.strip()}")
 
     dry_argv = list(plan["rsync_dry_run_argv"])
     assert_no_delete(dry_argv)
