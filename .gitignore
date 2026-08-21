@@ -12,6 +12,8 @@ opencode.json
 AGENTS.md
 reports/
 .agents/
+skills-lock.json
+scripts/watch_opencode_tmux.sh
 .pytest_cache/
 .claude/
 figures/
