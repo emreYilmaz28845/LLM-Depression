@@ -1114,13 +1114,59 @@ def _cmd_finish(args) -> int:
     return 0
 
 def _cmd_compare(args) -> int:
-    required = [args.group, args.attempts, args.dataset, args.metric, args.namespace, args.backend, args.view, args.aggregation]
-    if not all(required):
-        print("ERROR: all qualifiers required for compare", file=sys.stderr)
-        return 1
+    from src.experiment_tracking.compare import (
+        ComparisonError,
+        compare_group,
+        write_comparison_audit,
+    )
+
     attempts = [a.strip() for a in args.attempts.split(",") if a.strip()]
-    print(f"compare group={args.group} attempts={attempts} dataset={args.dataset} metric={args.metric} namespace={args.namespace} backend={args.backend} view={args.view} aggregation={args.aggregation}")
-    print("group comparison: checking for mixed folds/seeds/protocols, missing evaluation views, mixed aggregations, tie rules (stub)")
+    try:
+        audit = compare_group(
+            PROJECT_ROOT,
+            group_id=args.group,
+            attempt_ids=attempts,
+            dataset=args.dataset,
+            metric=args.metric,
+            namespace=args.namespace,
+            backend=args.backend,
+            view=args.view,
+            aggregation=args.aggregation,
+            tie_rule=args.tie_rule,
+            tie_tolerance=args.tie_tolerance,
+        )
+    except ComparisonError as e:
+        print(f"COMPARE REFUSED: {e}", file=sys.stderr)
+        return 1
+    output = Path(args.output) if args.output else (
+        PROJECT_ROOT / "outputs" / "comparisons" / f"{args.group}_{args.dataset}_{args.metric}.json"
+    )
+    write_comparison_audit(audit, output)
+    print(json.dumps(audit, indent=2, sort_keys=True))
+    print(f"audit written: {output}")
+    return 0
+
+
+def _cmd_plan_integration(args) -> int:
+    from src.experiment_tracking.compare import ComparisonError, plan_integration
+
+    try:
+        plan = plan_integration(
+            PROJECT_ROOT,
+            branch_a=args.branch_a,
+            branch_b=args.branch_b,
+            base=args.base,
+        )
+    except ComparisonError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
+    output = Path(args.output) if args.output else (
+        PROJECT_ROOT / "outputs" / "integration_plans" / f"{Path(args.branch_a).name}__{Path(args.branch_b).name}.json"
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(json.dumps(plan, indent=2, sort_keys=True))
+    print(f"plan written: {output}")
     return 0
 
 def main() -> int:
@@ -1217,16 +1263,26 @@ def main() -> int:
     validate_parser.add_argument("--fold-dir", default=None, help="local fold dir with collected evidence")
     validate_parser.set_defaults(func=_cmd_validate)
 
-    compare_parser = subparsers.add_parser("compare", help="group-scoped comparison with full qualifiers")
+    compare_parser = subparsers.add_parser("compare", help="group-scoped comparison with full qualifiers and deterministic audit")
     compare_parser.add_argument("--group", required=True, help="group ID")
-    compare_parser.add_argument("--attempts", required=True, help="comma-separated attempt IDs")
+    compare_parser.add_argument("--attempts", required=True, help="comma-separated attempt IDs (all must be REPORTABLE)")
     compare_parser.add_argument("--dataset", required=True)
     compare_parser.add_argument("--metric", required=True)
     compare_parser.add_argument("--namespace", required=True)
     compare_parser.add_argument("--backend", required=True)
     compare_parser.add_argument("--view", required=True)
     compare_parser.add_argument("--aggregation", required=True)
+    compare_parser.add_argument("--tie-rule", choices=["max", "min"], default="max")
+    compare_parser.add_argument("--tie-tolerance", type=float, default=0.0)
+    compare_parser.add_argument("--output", default=None, help="audit output path")
     compare_parser.set_defaults(func=_cmd_compare)
+
+    planint_parser = subparsers.add_parser("plan-integration", help="read-only integration plan: ancestry, Git conflicts, semantic-conflict candidates")
+    planint_parser.add_argument("--branch-a", required=True)
+    planint_parser.add_argument("--branch-b", required=True)
+    planint_parser.add_argument("--base", default="origin/main")
+    planint_parser.add_argument("--output", default=None)
+    planint_parser.set_defaults(func=_cmd_plan_integration)
 
     finish_parser = subparsers.add_parser("finish", help="gate orchestrator: advance to REPORTABLE only when every gate passes")
     finish_parser.add_argument("slug", nargs="?", default=None)
