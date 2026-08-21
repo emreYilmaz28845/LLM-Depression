@@ -789,41 +789,112 @@ created_at_utc: {datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
 
 
 def _cmd_status(args) -> int:
-    from pathlib import Path
-    import json
-    import subprocess
+    from src.experiment_tracking.monitor import (
+        MonitorError,
+        SchedulerClient,
+        reconcile_job,
+    )
+
     slug = args.slug
-    # Find worktree for slug if provided
+    worktree_path, pin = (None, None)
+    experiment_id = None
     if slug:
-        # Try to find worktree
-        import pathlib
-        candidate = pathlib.Path.home() / "worktrees" / f"LLM-Depression-{slug}"
-        if candidate.exists():
-            print(f"status for {slug}: worktree {candidate}")
-            # Check sidecars if output exists
-            # Look for output_model
-            import glob
-            for path in candidate.glob("output_model/**/fold_*/status.json"):
-                print(f"  sidecar {path}: {path.read_text()[:200]}")
-        # Check squeue/sacct for jobs in ledger
+        worktree_path, pin = _resolve_lane(slug)
+        if pin is None:
+            print(f"ERROR: no managed lane with pin found for slug {slug!r}", file=sys.stderr)
+            return 1
+        experiment_id = pin.get("experiment_id") or slug
+
+    state_path = PROJECT_ROOT / "outputs/parallel_workflow_implementation/20260820T205735Z-parallel-workflow-2d995f4c/state.json"
+    ledger = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+    lane_deployments = {
+        d.get("deployment_id")
+        for d in ledger.get("deployments", [])
+        if not experiment_id or d.get("experiment_id") == experiment_id
+    }
+    if experiment_id:
+        deploy_root = PROJECT_ROOT / "outputs" / "exp_deploy"
+        if deploy_root.exists():
+            for record_path in deploy_root.glob("*/deployment.json"):
+                try:
+                    record = json.loads(record_path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if record.get("experiment_id") == experiment_id:
+                    lane_deployments.add(record.get("deployment_id"))
+    lane_jobs = [
+        j for j in ledger.get("jobs", [])
+        if j.get("deployment_id") in lane_deployments or (not experiment_id and True)
+    ]
+    if experiment_id:
+        lane_jobs = [j for j in lane_jobs if j.get("deployment_id") in lane_deployments]
+
+    job_ids = sorted({str(j["slurm_job_id"]) for j in lane_jobs if j.get("slurm_job_id")})
+    scheduler = SchedulerClient()
+    had_error = False
+    try:
+        queue = scheduler.squeue(job_ids)
+        accounting = scheduler.sacct(job_ids)
+    except MonitorError as e:
+        print(f"ERROR: remote scheduler query failed: {e}", file=sys.stderr)
+        return 1
+
+    unknown_ids = set(job_ids) - set(queue) - set(accounting)
+    if unknown_ids:
+        print(f"ERROR: jobs missing from both queue and accounting: {sorted(unknown_ids)}", file=sys.stderr)
+        had_error = True
+
+    print(f"=== exp status {slug or '(all lanes)'} ===")
+    print(f"lane deployments: {sorted(d for d in lane_deployments if d)}")
+    print(f"recorded jobs: {len(lane_jobs)}; scheduler-visible: {len(job_ids)}")
+    header = f"{'attempt':<64} {'job_key':<10} {'slurm':>9} {'queue':<12} {'accounting':<12} {'exit':>5} {'artifacts':<9} classification"
+    print(header)
+    for record in lane_jobs:
+        jid = str(record.get("slurm_job_id") or "")
         try:
-            result = subprocess.run(["squeue", "-u", "ozu647717", "-o", "%i %T %j", "-h"], capture_output=True, text=True, timeout=10)
-            print(f"squeue: {result.stdout[:500]}")
-        except Exception as e:
-            print(f"squeue check failed: {e}")
-        try:
-            result = subprocess.run(["sacct", "--format=JobIDRaw,State,ExitCode", "--noheader", "-P", "-u", "ozu647717"], capture_output=True, text=True, timeout=10)
-            print(f"sacct (first 500): {result.stdout[:500]}")
-        except Exception as e:
-            print(f"sacct check failed: {e}")
-    else:
-        print("status for all: checking ledger and squeue/sacct")
-        try:
-            result = subprocess.run(["squeue", "-u", "ozu647717", "-h"], capture_output=True, text=True, timeout=10)
-            print(result.stdout[:500])
-        except Exception as e:
-            print(f"squeue failed: {e}")
-    print(f"status for {slug or 'all'}: checking sidecars, squeue, sacct (real)")
+            rec = reconcile_job(record, queue, accounting, artifacts_ok=None)
+        except MonitorError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            had_error = True
+            continue
+        status_cell = rec.account_state or rec.queue_state or "UNKNOWN"
+        cls = rec.classification or ("running" if rec.queue_state else ("-"))
+        print(
+            f"{str(record.get('attempt_id', '-')):<64} {rec.job_key:<10} {jid:>9} "
+            f"{rec.queue_state or '-':<12} {status_cell:<12} {rec.exit_code or '-':>5} "
+            f"{'n/a':<9} {cls}"
+        )
+        # Append terminal evidence through official APIs when newly terminal.
+        if rec.terminal_failure or (rec.account_state == "COMPLETED" and rec.exit_code == "0:0"):
+            already_terminal = any(
+                str(j.get("slurm_job_id")) == jid and j.get("event_type") == "TERMINAL"
+                for j in ledger.get("jobs", [])
+            )
+            if not already_terminal:
+                terminal_status = rec.account_state
+                cmd = [
+                    sys.executable, str(PROJECT_ROOT / "tools" / "parallel_workflow_state.py"),
+                    "record-job", "--state", str(state_path),
+                    "--attempt-id", str(record.get("attempt_id")),
+                    "--job-key", rec.job_key,
+                    "--job-type", str(record.get("job_type", "train")),
+                    "--event-type", "TERMINAL",
+                    "--slurm-job-id", jid,
+                    "--status", terminal_status,
+                    "--fold", str(record.get("fold", 0)),
+                    "--exit-code", rec.exit_code or "-",
+                ]
+                if rec.classification:
+                    cmd += ["--reason", f"classification={rec.classification}"]
+                term = subprocess.run(cmd, capture_output=True, text=True)
+                if term.returncode != 0:
+                    print(f"ERROR: failed to append terminal event: {term.stderr.strip()}", file=sys.stderr)
+                    had_error = True
+                else:
+                    print(f"  appended TERMINAL event for {jid} ({terminal_status})")
+
+    if had_error:
+        return 1
     return 0
 
 def _cmd_collect(args) -> int:
