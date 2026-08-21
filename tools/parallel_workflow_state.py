@@ -419,6 +419,36 @@ def cmd_record_pr(args):
     return 0
 
 
+def cmd_remove_evidence(args):
+    """Remove a malformed evidence entry, recording the correction explicitly."""
+    state_path = pathlib.Path(args.state)
+    state = load_state(state_path)
+    ph = state["phases"][str(args.phase)]
+    entry = args.entry
+    if entry not in ph.get("evidence", []):
+        print(f"ERROR: evidence entry not found in phase {args.phase}: {entry}", file=sys.stderr)
+        return 1
+    ph["evidence"] = [e for e in ph["evidence"] if e != entry]
+    corrections = state.setdefault("evidence_corrections", [])
+    corrections.append({
+        "at_utc": utc_now_str(),
+        "phase": args.phase,
+        "removed_entry": entry,
+        "reason": args.reason,
+        "replacement": args.replacement,
+    })
+    if args.replacement:
+        ph["evidence"].append(args.replacement)
+    state["updated_at_utc"] = utc_now_str()
+    errors = validate_state_schema(state)
+    if errors:
+        print(f"ERROR: schema validation failed after remove-evidence: {errors}", file=sys.stderr)
+        return 1
+    atomic_write_json(state_path, state)
+    print(f"removed malformed evidence entry from phase {args.phase}")
+    return 0
+
+
 def cmd_correct_pr(args):
     """Append a corrected head/merge SHA for a PR; latest record wins."""
     state_path = pathlib.Path(args.state)
@@ -561,6 +591,14 @@ def main():
     p_pr.add_argument("--head-sha", required=True)
     p_pr.add_argument("--merge-sha", required=True)
     p_pr.set_defaults(func=cmd_record_pr)
+
+    p_rem = sub.add_parser("remove-evidence", help="remove a malformed evidence entry (records the correction)")
+    p_rem.add_argument("--state", required=True)
+    p_rem.add_argument("--phase", type=int, required=True)
+    p_rem.add_argument("--entry", required=True)
+    p_rem.add_argument("--reason", required=True)
+    p_rem.add_argument("--replacement", default=None)
+    p_rem.set_defaults(func=cmd_remove_evidence)
 
     p_cpr = sub.add_parser("correct-pr", help="append a corrected head/merge SHA for a previously recorded PR")
     p_cpr.add_argument("--state", required=True)
