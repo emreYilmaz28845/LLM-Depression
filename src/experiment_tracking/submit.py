@@ -124,6 +124,7 @@ def resolve_contract(
         raise SubmissionError("evaluation.sample_prediction_mode missing from resolved config")
 
     fold_dir = f"{run_root}/{run_name}/fold_{fold}"
+    local_fold_rel = f"output_model/{campaign}/{modality}/{dataset}/{run_name}/fold_{fold}"
     checkpoint_dir = f"{fold_dir}/best_model"
     standalone_eval_dir = f"{checkpoint_dir}/standalone_eval"
     log_root_train = str(runtime_root / "logs" / "slurm_train" / dataset)
@@ -178,6 +179,7 @@ def resolve_contract(
         "split_dir": split_dir,
         "run_root": run_root,
         "fold_dir": fold_dir,
+        "local_fold_rel": local_fold_rel,
         "checkpoint_dir": checkpoint_dir,
         "standalone_eval_dir": standalone_eval_dir,
         "log_root_train": log_root_train,
