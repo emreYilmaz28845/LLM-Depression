@@ -50,7 +50,7 @@ CONFIG="$PWD/configs/main/<cfg>.yaml" RUN_NAME=<unique> FOLD=0 bash scripts/subm
 
 Use experiment-specific wrappers for matrices, hidden classifiers, translation, merged runs, or other specialized workflows. Do not force those workflows through the canonical single-fold wrapper. Set and explicitly synchronize `EXPERIMENT_CONTEXT` when tracking a new run. Never reuse a run name until continuation and collision behavior are proven safe.
 
-Enforce one project-wide ceiling of 64 concurrently allocated H100s across all active jobs and campaigns. It is not a per-launcher allowance. Before submission, inspect the user's active GPU jobs and calculate the worst-case combined allocation if all eligible pending jobs start. Reduce launcher concurrency when another campaign consumes part of the ceiling. Scheduler, account, and QoS availability may be lower than 64. Do not change a job's own GPU shape merely to fill the ceiling.
+There is no project-wide GPU ceiling (the earlier 64-H100 cap was explicitly waived on 2026-08-18; see `docs/DEVICES.md`). Run as many jobs in parallel as the scheduler, account, and QoS grant, keeping each job's configured GPU shape. Do not change a job's own GPU shape to fill capacity.
 
 Run a uniquely named smoke job before a production matrix when required by the runbook. Record every returned job ID and dependency.
 
