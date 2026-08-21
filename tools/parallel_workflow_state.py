@@ -399,6 +399,68 @@ def cmd_record_job(args):
     return 0
 
 
+def cmd_record_pr(args):
+    state_path = pathlib.Path(args.state)
+    state = load_state(state_path)
+    state.setdefault("prs", []).append({
+        "pr_url": args.pr_url,
+        "phase": args.phase,
+        "head_sha": args.head_sha,
+        "merge_sha": args.merge_sha,
+        "recorded_at_utc": utc_now_str(),
+    })
+    state["updated_at_utc"] = utc_now_str()
+    errors = validate_state_schema(state)
+    if errors:
+        print(f"ERROR: schema validation failed after record-pr: {errors}", file=sys.stderr)
+        return 1
+    atomic_write_json(state_path, state)
+    print(f"recorded pr {args.pr_url}")
+    return 0
+
+
+def cmd_record_deployment(args):
+    state_path = pathlib.Path(args.state)
+    state = load_state(state_path)
+    state.setdefault("deployments", []).append({
+        "deployment_id": args.deployment_id,
+        "experiment_id": args.experiment_id,
+        "git_commit": args.git_commit,
+        "source_manifest_sha256": args.source_manifest_sha256,
+        "deployed_code_path": args.deployed_code_path,
+        "created_at_utc": utc_now_str(),
+    })
+    state["updated_at_utc"] = utc_now_str()
+    errors = validate_state_schema(state)
+    if errors:
+        print(f"ERROR: schema validation failed after record-deployment: {errors}", file=sys.stderr)
+        return 1
+    atomic_write_json(state_path, state)
+    print(f"recorded deployment {args.deployment_id}")
+    return 0
+
+
+def cmd_record_attempt(args):
+    state_path = pathlib.Path(args.state)
+    state = load_state(state_path)
+    state.setdefault("attempts", []).append({
+        "attempt_id": args.attempt_id,
+        "deployment_id": args.deployment_id,
+        "experiment_id": args.experiment_id,
+        "fold": args.fold,
+        "status": args.status,
+        "created_at_utc": utc_now_str(),
+    })
+    state["updated_at_utc"] = utc_now_str()
+    errors = validate_state_schema(state)
+    if errors:
+        print(f"ERROR: schema validation failed after record-attempt: {errors}", file=sys.stderr)
+        return 1
+    atomic_write_json(state_path, state)
+    print(f"recorded attempt {args.attempt_id} status {args.status}")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="Manage parallel workflow execution ledger")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -464,6 +526,32 @@ def main():
     for extra in ("exit_code", "dependency_job_ids", "reason", "deployment_id", "evaluation_view", "backend", "aggregation", "metrics_path"):
         p_job.add_argument(f"--{extra.replace('_', '-')}", default=None)
     p_job.set_defaults(func=cmd_record_job)
+
+    p_pr = sub.add_parser("record-pr", help="append a structured merged-PR record")
+    p_pr.add_argument("--state", required=True)
+    p_pr.add_argument("--pr-url", required=True)
+    p_pr.add_argument("--phase", type=int, required=True)
+    p_pr.add_argument("--head-sha", required=True)
+    p_pr.add_argument("--merge-sha", required=True)
+    p_pr.set_defaults(func=cmd_record_pr)
+
+    p_dep = sub.add_parser("record-deployment", help="append a structured deployment record")
+    p_dep.add_argument("--state", required=True)
+    p_dep.add_argument("--deployment-id", required=True)
+    p_dep.add_argument("--experiment-id", required=True)
+    p_dep.add_argument("--git-commit", required=True)
+    p_dep.add_argument("--source-manifest-sha256", required=True)
+    p_dep.add_argument("--deployed-code-path", required=True)
+    p_dep.set_defaults(func=cmd_record_deployment)
+
+    p_att = sub.add_parser("record-attempt", help="append a structured attempt record")
+    p_att.add_argument("--state", required=True)
+    p_att.add_argument("--attempt-id", required=True)
+    p_att.add_argument("--deployment-id", required=True)
+    p_att.add_argument("--experiment-id", required=True)
+    p_att.add_argument("--fold", type=int, default=0)
+    p_att.add_argument("--status", default="PLANNED")
+    p_att.set_defaults(func=cmd_record_attempt)
 
     args = parser.parse_args()
     # Additional immutability checks before func?
