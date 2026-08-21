@@ -8,6 +8,10 @@ EXTRA_TRAIN_ARGS="${EXTRA_TRAIN_ARGS:-}"
 EXTRA_EVAL_ARGS="${EXTRA_EVAL_ARGS:-}"
 LOG_ROOT="${LOG_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/experiment_runtime/parallel_workflow_smoke_v1/logs/slurm_train}"
 EXPERIMENT_CONTEXT="${EXPERIMENT_CONTEXT:-}"
+# Lossless common override transport: base64(JSON array of override tokens).
+# When set, it is authoritative for both training and evaluation; the
+# whitespace-split EXTRA_*_ARGS strings remain only as a legacy fallback.
+OVERRIDES_JSON_B64="${OVERRIDES_JSON_B64:-}"
 TRAIN_SCRIPT="${TRAIN_SCRIPT:-$PROJECT_ROOT/scripts/run_train_slurm.sh}"
 EVAL_SCRIPT="${EVAL_SCRIPT:-$PROJECT_ROOT/scripts/run_eval_slurm.sh}"
 if [ -f "/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate" ]; then
@@ -51,15 +55,20 @@ print(config["dataset"])
 PY
 )"
 # Resolve run_root with overrides
-CONFIG_VALUES="$(python - "$CONFIG" "$PROJECT_ROOT" "$EXTRA_TRAIN_ARGS" <<'PY'
-import json, sys, shlex
+CONFIG_VALUES="$(python - "$CONFIG" "$PROJECT_ROOT" "$EXTRA_TRAIN_ARGS" "$OVERRIDES_JSON_B64" <<'PY'
+import base64, json, sys, shlex
 from pathlib import Path
 sys.path.insert(0, sys.argv[2])
-from src.utils import load_yaml, load_yaml_with_overrides
+from src.utils import load_yaml
+from src.utils import load_yaml_with_overrides
 config_path = Path(sys.argv[1])
 project_root = sys.argv[2]
 extra_str = sys.argv[3] if len(sys.argv) > 3 else ""
-args = shlex.split(extra_str) if extra_str else []
+b64 = sys.argv[4] if len(sys.argv) > 4 else ""
+if b64:
+    args = json.loads(base64.b64decode(b64).decode("utf-8"))
+else:
+    args = shlex.split(extra_str) if extra_str else []
 try:
     config = load_yaml_with_overrides(config_path, args)
 except Exception:
@@ -84,13 +93,17 @@ EVAL_VIEW_TRAIN="$(extract_set_override "$EXTRA_TRAIN_ARGS" "evaluation.evaluati
 EVAL_VIEW_EVAL="$(extract_set_override "$EXTRA_EVAL_ARGS" "evaluation.evaluation_view" || true)"
 EVAL_VIEW="${EVAL_VIEW_TRAIN:-$EVAL_VIEW_EVAL}"
 if [ -z "$EVAL_VIEW" ]; then
-    HAS_VIEW="$(python - "$CONFIG" "$PROJECT_ROOT" "$EXTRA_TRAIN_ARGS" <<'PY'
-import sys, shlex
+    HAS_VIEW="$(python - "$CONFIG" "$PROJECT_ROOT" "$EXTRA_TRAIN_ARGS" "$OVERRIDES_JSON_B64" <<'PY'
+import base64, json, sys, shlex
 from pathlib import Path
 sys.path.insert(0, sys.argv[2])
-from src.utils import load_yaml, load_yaml_with_overrides
+from src.utils import load_yaml
+from src.utils import load_yaml_with_overrides
 config_path = Path(sys.argv[1])
-extra = shlex.split(sys.argv[3]) if len(sys.argv) > 3 else []
+extra = shlex.split(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3] else []
+b64 = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else ""
+if b64:
+    extra = json.loads(base64.b64decode(b64).decode("utf-8"))
 try:
     config = load_yaml_with_overrides(config_path, extra)
 except Exception:
@@ -111,7 +124,7 @@ echo "  evaluation_view: $EVAL_VIEW"
 echo "  log_root: $LOG_ROOT"
 # Ensure log root exists
 mkdir -p "$LOG_ROOT"
-EXPORT_ARGS="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$CONFIG,FOLD=$FOLD,RUN_NAME=$RUN_NAME,EXTRA_TRAIN_ARGS=$EXTRA_TRAIN_ARGS,EXTRA_EVAL_ARGS=$EXTRA_EVAL_ARGS,EXPERIMENT_CONTEXT=${EXPERIMENT_CONTEXT:-},LOG_ROOT=$LOG_ROOT"
+EXPORT_ARGS="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$CONFIG,FOLD=$FOLD,RUN_NAME=$RUN_NAME,EXTRA_TRAIN_ARGS=$EXTRA_TRAIN_ARGS,EXTRA_EVAL_ARGS=$EXTRA_EVAL_ARGS,EXPERIMENT_CONTEXT=${EXPERIMENT_CONTEXT:-},LOG_ROOT=$LOG_ROOT,OVERRIDES_JSON_B64=${OVERRIDES_JSON_B64:-}"
 SBATCH_BASE_ARGS=()
 echo "Submitting workflow with --chdir=$PROJECT_ROOT"
 TRAIN_JOB_RAW="$(sbatch --parsable --chdir="$PROJECT_ROOT" "${SBATCH_BASE_ARGS[@]}" --export="$EXPORT_ARGS" "$TRAIN_SCRIPT")"

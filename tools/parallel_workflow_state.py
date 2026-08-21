@@ -348,6 +348,36 @@ def cmd_reopen(args):
     return 0
 
 
+def cmd_record_job(args):
+    """Append a structured job record to the ledger (append-only, atomic)."""
+    state_path = pathlib.Path(args.state)
+    state = load_state(state_path)
+    jobs = state.setdefault("jobs", [])
+    record = {
+        "at_utc": utc_now_str(),
+        "attempt_id": args.attempt_id,
+        "job_key": args.job_key,
+        "job_type": args.job_type,
+        "event_type": args.event_type,
+        "slurm_job_id": args.slurm_job_id,
+        "status": args.status,
+        "fold": args.fold,
+    }
+    for extra in ("exit_code", "dependency_job_ids", "reason", "deployment_id", "evaluation_view", "backend", "aggregation", "metrics_path"):
+        value = getattr(args, extra, None)
+        if value is not None:
+            record[extra] = value
+    jobs.append(record)
+    state["updated_at_utc"] = utc_now_str()
+    errors = validate_state_schema(state)
+    if errors:
+        print(f"ERROR: schema validation failed after record-job: {errors}", file=sys.stderr)
+        return 1
+    atomic_write_json(state_path, state)
+    print(f"recorded job event {args.event_type} {args.job_key} {args.slurm_job_id or '-'} for {args.attempt_id}")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="Manage parallel workflow execution ledger")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -400,6 +430,19 @@ def main():
     p_reopen.add_argument("--reason", required=True, help="reason for invalidation")
     p_reopen.add_argument("--evidence", required=True, help="evidence path or ID for invalidation")
     p_reopen.set_defaults(func=cmd_reopen)
+
+    p_job = sub.add_parser("record-job", help="append a structured job record to the ledger (append-only)")
+    p_job.add_argument("--state", required=True)
+    p_job.add_argument("--attempt-id", required=True)
+    p_job.add_argument("--job-key", required=True)
+    p_job.add_argument("--job-type", required=True)
+    p_job.add_argument("--event-type", default="SUBMITTED")
+    p_job.add_argument("--slurm-job-id", default=None)
+    p_job.add_argument("--status", required=True)
+    p_job.add_argument("--fold", type=int, default=0)
+    for extra in ("exit_code", "dependency_job_ids", "reason", "deployment_id", "evaluation_view", "backend", "aggregation", "metrics_path"):
+        p_job.add_argument(f"--{extra.replace('_', '-')}", default=None)
+    p_job.set_defaults(func=cmd_record_job)
 
     args = parser.parse_args()
     # Additional immutability checks before func?

@@ -67,9 +67,24 @@ RUN_NAME="${RUN_NAME:-mn5_reproduction}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
 MODEL_PATH="${MODEL_PATH:-}"
 EXTRA_TRAIN_ARGS="${EXTRA_TRAIN_ARGS:-}"
+OVERRIDES_JSON_B64="${OVERRIDES_JSON_B64:-}"
 EXPERIMENT_CONTEXT="${EXPERIMENT_CONTEXT:-}"
 SKIP_MANIFEST_BUILD="${SKIP_MANIFEST_BUILD:-0}"
 ENABLE_LABEL_MASK_DEBUG="${ENABLE_LABEL_MASK_DEBUG:-0}"
+
+# Lossless common overrides: decode the base64 JSON token array when present
+# (authoritative); otherwise fall back to whitespace-splitting EXTRA_TRAIN_ARGS.
+if [ -n "$OVERRIDES_JSON_B64" ]; then
+    mapfile -t -d '' OVERRIDE_ARGS < <(python - "$OVERRIDES_JSON_B64" <<'PY'
+import base64, json, sys
+tokens = json.loads(base64.b64decode(sys.argv[1]).decode("utf-8"))
+sys.stdout.write("\0".join(tokens))
+PY
+)
+else
+    # shellcheck disable=SC2206
+    OVERRIDE_ARGS=($EXTRA_TRAIN_ARGS)
+fi
 DATASET_NAME="$(python - <<PY
 import sys
 from pathlib import Path
@@ -137,13 +152,16 @@ pip freeze > "$PROV_OUT/pip_freeze.txt" 2>/dev/null || true
 echo "Provenance stamped -> $PROV_OUT" | tee -a "$RUN_LOG_FILE"
 
 python - <<PY | tee -a "$RUN_LOG_FILE"
-import json
+import base64, json
 import sys
 from pathlib import Path
 sys.path.insert(0, "$PROJECT_ROOT")
 from src.utils import load_yaml_with_overrides, resolve_project_path
 
-override_args = """$EXTRA_TRAIN_ARGS""".split()
+if """$OVERRIDES_JSON_B64""":
+    override_args = json.loads(base64.b64decode("""$OVERRIDES_JSON_B64""").decode("utf-8"))
+else:
+    override_args = """$EXTRA_TRAIN_ARGS""".split()
 config = load_yaml_with_overrides(Path("$CONFIG"), override_args)
 dataset = config["dataset"]
 per_device = int(config["training"]["per_device_train_batch_size"])
@@ -174,12 +192,13 @@ MANIFEST_CMD=(
     "$PROJECT_ROOT/src/data/build_manifest.py"
     --config "$CONFIG"
 )
-if [ -n "$EXTRA_TRAIN_ARGS" ]; then
-    # shellcheck disable=SC2206
-    EXTRA_ARGS_ARRAY=($EXTRA_TRAIN_ARGS)
-    for ((i=0; i<${#EXTRA_ARGS_ARRAY[@]}; i++)); do
-        if [ "${EXTRA_ARGS_ARRAY[$i]}" = "--set" ] && [ $((i + 1)) -lt ${#EXTRA_ARGS_ARRAY[@]} ]; then
-            MANIFEST_CMD+=("${EXTRA_ARGS_ARRAY[$i]}" "${EXTRA_ARGS_ARRAY[$((i + 1))]}")
+if [ "${#OVERRIDE_ARGS[@]}" -gt 0 ]; then
+    i=0
+    while [ $i -lt ${#OVERRIDE_ARGS[@]} ]; do
+        if [ "${OVERRIDE_ARGS[$i]}" = "--set" ] && [ $((i + 1)) -lt ${#OVERRIDE_ARGS[@]} ]; then
+            MANIFEST_CMD+=("${OVERRIDE_ARGS[$i]}" "${OVERRIDE_ARGS[$((i + 1))]}")
+            i=$((i + 2))
+        else
             i=$((i + 1))
         fi
     done
@@ -227,11 +246,9 @@ if [ -n "$LABEL_MASK_FLAG" ]; then
     CMD+=("$LABEL_MASK_FLAG")
 fi
 
-if [ -n "$EXTRA_TRAIN_ARGS" ]; then
-    # Intentionally allow extra CLI overrides from sbatch --export.
-    # shellcheck disable=SC2206
-    EXTRA_ARGS_ARRAY=($EXTRA_TRAIN_ARGS)
-    CMD+=("${EXTRA_ARGS_ARRAY[@]}")
+if [ "${#OVERRIDE_ARGS[@]}" -gt 0 ]; then
+    # Lossless common override array (from OVERRIDES_JSON_B64 or legacy split).
+    CMD+=("${OVERRIDE_ARGS[@]}")
 fi
 
 if [ -n "$EXPERIMENT_CONTEXT" ]; then
