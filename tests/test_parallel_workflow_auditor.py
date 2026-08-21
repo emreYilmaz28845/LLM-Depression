@@ -16,6 +16,9 @@ if str(PROJECT_ROOT) not in sys.path:
 from tools.audit_parallel_workflow_implementation import (
     audit_state,
     check_clean_source,
+    check_full_suite_evidence,
+    check_smoke_artifacts,
+    check_source_revision,
     check_structured_records,
 )
 
@@ -36,9 +39,55 @@ def _run_audit(state_path, *extra):
     return proc
 
 
-def _tmp_state(tmp_path, source=EXEC_STATE, name="state.json"):
+def _base_state():
+    phases = {
+        str(i): {"status": "PENDING", "evidence": ["synthetic evidence"]}
+        for i in range(14)
+    }
+    return {
+        "schema_version": "audiollm.parallel_workflow_execution.v1",
+        "execution_id": "test-parallel-workflow-execution",
+        "runbook_sha256_at_start": "a" * 64,
+        "status": "ACTIVE",
+        "current_phase": 0,
+        "phases": phases,
+        "prs": [{
+            "pr_url": "https://github.com/example/repo/pull/1",
+            "head_sha": "1" * 40,
+            "merge_sha": "2" * 40,
+        }],
+        "deployments": [{
+            "deployment_id": "test-deployment",
+            "git_commit": "3" * 40,
+            "source_manifest_sha256": "4" * 64,
+            "deployed_code_path": "/gpfs/test/deployments/test/code",
+        }],
+        "attempts": [{
+            "attempt_id": "20260821T000000Z-test-a1b2c3d4-deadbeef",
+            "deployment_id": "test-deployment",
+            "status": "REPORTABLE",
+        }],
+        "jobs": [
+            {
+                "attempt_id": "20260821T000000Z-test-a1b2c3d4-deadbeef",
+                "job_key": "train", "job_type": "train", "status": "COMPLETED",
+                "exit_code": "0:0", "slurm_job_id": "1",
+            },
+            {
+                "attempt_id": "20260821T000000Z-test-a1b2c3d4-deadbeef",
+                "job_key": "standalone_eval", "job_type": "evaluation",
+                "status": "COMPLETED", "exit_code": "0:0", "slurm_job_id": "2",
+            },
+        ],
+    }
+
+
+def _tmp_state(tmp_path, source=None, name="state.json"):
     dst = tmp_path / name
-    shutil.copy(source, dst)
+    if source is None:
+        dst.write_text(json.dumps(_base_state()))
+    else:
+        shutil.copy(source, dst)
     return dst
 
 
@@ -88,6 +137,7 @@ def test_missing_evidence_paths_fail(tmp_path):
     dst = _tmp_state(tmp_path)
     state = json.loads(dst.read_text())
     for i in range(3):
+        state["phases"][str(i)]["status"] = "PASSED"
         state["phases"][str(i)]["evidence"] = ["/nonexistent/path/evidence.log"]
     dst.write_text(json.dumps(state))
     passed, messages, _ = audit_state(dst, allow_incomplete=True)
@@ -120,11 +170,16 @@ def test_cancelled_eval_without_replacement_fails(tmp_path):
     dst = _tmp_state(tmp_path)
     state = json.loads(dst.read_text())
     jobs = state.get("jobs", [])
-    # keep only the cancelled eval, drop completed replacements
+    # Replace the completed evaluation with a cancelled one and no replacement.
     state["jobs"] = [
         j for j in jobs
-        if not (j.get("job_key") == "best_eval" and j.get("status") == "COMPLETED")
+        if j.get("job_type") != "evaluation"
     ]
+    state["jobs"].append({
+        "attempt_id": "20260821T000000Z-test-a1b2c3d4-deadbeef",
+        "job_key": "standalone_eval", "job_type": "evaluation",
+        "status": "CANCELLED", "exit_code": "0:15", "slurm_job_id": "2",
+    })
     errors = check_structured_records(state, PROJECT_ROOT)
     assert any(
         ("lacks COMPLETED" in e) or ("without a completed replacement" in e)
@@ -161,6 +216,33 @@ def test_staged_unrelated_change_fails(tmp_path):
     assert any("staged change present" in e for e in errors)
 
 
+def test_unstaged_tracked_deletion_fails(tmp_path):
+    repo = tmp_path / "repo-deletion"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, capture_output=True)
+    tracked = repo / "tracked.txt"
+    tracked.write_text("keep me\n")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=T", "commit", "-q", "-m", "x"],
+                   cwd=repo, check=True, capture_output=True)
+    tracked.unlink()
+    errors = check_clean_source(repo)
+    assert any("verification worktree is dirty" in e and "tracked.txt" in e for e in errors)
+
+
+def test_untracked_file_fails_clean_source_gate(tmp_path):
+    repo = tmp_path / "repo-untracked"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, capture_output=True)
+    (repo / "tracked.txt").write_text("tracked\n")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=T", "commit", "-q", "-m", "x"],
+                   cwd=repo, check=True, capture_output=True)
+    (repo / "untracked.txt").write_text("not clean\n")
+    errors = check_clean_source(repo)
+    assert any("verification worktree is dirty" in e and "untracked.txt" in e for e in errors)
+
+
 def test_terminal_requires_stored_preterminal_hash(tmp_path):
     dst = _tmp_state(tmp_path)
     state = json.loads(dst.read_text())
@@ -172,6 +254,48 @@ def test_terminal_requires_stored_preterminal_hash(tmp_path):
     passed, messages, _ = audit_state(dst, mode="terminal")
     assert not passed
     assert any("lacks recorded preterminal audit path" in m for m in messages)
+
+
+def test_substantive_audit_requires_exact_final_sha(tmp_path):
+    errors = check_source_revision(PROJECT_ROOT, None)
+    assert errors == ["expected final SHA is required for a substantive completion audit"]
+
+
+def test_full_suite_requires_exit_code_evidence(tmp_path):
+    log = tmp_path / "final_full_suite.log"
+    log.write_text("# full suite on final merged SHA: " + "a" * 40 + "\n1 passed\npytest_exit=0\n")
+    state = _base_state()
+    state["phases"]["11"]["evidence"] = [str(log)]
+    errors = check_full_suite_evidence(state, PROJECT_ROOT, "a" * 40)
+    assert any("exit-code evidence is missing" in e for e in errors)
+
+
+def test_final_smoke_requires_structured_local_fold_path():
+    state = _base_state()
+    errors = check_smoke_artifacts(state, PROJECT_ROOT)
+    assert any("lacks local_fold_path" in e for e in errors)
+
+
+def test_state_tool_records_absolute_local_fold_path(tmp_path):
+    state_path = tmp_path / "state.json"
+    tool = str(PROJECT_ROOT / "tools" / "parallel_workflow_state.py")
+    subprocess.run(
+        [sys.executable, tool, "init",
+         "--runbook", str(PROJECT_ROOT / "docs" / "PARALLEL_EXPERIMENT_WORKFLOW_PLAN.md"),
+         "--execution-id", "test-parallel-workflow-attempt", "--output", str(state_path)],
+        check=True, capture_output=True,
+    )
+    fold = tmp_path / "evidence" / "fold_0"
+    fold.mkdir(parents=True)
+    subprocess.run(
+        [sys.executable, tool, "record-attempt", "--state", str(state_path),
+         "--attempt-id", "20260821T000000Z-test-a1b2c3d4-deadbeef",
+         "--deployment-id", "deployment-1", "--experiment-id", "experiment-1",
+         "--status", "REPORTABLE", "--local-fold-path", str(fold)],
+        check=True, capture_output=True,
+    )
+    state = json.loads(state_path.read_text())
+    assert state["attempts"][-1]["local_fold_path"] == str(fold.resolve())
 
 
 def test_tampered_preterminal_audit_detected(tmp_path):
