@@ -333,6 +333,220 @@ def _cmd_deploy(args) -> int:
     return 0
 
 
+def _find_deployment_record(experiment_id: str, deployment_id: str | None = None):
+    deploy_root = PROJECT_ROOT / "outputs" / "exp_deploy"
+    if not deploy_root.exists():
+        return None, f"no local deployment evidence under {deploy_root}"
+    candidates = []
+    for record_path in sorted(deploy_root.glob("*/deployment.json")):
+        try:
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if record.get("experiment_id") != experiment_id:
+            continue
+        if deployment_id and record.get("deployment_id") != deployment_id:
+            continue
+        candidates.append((record_path, record))
+    if not candidates:
+        return None, f"no deployment record for experiment {experiment_id}"
+    return candidates[-1]
+
+
+def _cmd_submit(args) -> int:
+    from src.experiment_tracking.submit import (
+        SubmissionError,
+        SshSubmitRunner,
+        build_remote_submit_script,
+        check_collisions,
+        parse_submitted_job_ids,
+        resolve_contract,
+        DEFAULT_SCHEDULER_HOST,
+    )
+    from src.experiment_tracking.deployment import (
+        DeploymentError,
+        RemoteRunner,
+        remote_path_exists,
+        verify_deployment,
+        write_remote_file_once,
+        REMOTE_BASE,
+    )
+
+    slug = args.slug
+    execute = bool(args.execute)
+    dry_run_flag = bool(args.dry_run)
+    if execute and dry_run_flag:
+        print("ERROR: specify either --dry-run or --execute, not both", file=sys.stderr)
+        return 1
+
+    worktree_path, pin = _resolve_lane(slug)
+    if worktree_path is None or pin is None:
+        print(f"ERROR: no managed lane with pin found for slug {slug!r}", file=sys.stderr)
+        return 1
+    experiment_id = pin.get("experiment_id") or slug
+    ok, message = _check_pin(worktree_path)
+    if not ok:
+        print(f"ERROR: pin check failed: {message}", file=sys.stderr)
+        return 1
+
+    found = _find_deployment_record(experiment_id, getattr(args, "deployment_id", None))
+    if isinstance(found, tuple) and len(found) == 2 and isinstance(found[0], Path):
+        _record_path, deployment = found
+    else:
+        print(f"ERROR: {found}", file=sys.stderr)
+        return 1
+
+    # Resolve config locally with the user's scientific overrides only.
+    sys.path.insert(0, str(PROJECT_ROOT))
+    from src.utils import load_yaml_with_overrides
+    user_overrides = list(args.set or [])
+    scientific_tokens = []
+    for token in user_overrides:
+        scientific_tokens.extend(["--set", token] if "=" in token else [token])
+    try:
+        config_dict = load_yaml_with_overrides(Path(args.config), scientific_tokens)
+    except Exception as e:
+        print(f"ERROR: failed to load config with overrides: {e}", file=sys.stderr)
+        return 1
+    dataset = config_dict.get("dataset")
+    if args.dataset and dataset != args.dataset:
+        print(f"ERROR: --dataset {args.dataset} does not match config dataset {dataset}", file=sys.stderr)
+        return 1
+
+    # The remote config path lives inside the deployment code snapshot.
+    rel_config = Path(args.config)
+    marker = "configs" + os.sep
+    if marker in str(rel_config):
+        idx = str(rel_config).index(marker)
+        remote_rel = str(rel_config)[idx:].replace(os.sep, "/")
+    elif "configs/" in str(rel_config):
+        idx = str(rel_config).index("configs/")
+        remote_rel = str(rel_config)[idx:]
+    else:
+        remote_rel = f"configs/main/{rel_config.name}"
+    config_path_remote = f"{deployment['deployed_code_path']}/{remote_rel}"
+
+    try:
+        contract = resolve_contract(
+            experiment_id=experiment_id,
+            deployment=deployment,
+            config_path_remote=config_path_remote,
+            config_dict=config_dict,
+            fold=args.fold,
+            seed=args.seed,
+            run_name=args.run_name,
+            campaign=args.campaign,
+            modality=args.modality,
+            dataset=dataset,
+            extra_overrides=[f"--set={t}" if "=" in t and not t.startswith("--set") else t for t in user_overrides],
+            scheduler_host=getattr(args, "scheduler_host", None) or DEFAULT_SCHEDULER_HOST,
+            supersedes_attempt_id=getattr(args, "supersedes_attempt_id", None),
+            group_id=getattr(args, "group_id", None),
+            github_issue=os.environ.get("GITHUB_ISSUE"),
+            github_pr=os.environ.get("GITHUB_PR"),
+        )
+    except SubmissionError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
+
+    evidence_dir = PROJECT_ROOT / "outputs" / "exp_submit" / contract["attempt_id"]
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+
+    print("=== exp submit contract ===")
+    printable = {k: v for k, v in contract.items() if k not in ("context", "overrides_b64")}
+    print(json.dumps(printable, indent=2, sort_keys=True))
+    script = build_remote_submit_script(contract)
+    (evidence_dir / "submit_script.sh").write_text(script, encoding="utf-8")
+    (evidence_dir / "context.json").write_text(json.dumps(contract["context"], indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    if not execute:
+        print("--- remote submit script (would run on scheduler login) ---")
+        print(script)
+        print("dry-run complete; no mutation performed")
+        return 0
+
+    runner = RemoteRunner(host="ozu647717@transfer1.bsc.es")
+    try:
+        result = verify_deployment(
+            runner,
+            deployment["deployment_id"],
+            remote_base=REMOTE_BASE,
+            expected_git_commit=deployment.get("git_commit"),
+            expected_source_manifest_sha256=deployment.get("source_manifest_sha256"),
+        )
+        print(f"deployment verified: {result['deployment_id']} "
+              f"({result['tree_verification']['verified_files']}/{result['tree_verification']['expected_files']} files)")
+
+        def exists(path: str) -> bool:
+            return remote_path_exists(runner, path)
+
+        check_collisions(contract, exists)
+
+        context_payload = json.dumps(contract["context"], indent=2, sort_keys=True) + "\n"
+        ctx_parent = str(Path(contract["context_path"]).parent)
+        proc = runner.run("mkdir -p " + shlex.quote(ctx_parent))
+        if proc.returncode != 0:
+            raise DeploymentError(f"failed to create context dir: {proc.stderr.strip()}")
+        write_remote_file_once(runner, contract["context_path"], context_payload, "experiment context")
+        print(f"context written: {contract['context_path']}")
+    except (DeploymentError, Exception) as e:
+        if isinstance(e, (DeploymentError, SubmissionError)):
+            print(f"ERROR: submission aborted before sbatch: {e}", file=sys.stderr)
+            return 1
+        raise
+
+    submit_runner = SshSubmitRunner(host=contract["scheduler_host"])
+    proc = submit_runner.run_script(script)
+    (evidence_dir / "submit_output.log").write_text(
+        "$ ssh " + contract["scheduler_host"] + " bash -s < submit_script.sh\n"
+        + proc.stdout + ("\n[stderr]\n" + proc.stderr if proc.stderr else ""),
+        encoding="utf-8",
+    )
+    if proc.returncode != 0:
+        print(f"ERROR: remote submission failed rc={proc.returncode}: {proc.stderr.strip()}", file=sys.stderr)
+        return 1
+    job_ids = parse_submitted_job_ids(proc.stdout)
+    if not job_ids:
+        print("ERROR: no job IDs parsed from wrapper output; refusing to record events", file=sys.stderr)
+        return 1
+    print(f"submitted jobs: {job_ids}")
+
+    STATE_PATH = PROJECT_ROOT / "outputs/parallel_workflow_implementation/20260820T205735Z-parallel-workflow-2d995f4c/state.json"
+    q = shlex.quote
+    qualifiers = contract["qualifiers"]
+    dep_ids = []
+    for graph_job in contract["job_graph"]:
+        jid = job_ids.get(graph_job["job_key"])
+        if not jid:
+            continue
+        cmd = [
+            sys.executable, str(PROJECT_ROOT / "tools" / "parallel_workflow_state.py"),
+            "record-job", "--state", str(STATE_PATH),
+            "--attempt-id", contract["attempt_id"],
+            "--job-key", graph_job["job_key"],
+            "--job-type", graph_job["job_type"],
+            "--event-type", "SUBMITTED",
+            "--slurm-job-id", jid,
+            "--status", "PENDING",
+            "--fold", str(contract["fold"]),
+            "--deployment-id", contract["deployment_id"],
+            "--evaluation-view", qualifiers["evaluation_view"],
+            "--backend", qualifiers["backend"],
+            "--aggregation", qualifiers["aggregation"],
+        ]
+        if graph_job.get("depends_on"):
+            resolved_dep = [job_ids[d] for d in graph_job["depends_on"] if d in job_ids]
+            if resolved_dep:
+                cmd += ["--dependency-job-ids", ",".join(resolved_dep)]
+        rec = subprocess.run(cmd, capture_output=True, text=True)
+        if rec.returncode != 0:
+            print(f"ERROR: failed to record job event: {rec.stderr.strip()}", file=sys.stderr)
+            return 1
+        dep_ids.append(jid)
+    print(f"ledger updated with {len(dep_ids)} SUBMITTED job events")
+    return 0
+
+
 def _cmd_verify_deployment(args) -> int:
     deployment_id = args.deployment_id
     expected_commit = getattr(args, "expected_git_commit", None)
@@ -707,6 +921,24 @@ def main() -> int:
     status_parser = subparsers.add_parser("status", help="show experiment status (sidecars + squeue/sacct)")
     status_parser.add_argument("slug", nargs="?", default=None, help="experiment slug")
     status_parser.set_defaults(func=_cmd_status)
+
+    submit_parser = subparsers.add_parser("submit", help="submit train+standalone-eval job graph for a lane deployment (dry-run first)")
+    submit_parser.add_argument("slug", help="experiment slug or experiment_id")
+    submit_parser.add_argument("--config", required=True, help="config YAML path (local path; resolved inside the deployment)")
+    submit_parser.add_argument("--fold", type=int, default=0)
+    submit_parser.add_argument("--seed", type=int, default=None)
+    submit_parser.add_argument("--run-name", required=True)
+    submit_parser.add_argument("--campaign", required=True)
+    submit_parser.add_argument("--modality", required=True)
+    submit_parser.add_argument("--dataset", default=None, help="must match config dataset when given")
+    submit_parser.add_argument("--deployment-id", default=None, help="defaults to latest local record for the lane")
+    submit_parser.add_argument("--set", action="append", dest="set", default=[], help="scientific override key=value (repeatable; applied identically to train and eval)")
+    submit_parser.add_argument("--scheduler-host", default=None, help="override scheduler login host")
+    submit_parser.add_argument("--group-id", default=None)
+    submit_parser.add_argument("--supersedes-attempt-id", default=None)
+    submit_parser.add_argument("--dry-run", action="store_true", help="print the full resolved contract and exact commands without mutation")
+    submit_parser.add_argument("--execute", action="store_true", help="verify deployment, transfer context, and submit through Slurm")
+    submit_parser.set_defaults(func=_cmd_submit)
 
     collect_parser = subparsers.add_parser("collect", help="collect compact evidence from MN5 (dry-run first)")
     collect_parser.add_argument("slug", help="experiment slug")
