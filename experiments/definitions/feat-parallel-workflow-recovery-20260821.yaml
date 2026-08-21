@@ -1,0 +1,10 @@
+schema_version: audiollm.experiment_group.v1
+experiment_id: feat-parallel-workflow-recovery-20260821
+slug: parallel-workflow-recovery
+tier: 2
+branch: agent/feat-parallel-workflow-recovery
+worktree: /home/emre/worktrees/LLM-Depression-feat-parallel-workflow-recovery
+parent_branch: origin/main
+parent_sha: 69c09b7333220ea2b564cee58895c01bec02c8e8
+created_at_utc: 2026-08-21T09:22:20Z
+type: complementary
