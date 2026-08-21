@@ -921,10 +921,82 @@ def _cmd_status(args) -> int:
                     had_error = True
                 else:
                     print(f"  appended TERMINAL event for {jid} ({terminal_status})")
+            # Mirror the terminal evidence into the attempt's fold jobs.jsonl
+            # through the official append-only API, then advance the fold
+            # lifecycle RUNNING -> COMPLETED_ON_MN5 when every required job
+            # has COMPLETED 0:0.
+            _mirror_terminal_to_fold(record, rec)
 
     if had_error:
         return 1
     return 0
+
+
+def _mirror_terminal_to_fold(record: dict, rec) -> None:
+    """Append the terminal job event to the local fold sidecar (if collected)
+    and advance RUNNING -> COMPLETED_ON_MN5 once train+eval are COMPLETED 0:0."""
+    from src.experiment_tracking import lifecycle
+    from src.experiment_tracking.sidecars import is_modern_tracked
+
+    attempt_id = record.get("attempt_id")
+    submit_contract = PROJECT_ROOT / "outputs" / "exp_submit" / str(attempt_id) / "contract.json"
+    if not submit_contract.is_file():
+        return
+    try:
+        contract = json.loads(submit_contract.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    fold_dir = PROJECT_ROOT / contract.get("local_fold_rel", "")
+    jobs_path = fold_dir / "jobs.jsonl"
+    if not is_modern_tracked(fold_dir):
+        return
+    events = lifecycle.read_job_events(jobs_path)
+    jid = str(rec.slurm_job_id)
+    already = any(
+        str(e.get("slurm_job_id")) == jid and e.get("event_type") == "COMPLETED"
+        for e in events
+    )
+    if not already:
+        event = lifecycle.new_job_event(
+            job_key=rec.job_key,
+            job_type=str(record.get("job_type", "train")),
+            event_type="COMPLETED",
+            attempt_id=str(attempt_id),
+            fold=int(record.get("fold", 0)),
+            slurm_job_id=jid,
+            status=rec.account_state,
+        )
+        event["exit_code"] = rec.exit_code
+        try:
+            lifecycle.append_job_event(jobs_path, event)
+        except Exception as e:
+            print(f"WARNING: could not append to {jobs_path}: {e}", file=sys.stderr)
+            return
+    # Advance the fold lifecycle when both required jobs are COMPLETED 0:0.
+    status_path = fold_dir / "status.json"
+    try:
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    if status.get("state") != "RUNNING":
+        return
+    refreshed = lifecycle.read_job_events(jobs_path)
+    done_keys = {
+        str(e.get("job_key"))
+        for e in refreshed
+        if e.get("event_type") == "COMPLETED" and e.get("status") == "COMPLETED"
+        and str(e.get("exit_code", "")).startswith("0:0")
+    }
+    if {"train", "best_eval"} <= done_keys:
+        record_obj = lifecycle.StatusRecord.from_dict(status)
+        try:
+            record_obj.transition("COMPLETED_ON_MN5",
+                                  reason="train and standalone eval COMPLETED 0:0 per sacct reconciliation")
+        except Exception as e:
+            print(f"WARNING: lifecycle transition refused: {e}", file=sys.stderr)
+            return
+        lifecycle.write_status(status_path, record_obj)
+        print(f"  fold lifecycle advanced to COMPLETED_ON_MN5 ({fold_dir.name})")
 
 def _cmd_collect(args) -> int:
     from src.experiment_tracking.collect import (
@@ -1098,6 +1170,16 @@ def _cmd_validate(args) -> int:
     if not result["ok"]:
         print("VALIDATE FAILED", file=sys.stderr)
         return 1
+    # Official local verification of artifacts and evaluations (sets the
+    # locally_verified flags the registry importer requires).
+    from src.experiment_tracking.evidence import (
+        verify_artifacts_locally,
+        verify_evaluations_locally,
+    )
+    art = verify_artifacts_locally(fold_dir)
+    evs = verify_evaluations_locally(fold_dir)
+    print(f"verified artifacts: {art.get('verified_artifacts', '?')}/{art.get('total_artifacts', '?')}; "
+          f"evaluations: {evs.get('verified_evaluations', '?')}/{evs.get('total_evaluations', '?')}")
     # Stepwise official advancement: COMPLETED_ON_MN5 -> SYNCED_LOCALLY -> LOCALLY_VALIDATED
     advanced = []
     try:
