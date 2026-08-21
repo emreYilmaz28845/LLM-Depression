@@ -317,6 +317,7 @@ def audit_state(
     mode: str = "auto",
     verify_live_jobs: bool = False,
     expected_final_sha: str | None = None,
+    repo_root_override: pathlib.Path | None = None,
 ) -> tuple[bool, list[str], dict]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -325,7 +326,10 @@ def audit_state(
     except Exception as e:
         return False, [f"failed to load state: {e}"], {}
 
-    repo_root = state_path.parent.parent.parent.resolve()  # outputs/<exec>/state.json -> repo
+    if repo_root_override is not None:
+        repo_root = pathlib.Path(repo_root_override).resolve()
+    else:
+        repo_root = state_path.parent.parent.parent.resolve()  # outputs/<exec>/state.json -> repo
 
     if state.get("schema_version") != SCHEMA_VERSION:
         errors.append(f"schema_version mismatch: {state.get('schema_version')} != {SCHEMA_VERSION}")
@@ -449,6 +453,9 @@ def main():
                         help="reconcile recorded job ids against live MN5 accounting")
     parser.add_argument("--expected-final-sha", default=None,
                         help="full SHA the full-suite evidence must be tied to")
+    parser.add_argument("--repo-root", default=None,
+                        help="verification repository for clean-source/CLI/docs gates "
+                             "(default: the repository containing the state file)")
     args = parser.parse_args()
     state_path = pathlib.Path(args.state)
     passed, messages, state = audit_state(
@@ -457,6 +464,7 @@ def main():
         mode=args.mode,
         verify_live_jobs=args.verify_live_jobs,
         expected_final_sha=args.expected_final_sha,
+        repo_root_override=pathlib.Path(args.repo_root) if args.repo_root else None,
     )
     audit = {
         "schema_version": "audiollm.parallel_workflow_audit.v1",
