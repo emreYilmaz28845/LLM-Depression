@@ -121,6 +121,15 @@ def classify_failure(state: str, exit_code: str, dependency_cancelled: bool = Fa
     return "unknown"
 
 
+def terminal_event_type(state: str, exit_code: str) -> str:
+    state_u = (state or "").upper()
+    if state_u.startswith("CANCELLED"):
+        return "CANCELLED"
+    if state_u == "COMPLETED" and exit_code == "0:0":
+        return "COMPLETED"
+    return "FAILED"
+
+
 @dataclass
 class JobReconciliation:
     slurm_job_id: str

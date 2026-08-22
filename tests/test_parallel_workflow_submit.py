@@ -20,6 +20,7 @@ from src.experiment_tracking.submit import (
     decode_overrides,
     encode_overrides,
     parse_submitted_job_ids,
+    require_complete_job_ids,
     resolve_contract,
 )
 from src.experiment_tracking.identity import validate_attempt_id
@@ -102,6 +103,7 @@ def test_resolve_contract_paths_follow_writable_contract():
     assert contract["standalone_eval_dir"] == contract["checkpoint_dir"] + "/standalone_eval"
     # identical override array for train and eval is enforced by construction
     assert contract["overrides"][0].startswith("--set=output_dirs.manifest_dir=")
+    assert "--set=seed=1337" in contract["overrides"]
     assert decode_overrides(contract["overrides_b64"]) == contract["overrides"]
 
 
@@ -175,6 +177,39 @@ def test_parse_submitted_job_ids():
     ids = parse_submitted_job_ids(out)
     assert ids == {"train": "12345", "best_eval": "12346"}
     assert parse_submitted_job_ids("nothing here") == {}
+
+
+def test_submission_requires_complete_numeric_job_graph_ids():
+    contract = resolve_contract(deployment=_deployment(), config_dict=_config(), **BASE_KW)
+    complete = require_complete_job_ids(
+        {"train": "12345", "best_eval": "12346"}, contract["job_graph"]
+    )
+    assert complete == {"best_eval": "12346", "train": "12345"}
+    with pytest.raises(SubmissionError, match="missing job IDs"):
+        require_complete_job_ids({"train": "12345"}, contract["job_graph"])
+    with pytest.raises(SubmissionError, match="non-numeric"):
+        require_complete_job_ids(
+            {"train": "not-a-job", "best_eval": "12346"}, contract["job_graph"]
+        )
+
+
+def test_seed_override_must_match_context_seed():
+    contract = resolve_contract(deployment=_deployment(), config_dict=_config(), **BASE_KW)
+    assert contract["seed"] == 1337
+    assert contract["context"]["seed"] == 1337
+    assert "--set=seed=1337" in contract["overrides"]
+    with pytest.raises(SubmissionError, match="conflicts"):
+        resolve_contract(
+            deployment=_deployment(),
+            config_dict=_config(),
+            **{**BASE_KW, "extra_overrides": ["--set=seed=7"]},
+        )
+    with pytest.raises(SubmissionError, match="matching --seed"):
+        resolve_contract(
+            deployment=_deployment(),
+            config_dict=_config(),
+            **{**BASE_KW, "seed": None, "extra_overrides": ["--set=seed=7"]},
+        )
 
 
 def test_state_tool_record_job_appends_atomically(tmp_path):

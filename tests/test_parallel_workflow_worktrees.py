@@ -5,6 +5,7 @@ import pathlib
 import tempfile
 import os
 import sys
+from datetime import datetime, timezone
 
 import pytest
 
@@ -13,9 +14,46 @@ import pytest
 TOOL_PIN = pathlib.Path("tools/check_worktree_pin.py")
 TOOL_EXP = pathlib.Path("tools/exp.py")
 
-def run_cmd(cmd, cwd=None):
-    result = subprocess.run(cmd, cwd=str(cwd) if cwd else None, capture_output=True, text=True)
+def run_cmd(cmd, cwd=None, env=None):
+    result = subprocess.run(
+        cmd,
+        cwd=str(cwd) if cwd else None,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
     return result
+
+
+def make_create_test_repo(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    run_cmd(["git", "init", "-b", "main"], cwd=repo)
+    run_cmd(["git", "config", "user.email", "test@test.com"], cwd=repo)
+    run_cmd(["git", "config", "user.name", "Test"], cwd=repo)
+    (repo / ".gitignore").write_text(
+        "outputs/\n.agent-pin.json\n__pycache__/\n*.pyc\n",
+        encoding="utf-8",
+    )
+    (repo / "README.md").write_text("test repo\n", encoding="utf-8")
+    for tool in [TOOL_PIN, TOOL_EXP]:
+        src = pathlib.Path.cwd() / tool
+        dst = repo / tool
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    package = repo / "src" / "experiment_tracking"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "registry.py").write_text(
+        "DEFAULT_DB_PATH='outputs/experiment_registry/experiments.sqlite'\n",
+        encoding="utf-8",
+    )
+    run_cmd(["git", "add", "."], cwd=repo)
+    result = run_cmd(["git", "commit", "-m", "init"], cwd=repo)
+    assert result.returncode == 0, result.stderr
+    env = dict(os.environ)
+    env["HOME"] = str(tmp_path / "home")
+    return repo, env
 
 def test_pin_does_not_dirty_worktree(tmp_path):
     # Create temp git repo with .gitignore containing .agent-pin.json
@@ -161,6 +199,132 @@ def test_exp_create_collision_refusal(tmp_path):
     result = run_cmd([sys.executable, str(tmp_repo / TOOL_EXP), "create", "collide", "--tier", "1", "--dry-run"], cwd=tmp_repo)
     assert result.returncode != 0
     assert "already exists" in result.stderr.lower()
+
+
+def test_exp_create_writes_definition_into_new_worktree_and_pin_passes(tmp_path):
+    repo, env = make_create_test_repo(tmp_path)
+    result = run_cmd(
+        [sys.executable, str(repo / TOOL_EXP), "create", "definition-location", "--tier", "1"],
+        cwd=repo,
+        env=env,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    date = datetime.now(timezone.utc).strftime("%Y%m%d")
+    experiment_id = f"exp-definition-location-{date}"
+    worktree = pathlib.Path(env["HOME"]) / "worktrees" / "LLM-Depression-exp-definition-location"
+    definition = worktree / "experiments" / "definitions" / f"{experiment_id}.yaml"
+    pin = worktree / ".agent-pin.json"
+
+    assert definition.is_file()
+    assert pin.is_file()
+    assert not (repo / "experiments" / "definitions" / definition.name).exists()
+    assert run_cmd(["git", "status", "--porcelain"], cwd=repo).stdout == ""
+
+    pin_payload = json.loads(pin.read_text(encoding="utf-8"))
+    assert pin_payload["parent_branch"] == "main"
+    assert len(pin_payload["parent_sha"]) == 40
+    assert pin_payload["tier"] == 1
+
+    checked = run_cmd(
+        [sys.executable, str(repo / TOOL_PIN), "--cwd", str(worktree), "--pin", str(pin)],
+        cwd=worktree,
+        env=env,
+    )
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+def test_exp_create_rejects_missing_explicit_parent_without_mutation(tmp_path):
+    repo, env = make_create_test_repo(tmp_path)
+    result = run_cmd(
+        [
+            sys.executable,
+            str(repo / TOOL_EXP),
+            "create",
+            "missing-parent",
+            "--tier",
+            "1",
+            "--from",
+            "agent/does-not-exist",
+        ],
+        cwd=repo,
+        env=env,
+    )
+    assert result.returncode != 0
+    assert "could not resolve parent ref" in result.stderr
+    assert not (pathlib.Path(env["HOME"]) / "worktrees").exists()
+    assert run_cmd(["git", "branch", "--list", "agent/exp-missing-parent"], cwd=repo).stdout == ""
+
+
+@pytest.mark.parametrize(
+    ("slug", "tier", "message"),
+    [
+        ("../escape", "1", "slug must use"),
+        ("feat-wrong-tier", "1", "must start"),
+        ("exp-wrong-tier", "2", "must start"),
+    ],
+)
+def test_exp_create_rejects_unsafe_or_mismatched_slug(tmp_path, slug, tier, message):
+    repo, env = make_create_test_repo(tmp_path)
+    result = run_cmd(
+        [sys.executable, str(repo / TOOL_EXP), "create", slug, "--tier", tier],
+        cwd=repo,
+        env=env,
+    )
+    assert result.returncode != 0
+    assert message in result.stderr
+    assert not (pathlib.Path(env["HOME"]) / "worktrees").exists()
+
+
+def test_pin_rejects_definition_identity_mismatch(tmp_path):
+    repo, env = make_create_test_repo(tmp_path)
+    result = run_cmd(
+        [sys.executable, str(repo / TOOL_EXP), "create", "pin-mismatch", "--tier", "1"],
+        cwd=repo,
+        env=env,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    worktree = pathlib.Path(env["HOME"]) / "worktrees" / "LLM-Depression-exp-pin-mismatch"
+    pin = worktree / ".agent-pin.json"
+    payload = json.loads(pin.read_text(encoding="utf-8"))
+    definition = worktree / "experiments" / "definitions" / f"{payload['experiment_id']}.yaml"
+    definition.write_text(
+        definition.read_text(encoding="utf-8").replace(
+            "branch: agent/exp-pin-mismatch", "branch: agent/exp-wrong"
+        ),
+        encoding="utf-8",
+    )
+
+    checked = run_cmd(
+        [sys.executable, str(repo / TOOL_PIN), "--cwd", str(worktree), "--pin", str(pin)],
+        cwd=worktree,
+        env=env,
+    )
+    assert checked.returncode != 0
+    assert "does not match pin" in checked.stderr
+
+
+def test_pin_rejects_missing_required_identity_fields(tmp_path):
+    repo = tmp_path / "malformed-pin"
+    repo.mkdir()
+    run_cmd(["git", "init", "-b", "main"], cwd=repo)
+    run_cmd(["git", "config", "user.email", "test@test.com"], cwd=repo)
+    run_cmd(["git", "config", "user.name", "Test"], cwd=repo)
+    (repo / ".gitignore").write_text(".agent-pin.json\n", encoding="utf-8")
+    run_cmd(["git", "add", ".gitignore"], cwd=repo)
+    run_cmd(["git", "commit", "-m", "init"], cwd=repo)
+    pin = repo / ".agent-pin.json"
+    pin.write_text(
+        json.dumps({"schema_version": "audiollm.agent_pin.v1"}),
+        encoding="utf-8",
+    )
+    checked = run_cmd(
+        [sys.executable, str(pathlib.Path.cwd() / TOOL_PIN), "--cwd", str(repo), "--pin", str(pin)],
+        cwd=repo,
+    )
+    assert checked.returncode != 0
+    assert "missing required field" in checked.stderr
 
 def test_stacked_child_records_parent(tmp_path):
     # Use real project root's exp create dry-run with --from to check parent recording

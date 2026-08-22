@@ -103,11 +103,27 @@ def resolve_contract(
     manifest_dir = str(runtime_root / "manifests" / dataset)
     split_dir = str(runtime_root / "splits" / dataset)
 
+    normalized_extra_overrides = list(extra_overrides)
+    top_level_seed = None
+    for token in normalized_extra_overrides:
+        key, value = _validate_override_token(token)
+        if key == "seed":
+            top_level_seed = value
+    if seed is None and top_level_seed is not None:
+        raise SubmissionError("top-level seed override requires matching --seed for provenance")
+    if seed is not None:
+        if top_level_seed is not None and top_level_seed != str(seed):
+            raise SubmissionError(
+                f"--seed {seed} conflicts with top-level seed override {top_level_seed!r}"
+            )
+        if top_level_seed is None:
+            normalized_extra_overrides.append(f"--set=seed={seed}")
+
     overrides = build_common_overrides(
         manifest_dir=manifest_dir,
         split_dir=split_dir,
         run_root=run_root,
-        extra_overrides=list(extra_overrides),
+        extra_overrides=normalized_extra_overrides,
     )
     for token in overrides[3:]:
         _validate_override_token(token)
@@ -276,3 +292,19 @@ def parse_submitted_job_ids(output: str) -> dict[str, str]:
         elif line.startswith("Submitted best-checkpoint eval job:"):
             ids[EVAL_JOB_KEY] = line.split(":", 1)[1].strip()
     return ids
+
+
+def require_complete_job_ids(
+    job_ids: dict[str, str], job_graph: list[dict[str, Any]]
+) -> dict[str, str]:
+    expected = {str(job["job_key"]) for job in job_graph}
+    missing = sorted(expected - set(job_ids))
+    invalid = sorted(key for key in expected if key in job_ids and not str(job_ids[key]).isdigit())
+    if missing or invalid:
+        details = []
+        if missing:
+            details.append(f"missing job IDs for {missing}")
+        if invalid:
+            details.append(f"non-numeric job IDs for {invalid}")
+        raise SubmissionError("incomplete submission output: " + "; ".join(details))
+    return {key: str(job_ids[key]) for key in sorted(expected)}

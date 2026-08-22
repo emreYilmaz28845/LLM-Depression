@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shlex
 import sys
 import subprocess
@@ -186,6 +187,20 @@ def _get_git_branch_sha(ref, cwd=None):
     if result2.returncode == 0:
         return result2.stdout.strip()
     return None
+
+
+def _get_git_branch_name(cwd=None):
+    result = _run_git(["branch", "--show-current"], cwd=cwd)
+    if result.returncode != 0:
+        return None
+    branch = result.stdout.strip()
+    return branch or None
+
+
+def _rollback_created_lane(project_root: Path, worktree_path: Path, branch: str) -> None:
+    """Remove only resources created by a failed lane-creation attempt."""
+    _run_git(["worktree", "remove", "--force", str(worktree_path)], cwd=project_root)
+    _run_git(["branch", "-D", branch], cwd=project_root)
 
 
 def _resolve_lane(slug: str):
@@ -392,6 +407,7 @@ def _cmd_submit(args) -> int:
         build_remote_submit_script,
         check_collisions,
         parse_submitted_job_ids,
+        require_complete_job_ids,
         resolve_contract,
         DEFAULT_SCHEDULER_HOST,
     )
@@ -539,9 +555,12 @@ def _cmd_submit(args) -> int:
     if proc.returncode != 0:
         print(f"ERROR: remote submission failed rc={proc.returncode}: {proc.stderr.strip()}", file=sys.stderr)
         return 1
-    job_ids = parse_submitted_job_ids(proc.stdout)
-    if not job_ids:
-        print("ERROR: no job IDs parsed from wrapper output; refusing to record events", file=sys.stderr)
+    try:
+        job_ids = require_complete_job_ids(
+            parse_submitted_job_ids(proc.stdout), contract["job_graph"]
+        )
+    except SubmissionError as e:
+        print(f"ERROR: {e}; refusing to record a partial job graph", file=sys.stderr)
         return 1
     print(f"submitted jobs: {job_ids}")
 
@@ -614,25 +633,29 @@ def _cmd_create(args) -> int:
     from_ref = args.from_ref
     dry_run = args.dry_run
     # Validate tier
-    if tier not in (0,1,2):
-        print(f"ERROR: tier must be 0,1,2 got {tier}", file=sys.stderr)
+    if tier not in (1, 2):
+        print(f"ERROR: managed worktrees support only tier 1 or 2, got {tier}", file=sys.stderr)
+        return 1
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug):
+        print(
+            "ERROR: slug must use lowercase letters, digits, and single hyphen-separated words",
+            file=sys.stderr,
+        )
         return 1
     # Determine branch name
     # Slug handling: if slug already starts with exp- or feat-, use as is; else add prefix based on tier
     if slug.startswith("exp-") or slug.startswith("feat-"):
         branch_suffix = slug
-        # Determine expected prefix based on tier
         expected_prefix = "exp-" if tier == 1 else "feat-" if tier == 2 else None
-        # Allow but warn if mismatch? For tier 0, we may allow either
         if tier != 0 and expected_prefix and not slug.startswith(expected_prefix):
-            # Allow but note: e.g., feat slug with tier1 should maybe be exp, but we allow
-            pass
+            print(
+                f"ERROR: tier {tier} slug must start with {expected_prefix!r}, got {slug!r}",
+                file=sys.stderr,
+            )
+            return 1
         branch = f"agent/{slug}"
     else:
-        prefix = "exp" if tier == 1 else "feat" if tier == 2 else "exp"
-        if tier == 0:
-            # For tier 0, we still create branch? Spec says Tier0 stays on main if not editing, but if user requests create with tier0 and slug, we treat as tier1? Let's just allow.
-            prefix = "exp"
+        prefix = "exp" if tier == 1 else "feat"
         branch = f"agent/{prefix}-{slug}"
         branch_suffix = f"{prefix}-{slug}"
 
@@ -642,6 +665,10 @@ def _cmd_create(args) -> int:
     worktree_path = Path.home() / "worktrees" / worktree_name
     # Resolve canonical
     worktree_path_resolved = worktree_path.resolve()
+    worktrees_root = (Path.home() / "worktrees").resolve()
+    if worktrees_root not in worktree_path_resolved.parents:
+        print(f"ERROR: worktree path escapes managed root {worktrees_root}", file=sys.stderr)
+        return 1
 
     # Check protected paths
     for pp in PROTECTED_PATHS:
@@ -660,27 +687,17 @@ def _cmd_create(args) -> int:
             print(f"ERROR: worktree path {worktree_path_resolved} inside protected {pp_res}", file=sys.stderr)
             return 1
 
-    # Determine parent ref
+    # Determine parent ref. An explicit --from is provenance-critical and must
+    # never silently fall back to another branch or commit.
     project_root = PROJECT_ROOT.resolve()
-    # Find git top for current worktree
-    # Use from_ref if provided
     parent_ref = from_ref if from_ref else "HEAD"
-    # If from_ref is branch or sha, resolve
     parent_sha = _get_git_branch_sha(parent_ref, cwd=project_root)
-    if parent_sha is None:
-        # Try origin/main
-        parent_sha = _get_git_branch_sha("origin/main", cwd=project_root)
-        if parent_sha is None:
-            parent_sha = _get_git_branch_sha("HEAD", cwd=project_root)
     if parent_sha is None:
         print(f"ERROR: could not resolve parent ref {parent_ref}", file=sys.stderr)
         return 1
-    # Determine parent branch name for metadata
-    parent_branch = from_ref if from_ref else None
-    if parent_branch:
-        # Check if it's a sha (40 hex) then not branch
-        if len(parent_branch) == 40 and all(c in "0123456789abcdef" for c in parent_branch.lower()):
-            parent_branch = None  # sha not branch; parent_sha still recorded below
+    parent_branch = from_ref if from_ref else _get_git_branch_name(cwd=project_root)
+    if parent_branch and len(parent_branch) == 40 and all(c in "0123456789abcdef" for c in parent_branch.lower()):
+        parent_branch = None
 
     # Determine experiment_id
     # Use slug + date, e.g., exp-rotary-20260821
@@ -693,7 +710,7 @@ def _cmd_create(args) -> int:
         experiment_id = f"{branch_suffix}-{date_str}"
 
     # Definition file path
-    definitions_dir = project_root / "experiments" / "definitions"
+    definitions_dir = worktree_path / "experiments" / "definitions"
     definition_path = definitions_dir / f"{experiment_id}.yaml"
     # Alternative: use slug as file name? Spec says tracked definitions under experiments/definitions/
     # Use experiment_id as file name, but ensure unique
@@ -705,8 +722,14 @@ def _cmd_create(args) -> int:
         errors.append(f"branch {branch} already exists")
     if worktree_path.exists():
         errors.append(f"worktree path {worktree_path} already exists")
-    if definition_path.exists():
-        errors.append(f"definition file {definition_path} already exists")
+    definition_relpath = f"experiments/definitions/{experiment_id}.yaml"
+    parent_definition = _run_git(["cat-file", "-e", f"{parent_sha}:{definition_relpath}"], cwd=project_root)
+    if parent_definition.returncode == 0:
+        errors.append(f"definition file {definition_relpath} already exists in parent {parent_sha[:8]}")
+
+    branch_check = _run_git(["check-ref-format", "--branch", branch], cwd=project_root)
+    if branch_check.returncode != 0:
+        errors.append(f"invalid branch derived from slug: {branch}")
 
     # Also check for any worktree already registered with that path via git worktree list
     wt_list = _run_git(["worktree", "list", "--porcelain"], cwd=project_root)
@@ -752,16 +775,20 @@ def _cmd_create(args) -> int:
     # Create worktree
     print(f"creating worktree {worktree_path} for branch {branch}")
     # Ensure parent dir exists
-    worktree_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        worktree_path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        print(f"ERROR: failed to create worktree parent: {e}", file=sys.stderr)
+        _rollback_created_lane(project_root, worktree_path, branch)
+        return 1
     res = _run_git(["worktree", "add", str(worktree_path), branch], cwd=project_root)
     if res.returncode != 0:
         print(f"ERROR: failed to create worktree: {res.stderr}", file=sys.stderr)
-        # Cleanup branch
-        _run_git(["branch", "-D", branch], cwd=project_root)
+        _rollback_created_lane(project_root, worktree_path, branch)
         return 1
 
-    # Create definition file (tracked)
-    definitions_dir.mkdir(parents=True, exist_ok=True)
+    # Create definition file in the new worktree so the pin checker and the
+    # eventual commit see the same tracked experiment identity.
     definition_content = f"""schema_version: audiollm.experiment_group.v1
 experiment_id: {experiment_id}
 slug: {slug}
@@ -778,28 +805,26 @@ created_at_utc: {datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
         definition_content += "type: complementary\n"
 
     try:
+        definitions_dir.mkdir(parents=True, exist_ok=True)
         definition_path.write_text(definition_content, encoding="utf-8")
         print(f"created definition {definition_path}")
     except Exception as e:
         print(f"ERROR: failed to write definition: {e}", file=sys.stderr)
+        _rollback_created_lane(project_root, worktree_path, branch)
         return 1
 
     # Create pin file (ignored)
     pin_data = {
         "schema_version": "audiollm.agent_pin.v1",
         "experiment_id": experiment_id,
+        "tier": tier,
         "worktree": str(worktree_path),
         "branch": branch,
+        "parent_branch": parent_branch,
+        "parent_sha": parent_sha,
         "allowed_paths": [str(worktree_path)],
         "protected_paths": [str(p) for p in PROTECTED_PATHS],
     }
-    if parent_branch:
-        pin_data["parent_branch"] = parent_branch
-        pin_data["parent_sha"] = parent_sha
-    elif from_ref:
-        # --from was a raw SHA: record the exact stacked parent commit.
-        pin_data["parent_branch"] = None
-        pin_data["parent_sha"] = parent_sha
 
     pin_path = worktree_path / ".agent-pin.json"
     try:
@@ -810,6 +835,7 @@ created_at_utc: {datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
         print(f"created pin {pin_path}")
     except Exception as e:
         print(f"ERROR: failed to write pin: {e}", file=sys.stderr)
+        _rollback_created_lane(project_root, worktree_path, branch)
         return 1
 
     print(f"created lane {experiment_id} branch {branch} worktree {worktree_path}")
@@ -952,15 +978,19 @@ def _mirror_terminal_to_fold(record: dict, rec) -> None:
         return
     events = lifecycle.read_job_events(jobs_path)
     jid = str(rec.slurm_job_id)
+    from src.experiment_tracking.monitor import terminal_event_type
+
+    event_type = terminal_event_type(rec.account_state or "", rec.exit_code or "")
     already = any(
-        str(e.get("slurm_job_id")) == jid and e.get("event_type") == "COMPLETED"
+        str(e.get("slurm_job_id")) == jid
+        and e.get("event_type") in {"COMPLETED", "FAILED", "CANCELLED"}
         for e in events
     )
     if not already:
         event = lifecycle.new_job_event(
             job_key=rec.job_key,
             job_type=str(record.get("job_type", "train")),
-            event_type="COMPLETED",
+            event_type=event_type,
             attempt_id=str(attempt_id),
             fold=int(record.get("fold", 0)),
             slurm_job_id=jid,
@@ -977,6 +1007,22 @@ def _mirror_terminal_to_fold(record: dict, rec) -> None:
     try:
         status = json.loads(status_path.read_text(encoding="utf-8"))
     except Exception:
+        return
+    if status.get("state") not in {"SUBMITTED", "RUNNING"}:
+        return
+    if event_type in {"FAILED", "CANCELLED"}:
+        target_state = event_type
+        record_obj = lifecycle.StatusRecord.from_dict(status)
+        try:
+            record_obj.transition(
+                target_state,
+                reason=f"{rec.job_key} ended with {rec.account_state} {rec.exit_code}",
+            )
+        except Exception as e:
+            print(f"WARNING: lifecycle transition refused: {e}", file=sys.stderr)
+            return
+        lifecycle.write_status(status_path, record_obj)
+        print(f"  fold lifecycle advanced to {target_state} ({fold_dir.name})")
         return
     if status.get("state") != "RUNNING":
         return
@@ -1331,7 +1377,7 @@ def main() -> int:
 
     create_parser = subparsers.add_parser("create", help="create new experiment lane (worktree/branch/pin/definition)")
     create_parser.add_argument("slug", help="experiment slug (e.g., exp-rotary or rotary)")
-    create_parser.add_argument("--tier", type=int, choices=[0,1,2], required=True, help="Tier 0=CLI-only, 1=competing, 2=complementary")
+    create_parser.add_argument("--tier", type=int, choices=[1,2], required=True, help="Tier 1=competing, 2=complementary")
     create_parser.add_argument("--from", dest="from_ref", default=None, help="parent branch or SHA for stacked lanes")
     create_parser.add_argument("--dry-run", action="store_true", help="show what would be done without mutation")
     create_parser.set_defaults(func=_cmd_create)
