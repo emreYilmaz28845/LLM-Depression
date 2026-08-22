@@ -697,3 +697,4 @@ def check_tokenizer_fit(
     return failures, details
 
 if __name__ == "__main__":
+    raise SystemExit(main())
