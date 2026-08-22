@@ -497,6 +497,7 @@ def render_merged_chain_script(
     head_trials_value = int(0 if head_trials is None else head_trials)
     return f"""#!/bin/bash
 set -euo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 CODE={_q(code_path)}
 cd "$CODE"
 module purge
@@ -555,6 +556,7 @@ def render_study_job_script(
         dep_args = f" --dependency=afterok:{':'.join(after_job_ids)}"
     return f"""#!/bin/bash
 set -euo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 CODE={_q(code_path)}
 cd "$CODE"
 {export_lines}

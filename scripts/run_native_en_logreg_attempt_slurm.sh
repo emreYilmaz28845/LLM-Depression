@@ -53,6 +53,7 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export TOKENIZERS_PARALLELISM=false
+export PYTHONDONTWRITEBYTECODE=1
 
 mkdir -p "$LOG_ROOT"
 exec > >(tee -a "$LOG_ROOT/logreg-${SLURM_JOB_ID}.out")
