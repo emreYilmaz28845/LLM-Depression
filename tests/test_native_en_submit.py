@@ -350,3 +350,64 @@ class TestPreflight:
         )
         failures2, _ = check_paired_membership({"cmdc": (native, english)})
         assert any("labels differ" in f for f in failures2)
+
+
+class TestPreflightMn5Helpers:
+    def test_naming_conventions(self) -> None:
+        from scripts.preflight_native_en_text_heads import (
+            merged_run_id_for,
+            run_name_for,
+        )
+
+        assert run_name_for("native", "qwen", "d3tec", 7) == "tnh-nat-qwen-d3tec-s7"
+        assert run_name_for("english", "gemma4", "turkish", 2024) == (
+            "tnh-en-gemma4-turkish-s2024"
+        )
+        assert merged_run_id_for("english", "qwen", 1337) == "tmh-en-qwen-s1337"
+
+    def test_job_matrix_matches_locked_counts(self) -> None:
+        from scripts.preflight_native_en_text_heads import check_job_matrix
+
+        failures, details = check_job_matrix()
+        assert failures == []
+        planned = details["planned"]
+        assert planned["standalone_jobs"] == 960
+        assert planned["merged_cv_jobs"] == 240
+        assert planned["merged_final_jobs"] == 48
+        assert details["panels"] == 12
+
+    def test_collision_scan_detects_existing_outputs(self, tmp_path: Path) -> None:
+        from scripts.preflight_native_en_text_heads import check_output_collisions
+
+        (tmp_path / "output_model/text_heads_native_v1/text_only/d3tec").mkdir(parents=True)
+        (tmp_path / "output_model/text_heads_native_v1/text_only/d3tec/tnh-nat-qwen-d3tec-s7").mkdir()
+        failures, details = check_output_collisions(
+            project_root=tmp_path,
+            run_names=["tnh-nat-qwen-d3tec-s7", "tnh-nat-qwen-cmdc-s7"],
+            merged_run_ids=["tmh-nat-qwen-s7"],
+        )
+        assert len(failures) == 1
+        assert any("tnh-nat-qwen-d3tec-s7" in f for f in failures)
+        assert details["checked_run_names"] == 2
+
+    def test_merged_protocol_check(self, tmp_path: Path) -> None:
+        from scripts.preflight_native_en_text_heads import check_merged_protocols
+
+        variant_dir = tmp_path / "outputs/symmetric_merged/native_en_text_heads_v1/native_qwen_text_only"
+        variant_dir.mkdir(parents=True)
+        payload = {
+            "schema_version": "symmetric_merged_protocol.v1",
+            "split_audit": {"status": "passed"},
+            "protocol": {"seed": 1337, "split_hash": "h"},
+            "manifest": {"component_manifest_hashes": {ds: "x" for ds in ns.MERGED_DATASETS}},
+        }
+        (variant_dir / "merged_protocol.json").write_text(json.dumps(payload))
+        failures, details = check_merged_protocols(tmp_path)
+        # Only one of four variants present; that one must be clean.
+        assert any("missing merged protocol artifact for english_qwen" in f for f in failures)
+        assert details["native_qwen"]["components"] == sorted(ns.MERGED_DATASETS)
+
+        payload["protocol"]["seed"] = 7
+        (variant_dir / "merged_protocol.json").write_text(json.dumps(payload))
+        failures2, _ = check_merged_protocols(tmp_path)
+        assert any("native_qwen: merged protocol split seed must be 1337" in f for f in failures2)
