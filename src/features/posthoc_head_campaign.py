@@ -496,13 +496,27 @@ def create_attempt(*, repo_root: str | Path, attempt_dir: str | Path, task_spec:
                 "best_model": None,
                 "local_evidence_root": None,
             },
-            "parent": {
-                "parent_attempt_id": spec.get("parent", {}).get("parent_attempt_id"),
-                "parent_checkpoint_role": "best_model",
-                "parent_checkpoint_path": spec.get("parent", {}).get("parent_checkpoint_path"),
-                "adapter_config_sha256": spec.get("parent", {}).get("adapter_config_sha256"),
-                "adapter_sha256": spec.get("parent", {}).get("adapter_sha256"),
-            },
+            # The sidecar schema requires the parent block to be absent
+            # unless it carries a valid (or legacy) parent attempt id.
+            **(
+                {
+                    "parent": {
+                        "parent_attempt_id": str(
+                            spec["parent"]["parent_attempt_id"]
+                        ),
+                        "parent_checkpoint_role": "best_model",
+                        "parent_checkpoint_path": spec["parent"].get(
+                            "parent_checkpoint_path"
+                        ),
+                        "adapter_config_sha256": spec["parent"].get(
+                            "adapter_config_sha256"
+                        ),
+                        "adapter_sha256": spec["parent"].get("adapter_sha256"),
+                    }
+                }
+                if spec.get("parent", {}).get("parent_attempt_id")
+                else {}
+            ),
             "wandb": {
                 "project": "audiollm-depression",
                 "entity": None,
