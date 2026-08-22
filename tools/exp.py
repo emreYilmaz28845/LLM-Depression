@@ -1783,7 +1783,11 @@ def _cmd_submit_optuna100(args) -> int:
     from src.experiment_tracking.submit import REMOTE_RUNTIME_BASE
 
     runtime_root = REMOTE_RUNTIME_BASE / ctx["experiment_id"]
-    spec_remote = f"{runtime_root}/specs/optuna100/{family}/{campaign}/{dataset}/{run_name}/f{fold}{('_' + stage) if stage else ''}/task_spec.json"
+    spec_tag = getattr(args, "spec_tag", None)
+    spec_remote = (
+        f"{runtime_root}/specs/optuna100/{family}/{campaign}/{dataset}/{run_name}/"
+        f"f{fold}{('_' + stage) if stage else ''}{('/' + spec_tag) if spec_tag else ''}/task_spec.json"
+    )
     code_path = str(deployment["deployed_code_path"])
     exports = [
         ("PROJECT_ROOT", code_path),
@@ -2350,6 +2354,7 @@ def main() -> int:
     optuna_parser.add_argument("--deployment-id", default=None)
     optuna_parser.add_argument("--group-id", default=None)
     optuna_parser.add_argument("--scheduler-host", default=None)
+    optuna_parser.add_argument("--spec-tag", default=None, help="disambiguates re-submissions whose prior spec file exists")
     optuna_group = optuna_parser.add_mutually_exclusive_group(required=True)
     optuna_group.add_argument("--dry-run", action="store_true")
     optuna_group.add_argument("--execute", action="store_true")
