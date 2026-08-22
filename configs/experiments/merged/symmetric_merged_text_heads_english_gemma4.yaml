@@ -1,0 +1,71 @@
+name: symmetric_merged_text_heads_english_gemma4
+protocol: symmetric_merged
+recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_tf_en_v1
+modality: text_only
+seed: 1337
+model_backend: gemma4
+model_name_or_path: ${GEMMA4_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/gemma-4-12B-it/707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7}
+model_revision: 707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7
+components:
+  - name: daic
+    config: configs/main/daic_text_only_harmonized_selmacrof1_tf_gemma4_12b.yaml
+    manifest_path: outputs/manifests_harmonized/daic/daic_manifest.jsonl
+    metadata_path: outputs/splits_harmonized/daic/daic_manifest_metadata.json
+  - name: cmdc
+    config: configs/main/cmdc_text_only_harmonized_selmacrof1_tf_en_gemma4_12b.yaml
+    manifest_path: outputs/manifests_harmonized_en/cmdc/cmdc_manifest.jsonl
+    metadata_path: outputs/splits_harmonized_en/cmdc/cmdc_manifest_metadata.json
+  - name: turkish
+    config: configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml
+    manifest_path: outputs/manifests_harmonized_en/turkish_t17_qwen3asr/turkish_manifest.jsonl
+    metadata_path: outputs/splits_harmonized_en/turkish_t17_qwen3asr/turkish_manifest_metadata.json
+  - name: d3tec
+    config: configs/main/d3tec_text_only_harmonized_selmacrof1_tf_en_gemma4_12b.yaml
+    manifest_path: outputs/manifests_harmonized_en/d3tec/d3tec_manifest.jsonl
+    metadata_path: outputs/splits_harmonized_en/d3tec/d3tec_manifest_metadata.json
+  - name: androids_interview
+    config: configs/main/androids_text_only_harmonized_selmacrof1_tf_en_gemma4_12b.yaml
+    manifest_path: outputs/manifests_harmonized_en/androids/androids_interview_manifest.jsonl
+    metadata_path: outputs/splits_harmonized_en/androids/androids_interview_manifest_metadata.json
+output_dirs:
+  merged_root: ${PROJECT_ROOT}/outputs/symmetric_merged/native_en_text_heads_v1/english_gemma4_text_only
+  run_root: ${PROJECT_ROOT}/output_model/symmetric_merged/native_en_text_heads_v1/english_gemma4_text_only
+protocol_settings:
+  outer_folds: 5
+  inner_val_ratio: 0.2
+  selection_metric: mean_dataset_macro_f1
+  selection_metric_mode: max
+  head_inner_folds: 3
+  threshold: 0.5
+  daic_official_test_only: true
+  split_seed: 1337
+training:
+  num_train_epochs: 20
+  dist_timeout_minutes: 180
+  final_epoch_policy: rounded_median_selected_epoch
+  learning_rate: 0.0002
+  weight_decay: 0.0
+  warmup_ratio: 0.03
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 32
+  logging_steps: 25
+  bf16: true
+  gradient_checkpointing: true
+  dataloader_num_workers: 0
+  max_grad_norm: 1.0
+  early_stopping: {enabled: true, patience: 3, min_delta: 0.0}
+heads:
+  fixed_xgb: {n_estimators: 300, learning_rate: 0.03, max_depth: 2, min_child_weight: 5, subsample: 0.8, colsample_bytree: 0.25, reg_alpha: 1.0, reg_lambda: 10.0}
+  optuna: {enabled: false, target_trials: 0, inner_folds: 3, seed: 1337, xgb_threads: 20, study_name: disabled, protocol_profile: harmonized_optuna100_v1}
+  fixed_seed: 1337
+execution:
+  smoke_subjects_per_class: 2
+  smoke_head_inner_folds: 2
+  smoke_epochs: 1
+  smoke_optuna_trials: 0
+  qwen_gpus: 4
+  postprocess_gpus: 1
+  head_cpus: 20
+  qwen_time: 259200
+  postprocess_time: 172800
+  head_time: 43200

@@ -216,10 +216,13 @@ def load_task_spec(path: str | Path) -> dict[str, Any]:
             raise PosthocError(f"task spec missing required key {key!r}")
     from src.features import optuna100_policy as policy
 
-    if int(spec["target_trials"]) != policy.PRODUCTION_TARGET_TRIALS:
+    target = int(spec["target_trials"])
+    smoke_two_trial = target == 2 and str(spec.get("stage")) == "smoke"
+    if target != policy.PRODUCTION_TARGET_TRIALS and not smoke_two_trial:
         raise PosthocError(
             f"post-hoc task target_trials must be "
-            f"{policy.PRODUCTION_TARGET_TRIALS}, got {spec['target_trials']}"
+            f"{policy.PRODUCTION_TARGET_TRIALS} (or exactly 2 at stage=smoke), "
+            f"got {spec['target_trials']}"
         )
     return spec
 

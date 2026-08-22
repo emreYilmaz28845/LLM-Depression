@@ -167,8 +167,24 @@ def run_merged_optuna100(
     stage: str,
     fold: int,
     run_id: str,
+    target_trials: int | None = None,
 ) -> dict[str, Any]:
-    policy.assert_production_target(policy.PRODUCTION_TARGET_TRIALS)
+    target = (
+        policy.PRODUCTION_TARGET_TRIALS
+        if target_trials is None
+        else int(target_trials)
+    )
+    if target == policy.PRODUCTION_TARGET_TRIALS:
+        policy.assert_production_target(target)
+    else:
+        # The locked smoke gate exercises Optuna resumability with exactly
+        # two completed trials; any other non-production count is invalid.
+        if stage != "smoke" or target != 2:
+            raise ValueError(
+                "Merged Optuna-100 production studies require exactly "
+                f"{policy.PRODUCTION_TARGET_TRIALS} completed trials; got "
+                f"target={target} at stage={stage!r}."
+            )
     merged_config = load_merged_config(merged_config_path)
     modality = str(merged_config.get("modality") or "")
     features = Path(features_dir)
@@ -259,14 +275,14 @@ def run_merged_optuna100(
         return value
 
     completed = [trial for trial in study.trials if trial.state.name == "COMPLETE"]
-    remaining = policy.PRODUCTION_TARGET_TRIALS - len(completed)
+    remaining = target - len(completed)
     if remaining > 0:
         study.optimize(objective, n_trials=remaining, n_jobs=1)
     completed = [trial for trial in study.trials if trial.state.name == "COMPLETE"]
-    if len(completed) != policy.PRODUCTION_TARGET_TRIALS:
+    if len(completed) != target:
         raise RuntimeError(
             f"Merged study has {len(completed)} completed trials; expected "
-            f"{policy.PRODUCTION_TARGET_TRIALS}."
+            f"{target}."
         )
 
     rows: list[dict[str, Any]] = []
@@ -348,7 +364,7 @@ def run_merged_optuna100(
             "prediction_backend": prediction_backend,
             "model_backend": model_backend or None,
             "objective": policy.OBJECTIVE_MERGED,
-            "target_trials": policy.PRODUCTION_TARGET_TRIALS,
+            "target_trials": target,
             "completed_trials": len(completed),
             "best_value": float(best.value),
             "best_trial_number": int(best.number),
@@ -379,9 +395,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--features-dir", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--merged-config", required=True)
-    parser.add_argument("--stage", choices=("cv", "final"), required=True)
+    parser.add_argument("--stage", choices=("smoke", "cv", "final"), required=True)
     parser.add_argument("--fold", type=int, required=True)
     parser.add_argument("--run-id", required=True)
+    parser.add_argument(
+        "--target-trials",
+        type=int,
+        default=None,
+        help="Completed-trial target. Defaults to the production 100; only "
+        "the smoke stage may use exactly two trials.",
+    )
     return parser.parse_args()
 
 
@@ -394,6 +417,7 @@ def main() -> None:
         stage=args.stage,
         fold=args.fold,
         run_id=args.run_id,
+        target_trials=args.target_trials,
     )
     print(json.dumps(result, indent=2), flush=True)
 
