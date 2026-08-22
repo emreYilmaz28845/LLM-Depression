@@ -20,6 +20,7 @@ from src.experiment_tracking.monitor import (
     parse_squeue,
     plan_retry,
     reconcile_job,
+    terminal_event_type,
     validate_lifecycle_advancement,
 )
 
@@ -105,6 +106,14 @@ def test_failure_classification_matrix():
     assert classify_failure("CANCELLED by 999", "0:15") == "cancelled_dependency"
     assert classify_failure("", "1:0") == "deterministic_code_config"
     assert classify_failure("SUSPENDED", "0:0") == "unknown"
+
+
+def test_terminal_event_type_never_labels_failures_completed():
+    assert terminal_event_type("COMPLETED", "0:0") == "COMPLETED"
+    assert terminal_event_type("CANCELLED by 999", "0:15") == "CANCELLED"
+    assert terminal_event_type("FAILED", "1:0") == "FAILED"
+    assert terminal_event_type("TIMEOUT", "0:9") == "FAILED"
+    assert terminal_event_type("COMPLETED", "1:0") == "FAILED"
 
 
 def test_cancelled_dependency_detected_from_dependency_state():

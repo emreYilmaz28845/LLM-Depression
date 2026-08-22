@@ -1,6 +1,7 @@
 from __future__ import annotations
 import argparse
 import json
+import re
 import sys
 import subprocess
 from pathlib import Path
@@ -53,6 +54,34 @@ def load_pin(pin_path: Path) -> dict:
         data = json.load(f)
     return data
 
+
+def load_simple_definition(definition_path: Path) -> dict:
+    """Load the scalar YAML emitted by tools/exp.py without adding PyYAML."""
+    data = {}
+    for line_number, raw_line in enumerate(
+        definition_path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if ":" not in line:
+            raise ValueError(f"line {line_number} is not a key/value pair")
+        key, raw_value = line.split(":", 1)
+        key = key.strip()
+        value = raw_value.strip()
+        if not key:
+            raise ValueError(f"line {line_number} has an empty key")
+        if value in {"null", "~"}:
+            parsed = None
+        elif value.isdigit():
+            parsed = int(value)
+        elif len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            parsed = value[1:-1]
+        else:
+            parsed = value
+        data[key] = parsed
+    return data
+
 def validate_pin(pin_data: dict, pin_path: Path, cwd: Path, target_path: Path | None) -> list[str]:
     errors = []
     # Schema
@@ -63,6 +92,18 @@ def validate_pin(pin_data: dict, pin_path: Path, cwd: Path, target_path: Path | 
     allowed_paths = [Path(p).resolve() for p in pin_data.get("allowed_paths", [])]
     protected_paths = [Path(p).resolve() for p in pin_data.get("protected_paths", [])]
     experiment_id = pin_data.get("experiment_id")
+
+    required = {
+        "experiment_id": experiment_id,
+        "worktree": pin_data.get("worktree"),
+        "branch": branch,
+        "allowed_paths": pin_data.get("allowed_paths"),
+    }
+    for key, value in required.items():
+        if value is None or value == "" or value == []:
+            errors.append(f"pin is missing required field {key!r}")
+    if experiment_id and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", str(experiment_id)):
+        errors.append(f"invalid experiment_id {experiment_id!r}")
 
     # Add default protected paths if not present? Ensure they are checked
     for pp in PROTECTED_PATHS:
@@ -88,39 +129,34 @@ def validate_pin(pin_data: dict, pin_path: Path, cwd: Path, target_path: Path | 
     elif branch and git_branch != branch:
         errors.append(f"checked-out branch {git_branch!r} does not equal pinned branch {branch!r}")
 
-    # Check experiment definition matches pin - look for file under experiments/definitions/<experiment_id>.yaml/json ?
-    # If experiment_id present, check that file exists
+    # Check the exact definition emitted for this experiment. Older pins may
+    # lack parent/tier fields; compare those only when the pin records them.
     if experiment_id:
-        # Try to find definition file
         project_root = git_top if git_top else cwd
-        # Definition may be at experiments/definitions/<slug>.yaml where slug is after last -? For now check any file containing experiment_id
-        # Simpler: check that experiments/definitions/<experiment_id or slug> exists
-        # We will check existence of experiments/definitions/<experiment_id>.yaml or .json, and if not found, check for pattern
-        found = False
-        # Try direct
-        for ext in (".yaml", ".yml", ".json"):
-            cand = project_root / "experiments" / "definitions" / f"{experiment_id}{ext}"
-            if cand.exists():
-                found = True
-                break
-        # Also try slug form: experiment_id may be like exp-rotary-20260820, need to map to definition file name?
-        # If not found, we don't error strictly for now unless definition is required
-        # But we can check that at least one definition file exists that contains experiment_id
-        if not found:
-            # Search all definition files for experiment_id string
-            def_dir = project_root / "experiments" / "definitions"
-            if def_dir.exists():
-                for f in def_dir.glob("*"):
-                    try:
-                        text = f.read_text(encoding="utf-8")
-                        if experiment_id in text:
-                            found = True
-                            break
-                    except Exception:
-                        continue
-            # If still not found, warn but not fail? Spec says must verify experiment definition matches pin - so fail if not found
-            if not found:
-                errors.append(f"experiment definition for {experiment_id!r} not found under experiments/definitions/")
+        definition_path = project_root / "experiments" / "definitions" / f"{experiment_id}.yaml"
+        if not definition_path.is_file():
+            errors.append(f"experiment definition for {experiment_id!r} not found at {definition_path}")
+        else:
+            try:
+                definition = load_simple_definition(definition_path)
+            except Exception as exc:
+                errors.append(f"could not parse experiment definition {definition_path}: {exc}")
+            else:
+                expected = {
+                    "schema_version": "audiollm.experiment_group.v1",
+                    "experiment_id": experiment_id,
+                    "branch": branch,
+                    "worktree": str(worktree) if worktree else None,
+                }
+                for optional_key in ("tier", "parent_branch", "parent_sha"):
+                    if optional_key in pin_data:
+                        expected[optional_key] = pin_data.get(optional_key)
+                for key, expected_value in expected.items():
+                    actual_value = definition.get(key)
+                    if actual_value != expected_value:
+                        errors.append(
+                            f"experiment definition {key}={actual_value!r} does not match pin {expected_value!r}"
+                        )
 
     # Check target path
     check_target = target_path.resolve() if target_path else cwd_resolved
