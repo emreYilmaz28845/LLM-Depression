@@ -13,6 +13,10 @@ EXPERIMENT_CONTEXT="${EXPERIMENT_CONTEXT:-}"
 # whitespace-split EXTRA_*_ARGS strings remain only as a legacy fallback.
 OVERRIDES_JSON_B64="${OVERRIDES_JSON_B64:-}"
 SKIP_MANIFEST_BUILD="${SKIP_MANIFEST_BUILD:-0}"
+# Optional task-scoped sbatch options.  The native-en launcher uses this to
+# carry its node exclusion into both the training and dependent evaluation
+# submissions without changing the requested resource shape.
+SBATCH_EXTRA_ARGS="${SBATCH_EXTRA_ARGS:-}"
 TRAIN_SCRIPT="${TRAIN_SCRIPT:-$PROJECT_ROOT/scripts/run_train_slurm.sh}"
 EVAL_SCRIPT="${EVAL_SCRIPT:-$PROJECT_ROOT/scripts/run_eval_slurm.sh}"
 if [ -f "/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate" ]; then
@@ -127,6 +131,10 @@ echo "  log_root: $LOG_ROOT"
 mkdir -p "$LOG_ROOT"
 EXPORT_ARGS="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$CONFIG,FOLD=$FOLD,RUN_NAME=$RUN_NAME,EXTRA_TRAIN_ARGS=$EXTRA_TRAIN_ARGS,EXTRA_EVAL_ARGS=$EXTRA_EVAL_ARGS,EXPERIMENT_CONTEXT=${EXPERIMENT_CONTEXT:-},LOG_ROOT=$LOG_ROOT,OVERRIDES_JSON_B64=${OVERRIDES_JSON_B64:-},ENV_ACTIVATE=${ENV_ACTIVATE:-},MODEL_PATH=${MODEL_PATH:-},SKIP_MANIFEST_BUILD=$SKIP_MANIFEST_BUILD"
 SBATCH_BASE_ARGS=()
+if [ -n "$SBATCH_EXTRA_ARGS" ]; then
+    # shellcheck disable=SC2206
+    read -r -a SBATCH_BASE_ARGS <<< "$SBATCH_EXTRA_ARGS"
+fi
 echo "Submitting workflow with --chdir=$PROJECT_ROOT"
 TRAIN_JOB_RAW="$(sbatch --parsable --chdir="$PROJECT_ROOT" "${SBATCH_BASE_ARGS[@]}" --export="$EXPORT_ARGS" "$TRAIN_SCRIPT")"
 TRAIN_JOB_ID="${TRAIN_JOB_RAW%%;*}"

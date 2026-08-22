@@ -95,6 +95,8 @@ def test_managed_smoke_plan_has_four_job_chains_and_parseable_markers() -> None:
     assert "__SUBMISSION_COMPLETE__" in script
     assert "scripts/submit_train_and_eval.sh" in script
     assert "--dependency=afterok:" in script
+    assert "SBATCH_EXTRA_ARGS=--exclude=as01r2b12" in script
+    assert "--exclude=as01r2b12" in script
     standalone = next(job for job in plan["jobs"] if job.get("kind") == "standalone_backbone")
     assert "--set=evaluation.evaluation_view=harmonized_all_windows_full_coverage" in standalone["overrides"]
 
