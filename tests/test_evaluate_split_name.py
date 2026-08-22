@@ -37,3 +37,14 @@ def test_cv_train_val_test_evaluates_saved_final_subjects() -> None:
         "test-1",
         "test-2",
     ]
+
+
+def test_cv_train_val_accepts_canonical_fold_metadata_name() -> None:
+    split_payload = {
+        "outer_train_subject_ids": ["train-1"],
+        "final_eval_subject_ids": ["outer-fold-2", "outer-fold-1"],
+    }
+    assert _resolve_cv_evaluation_subject_ids(split_payload, CV_PROTOCOL_TRAIN_VAL) == [
+        "outer-fold-1",
+        "outer-fold-2",
+    ]
