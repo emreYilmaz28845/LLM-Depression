@@ -20,6 +20,25 @@ def _key(row: dict) -> tuple[str, str, int]:
     return str(row["unit_id"]), str(row["field"]), int(row.get("part_index", 0))
 
 
+def _reason_codes(reasons: list[str]) -> list[str]:
+    codes: list[str] = []
+    for reason in reasons:
+        text = str(reason).lower()
+        if "turkish-only characters" in text:
+            codes.append("turkish_only_characters")
+        elif "source-script" in text or "cjk" in text:
+            codes.append("source_script_characters")
+        elif "numbers not preserved" in text:
+            codes.append("numbers_not_preserved")
+        elif "named entities not preserved" in text:
+            codes.append("named_entities_not_preserved")
+        elif "sensitive term" in text:
+            codes.append("sensitive_term_not_preserved")
+        else:
+            raise ValueError(f"Unsupported validation retry reason: {reason!r}")
+    return sorted(set(codes))
+
+
 def prepare(parent_root: Path, retry_root: Path, *, retry_seed: int) -> dict:
     parent_root = parent_root.resolve()
     retry_root = retry_root.resolve()
@@ -53,9 +72,20 @@ def prepare(parent_root: Path, retry_root: Path, *, retry_seed: int) -> dict:
         raise ValueError("Parent accepted/rejected coverage does not match its units.")
 
     retained = [row for row in candidates if _key(row) not in rejected_keys]
+    retry_directives = [
+        {
+            "unit_id": row["unit_id"],
+            "field": row["field"],
+            "part_index": int(row.get("part_index", 0)),
+            "source_sha256": row["source_sha256"],
+            "reason_codes": _reason_codes(list(row.get("reasons", []))),
+        }
+        for row in rejected
+    ]
     retry_root.mkdir(parents=True)
     write_jsonl(units, retry_root / "units.jsonl")
     write_jsonl(retained, retry_root / "candidates.jsonl")
+    write_jsonl(retry_directives, retry_root / "validation_retries.jsonl")
     if (parent_root / "length_profile.json").is_file():
         shutil.copy2(parent_root / "length_profile.json", retry_root / "length_profile.json")
 
@@ -70,6 +100,9 @@ def prepare(parent_root: Path, retry_root: Path, *, retry_seed: int) -> dict:
         "pending_rejected_count": len(rejected_keys),
         "action": "regenerate_parent_validation_rejections",
         "parent_hashes": {name: sha256_file(parent_root / name) for name in required},
+        "validation_retry_directives_sha256": sha256_file(
+            retry_root / "validation_retries.jsonl"
+        ),
     }
     save_json(provenance, retry_root / "repair_provenance.json")
     return provenance

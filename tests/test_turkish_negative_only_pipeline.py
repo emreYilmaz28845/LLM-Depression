@@ -16,6 +16,7 @@ from scripts.audit_turkish_negative_only_pipeline import (
 )
 from scripts.prepare_translation_retry import prepare as prepare_translation_retry
 from src.data.turkish import build_turkish_manifest
+from src.translation.prompts import user_prompt
 from src.translation.units import unit_rows_for_dataset
 
 
@@ -174,15 +175,24 @@ def test_translation_retry_preserves_parent_and_only_requeues_rejected(tmp_path:
     retry = tmp_path / "retry"
     parent.mkdir()
     units = [
-        {"unit_id": "u1", "field": "transcript", "part_index": 0},
-        {"unit_id": "u2", "field": "transcript", "part_index": 0},
+        {"unit_id": "u1", "field": "transcript", "part_index": 0, "source_sha256": "a" * 64},
+        {"unit_id": "u2", "field": "transcript", "part_index": 0, "source_sha256": "b" * 64},
     ]
     candidates = [{**row, "status": "translated"} for row in units]
     for name, rows in (
         ("units.jsonl", units),
         ("candidates.jsonl", candidates),
         ("accepted.jsonl", [candidates[0]]),
-        ("rejected.jsonl", [{**candidates[1], "status": "failed"}]),
+        (
+            "rejected.jsonl",
+            [
+                {
+                    **candidates[1],
+                    "status": "failed",
+                    "reasons": ["Turkish-only characters present in translation"],
+                }
+            ],
+        ),
     ):
         (parent / name).write_text(
             "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
@@ -197,6 +207,22 @@ def test_translation_retry_preserves_parent_and_only_requeues_rejected(tmp_path:
     assert json.loads((retry / "candidates.jsonl").read_text().splitlines()[0])["unit_id"] == "u1"
     assert (parent / "candidates.jsonl").read_bytes() == parent_hash
     assert not (retry / "accepted.jsonl").exists()
+    directive = json.loads((retry / "validation_retries.jsonl").read_text().strip())
+    assert directive["reason_codes"] == ["turkish_only_characters"]
+    assert "translation" not in directive
+
+
+def test_validation_retry_prompt_explicitly_removes_turkish_lexical_content() -> None:
+    prompt = user_prompt(
+        {
+            "source_text": "source text",
+            "_validation_retry_codes": ["turkish_only_characters"],
+        }
+    )
+
+    assert "previous translation failed validation" in prompt
+    assert "Translate every Turkish lexical item into English" in prompt
+    assert "transliterate proper names" in prompt
 
 
 def _variant_configs() -> tuple[list[Path], list[Path]]:
@@ -237,7 +263,7 @@ def test_negative_only_configs_are_isolated_and_recipe_matched() -> None:
         transcripts = config["transcripts"]
         assert transcripts == {
             "variant": "english",
-            "cache_path": "${TRANSLATION_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/translations}/harmonized_en_complete_v2/turkish_negative_only_t17/accepted.jsonl",
+            "cache_path": "${TRANSLATION_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/translations}/harmonized_en_complete_v3/turkish_negative_only_t17/accepted.jsonl",
             "minimum_status": "automatic_low",
             "require_complete": True,
             "include_failed": False,

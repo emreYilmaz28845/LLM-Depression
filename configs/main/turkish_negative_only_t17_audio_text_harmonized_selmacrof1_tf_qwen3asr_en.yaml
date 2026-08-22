@@ -24,7 +24,7 @@ training: {dist_timeout_minutes: 120, num_train_epochs: 20, learning_rate: 2.0e-
 evaluation: {sample_prediction_mode: original_teacher_forced, headline_mode: original_teacher_forced, aggregation_level: response_subject, hierarchical_score_aggregation: mean, evaluation_view: harmonized_all_windows_full_coverage, generation_max_new_tokens: 8, num_beams: 1, do_sample: false, evaluate_last_checkpoint: false}
 transcripts:
   variant: english
-  cache_path: ${TRANSLATION_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/translations}/harmonized_en_complete_v2/turkish_negative_only_t17/accepted.jsonl
+  cache_path: ${TRANSLATION_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/translations}/harmonized_en_complete_v3/turkish_negative_only_t17/accepted.jsonl
   minimum_status: automatic_low
   require_complete: true
   include_failed: false

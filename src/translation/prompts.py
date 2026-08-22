@@ -34,6 +34,24 @@ _CORRECTIVE_SUFFIX = (
 )
 
 
+def _validation_retry_instructions(codes: list[str]) -> list[str]:
+    instructions: list[str] = []
+    if "turkish_only_characters" in codes:
+        instructions.append(
+            "Translate every Turkish lexical item into English. Do not leave Turkish-specific "
+            "letters in the output; transliterate proper names with basic Latin letters."
+        )
+    if "source_script_characters" in codes:
+        instructions.append("Do not leave source-language script characters in the English output.")
+    if "numbers_not_preserved" in codes:
+        instructions.append("Preserve every number exactly.")
+    if "named_entities_not_preserved" in codes:
+        instructions.append("Preserve or faithfully transliterate every named entity.")
+    if "sensitive_term_not_preserved" in codes:
+        instructions.append("Preserve all sensitive clinical and self-harm meaning explicitly.")
+    return instructions
+
+
 def user_prompt(unit: dict[str, Any], corrective: bool = False) -> str:
     parts: list[str] = []
     context_text = str(unit.get("context_text", "")).strip()
@@ -41,6 +59,11 @@ def user_prompt(unit: dict[str, Any], corrective: bool = False) -> str:
         parts.append(f"<context>\n{context_text}\n</context>")
     parts.append(f"<target>\n{unit['source_text']}\n</target>")
     parts.append('Translate the target passage into English and return JSON: {"translation": "..."}.')
+    retry_codes = [str(code) for code in unit.get("_validation_retry_codes", [])]
+    retry_instructions = _validation_retry_instructions(retry_codes)
+    if retry_instructions:
+        parts.append("A previous translation failed validation. Correct these issues:")
+        parts.extend(f"- {instruction}" for instruction in retry_instructions)
     if corrective:
         parts.append(_CORRECTIVE_SUFFIX)
     return "\n".join(parts)

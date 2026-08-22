@@ -185,10 +185,13 @@ def _audit_translation(
     repair_provenance = None
     if require_retry_provenance:
         repair_path = cache_root / "repair_provenance.json"
+        retry_directives_path = cache_root / "validation_retries.jsonl"
         if not repair_path.is_file():
             failures.append("translation_repair_provenance_missing")
         else:
             repair_provenance = read_json(repair_path)
+        if not retry_directives_path.is_file():
+            failures.append("translation_validation_retries_missing")
     unit_hashes = {
         (str(row["unit_id"]), str(row["field"]), int(row.get("part_index", 0))): str(row["source_sha256"])
         for row in units
@@ -225,6 +228,11 @@ def _audit_translation(
                 "repair_seed": isinstance(repair_provenance.get("retry_seed"), int),
                 "repair_parent_hashes": set(repair_provenance.get("parent_hashes", {}))
                 == {"units.jsonl", "candidates.jsonl", "accepted.jsonl", "rejected.jsonl", "audit.json"},
+                "repair_directives_hash": (
+                    (cache_root / "validation_retries.jsonl").is_file()
+                    and repair_provenance.get("validation_retry_directives_sha256")
+                    == sha256_file(cache_root / "validation_retries.jsonl")
+                ),
             }
         )
     failures.extend(f"translation_{name}" for name, passed in checks.items() if not passed)
@@ -323,7 +331,7 @@ def parse_args() -> argparse.Namespace:
         default=Path(
             os.environ.get(
                 "TURKISH_NEGATIVE_ONLY_TRANSLATION_CACHE",
-                "/gpfs/projects/etur92/ozu647717/AudioLLM/translations/harmonized_en_complete_v2/turkish_negative_only_t17",
+                "/gpfs/projects/etur92/ozu647717/AudioLLM/translations/harmonized_en_complete_v3/turkish_negative_only_t17",
             )
         ),
     )

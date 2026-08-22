@@ -218,6 +218,9 @@ TRANSLATE_ARGS=(
 if [ "$FORCE_RESYNC" = "1" ]; then
   TRANSLATE_ARGS+=(--force-resync)
 fi
+if [ -f "$RUN_ROOT/validation_retries.jsonl" ]; then
+  TRANSLATE_ARGS+=(--validation-retries "$RUN_ROOT/validation_retries.jsonl")
+fi
 python -m src.translation.translate "${TRANSLATE_ARGS[@]}" 2>&1 | tee -a "$ART_DIR/translate.log"
 
 echo "[stage:validate] Validating candidates" | tee -a "$ART_DIR/job_summary.txt"
