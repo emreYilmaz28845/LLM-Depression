@@ -76,5 +76,5 @@ CMD=(torchrun --standalone --nnodes=1 --nproc_per_node="$NPROC_PER_NODE" -m src.
     --config "$CONFIG" --stage "$STAGE" --fold "$FOLD" --run-id "$RUN_ID")
 if [ -n "$EPOCHS" ]; then CMD+=(--epochs "$EPOCHS"); fi
 if [ -n "$SUBJECTS_PER_CLASS" ]; then CMD+=(--subjects-per-class "$SUBJECTS_PER_CLASS"); fi
-for token in "${OVERRIDE_ARGS[@]}"; do CMD+=(--override "$token"); done
+for token in "${OVERRIDE_ARGS[@]}"; do CMD+=(--override="$token"); done
 "${CMD[@]}"

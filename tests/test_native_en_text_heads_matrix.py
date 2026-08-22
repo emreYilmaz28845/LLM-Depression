@@ -17,6 +17,7 @@ from tools.native_en_text_heads import (
     build_plan,
     job_export,
     parse_submission_markers,
+    remote_prepare_script,
     remote_submission_script,
 )
 
@@ -106,6 +107,22 @@ def test_managed_smoke_plan_has_four_job_chains_and_parseable_markers() -> None:
             marker_lines.append(f"__JOB__ {index} {3000 + index}")
     parse_submission_markers(plan, "\n".join(marker_lines))
     assert all(job["job_ids"] for job in plan["jobs"])
+
+
+def test_remote_prepare_attaches_set_tokens_to_override_options() -> None:
+    plan = build_plan(
+        stage="smoke",
+        deployment=_fake_deployment(),
+        experiment_id="exp-native-en-text-heads-v2-20260822",
+    )
+    script = remote_prepare_script(
+        plan,
+        _fake_deployment(),
+        {},
+        Path(plan["stage_root"]) / "preflight.json",
+    )
+    assert "--override=--set=output_dirs.run_root=" in script
+    assert "--override --set=output_dirs.run_root=" not in script
 
 
 def test_production_cv_submission_script_defers_final_jobs() -> None:

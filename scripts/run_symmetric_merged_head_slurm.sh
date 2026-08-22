@@ -66,5 +66,5 @@ CMD=(python -m src.merged.heads --config "$CONFIG" --stage "$STAGE" --fold "$FOL
 if [ -n "$TRIALS" ]; then CMD+=(--trials "$TRIALS"); fi
 if [ -n "$METHOD" ]; then CMD+=(--method "$METHOD"); fi
 if [ -n "$OUTPUT_ROOT" ]; then CMD+=(--output-root "$OUTPUT_ROOT"); fi
-for token in "${OVERRIDE_ARGS[@]}"; do CMD+=(--override "$token"); done
+for token in "${OVERRIDE_ARGS[@]}"; do CMD+=(--override="$token"); done
 "${CMD[@]}"

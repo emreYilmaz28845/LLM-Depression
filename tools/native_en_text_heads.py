@@ -825,7 +825,11 @@ def remote_prepare_script(
             config_remote = rel_config(relative, code)
             command = ["python", "scripts/build_symmetric_merged_manifest.py", "--config", config_remote, "--build-components"]
             for token in overrides:
-                command.extend(("--override", token))
+                # Override values are themselves `--set=...` tokens.  Passing
+                # them as the next argv item makes argparse treat the value as
+                # another option; use the equals form so the value remains
+                # attached to `--override` losslessly.
+                command.append(f"--override={token}")
             lines.append(" ".join(q(token) for token in command))
     lines.extend(
         [
