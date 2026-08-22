@@ -1760,12 +1760,26 @@ def _cmd_submit_optuna100(args) -> int:
         )
         parent_ckpt = getattr(args, "parent_checkpoint_path", None)
 
+    # The cache identity check compares spec.condition against the
+    # extraction metadata's own record; always take the authoritative value.
+    try:
+        meta_proc = transfer_runner_probe = None
+        from src.experiment_tracking.deployment import RemoteRunner as _RR
+        _probe = _RR(host=DEFAULT_TRANSFER_HOST)
+        meta_path = f"{features_dir}/extraction_metadata.json"
+        mp = _probe.run("cat " + shlex.quote(meta_path))
+        if mp.returncode == 0:
+            cache_condition = str(json.loads(mp.stdout).get("condition") or "")
+            if cache_condition:
+                condition = cache_condition
+    except Exception:
+        pass
     spec = ns.build_optuna_task_spec(
         family=family,
         backend=backbone,
         dataset=dataset,
         modality="text_only",
-        condition=f"{condition}_{backbone}",
+        condition=condition,
         fold=fold,
         seed=int(args.seed),
         stage=stage or None,
