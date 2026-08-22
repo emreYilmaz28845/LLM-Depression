@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -2297,7 +2296,6 @@ def main() -> None:
                     cell_values[("DAIC Head Ablation", f"{MODALITY_LABELS[modality]} — {variant_label}")] = (
                         DAIC_OFFICIALDEV_HEADS[(modality, backbone, variant)]["macro_f1"]
                     )
-        register_native_en_cell_values(cell_values, load_native_en_report())
         ok, report = validate_selected_results(Path(args.validate_selected), cell_values)
         print("\n".join(report))
         print(f"checked={sum(1 for s in json.loads(Path(args.validate_selected).read_text())['selections'] if s['status'] == 'selected')} "
@@ -2305,267 +2303,18 @@ def main() -> None:
               f"legacy_unmigrated={sum(1 for line in report if line.startswith('legacy-unmigrated:'))}")
         return 0 if ok else 1
 
-    native_en_report = load_native_en_report()
     wb = Workbook()
     wb.remove(wb.active)
     build_summary(wb, detailed=detailed)
     build_gemma_vs_qwen(wb)
-    if native_en_report is None:
-        # Study pending: preserve the legacy single-seed snapshot verbatim
-        # instead of publishing empty cells. Once the deterministic report
-        # exists, the locked three-seed layout replaces this sheet.
-        build_native_vs_english(wb)
-    else:
-        build_native_vs_en_study(wb, native_en_report)
+    build_native_vs_english(wb)
     build_packed30(wb)
     build_provenance(wb, detailed=detailed)
-    build_native_en_provenance(wb, native_en_report)
     out = OUT_DETAILED if detailed else OUT
     out.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out)
     print(f"wrote {out}")
 
 
-# ---------------------------------------------------------------- Native vs EN (study-driven)
-NATIVE_EN_STUDY_REPORT_ENV = "NATIVE_EN_STUDY_REPORT"
-NATIVE_EN_REPORT_DEFAULT = PROJECT_ROOT / "outputs/native_en_text_heads/study_summary.json"
-NATIVE_EN_ENDPOINT_LABELS = {
-    "standalone": "Standalone",
-    "merged_cv": "Merged CV",
-    "final_daic": "Final merged DAIC",
-}
-NATIVE_EN_DATASET_LABELS = {
-    "d3tec": "D3TEC",
-    "androids_interview": "Androids Interview",
-    "cmdc": "CMDC",
-    "turkish": "Turkish",
-    "": "Five-dataset merged",
-    "daic": "DAIC official test",
-}
-NATIVE_EN_HEAD_LABELS = {"logreg": "LogReg head", "xgb_optuna100": "XGBoost Optuna-100"}
-
-
-def load_native_en_report() -> dict | None:
-    """Load the deterministic study report if it exists; never fabricate."""
-
-    path_value = os.environ.get(NATIVE_EN_STUDY_REPORT_ENV)
-    path = Path(path_value) if path_value else NATIVE_EN_REPORT_DEFAULT
-    if not path.is_file():
-        return None
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    expected = "audiollm.native_en_study_report.v1"
-    if str(payload.get("schema_version")) != expected:
-        raise ValueError(f"{path}: schema_version must be {expected}")
-    return payload
-
-
-def _native_en_rows(report: dict) -> list[tuple[tuple, dict]]:
-    rows = []
-    for comp in report.get("comparisons", []):
-        endpoint = str(comp.get("endpoint"))
-        dataset = str(comp.get("dataset") or "")
-        backbone = str(comp.get("backbone"))
-        head = str(comp.get("head"))
-        key = (endpoint, dataset, backbone, head)
-        rows.append((key, comp))
-    order = {"standalone": 0, "merged_cv": 1, "final_daic": 2}
-    dataset_order = {"d3tec": 0, "androids_interview": 1, "cmdc": 2, "turkish": 3, "": 4, "daic": 5}
-    rows.sort(
-        key=lambda item: (
-            order[item[0][0]],
-            dataset_order.get(item[0][1], 9),
-            item[0][2],
-            item[0][3],
-        )
-    )
-    return rows
-
-
-def build_native_vs_en_study(wb: Workbook, report: dict | None) -> None:
-    """Replace the legacy single-seed sheet with the locked three-seed layout.
-
-    24 summary comparisons (16 standalone + 4 merged CV + 4 final merged
-    DAIC), each carrying native/English mean ± sample sd and the paired
-    EN-minus-native delta for strict macro-F1 and strict positive-F1.
-    """
-
-    ws = wb.create_sheet("Native vs EN")
-    headers = [
-        "Endpoint", "Dataset", "Backbone", "Head",
-        "Native macro-F1", "Native sd",
-        "EN macro-F1", "EN sd",
-        "Δ macro-F1", "Δ sd",
-        "Native pos-F1", "Native sd ",
-        "EN pos-F1", "EN sd ",
-        "Δ pos-F1", "Δ sd ",
-        "Aggregation", "Seeds", "Status",
-    ]
-    _widths(ws, {"A": 18, "B": 22, "C": 12, "D": 20})
-    _title(ws, "Native vs English — text-only LogReg / Optuna-100 XGBoost (seeds 7/1337/2024)", len(headers))
-    if report is None:
-        _note(
-            ws, 2,
-            "Study pending: no deterministic study report found. Generate it with "
-            "tools/summarize_native_en_text_heads.py after production cells reach REPORTABLE; "
-            "this workbook is then regenerated so every value below carries full provenance.",
-            len(headers), height=42,
-        )
-        _header_row(ws, 4, headers)
-        ws.freeze_panes = "A5"
-        return
-    seeds = report.get("seeds") or []
-    _note(
-        ws, 2,
-        "Values are read from the deterministic study report; nothing is hand-typed. "
-        "sd = sample standard deviation across training seeds "
-        f"{seeds}. Δ = English minus native within matched seeds. D3TEC/Androids standalone "
-        "pool five outer folds at subject level per seed; CMDC/Turkish use the unweighted "
-        "five-fold mean (Turkish train_val caveat applies). Merged CV takes the unweighted "
-        "mean of the five dataset metrics per fold, then across folds.",
-        len(headers), height=64,
-    )
-    _header_row(ws, 4, headers)
-    row = 5
-    for key, comp in _native_en_rows(report):
-        endpoint, dataset, backbone, head = key
-        values = []
-        for metric in ("macro_f1", "positive_f1"):
-            native = comp["native"][metric]
-            english = comp["english"][metric]
-            delta = comp["paired_delta"][metric]
-            values += [native["mean"], native["sample_sd"], english["mean"], english["sample_sd"], delta["mean"], delta["sample_sd"]]
-        label_values = [
-            NATIVE_EN_ENDPOINT_LABELS[endpoint],
-            NATIVE_EN_DATASET_LABELS.get(dataset, dataset),
-            backbone,
-            NATIVE_EN_HEAD_LABELS[head],
-        ]
-        for col, value in enumerate(label_values, start=1):
-            _body_cell(ws, row, col, value)
-        base = len(label_values)
-        for offset, value in enumerate(values, start=base + 1):
-            idx = offset - base - 1
-            fmt = "+0.0000;-0.0000;0.0000" if idx % 6 == 4 else "0.0000"
-            _body_cell(ws, row, offset, value, fmt=fmt)
-        tail_col = base + len(values) + 1
-        aggregation = {
-            "d3tec": "pooled_subject_level",
-            "androids_interview": "pooled_subject_level",
-            "cmdc": "fold_mean_unweighted",
-            "turkish": "fold_mean_unweighted (train_val)",
-        }.get(dataset, "") if endpoint == "standalone" else (
-            "mean_dataset_fold_mean_unweighted" if endpoint == "merged_cv" else "subject_level"
-        )
-        _body_cell(ws, row, tail_col, aggregation)
-        _body_cell(ws, row, tail_col + 1, len(seeds))
-        _body_cell(ws, row, tail_col + 2, "REPORTABLE")
-        row += 1
-    assert row - 5 == 24 or not report.get("comparisons"), (
-        f"expected 24 summary comparisons, wrote {row - 5}"
-    )
-    ws.freeze_panes = "A5"
-
-    seed_ws = wb.create_sheet("Native vs EN Seeds")
-    seed_headers = [
-        "Endpoint", "Dataset", "Backbone", "Head", "Seed",
-        "Native macro-F1", "EN macro-F1", "Δ macro-F1",
-        "Native pos-F1", "EN pos-F1", "Δ pos-F1",
-        "Split seed", "Head seed", "Evaluation view",
-    ]
-    _title(seed_ws, "Seed-level detail — one row per comparison × seed", len(seed_headers))
-    _note(
-        seed_ws, 2,
-        "72 detail rows back the summary sheet. Split seed is fixed at 1337; head "
-        "seed/protocol is fixed at 1337 (LogReg random_state; Optuna sampler/model/"
-        "inner-CV). Evaluation view is harmonized_all_windows_full_coverage throughout.",
-        len(seed_headers), height=42,
-    )
-    _header_row(seed_ws, 4, seed_headers)
-    seed_row = 5
-    for key, comp in _native_en_rows(report):
-        endpoint, dataset, backbone, head = key
-        for seed in seeds:
-            s = str(seed)
-            values = []
-            for metric in ("macro_f1", "positive_f1"):
-                n = comp["native"][metric]["per_seed"][s]
-                e = comp["english"][metric]["per_seed"][s]
-                d = comp["paired_delta"][metric]["per_seed"][s]
-                values += [n, e, d]
-            label_values = [
-                NATIVE_EN_ENDPOINT_LABELS[endpoint],
-                NATIVE_EN_DATASET_LABELS.get(dataset, dataset),
-                backbone,
-                NATIVE_EN_HEAD_LABELS[head],
-                int(s),
-            ]
-            for col, value in enumerate(label_values, start=1):
-                _body_cell(seed_ws, seed_row, col, value)
-            sbase = len(label_values)
-            for offset, value in enumerate(values, start=sbase + 1):
-                idx = offset - sbase - 1
-                fmt = "+0.0000;-0.0000;0.0000" if idx % 3 == 2 else "0.0000"
-                _body_cell(seed_ws, seed_row, offset, value, fmt=fmt)
-            fixed_cols = ["1337", "1337", "harmonized_all_windows_full_coverage"]
-            for offset, value in enumerate(fixed_cols, start=len(label_values) + 7):
-                _body_cell(seed_ws, seed_row, offset, value)
-            seed_row += 1
-    assert seed_row - 5 == 72 or not report.get("comparisons"), (
-        f"expected 72 seed-detail rows, wrote {seed_row - 5}"
-    )
-    seed_ws.freeze_panes = "A5"
-
-
-def register_native_en_cell_values(cell_values: dict, report: dict | None) -> None:
-    """Expose study cells to --validate-selected cross-checking."""
-
-    if report is None:
-        return
-    for key, comp in _native_en_rows(report):
-        endpoint, dataset, backbone, head = key
-        for metric_name, suffix in (("macro_f1", "macro"), ("positive_f1", "pos")):
-            cell = (
-                f"{NATIVE_EN_ENDPOINT_LABELS[endpoint]} — {NATIVE_EN_DATASET_LABELS.get(dataset, dataset)}"
-                f"|{backbone} — {NATIVE_EN_HEAD_LABELS[head]}|{suffix}"
-            )
-            cell_values[cell] = float(comp["english"][metric_name]["per_seed"]["1337"])
-
-
-def build_native_en_provenance(wb: Workbook, report: dict | None) -> None:
-    if report is None:
-        return
-    ws = wb["Provenance"]
-    header_row = 1
-
-    def put(values: list) -> None:
-        nonlocal_header = header_row
-        row = ws.max_row + 1
-        for col, value in enumerate(values, start=1):
-            cell = ws.cell(row=row, column=col, value=value)
-            from openpyxl.styles import Font
-
-            cell.font = Font(size=8)
-
-    evidence_index = report.get("evidence_index") or []
-    seen: set[tuple] = set()
-    for entry in evidence_index:
-        ident = (entry["endpoint"], entry["dataset"], entry["condition"], entry["backbone"], entry["head"], entry["seed"])
-        if ident in seen:
-            continue
-        seen.add(ident)
-        put([
-            "Native vs EN (text-only heads)",
-            NATIVE_EN_DATASET_LABELS.get(str(entry["dataset"]), str(entry["dataset"]) or "—"),
-            f"{entry['condition']} · {entry['backbone']}",
-            f"{NATIVE_EN_HEAD_LABELS[str(entry['head'])]} · seed {entry['seed']}",
-            "",
-            f"attempt_dir={entry['attempt_dir']} (attempt id inside metadata.json)",
-            "view=harmonized_all_windows_full_coverage; aggregation per endpoint; namespace=headline/binary_strict",
-            entry["attempt_dir"],
-            "REPORTABLE via tools/exp.py validate + finish",
-        ])
-
 if __name__ == "__main__":
     sys.exit(main())
-
-

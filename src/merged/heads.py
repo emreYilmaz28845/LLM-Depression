@@ -40,49 +40,6 @@ from src.utils import (
 FIXED_HEAD = "xgb_fixed"
 HEADS = ("logreg", FIXED_HEAD, "xgb_optuna")
 
-QWEN_LOGREG_RAW_MERGED_BACKEND = "qwen_hidden_logreg_raw_symmetric_merged"
-GEMMA4_LOGREG_RAW_MERGED_BACKEND = "gemma4_hidden_logreg_raw_symmetric_merged"
-
-
-def resolve_fixed_head_seed(merged_config: dict[str, Any]) -> int:
-    """Resolve the fixed-head (LogReg / fixed XGBoost) random seed.
-
-    ``heads.fixed_seed`` keeps head randomness fixed while top-level training
-    seeds vary. Without the key this falls back to the historical behavior of
-    using the top-level merged config seed.
-    """
-
-    heads_cfg = merged_config.get("heads") or {}
-    fixed_seed = heads_cfg.get("fixed_seed")
-    if fixed_seed is not None:
-        return int(fixed_seed)
-    return int(merged_config.get("seed", 1337))
-
-
-def method_prediction_backend(
-    model_backend: str, method: str, *, profile_matches: bool
-) -> str | None:
-    """Return the real method-specific merged prediction backend.
-
-    Only the locked headline heads are qualified: LogReg uses the merged
-    LogReg qualifier and Optuna-100 XGBoost uses the merged XGBoost
-    qualifier. Fixed XGBoost stays unqualified, and without the
-    ``harmonized_optuna100_v1`` profile every method stays unqualified for
-    backward compatibility with historical evidence.
-    """
-
-    if not profile_matches:
-        return None
-    if method == "logreg":
-        if str(model_backend or "").strip().lower() == "gemma4":
-            return GEMMA4_LOGREG_RAW_MERGED_BACKEND
-        return QWEN_LOGREG_RAW_MERGED_BACKEND
-    if method == "xgb_optuna":
-        from src.features import optuna100_policy as policy
-
-        return policy.prediction_backend(model_backend, merged=True)
-    return None
-
 
 def _load_features(features_dir: Path, partition: str) -> tuple[np.ndarray, list[dict[str, Any]]]:
     matrix_path = features_dir / f"{partition}.npz"
@@ -558,7 +515,7 @@ def run_merged_heads(
     )
     save_json(assignments, output_root / "inner_folds.json")
     y_train = np.asarray([int(row["label"]) for row in train_rows], dtype=np.int64)
-    seed = resolve_fixed_head_seed(merged_config)
+    seed = int(merged_config.get("seed", 1337))
     method_summaries: dict[str, Any] = {}
     for method in HEADS:
         if expected_trial_count == 0 and method == "xgb_optuna":
@@ -606,9 +563,7 @@ def run_merged_heads(
                 "manifest_hash": feature_metadata.get("manifest_hash"),
                 "split_hash": feature_metadata.get("split_hash"),
                 "model_backend": model_backend,
-                "prediction_backend": method_prediction_backend(
-                    model_backend, method, profile_matches=protocol_profile == policy.PROTOCOL_PROFILE
-                ),
+                "prediction_backend": prediction_backend,
             },
             method_dir / "classifier_metadata.json",
         )

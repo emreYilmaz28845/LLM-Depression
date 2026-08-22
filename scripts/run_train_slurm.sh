@@ -159,17 +159,7 @@ sys.path.insert(0, "$PROJECT_ROOT")
 from src.utils import load_yaml_with_overrides, resolve_project_path
 
 if """$OVERRIDES_JSON_B64""":
-    _raw_b64 = """$OVERRIDES_JSON_B64"""
-    try:
-        override_args = json.loads(base64.b64decode(_raw_b64).decode("utf-8"))
-    except json.JSONDecodeError as exc:
-        import hashlib
-        decoded = base64.b64decode(_raw_b64).decode("utf-8", errors="replace")
-        print("B64DEBUG len_env", len(_raw_b64), "sha_env", hashlib.sha256(_raw_b64.encode()).hexdigest()[:16], flush=True)
-        print("B64DEBUG len_decoded", len(decoded), "newlines", decoded.count(chr(10)), flush=True)
-        print("B64DEBUG head", repr(decoded[:60]), flush=True)
-        print("B64DEBUG boundary", repr(decoded[max(0, exc.pos - 60):exc.pos + 120]), flush=True)
-        raise
+    override_args = json.loads(base64.b64decode("""$OVERRIDES_JSON_B64""").decode("utf-8"))
 else:
     override_args = """$EXTRA_TRAIN_ARGS""".split()
 config = load_yaml_with_overrides(Path("$CONFIG"), override_args)
@@ -208,10 +198,6 @@ if [ "${#OVERRIDE_ARGS[@]}" -gt 0 ]; then
         if [ "${OVERRIDE_ARGS[$i]}" = "--set" ] && [ $((i + 1)) -lt ${#OVERRIDE_ARGS[@]} ]; then
             MANIFEST_CMD+=("${OVERRIDE_ARGS[$i]}" "${OVERRIDE_ARGS[$((i + 1))]}")
             i=$((i + 2))
-        elif [[ "${OVERRIDE_ARGS[$i]}" == --set=* ]]; then
-            # The base64 token array carries single-token "--set=k=v" forms.
-            MANIFEST_CMD+=("${OVERRIDE_ARGS[$i]}")
-            i=$((i + 1))
         else
             i=$((i + 1))
         fi

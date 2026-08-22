@@ -216,13 +216,10 @@ def load_task_spec(path: str | Path) -> dict[str, Any]:
             raise PosthocError(f"task spec missing required key {key!r}")
     from src.features import optuna100_policy as policy
 
-    target = int(spec["target_trials"])
-    smoke_two_trial = target == 2 and str(spec.get("stage")) == "smoke"
-    if target != policy.PRODUCTION_TARGET_TRIALS and not smoke_two_trial:
+    if int(spec["target_trials"]) != policy.PRODUCTION_TARGET_TRIALS:
         raise PosthocError(
             f"post-hoc task target_trials must be "
-            f"{policy.PRODUCTION_TARGET_TRIALS} (or exactly 2 at stage=smoke), "
-            f"got {spec['target_trials']}"
+            f"{policy.PRODUCTION_TARGET_TRIALS}, got {spec['target_trials']}"
         )
     return spec
 
@@ -496,27 +493,13 @@ def create_attempt(*, repo_root: str | Path, attempt_dir: str | Path, task_spec:
                 "best_model": None,
                 "local_evidence_root": None,
             },
-            # The sidecar schema requires the parent block to be absent
-            # unless it carries a valid (or legacy) parent attempt id.
-            **(
-                {
-                    "parent": {
-                        "parent_attempt_id": str(
-                            spec["parent"]["parent_attempt_id"]
-                        ),
-                        "parent_checkpoint_role": "best_model",
-                        "parent_checkpoint_path": spec["parent"].get(
-                            "parent_checkpoint_path"
-                        ),
-                        "adapter_config_sha256": spec["parent"].get(
-                            "adapter_config_sha256"
-                        ),
-                        "adapter_sha256": spec["parent"].get("adapter_sha256"),
-                    }
-                }
-                if spec.get("parent", {}).get("parent_attempt_id")
-                else {}
-            ),
+            "parent": {
+                "parent_attempt_id": spec.get("parent", {}).get("parent_attempt_id"),
+                "parent_checkpoint_role": "best_model",
+                "parent_checkpoint_path": spec.get("parent", {}).get("parent_checkpoint_path"),
+                "adapter_config_sha256": spec.get("parent", {}).get("adapter_config_sha256"),
+                "adapter_sha256": spec.get("parent", {}).get("adapter_sha256"),
+            },
             "wandb": {
                 "project": "audiollm-depression",
                 "entity": None,
