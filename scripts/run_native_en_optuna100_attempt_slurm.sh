@@ -113,7 +113,8 @@ else
         --sampling-mode none \
         --experiment-id xgb_optuna100_harmonized_v1 \
         --protocol-profile harmonized_optuna100_v1 \
-        --xgb-threads 20
+        --xgb-threads 20 \
+        $( [ "$TARGET_TRIALS" = "2" ] && echo --allow-smoke-trials )
 fi
 
 campaign materialize-mn5-evidence

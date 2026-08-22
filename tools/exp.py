@@ -1747,9 +1747,12 @@ def _cmd_submit_optuna100(args) -> int:
         parent_ckpt = getattr(args, "parent_checkpoint_path", None)
     else:
         dataset = str(args.dataset)
-        features_dir = ns.standalone_cache_paths(
-            dataset=dataset, condition=condition, run_name=run_name, fold=fold
-        )["cache_dir"]
+        if getattr(args, "cache_dir", None):
+            features_dir = str(args.cache_dir).rstrip("/")
+        else:
+            features_dir = ns.standalone_cache_paths(
+                dataset=dataset, condition=condition, run_name=run_name, fold=fold
+            )["cache_dir"]
         merged_config_remote = ""
         attempt_dir = ns.standalone_attempt_path(
             campaign=campaign,
@@ -1760,12 +1763,26 @@ def _cmd_submit_optuna100(args) -> int:
         )
         parent_ckpt = getattr(args, "parent_checkpoint_path", None)
 
+    # The cache identity check compares spec.condition against the
+    # extraction metadata's own record; always take the authoritative value.
+    try:
+        meta_proc = transfer_runner_probe = None
+        from src.experiment_tracking.deployment import RemoteRunner as _RR
+        _probe = _RR(host=DEFAULT_TRANSFER_HOST)
+        meta_path = f"{features_dir}/extraction_metadata.json"
+        mp = _probe.run("cat " + shlex.quote(meta_path))
+        if mp.returncode == 0:
+            cache_condition = str(json.loads(mp.stdout).get("condition") or "")
+            if cache_condition:
+                condition = cache_condition
+    except Exception:
+        pass
     spec = ns.build_optuna_task_spec(
         family=family,
         backend=backbone,
         dataset=dataset,
         modality="text_only",
-        condition=f"{condition}_{backbone}",
+        condition=condition,
         fold=fold,
         seed=int(args.seed),
         stage=stage or None,
@@ -1783,7 +1800,11 @@ def _cmd_submit_optuna100(args) -> int:
     from src.experiment_tracking.submit import REMOTE_RUNTIME_BASE
 
     runtime_root = REMOTE_RUNTIME_BASE / ctx["experiment_id"]
-    spec_remote = f"{runtime_root}/specs/optuna100/{family}/{campaign}/{dataset}/{run_name}/f{fold}{('_' + stage) if stage else ''}/task_spec.json"
+    spec_tag = getattr(args, "spec_tag", None)
+    spec_remote = (
+        f"{runtime_root}/specs/optuna100/{family}/{campaign}/{dataset}/{run_name}/"
+        f"f{fold}{('_' + stage) if stage else ''}{('/' + spec_tag) if spec_tag else ''}/task_spec.json"
+    )
     code_path = str(deployment["deployed_code_path"])
     exports = [
         ("PROJECT_ROOT", code_path),
@@ -2350,6 +2371,9 @@ def main() -> int:
     optuna_parser.add_argument("--deployment-id", default=None)
     optuna_parser.add_argument("--group-id", default=None)
     optuna_parser.add_argument("--scheduler-host", default=None)
+    optuna_parser.add_argument("--cache-dir", default=None,
+                               help="standalone family: explicit remote hidden-features dir")
+    optuna_parser.add_argument("--spec-tag", default=None, help="disambiguates re-submissions whose prior spec file exists")
     optuna_group = optuna_parser.add_mutually_exclusive_group(required=True)
     optuna_group.add_argument("--dry-run", action="store_true")
     optuna_group.add_argument("--execute", action="store_true")

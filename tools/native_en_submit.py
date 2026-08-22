@@ -111,6 +111,13 @@ def materialize_merged_config(config_dict: dict[str, Any], *, seed: int) -> str:
         )
     derived = copy.deepcopy(config_dict)
     derived["seed"] = int(seed)
+    for component in derived.get("components") or []:
+        for key in ("manifest_path", "metadata_path"):
+            value = str(component.get(key) or "")
+            if value and not value.startswith("/"):
+                # Runtime workers may carry a deployment-rooted PROJECT_ROOT;
+                # component data lives only in the permanent tree.
+                component[key] = f"{REMOTE_PROJECT_BASE}/{value}"
     text = yaml.safe_dump(derived, sort_keys=False)
     return text.replace("${PROJECT_ROOT}", REMOTE_PROJECT_BASE)
 
@@ -470,6 +477,7 @@ def render_merged_chain_script(
     features_dir: str,
     source_commit: str,
     context_path: str,
+    qwen_hidden_deps: str = "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/.deps/qwen_hidden",
     log_root_train: str = "",
     log_root_post: str = "",
     log_root_head: str = "",
@@ -514,9 +522,12 @@ export FOLD={int(fold)}
 export RUN_ID={_q(run_id)}
 export SOURCE_COMMIT={_q(source_commit)}
 {gemma_exports}
+export QWEN_HIDDEN_DEPS={_q(qwen_hidden_deps)}
+export PYTHONPATH="$QWEN_HIDDEN_DEPS:$CODE${{PYTHONPATH:+:$PYTHONPATH}}"
 
 # --- train (1 node x 4 tasks x 4 H100, NPROC_PER_NODE=4 DDP) ---
 export NPROC_PER_NODE=4{epoch_export}{smoke_export}
+export LOG_ROOT={_q(log_root_train)}
 TRAIN_ID=$(sbatch --parsable --chdir="$CODE" scripts/run_symmetric_merged_train_slurm.sh)
 echo "Submitted training job: $TRAIN_ID"
 unset EPOCHS SUBJECTS_PER_CLASS || true

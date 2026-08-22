@@ -104,6 +104,56 @@ def _inner_folds(train_rows: list[dict[str, Any]], *, inner_folds: int, seed: in
     }
 
 
+def _inner_folds_smoke_two_fold(
+    train_rows: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Deterministic two-fold inner split for the resumability smoke.
+
+    At the locked smoke cohort (two subjects per class per dataset) a plain
+    three-fold stratified split can leave an inner-train side without any
+    subject of some dataset, which makes the locked five-dataset objective
+    undefined. Round-robin assignment per dataset keeps every dataset on
+    both sides of both folds.
+    """
+
+    subjects_by_dataset: dict[str, set[str]] = defaultdict(set)
+    rows_by_subject: dict[str, list[int]] = defaultdict(list)
+    for index, row in enumerate(train_rows):
+        dataset = str(row["dataset"]).lower()
+        subject = str(row["subject_id"])
+        subjects_by_dataset[dataset].add(subject)
+        rows_by_subject[subject].append(index)
+    fold_of_subject: dict[str, int] = {}
+    for dataset in sorted(subjects_by_dataset):
+        for position, subject in enumerate(sorted(subjects_by_dataset[dataset])):
+            fold_of_subject[subject] = position % 2
+    folds: list[dict[str, Any]] = []
+    for fold_index in (0, 1):
+        train_rows_idx = [
+            index for subject, fold in fold_of_subject.items() if fold != fold_index
+            for index in rows_by_subject[subject]
+        ]
+        val_idx = [
+            index for subject, fold in fold_of_subject.items() if fold == fold_index
+            for index in rows_by_subject[subject]
+        ]
+        train_datasets = {train_rows[i]["dataset"] for i in train_rows_idx}
+        val_datasets = {train_rows[i]["dataset"] for i in val_idx}
+        missing = {d for d in DATASETS} - (train_datasets & val_datasets)
+        if missing:
+            raise ValueError(f"Smoke inner fold {fold_index} lost datasets: {sorted(missing)}")
+        folds.append(
+            {
+                "fold": fold_index,
+                "train_subject_ids": [s for s, f in fold_of_subject.items() if f != fold_index],
+                "validation_subject_ids": [s for s, f in fold_of_subject.items() if f == fold_index],
+                "train_row_indices": sorted(set(train_rows_idx)),
+                "validation_row_indices": sorted(set(val_idx)),
+            }
+        )
+    return {"schema_version": "merged_inner_assignments.v1", "folds": folds}
+
+
 def _inner_objective(
     train_x: np.ndarray,
     train_rows: list[dict[str, Any]],
@@ -208,7 +258,12 @@ def run_merged_optuna100(
         raise ValueError(f"output dir must end with {policy.EXPERIMENT_ID!r}: {output}")
     output.mkdir(parents=True, exist_ok=True)
 
-    assignments = _inner_folds(train_rows, inner_folds=policy.INNER_FOLDS, seed=policy.INNER_SPLIT_SEED)
+    if target == policy.PRODUCTION_TARGET_TRIALS:
+        assignments = _inner_folds(
+            train_rows, inner_folds=policy.INNER_FOLDS, seed=policy.INNER_SPLIT_SEED
+        )
+    else:
+        assignments = _inner_folds_smoke_two_fold(train_rows)
     protocol = policy.protocol_block(
         dataset="merged",
         condition=modality,

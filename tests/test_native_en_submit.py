@@ -460,3 +460,12 @@ def test_standalone_two_trial_smoke_spec_is_valid(tmp_path: Path) -> None:
     path = tmp_path / "spec.json"
     path.write_text(json.dumps(spec))
     assert load_posthoc_spec(path)["target_trials"] == 2
+
+
+def test_derived_config_absolutizes_component_data_paths() -> None:
+    config = _merged_config()
+    text = ns.materialize_merged_config(config, seed=7)
+    doc = yaml.safe_load(text)
+    for component in doc["components"]:
+        assert str(component["manifest_path"]).startswith(ns.REMOTE_PROJECT_BASE)
+        assert str(component["metadata_path"]).startswith(ns.REMOTE_PROJECT_BASE)
