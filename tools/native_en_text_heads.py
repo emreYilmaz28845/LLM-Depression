@@ -854,7 +854,7 @@ def remote_prepare_script(
 ) -> str:
     code = str(deployment["deployed_code_path"])
     root = Path(plan["stage_root"])
-    map_path = root / "manifest_map.json"
+    map_path = root / f"manifest_map_{deployment['deployment_id']}.json"
     lines = [
         "set -euo pipefail",
         "module purge",
