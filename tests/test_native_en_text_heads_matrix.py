@@ -109,6 +109,29 @@ def test_managed_smoke_plan_has_four_job_chains_and_parseable_markers() -> None:
     assert all(job["job_ids"] for job in plan["jobs"])
 
 
+def test_remote_workers_source_mn5_dataset_environment() -> None:
+    plan = build_plan(
+        stage="smoke",
+        deployment=_fake_deployment(),
+        experiment_id="exp-native-en-text-heads-v2-20260822",
+    )
+    add_plan_indexes(plan)
+    expected = "source /gpfs/projects/etur92/ozu647717/AudioLLM/deployments/test/code/scripts/native_en_text_heads_env.sh"
+    prepare = remote_prepare_script(
+        plan,
+        _fake_deployment(),
+        {},
+        Path(plan["stage_root"]) / "preflight.json",
+    )
+    submission = remote_submission_script(
+        plan,
+        _fake_deployment(),
+        Path(plan["stage_root"]) / "preflight.json",
+    )
+    assert expected in prepare
+    assert expected in submission
+
+
 def test_remote_prepare_attaches_set_tokens_to_override_options() -> None:
     plan = build_plan(
         stage="smoke",
