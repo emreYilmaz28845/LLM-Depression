@@ -976,11 +976,17 @@ def _resolve_cv_evaluation_subject_ids(
     split_payload: dict[str, Any], cv_protocol: str
 ) -> list[str]:
     """Resolve the reported CV subjects from the saved split contract."""
-    source = (
-        "selection_subject_ids"
-        if cv_protocol == CV_PROTOCOL_TRAIN_VAL
-        else "final_eval_subject_ids"
-    )
+    if cv_protocol == CV_PROTOCOL_TRAIN_VAL:
+        # The canonical fold metadata calls the outer held-out partition
+        # final_eval_subject_ids, while a trained run records the same
+        # train_val subjects as selection_subject_ids in split_used.json.
+        source = (
+            "selection_subject_ids"
+            if "selection_subject_ids" in split_payload
+            else "final_eval_subject_ids"
+        )
+    else:
+        source = "final_eval_subject_ids"
     return sorted(split_payload[source])
 
 
