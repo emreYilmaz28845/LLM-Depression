@@ -111,6 +111,13 @@ def materialize_merged_config(config_dict: dict[str, Any], *, seed: int) -> str:
         )
     derived = copy.deepcopy(config_dict)
     derived["seed"] = int(seed)
+    for component in derived.get("components") or []:
+        for key in ("manifest_path", "metadata_path"):
+            value = str(component.get(key) or "")
+            if value and not value.startswith("/"):
+                # Runtime workers may carry a deployment-rooted PROJECT_ROOT;
+                # component data lives only in the permanent tree.
+                component[key] = f"{REMOTE_PROJECT_BASE}/{value}"
     text = yaml.safe_dump(derived, sort_keys=False)
     return text.replace("${PROJECT_ROOT}", REMOTE_PROJECT_BASE)
 
