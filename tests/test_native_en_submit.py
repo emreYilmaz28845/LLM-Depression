@@ -437,3 +437,26 @@ class TestPreflightScriptOrdering:
             )
             assert def_line is not None, f"{name} missing"
             assert def_line < guard_line, f"{name} defined after __main__ guard"
+
+
+def test_standalone_two_trial_smoke_spec_is_valid(tmp_path: Path) -> None:
+    spec = ns.build_optuna_task_spec(
+        family="standalone",
+        backend="qwen",
+        dataset="d3tec",
+        modality="text_only",
+        condition="native_qwen",
+        fold=0,
+        seed=1337,
+        stage="smoke",
+        cache_dir=str(tmp_path / "cache"),
+        group_id="g",
+        run_name="smoke-tnh-nat-qwen-d3tec",
+        branch="b",
+        merged_sha="a" * 40,
+        parent_checkpoint_path="/gpfs/x/smoke/fold_0/best_model",
+        target_trials=2,
+    )
+    path = tmp_path / "spec.json"
+    path.write_text(json.dumps(spec))
+    assert load_posthoc_spec(path)["target_trials"] == 2

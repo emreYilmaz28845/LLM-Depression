@@ -1673,7 +1673,7 @@ def _cmd_submit_optuna100(args) -> int:
         print("ERROR: --family must be standalone|merged", file=sys.stderr)
         return 1
     target_trials = int(getattr(args, "target_trials", 100))
-    stage = str(getattr(args, "stage", "cv") if family == "merged" else "")
+    stage = str(getattr(args, "stage") or "")
     if family == "merged":
         if target_trials == 100 and stage not in {"cv", "final"}:
             print("ERROR: merged production requires --stage cv|final", file=sys.stderr)
@@ -1685,10 +1685,23 @@ def _cmd_submit_optuna100(args) -> int:
             print("ERROR: the two-trial target is only valid with --stage smoke", file=sys.stderr)
             return 1
     else:
-        if target_trials != 100:
-            print("ERROR: standalone production requires exactly 100 trials", file=sys.stderr)
+        # The locked smoke gate exercises Optuna resumability with exactly
+        # two completed trials; production requires the full 100.
+        if target_trials == 2:
+            if stage != "smoke":
+                print("ERROR: standalone two-trial studies require --stage smoke", file=sys.stderr)
+                return 1
+        elif target_trials == 100:
+            if stage not in {"", "cv"}:
+                print("ERROR: standalone production takes no --stage", file=sys.stderr)
+                return 1
+            stage = ""
+        else:
+            print(
+                "ERROR: --target-trials must be 100 (production) or 2 with --stage smoke",
+                file=sys.stderr,
+            )
             return 1
-        stage = ""
 
     condition = str(args.condition)
     backbone = str(args.backbone)
