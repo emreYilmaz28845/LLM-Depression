@@ -962,11 +962,26 @@ def _resolve_final_eval_subject_ids(config: dict[str, Any], metadata: dict[str, 
     split_mode = resolve_split_mode(config, metadata)
     if split_mode == SPLIT_MODE_CV:
         fold_payload = read_fold_payload(metadata, fold)
-        return sorted(fold_payload["final_eval_subject_ids"])
+        return _resolve_cv_evaluation_subject_ids(
+            fold_payload,
+            resolve_cv_protocol(config),
+        )
     if not metadata.get("subject_partition_path"):
         raise ValueError("Split metadata does not include subject_partition_path for fixed/full_train evaluation.")
     partition_rows = read_json(metadata["subject_partition_path"])
     return subject_ids_for_partitions(partition_rows, [str(config["split"]["final_eval_partition"])])
+
+
+def _resolve_cv_evaluation_subject_ids(
+    split_payload: dict[str, Any], cv_protocol: str
+) -> list[str]:
+    """Resolve the reported CV subjects from the saved split contract."""
+    source = (
+        "selection_subject_ids"
+        if cv_protocol == CV_PROTOCOL_TRAIN_VAL
+        else "final_eval_subject_ids"
+    )
+    return sorted(split_payload[source])
 
 
 def _resolved_split_name(
@@ -1031,7 +1046,10 @@ def main() -> None:
                 f"Smoke evaluation requires the checkpoint's saved split: {saved_split_path}"
             )
         saved_split = read_json(saved_split_path)
-        final_eval_subject_ids = sorted(saved_split["final_eval_subject_ids"])
+        if split_mode == SPLIT_MODE_CV:
+            final_eval_subject_ids = _resolve_cv_evaluation_subject_ids(saved_split, cv_protocol)
+        else:
+            final_eval_subject_ids = sorted(saved_split["final_eval_subject_ids"])
     final_eval_rows = filter_rows_by_subjects(manifest_rows, final_eval_subject_ids)
     evaluation_role = "fold_validation" if cv_protocol == CV_PROTOCOL_TRAIN_VAL else "final_eval"
     examples = build_examples(final_eval_rows, config, partition_name=evaluation_role, truncation_log_path=None)
