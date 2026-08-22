@@ -83,6 +83,14 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=SEED_SMOKE)
     parser.add_argument("--out-root", default=None)
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--skip-standalone", action="store_true",
+                        help="resume mode: standalone panels already submitted")
+    parser.add_argument("--panels", default=None,
+                        help="comma list of panel keys to include (default all)")
+    parser.add_argument("--variants", default=None,
+                        help="comma list of merged variants to include (default all)")
+    parser.add_argument("--name-suffix", default="",
+                        help="appended to run names / run ids for retry identities")
     args = parser.parse_args()
 
     mode_dir = "exec" if args.execute else "dry"
@@ -107,10 +115,16 @@ def main() -> int:
         return _run(cmd + [mode], out_root / f"{tag}.log")
 
     # --- standalone panels -------------------------------------------------
-    for panel, dataset in PANEL_DATASET.items():
+    selected_panels = (
+        [k for k in PANEL_DATASET if k in set((args.panels or "").split(","))]
+        if args.panels else list(PANEL_DATASET.items())
+    )
+    if args.skip_standalone:
+        selected_panels = []
+    for panel, dataset in selected_panels:
         cond, bb = panel.split("-")
         campaign = ns.campaign_for(cond, bb)
-        run_name = f"smoke-{panel}-{dataset}"
+        run_name = f"smoke-{panel}-{dataset}{args.name_suffix}"
         chain_cmd = base() + [
             "submit", args.slug,
             "--config", PANEL_CONFIG[panel],
@@ -179,9 +193,13 @@ def main() -> int:
         jobs.append(oentry)
 
     # --- merged variants ---------------------------------------------------
-    for variant in MERGED_VARIANTS:
+    selected_variants = (
+        [v for v in MERGED_VARIANTS if v in set((args.variants or "").split(","))]
+        if args.variants else list(MERGED_VARIANTS)
+    )
+    for variant in selected_variants:
         cond, bb = variant.split("_")
-        run_id = f"smoke-tmh-{variant}"
+        run_id = f"smoke-tmh-{variant}{args.name_suffix}"
         merged_cfg_local = (
             PROJECT_ROOT / f"configs/experiments/merged/symmetric_merged_text_heads_{variant}.yaml"
         )
@@ -241,6 +259,7 @@ def main() -> int:
         jobs.append(oentry)
 
     expected_total = sum(j["jobs_expected"] for j in jobs)
+    locked_expected = EXPECTED_JOBS if not (args.skip_standalone or args.panels or args.variants) else expected_total
     reconciliation = {
         "schema_version": "audiollm.native_en_smoke_reconciliation.v1",
         "deployment_id": args.deployment_id,
@@ -248,7 +267,7 @@ def main() -> int:
         "entries": jobs,
         "expected_jobs": expected_total,
         "locked_jobs": EXPECTED_JOBS,
-        "match": expected_total == EXPECTED_JOBS,
+        "match": expected_total == locked_expected,
     }
     recon_path = out_root / "reconciliation.json"
     recon_path.write_text(json.dumps(reconciliation, indent=2, sort_keys=True) + "\n")
