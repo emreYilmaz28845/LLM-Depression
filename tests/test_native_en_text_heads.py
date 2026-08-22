@@ -287,3 +287,43 @@ class TestMergedOptunaSmokeGate:
                 run_id="r",
                 target_trials=2,
             )
+
+
+class TestSmokeInnerFolds:
+    def _rows(self, per_dataset_subjects: int = 2):
+        rows = []
+        for ds in ("daic", "cmdc", "turkish", "d3tec", "androids_interview"):
+            for i in range(per_dataset_subjects * 2):
+                rows.append(
+                    {
+                        "dataset": ds,
+                        "subject_id": f"{ds}-s{i}",
+                        "label": i % 2,
+                    }
+                )
+        return rows
+
+    def test_two_fold_keeps_every_dataset_on_both_sides(self) -> None:
+        from src.merged.optuna100 import _inner_folds_smoke_two_fold
+
+        rows = self._rows()
+        assignments = _inner_folds_smoke_two_fold(rows)
+        assert len(assignments["folds"]) == 2
+        datasets = {r["dataset"] for r in rows}
+        for fold in assignments["folds"]:
+            train_ds = {rows[i]["dataset"] for i in fold["train_row_indices"]}
+            val_ds = {rows[i]["dataset"] for i in fold["validation_row_indices"]}
+            assert train_ds == datasets
+            assert val_ds == datasets
+            assert not set(fold["train_subject_ids"]) & set(fold["validation_subject_ids"])
+
+    def test_production_path_uses_policy_folds(self) -> None:
+        from src.merged.optuna100 import _inner_folds
+        from src.features import optuna100_policy as policy
+        from collections import Counter
+
+        rows = self._rows(6)
+        labels_by_subject = {r["subject_id"]: r["label"] for r in rows}
+        assert min(Counter(labels_by_subject.values()).values()) >= policy.INNER_FOLDS
+        a = _inner_folds(rows, inner_folds=policy.INNER_FOLDS, seed=1337)
+        assert len(a["folds"]) == policy.INNER_FOLDS
