@@ -140,7 +140,7 @@ TRAIN_JOB_RAW="$(sbatch --parsable --chdir="$PROJECT_ROOT" "${SBATCH_BASE_ARGS[@
 TRAIN_JOB_ID="${TRAIN_JOB_RAW%%;*}"
 echo "Submitted training job: $TRAIN_JOB_ID"
 BEST_OUTPUT_DIR="$BEST_CHECKPOINT_DIR/standalone_eval"
-BEST_JOB_RAW="$(sbatch --parsable --chdir="$PROJECT_ROOT" --dependency=afterok:$TRAIN_JOB_ID --export="$EXPORT_ARGS,CHECKPOINT_DIR=$BEST_CHECKPOINT_DIR,OUTPUT_DIR=$BEST_OUTPUT_DIR" "$EVAL_SCRIPT")"
+BEST_JOB_RAW="$(sbatch --parsable --chdir="$PROJECT_ROOT" "${SBATCH_BASE_ARGS[@]}" --dependency=afterok:$TRAIN_JOB_ID --export="$EXPORT_ARGS,CHECKPOINT_DIR=$BEST_CHECKPOINT_DIR,OUTPUT_DIR=$BEST_OUTPUT_DIR" "$EVAL_SCRIPT")"
 BEST_JOB_ID="${BEST_JOB_RAW%%;*}"
 echo "Submitted best-checkpoint eval job: $BEST_JOB_ID"
 if [ -n "${EXPERIMENT_CONTEXT:-}" ] && [ -f "$EXPERIMENT_CONTEXT" ]; then
