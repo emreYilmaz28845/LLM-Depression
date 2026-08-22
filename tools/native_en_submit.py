@@ -517,6 +517,7 @@ export SOURCE_COMMIT={_q(source_commit)}
 
 # --- train (1 node x 4 tasks x 4 H100, NPROC_PER_NODE=4 DDP) ---
 export NPROC_PER_NODE=4{epoch_export}{smoke_export}
+export LOG_ROOT={_q(log_root_train)}
 TRAIN_ID=$(sbatch --parsable --chdir="$CODE" scripts/run_symmetric_merged_train_slurm.sh)
 echo "Submitted training job: $TRAIN_ID"
 unset EPOCHS SUBJECTS_PER_CLASS || true
