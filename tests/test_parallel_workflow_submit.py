@@ -244,3 +244,7 @@ def test_worker_scripts_decode_overrides_json_b64():
         assert 'OVERRIDE_ARGS' in text
     wrapper = (PROJECT_ROOT / "scripts" / "submit_train_and_eval.sh").read_text()
     assert "OVERRIDES_JSON_B64" in wrapper
+    assert (
+        'sbatch --parsable --chdir="$PROJECT_ROOT" "${SBATCH_BASE_ARGS[@]}" '
+        '--dependency=afterok:$TRAIN_JOB_ID'
+    ) in wrapper
