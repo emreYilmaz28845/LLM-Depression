@@ -14,6 +14,7 @@ import importlib
 import json
 import os
 import platform
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -208,13 +209,50 @@ def _translation_audits() -> list[dict[str, Any]]:
     return audits
 
 
-def _context_audit(config_paths: list[Path], manifest_rows: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+def _context_worker(payload: dict[str, Any]) -> dict[str, Any]:
+    """Run tokenizer checks inside the interpreter matching one model backend."""
     failures: list[str] = []
     models: dict[str, dict[str, Any]] = {}
     try:
         from transformers import AutoConfig, AutoTokenizer
     except Exception as exc:  # pragma: no cover - environment-specific
         return {"failures": [f"transformers import failed: {exc}"], "models": {}}
+    for item in payload.get("items", []):
+        config_path = str(item["config"])
+        model_path = Path(str(item["model_path"]))
+        backend = str(item["backend"])
+        entry: dict[str, Any] = {"backend": backend, "path": str(model_path), "config": config_path}
+        if not model_path.is_dir():
+            failures.append(f"missing {backend} text model snapshot: {model_path}")
+            models[config_path] = entry
+            continue
+        try:
+            model_config = AutoConfig.from_pretrained(str(model_path), local_files_only=True)
+            tokenizer = AutoTokenizer.from_pretrained(str(model_path), local_files_only=True, use_fast=True)
+            text_config = getattr(model_config, "text_config", model_config)
+            limit = int(getattr(text_config, "max_position_embeddings"))
+            texts = [str(text) for text in item.get("subject_texts", [])]
+            counts = [len(tokenizer(text, add_special_tokens=False)["input_ids"]) for text in texts]
+            maximum = max(counts, default=0)
+            entry.update({
+                "config_sha256": sha256_file(model_path / "config.json"),
+                "context_limit": limit,
+                "max_subject_transcript_tokens": maximum,
+                "subjects": len(counts),
+                "interpreter": sys.executable,
+            })
+            if maximum + 128 > limit:
+                failures.append(f"{config_path}: transcript context {maximum}+128 exceeds {limit}")
+        except Exception as exc:  # pragma: no cover - environment-specific
+            failures.append(f"{config_path}: tokenizer/config context audit failed: {exc}")
+        models[config_path] = entry
+    return {"failures": failures, "models": models}
+
+
+def _context_audit(config_paths: list[Path], manifest_rows: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    failures: list[str] = []
+    models: dict[str, dict[str, Any]] = {}
+    grouped: dict[str, list[dict[str, Any]]] = {"qwen": [], "gemma4": []}
     for config_path in sorted(set(config_paths)):
         config = load_yaml_with_overrides(config_path, [])
         backend = "gemma4" if str(config.get("model_backend", "")).lower() == "gemma4" else "qwen"
@@ -227,28 +265,51 @@ def _context_audit(config_paths: list[Path], manifest_rows: dict[str, list[dict[
             entry["skipped"] = "merged config; component context audit"
             models[str(config_path)] = entry
             continue
-        if not model_path.is_dir():
-            failures.append(f"missing {backend} text model snapshot: {model_path}")
-            models[str(config_path)] = entry
+        dataset = str(config["dataset"]).lower()
+        subjects: dict[str, list[str]] = {}
+        for row in manifest_rows.get(dataset, []):
+            subjects.setdefault(str(row["subject_id"]), []).append(str(row.get("transcript", "")))
+        grouped[backend].append({
+            "backend": backend,
+            "config": str(config_path),
+            "model_path": str(model_path),
+            "subject_texts": ["\n".join(values) for values in subjects.values()],
+        })
+
+    interpreters = {
+        "qwen": os.environ.get("QWEN_PYTHON") or sys.executable,
+        "gemma4": os.environ.get("GEMMA_PYTHON") or str(Path(os.environ.get("GEMMA_ENV", "")) / "bin" / "python"),
+    }
+    for backend, items in grouped.items():
+        if not items:
+            continue
+        interpreter = Path(interpreters[backend])
+        if not interpreter.is_file():
+            failures.append(f"{backend} context interpreter missing: {interpreter}")
             continue
         try:
-            model_config = AutoConfig.from_pretrained(str(model_path), local_files_only=True)
-            tokenizer = AutoTokenizer.from_pretrained(str(model_path), local_files_only=True, use_fast=True)
-            text_config = getattr(model_config, "text_config", model_config)
-            limit = int(getattr(text_config, "max_position_embeddings"))
-            dataset = str(config["dataset"]).lower()
-            rows = manifest_rows.get(dataset, [])
-            subjects: dict[str, list[str]] = {}
-            for row in rows:
-                subjects.setdefault(str(row["subject_id"]), []).append(str(row.get("transcript", "")))
-            counts = [len(tokenizer(text, add_special_tokens=False)["input_ids"]) for values in subjects.values() for text in ["\n".join(values)]]
-            maximum = max(counts, default=0)
-            entry.update({"config_sha256": sha256_file(model_path / "config.json"), "context_limit": limit, "max_subject_transcript_tokens": maximum, "subjects": len(counts)})
-            if maximum + 128 > limit:
-                failures.append(f"{config_path}: transcript context {maximum}+128 exceeds {limit}")
+            result = subprocess.run(
+                [str(interpreter), str(Path(__file__).resolve()), "--context-worker"],
+                input=json.dumps({"items": items}),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=6 * 60 * 60,
+                env=dict(os.environ),
+            )
         except Exception as exc:  # pragma: no cover - environment-specific
-            failures.append(f"{config_path}: tokenizer/config context audit failed: {exc}")
-        models[str(config_path)] = entry
+            failures.append(f"{backend} context worker failed to start: {exc}")
+            continue
+        if result.returncode != 0:
+            failures.append(f"{backend} context worker exited {result.returncode}: {result.stderr.strip()}")
+            continue
+        try:
+            worker = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            failures.append(f"{backend} context worker returned invalid JSON: {exc}")
+            continue
+        failures.extend(str(value) for value in worker.get("failures", []))
+        models.update({str(key): dict(value) for key, value in worker.get("models", {}).items()})
     return {"failures": failures, "models": models}
 
 
@@ -366,18 +427,24 @@ def run_preflight(args: argparse.Namespace) -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--run-id")
     parser.add_argument("--stage", choices=("smoke", "production"), default="production")
-    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--deployment-id")
     parser.add_argument("--source-manifest-sha256")
     parser.add_argument("--manifest-map", type=Path)
     parser.add_argument("--skip-context-fit", action="store_true")
+    parser.add_argument("--context-worker", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.context_worker:
+        print(json.dumps(_context_worker(json.load(sys.stdin)), sort_keys=True))
+        return
+    if not args.run_id or args.output is None:
+        raise SystemExit("--run-id and --output are required unless --context-worker is used")
     output = args.output.resolve()
     if output.exists():
         raise SystemExit(f"refusing to overwrite existing preflight audit: {output}")
