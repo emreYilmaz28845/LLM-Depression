@@ -176,6 +176,9 @@ if [ "${#OVERRIDE_ARGS[@]}" -gt 0 ]; then
         if [ "${OVERRIDE_ARGS[$i]}" = "--set" ] && [ $((i + 1)) -lt ${#OVERRIDE_ARGS[@]} ]; then
             MANIFEST_CMD+=("${OVERRIDE_ARGS[$i]}" "${OVERRIDE_ARGS[$((i + 1))]}")
             i=$((i + 2))
+        elif [[ "${OVERRIDE_ARGS[$i]}" == --set=* ]]; then
+            MANIFEST_CMD+=("${OVERRIDE_ARGS[$i]}")
+            i=$((i + 1))
         else
             i=$((i + 1))
         fi
