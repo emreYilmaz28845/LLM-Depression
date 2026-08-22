@@ -1,0 +1,41 @@
+schema_version: audiollm.experiment_group.v1
+group_id: turkish-negative-only-t17-20260823
+title: Turkish negative-question-only secondary comparison
+research_question: >-
+  How does depression classification change when the Turkish interviews retain
+  only negative-question responses while preserving the same subjects, labels,
+  folds, harmonized recipe, and native-versus-English transcript conditions?
+dataset: turkish_negative_only_t17
+baseline: canonical Turkish threshold-17 dataset with all selected interview responses
+treatment: Turkish threshold-17 dataset restricted to negative-question responses
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: original_teacher_forced
+  aggregation: fold_mean_subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+github_issue: null
+github_pr: 194
+scope:
+  preprocessing_only_in_this_change: true
+  transcript_conditions:
+    - native
+    - english
+  modalities:
+    - audio_only
+    - audio_text
+    - text_only
+  translation_model: Qwen/Qwen3.6-27B
+  translation_revision: 6a9e13bd6fc8f0983b9b99948120bc37f49c13e9
+exclusions:
+  - depression_model_training
+  - depression_model_evaluation
+  - pooled_original_and_negative_only_training
