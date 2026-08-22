@@ -1111,6 +1111,8 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Fixed 100-trial harmonized Optuna-100 protocol (production only).",
     )
+    parser.add_argument("--allow-smoke-trials", action="store_true",
+                        help="permit exactly two trials for the locked resumability smoke")
     return parser.parse_args()
 
 
