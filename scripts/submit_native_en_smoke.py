@@ -116,7 +116,7 @@ def main() -> int:
 
     # --- standalone panels -------------------------------------------------
     selected_panels = (
-        [k for k in PANEL_DATASET if k in set((args.panels or "").split(","))]
+        [(k, PANEL_DATASET[k]) for k in PANEL_DATASET if k in set((args.panels or "").split(","))]
         if args.panels else list(PANEL_DATASET.items())
     )
     if args.skip_standalone:
