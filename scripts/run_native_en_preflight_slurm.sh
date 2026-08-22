@@ -46,6 +46,7 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export TOKENIZERS_PARALLELISM=false
+export PYTHONDONTWRITEBYTECODE=1
 
 mkdir -p "$(dirname "$OUTPUT")"
 LOG_PREFIX="${PREFLIGHT_LOG_PREFIX:-$(dirname "$OUTPUT")/preflight-${SLURM_JOB_ID:-local}}"

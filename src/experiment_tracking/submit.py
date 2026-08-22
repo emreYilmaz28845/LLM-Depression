@@ -250,6 +250,7 @@ def build_remote_submit_script(contract: dict[str, Any]) -> str:
     eval_args = " ".join(contract["overrides"])
     lines = [
         "set -euo pipefail",
+        "export PYTHONDONTWRITEBYTECODE=1",
         f"cd {q(contract['deployed_code_path'])}",
         f"export PROJECT_ROOT={q(contract['deployed_code_path'])}",
         f"export CONFIG={q(contract['config_path_remote'])}",
