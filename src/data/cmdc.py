@@ -102,7 +102,10 @@ def build_cmdc_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> d
             "subject-level 5-fold stratified split."
         )
         LOGGER.warning("CMDC workbook folds failed validation: %s", exc)
-        folds = assign_stratified_group_folds(subject_labels, n_splits=5, seed=int(config["seed"]))
+        # Fold assignment is a dataset/split contract, not a model-seed
+        # choice.  Production runs share this metadata across seeds.
+        split_seed = int(config.get("split", {}).get("seed", config["seed"]))
+        folds = assign_stratified_group_folds(subject_labels, n_splits=5, seed=split_seed)
         validate_non_overlapping_folds(folds, subject_ids)
         fold_report = cmdc_fold_report(folds, subject_labels)
     for item in fold_report:

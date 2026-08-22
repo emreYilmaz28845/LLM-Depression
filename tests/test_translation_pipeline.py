@@ -380,6 +380,7 @@ def test_manifest_signature_ignores_original_variant_and_includes_english() -> N
         "split": {"seed": 1337, "cv_protocol": "train_val"},
     }
     without_block = manifest_build_signature(base)
+    assert manifest_build_signature({**base, "seed": 7}) == without_block
     with_original = manifest_build_signature({**base, "transcripts": {"variant": "original"}})
     assert without_block == with_original
     with_english = manifest_build_signature(

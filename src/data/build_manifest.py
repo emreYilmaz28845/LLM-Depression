@@ -57,6 +57,11 @@ def manifest_build_signature(config: dict[str, Any]) -> dict[str, Any]:
         "output_dirs",
         "prompt",
         "quarantine_path",
+        # The top-level seed controls model/training randomness and manifest
+        # preview order.  It is not part of the manifest or split contract;
+        # keeping it here would make the shared metadata look stale for every
+        # production seed and invite concurrent rebuilds.
+        "seed",
         "training",
     }
     if str((config.get("transcripts") or {}).get("variant", "original")).strip().lower() == "original":
