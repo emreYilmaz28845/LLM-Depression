@@ -174,6 +174,7 @@ def test_remote_workers_source_mn5_dataset_environment() -> None:
     assert expected in submission
     assert "--skip-existing-components" in prepare
     assert "reusing complete existing merged preparation artifacts" in prepare
+    assert "manifest_map_native-en-text-heads-v2-test-deployment.json" in prepare
 
 
 def test_remote_prepare_attaches_set_tokens_to_override_options() -> None:
