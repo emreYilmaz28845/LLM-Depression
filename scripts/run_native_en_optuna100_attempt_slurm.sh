@@ -26,7 +26,7 @@ export PROJECT_ROOT
 cd "$PROJECT_ROOT"
 
 ENV_ACTIVATE="${ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate}"
-QWEN_HIDDEN_DEPS="${QWEN_HIDDEN_DEPS:-$PROJECT_ROOT/.deps/qwen_hidden}"
+QWEN_HIDDEN_DEPS="${QWEN_HIDDEN_DEPS:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/.deps/qwen_hidden}"
 ATTEMPT_DIR="${ATTEMPT_DIR:?Set ATTEMPT_DIR}"
 CACHE_DIR="${CACHE_DIR:?Set CACHE_DIR}"
 TASK_SPEC_PATH="${TASK_SPEC_PATH:?Set TASK_SPEC_PATH}"

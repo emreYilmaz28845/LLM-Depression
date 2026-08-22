@@ -13,6 +13,16 @@
 # CPU-only preflight for the native-versus-English text-only head study.
 # Optionally builds the four merged protocol artifacts first, then writes the
 # hashed audit JSON. No training happens here.
+#
+# Path contract learned on MN5 (see agent journal 2026-08-22):
+# - CODE is the deployed code snapshot; it carries configs and src but NOT
+#   .deps (gitignored) nor manifests.
+# - Vendored pinned deps live under the PERMANENT tree: optuna/xgboost/sklearn
+#   resolve via QWEN_HIDDEN_DEPS -> PERMANENT/.deps/qwen_hidden.
+# - Protocol builds must run with PROJECT_ROOT=$PERMANENT so the component
+#   manifest paths (${PROJECT_ROOT}/outputs/manifests_harmonized…) resolve in
+#   the permanent tree, while --config uses absolute $CODE paths so the exact
+#   deployed config bytes are what gets built.
 set -euo pipefail
 module purge
 module load bsc/1.0
@@ -29,24 +39,30 @@ RUN_NAMES_FILE="${RUN_NAMES_FILE:-}"
 MERGED_RUN_IDS_FILE="${MERGED_RUN_IDS_FILE:-}"
 
 ENV_ACTIVATE="${ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate}"
+QWEN_HIDDEN_DEPS="${QWEN_HIDDEN_DEPS:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/.deps/qwen_hidden}"
 source "$ENV_ACTIVATE"
-export PYTHONPATH="$CODE/.deps/qwen_hidden:$CODE${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$QWEN_HIDDEN_DEPS:$CODE${PYTHONPATH:+:$PYTHONPATH}"
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export TOKENIZERS_PARALLELISM=false
 
 mkdir -p "$(dirname "$OUTPUT")"
+LOG_PREFIX="${PREFLIGHT_LOG_PREFIX:-$(dirname "$OUTPUT")/preflight-${SLURM_JOB_ID:-local}}"
+exec > >(tee -a "$LOG_PREFIX.out")
+exec 2> >(tee -a "$LOG_PREFIX.err" >&2)
 
 cd "$CODE"
 if [ "$BUILD_MERGED_PROTOCOLS" = "1" ]; then
+    export PROJECT_ROOT="$PERMANENT"
     for variant in native_qwen english_qwen native_gemma4 english_gemma4; do
-        cfg="configs/experiments/merged/symmetric_merged_text_heads_${variant}.yaml"
+        cfg="$CODE/configs/experiments/merged/symmetric_merged_text_heads_${variant}.yaml"
         out_dir="$PERMANENT/outputs/symmetric_merged/native_en_text_heads_v1/${variant}_text_only"
         echo "building merged protocol: $cfg -> $out_dir"
         python scripts/build_symmetric_merged_manifest.py \
             --config "$cfg" --output-dir "$out_dir"
     done
+    unset PROJECT_ROOT
 fi
 
 ARGS=(
@@ -60,34 +76,42 @@ python - "$PERMANENT" > "$OUTPUT.manifest_pairs.json" <<'PY'
 import json, sys
 from pathlib import Path
 root = Path(sys.argv[1])
+name_by_dataset = {
+    "d3tec": "d3tec_manifest.jsonl",
+    "androids_interview": "androids_interview_manifest.jsonl",
+    "cmdc": "cmdc_manifest.jsonl",
+    "turkish": "turkish_manifest.jsonl",
+}
+subdir_by_dataset = {
+    "d3tec": "d3tec",
+    "androids_interview": "androids",
+    "cmdc": "cmdc",
+    "turkish": "turkish_t17_qwen3asr",
+}
 pairs = {
-    "d3tec": [
-        str(root / "outputs/manifests_harmonized/d3tec/d3tec_manifest.jsonl"),
-        str(root / "outputs/manifests_harmonized_en/d3tec/d3tec_manifest.jsonl"),
-    ],
-    "androids_interview": [
-        str(root / "outputs/manifests_harmonized/androids/androids_interview_manifest.jsonl"),
-        str(root / "outputs/manifests_harmonized_en/androids/androids_interview_manifest.jsonl"),
-    ],
-    "cmdc": [
-        str(root / "outputs/manifests_harmonized/cmdc/cmdc_manifest.jsonl"),
-        str(root / "outputs/manifests_harmonized_en/cmdc/cmdc_manifest.jsonl"),
-    ],
-    "turkish": [
-        str(root / "outputs/manifests_harmonized/turkish_t17_qwen3asr/turkish_manifest.jsonl"),
-        str(root / "outputs/manifests_harmonized_en/turkish_t17_qwen3asr/turkish_manifest.jsonl"),
-    ],
+    ds: [
+        str(root / f"outputs/manifests_harmonized/{subdir}/{name}"),
+        str(root / f"outputs/manifests_harmonized_en/{subdir}/{name}"),
+    ]
+    for ds, name in name_by_dataset.items()
+    for subdir in [subdir_by_dataset[ds]]
 }
 print(json.dumps(pairs))
 PY
 ARGS+=(--manifest-pairs "$OUTPUT.manifest_pairs.json")
 
-mapfile -t DATASET_ROOT_ARGS < <(python - <<'PY'
-import os
-for key in ("DAIC_DATASET_ROOT", "D3TEC_DATASET_ROOT", "CMDC_DATASET_ROOT", "TURKISH_DATASET_ROOT"):
-    value = os.environ.get(key)
-    if value:
-        print(f"{key}={value}")
+DATASET_BASE_ROOT="${DATASET_BASE_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets}"
+mapfile -t DATASET_ROOT_ARGS < <(python - "$DATASET_BASE_ROOT" <<'PY'
+import os, sys
+base = sys.argv[1]
+defaults = {
+    "DAIC_DATASET_ROOT": f"{base}/DAIC-WOZ/preprocessed",
+    "D3TEC_DATASET_ROOT": f"{base}/D3TEC DATASET/D3TEC DATASET",
+    "CMDC_DATASET_ROOT": f"{base}/CMDC",
+    "TURKISH_DATASET_ROOT": f"{base}/Turkish",
+}
+for key, default in defaults.items():
+    print(f"{key}={os.environ.get(key, default)}")
 PY
 )
 if [ "${#DATASET_ROOT_ARGS[@]}" -gt 0 ]; then

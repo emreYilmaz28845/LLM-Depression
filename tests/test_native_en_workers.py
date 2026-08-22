@@ -95,3 +95,28 @@ class TestOptunaAttemptWorker:
     def test_uses_posthoc_campaign_for_optuna_attempts(self) -> None:
         text = OPTUNA_SCRIPT.read_text()
         assert "tools/posthoc_head_campaign.py" in text
+
+
+class TestVendoredDepsResolution:
+    """The deployed code tree has no .deps (gitignored); pinned optuna/
+    xgboost/sklearn must resolve from the PERMANENT tree's vendored deps."""
+
+    PERMANENT_DEPS = (
+        "QWEN_HIDDEN_DEPS=\"${QWEN_HIDDEN_DEPS:-"
+        "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/.deps/qwen_hidden}\""
+    )
+
+    def test_optuna_worker_defaults_to_permanent_deps(self) -> None:
+        text = OPTUNA_SCRIPT.read_text()
+        assert self.PERMANENT_DEPS in text
+        assert "$PROJECT_ROOT/.deps/qwen_hidden" not in text
+
+    def test_preflight_worker_defaults_to_permanent_deps(self) -> None:
+        text = (PROJECT_ROOT / "scripts/run_native_en_preflight_slurm.sh").read_text()
+        assert "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/.deps/qwen_hidden" in text
+        assert "$CODE/.deps/" not in text
+
+    def test_logreg_worker_defaults_to_permanent_deps(self) -> None:
+        text = LOGREG_SCRIPT.read_text()
+        assert "$PROJECT_ROOT/.deps/qwen_hidden" not in text
+        assert "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/.deps/qwen_hidden" in text

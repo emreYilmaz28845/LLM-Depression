@@ -493,9 +493,26 @@ _STANDALONE_MANIFEST_DIRS = {
 }
 
 
+def _standalone_split_seed(rel_config: str) -> int:
+    """The locked standalone split seed comes from the canonical config."""
+
+    doc = yaml.safe_load((PROJECT_ROOT / rel_config).read_text(encoding="utf-8"))
+    split_cfg = doc.get("split") or {}
+    return int(split_cfg.get("seed", doc.get("seed", 1337)))
+
+
 def check_manifests_and_splits(project_root: Path) -> tuple[list[str], dict[str, Any]]:
     failures: list[str] = []
     details: dict[str, Any] = {}
+    # The manifest metadata files do not carry a split_seed key; the locked
+    # standalone split seed lives in each canonical config's split.seed.
+    # Both backbone variants of a dataset/condition share one manifest, so
+    # every mapped config must resolve to seed 1337.
+    configs_by_manifest: dict[str, list[str]] = {}
+    for (condition, backbone), dataset_map in STANDALONE_CONFIGS.items():
+        for dataset, config_rel in dataset_map.items():
+            manifest_rel = _STANDALONE_MANIFEST_DIRS[(dataset, condition == "english")]
+            configs_by_manifest.setdefault(manifest_rel, []).append(config_rel)
     for (dataset, english), rel in sorted(_STANDALONE_MANIFEST_DIRS.items()):
         manifest = project_root / rel
         if not manifest.is_file():
@@ -508,20 +525,35 @@ def check_manifests_and_splits(project_root: Path) -> tuple[list[str], dict[str,
             failures.append(f"missing split metadata {metadata.name} for {dataset}{' EN' if english else ''}")
             continue
         payload = _read_json(metadata)
-        split_seed = payload.get("split_seed")
         row_count = int(payload.get("manifest_row_count", -1))
         rows = sum(1 for line in manifest.open(encoding="utf-8") if line.strip())
         entry = {
             "rows": rows,
             "metadata_row_count": row_count,
-            "split_seed": split_seed,
+            "split_source": payload.get("split_source"),
             "build_signature_present": bool(payload.get("build_signature")),
         }
         details[f"{dataset}{'_en' if english else ''}"] = entry
         if row_count != rows:
             failures.append(f"{rel}: row count {rows} != metadata {row_count}")
-        if split_seed is None or int(split_seed) != 1337:
-            failures.append(f"{dataset}{' EN' if english else ''}: split_seed must be 1337")
+        if not entry["build_signature_present"]:
+            failures.append(
+                f"{dataset}{' EN' if english else ''}: split metadata lacks build_signature"
+            )
+        config_rels = configs_by_manifest.get(rel) or []
+        if not config_rels:
+            failures.append(f"{rel}: no study standalone config maps to this manifest")
+        for config_rel in config_rels:
+            try:
+                split_seed = _standalone_split_seed(config_rel)
+            except Exception as exc:
+                failures.append(f"{config_rel}: cannot resolve split.seed ({exc})")
+                continue
+            entry.setdefault("split_seeds", {})[config_rel] = split_seed
+            if split_seed != 1337:
+                failures.append(
+                    f"{config_rel}: split seed must be 1337, got {split_seed}"
+                )
         if english:
             sample_rows = [json.loads(line) for _, line in zip(range(5), manifest.open(encoding="utf-8"))]
             bad_variant = [r for r in sample_rows if str(r.get("transcript_variant") or "english") != "english"]
