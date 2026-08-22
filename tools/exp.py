@@ -1747,9 +1747,12 @@ def _cmd_submit_optuna100(args) -> int:
         parent_ckpt = getattr(args, "parent_checkpoint_path", None)
     else:
         dataset = str(args.dataset)
-        features_dir = ns.standalone_cache_paths(
-            dataset=dataset, condition=condition, run_name=run_name, fold=fold
-        )["cache_dir"]
+        if getattr(args, "cache_dir", None):
+            features_dir = str(args.cache_dir).rstrip("/")
+        else:
+            features_dir = ns.standalone_cache_paths(
+                dataset=dataset, condition=condition, run_name=run_name, fold=fold
+            )["cache_dir"]
         merged_config_remote = ""
         attempt_dir = ns.standalone_attempt_path(
             campaign=campaign,
@@ -2368,6 +2371,8 @@ def main() -> int:
     optuna_parser.add_argument("--deployment-id", default=None)
     optuna_parser.add_argument("--group-id", default=None)
     optuna_parser.add_argument("--scheduler-host", default=None)
+    optuna_parser.add_argument("--cache-dir", default=None,
+                               help="standalone family: explicit remote hidden-features dir")
     optuna_parser.add_argument("--spec-tag", default=None, help="disambiguates re-submissions whose prior spec file exists")
     optuna_group = optuna_parser.add_mutually_exclusive_group(required=True)
     optuna_group.add_argument("--dry-run", action="store_true")
