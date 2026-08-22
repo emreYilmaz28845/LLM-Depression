@@ -411,3 +411,29 @@ class TestPreflightMn5Helpers:
         (variant_dir / "merged_protocol.json").write_text(json.dumps(payload))
         failures2, _ = check_merged_protocols(tmp_path)
         assert any("native_qwen: merged protocol split seed must be 1337" in f for f in failures2)
+
+
+class TestPreflightScriptOrdering:
+    def test_all_check_functions_defined_before_main_guard(self) -> None:
+        from pathlib import Path as _P
+
+        src = (_P(__file__).parents[1] / "scripts/preflight_native_en_text_heads.py").read_text()
+        lines = src.splitlines()
+        guard_line = next(i for i, l in enumerate(lines) if l.startswith("if __name__"))
+        for name in (
+            "check_deployment_identity",
+            "check_environment_imports",
+            "check_model_snapshots",
+            "check_dataset_roots",
+            "check_manifests_and_splits",
+            "check_merged_protocols",
+            "check_job_matrix",
+            "check_output_collisions",
+            "check_qualifiers",
+            "check_tokenizer_fit",
+        ):
+            def_line = next(
+                (i for i, l in enumerate(lines) if l.startswith(f"def {name}(")), None
+            )
+            assert def_line is not None, f"{name} missing"
+            assert def_line < guard_line, f"{name} defined after __main__ guard"

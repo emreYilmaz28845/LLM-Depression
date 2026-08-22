@@ -376,7 +376,6 @@ def main() -> int:
     return 0 if audit["status"] == "passed" else 1
 
 
-if __name__ == "__main__":
     raise SystemExit(main())
 
 
@@ -696,3 +695,5 @@ def check_tokenizer_fit(
                 )
         details[dataset] = {"sampled_rows": scanned, **per_backend}
     return failures, details
+
+if __name__ == "__main__":
