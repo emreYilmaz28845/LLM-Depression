@@ -486,7 +486,10 @@ def build_plan(
                         by_key[f"{logical}:standalone:{fold}:train:none"] = contract
                         by_key[f"{logical}:standalone:{fold}:best_eval:none"] = contract
                         collision_paths.update((str(fold_dir), str(context_path)))
-                        cache_dir = root / "hidden_features" / condition / backbone / dataset / logical / f"fold_{fold}"
+                        cache_root = root / "hidden_features"
+                        if output_suffix:
+                            cache_root = cache_root / output_suffix
+                        cache_dir = cache_root / condition / backbone / dataset / logical / f"fold_{fold}"
                         for method, backend, script, deps, trials in (
                             (
                                 "logreg",

@@ -137,10 +137,12 @@ def test_retry_plan_uses_fresh_output_identity_and_links_superseded_attempts() -
         job.get("fold_dir") if job.get("kind") == "standalone_backbone" else job.get("attempt_dir")
         for job in original["jobs"]
     }
+    old_paths.update(job.get("cache_dir") for job in original["jobs"] if job.get("cache_dir"))
     retry_paths = {
         job.get("fold_dir") if job.get("kind") == "standalone_backbone" else job.get("attempt_dir")
         for job in retry["jobs"]
     }
+    retry_paths.update(job.get("cache_dir") for job in retry["jobs"] if job.get("cache_dir"))
     assert old_paths.isdisjoint(retry_paths)
     assert all(job.get("supersedes_attempt_id") for job in retry["jobs"])
     assert all(
@@ -149,6 +151,8 @@ def test_retry_plan_uses_fresh_output_identity_and_links_superseded_attempts() -
     )
     standalone = next(job for job in retry["jobs"] if job.get("kind") == "standalone_backbone")
     assert "native_en_text_heads_v2_smoke_retry1" in standalone["run_root"]
+    head = next(job for job in retry["jobs"] if job.get("method") == "logreg")
+    assert "/hidden_features/retry1/" in head["cache_dir"]
 
 
 def test_remote_workers_source_mn5_dataset_environment() -> None:
