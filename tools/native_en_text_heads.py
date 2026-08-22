@@ -1072,6 +1072,11 @@ def job_export(entry: dict[str, Any], deployment: dict[str, Any]) -> str:
         })
     else:
         values["ENV_ACTIVATE"] = QWEN_ENV_ACTIVATE
+    if (
+        entry.get("method") == "xgb_optuna100"
+        and entry.get("script", "").endswith("run_native_en_merged_head_slurm.sh")
+    ):
+        values["OPTUNA_STAGE"] = "smoke" if int(entry.get("trials") or 0) == 2 else "production"
     return ",".join(f"{key}={str(value)}" for key, value in values.items())
 
 

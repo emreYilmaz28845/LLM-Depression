@@ -423,12 +423,22 @@ def _run_optuna(
 
 
 def resolve_optuna_trials(
-    merged_config: dict[str, Any], stage: str, trials: int | None
+    merged_config: dict[str, Any],
+    stage: str,
+    trials: int | None,
+    *,
+    policy_stage: str | None = None,
 ) -> int:
     """Resolve and enforce the merged Optuna trial count from the config
     identity. New harmonized configs declare the harmonized_optuna100_v1
     profile and require exactly 100 production trials; historical configs
-    keep the fixed 150-trial rule; trials=0 disables Optuna."""
+    keep the fixed 150-trial rule; trials=0 disables Optuna.
+
+    ``stage`` remains the feature/provenance stage.  Smoke merged CV uses
+    ``stage=cv`` for that identity while the policy stage is explicitly
+    ``smoke`` and therefore requires exactly two trials.
+    """
+    effective_policy_stage = str(policy_stage or stage)
     expected_trial_count = int(
         trials
         if trials is not None
@@ -441,7 +451,7 @@ def resolve_optuna_trials(
     if expected_trial_count == 0:
         return 0
     if protocol_profile == policy.PROTOCOL_PROFILE:
-        if stage == "smoke":
+        if effective_policy_stage == "smoke":
             if expected_trial_count != 2:
                 raise ValueError(
                     "Smoke merged Optuna studies using the production profile "
@@ -450,7 +460,7 @@ def resolve_optuna_trials(
             return expected_trial_count
         policy.assert_production_target(expected_trial_count)
         return expected_trial_count
-    if stage != "smoke" and expected_trial_count != 150:
+    if effective_policy_stage != "smoke" and expected_trial_count != 150:
         raise ValueError("Historical production merged Optuna is fixed to 150 trials.")
     return expected_trial_count
 
@@ -466,6 +476,7 @@ def run_merged_heads(
     method: str | None = None,
     overrides: list[str] | None = None,
     output_root_override: str | Path | None = None,
+    optuna_stage: str | None = None,
 ) -> dict[str, Any]:
     if method is not None and method not in {"logreg", FIXED_HEAD, "xgb_optuna"}:
         raise ValueError(f"Unsupported merged head method: {method!r}")
@@ -505,7 +516,9 @@ def run_merged_heads(
     expected_trial_count = (
         0
         if method == "logreg"
-        else resolve_optuna_trials(merged_config, stage, trials)
+        else resolve_optuna_trials(
+            merged_config, stage, trials, policy_stage=optuna_stage
+        )
     )
     from src.features import optuna100_policy as policy
 
@@ -532,6 +545,7 @@ def run_merged_heads(
     identity = {
         "schema_version": "symmetric_merged_heads_identity.v1",
         "stage": stage,
+        "optuna_policy_stage": str(optuna_stage or stage),
         "fold": int(fold),
         "run_id": run_id,
         "feature_metadata": str(feature_dir / "feature_metadata.json"),
@@ -670,6 +684,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--method", choices=("logreg", FIXED_HEAD, "xgb_optuna"))
     parser.add_argument("--override", action="append", default=[])
     parser.add_argument("--output-root", type=Path)
+    parser.add_argument("--optuna-stage", choices=("smoke", "production"))
     return parser.parse_args()
 
 
@@ -686,6 +701,7 @@ def main() -> None:
         method=args.method,
         overrides=args.override,
         output_root_override=args.output_root,
+        optuna_stage=args.optuna_stage,
     )
     print(json.dumps(result, indent=2), flush=True)
 

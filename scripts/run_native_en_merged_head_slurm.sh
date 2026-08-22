@@ -29,6 +29,7 @@ RUN_ID="${RUN_ID:?RUN_ID is required}"
 METHOD="${METHOD:?METHOD is required}"
 TRIALS="${TRIALS:-}"
 OVERRIDES_JSON_B64="${OVERRIDES_JSON_B64:-}"
+OPTUNA_STAGE="${OPTUNA_STAGE:-}"
 LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/native_en_text_heads_v2/merged_head}"
 
 source "$PROJECT_ROOT/scripts/native_en_text_heads_env.sh"
@@ -70,6 +71,7 @@ CMD=(python -m src.merged.heads --config "$CONFIG" --stage "$STAGE" --fold "$FOL
     --run-id "$RUN_ID" --features-dir "$FEATURES_DIR" --method "$METHOD" \
     --output-root "$ATTEMPT_DIR")
 if [ -n "$TRIALS" ]; then CMD+=(--trials "$TRIALS"); fi
+if [ -n "$OPTUNA_STAGE" ]; then CMD+=(--optuna-stage "$OPTUNA_STAGE"); fi
 for token in "${OVERRIDE_ARGS[@]}"; do CMD+=(--override="$token"); done
 echo "Merged head command: ${CMD[*]}"
 "${CMD[@]}"
