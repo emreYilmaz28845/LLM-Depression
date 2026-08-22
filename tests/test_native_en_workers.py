@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LOGREG_SCRIPT = PROJECT_ROOT / "scripts/run_native_en_logreg_attempt_slurm.sh"
 OPTUNA_SCRIPT = PROJECT_ROOT / "scripts/run_native_en_optuna100_attempt_slurm.sh"
@@ -184,3 +186,37 @@ class TestGemmaEnvForwarding:
             extra_env={"MODEL_PATH": "/m"},
         )
         assert contract["env_exports"] == {"MODEL_PATH": "/m"}
+
+
+class TestWorkerManifestOverrideForms:
+    """b64 token arrays carry single-token --set=k=v; the whitespace fallback
+    carries two tokens. Both must reach build_manifest."""
+
+    @pytest.mark.parametrize("script", ["scripts/run_train_slurm.sh", "scripts/run_eval_slurm.sh"])
+    def test_loop_handles_both_override_forms(self, script: str) -> None:
+        text = (PROJECT_ROOT / script).read_text()
+        assert '= "--set" ]' in text
+        assert "elif [[ \"${OVERRIDE_ARGS[$i]}\" == --set=* ]]; then" in text
+
+    def test_behavioral_pairing(self) -> None:
+        import subprocess
+
+        snippet = r'''
+OVERRIDE_ARGS=("--set=a.b=1" "--set" "c.d=2" "ignored")
+MANIFEST_CMD=("python" "build.py")
+i=0
+while [ $i -lt ${#OVERRIDE_ARGS[@]} ]; do
+    if [ "${OVERRIDE_ARGS[$i]}" = "--set" ] && [ $((i + 1)) -lt ${#OVERRIDE_ARGS[@]} ]; then
+        MANIFEST_CMD+=("${OVERRIDE_ARGS[$i]}" "${OVERRIDE_ARGS[$((i + 1))]}")
+        i=$((i + 2))
+    elif [[ "${OVERRIDE_ARGS[$i]}" == --set=* ]]; then
+        MANIFEST_CMD+=("${OVERRIDE_ARGS[$i]}")
+        i=$((i + 1))
+    else
+        i=$((i + 1))
+    fi
+done
+printf '%s\n' "${MANIFEST_CMD[@]}"
+'''
+        out = subprocess.run(["bash", "-c", snippet], capture_output=True, text=True).stdout.split()
+        assert out == ["python", "build.py", "--set=a.b=1", "--set", "c.d=2"]
