@@ -816,6 +816,7 @@ def run_optuna_raw_xgb(
         oversampling_seed=oversampling_seed,
         protocol_profile=protocol_profile_value,
         prediction_backend=prediction_backend,
+        allow_smoke_trials=allow_smoke_trials,
     )
     _write_or_validate_study_config(output_dir, config, config_hash)
     _write_or_validate_json(
