@@ -99,6 +99,9 @@ def test_managed_smoke_plan_has_four_job_chains_and_parseable_markers() -> None:
     assert "--exclude=as01r2b12" in script
     standalone = next(job for job in plan["jobs"] if job.get("kind") == "standalone_backbone")
     assert "--set=evaluation.evaluation_view=harmonized_all_windows_full_coverage" in standalone["overrides"]
+    head_jobs = [job for job in plan["jobs"] if job.get("method")]
+    assert all(job.get("backend") for job in head_jobs)
+    assert {job["trials"] for job in head_jobs if job["method"] == "xgb_optuna100"} == {2}
 
     marker_lines = []
     for job in plan["jobs"]:

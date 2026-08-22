@@ -216,14 +216,22 @@ def _qualify_attempt(
         raise ReportError(f"method mismatch for {job['attempt_id']}: {classifier.get('method')} != {expected_method}")
     if classifier.get("head_seed") != HEAD_SEED or classifier.get("protocol") != "native_en_text_heads_v2":
         raise ReportError(f"head seed/protocol mismatch for {job['attempt_id']}")
-    expected_trials = int(job.get("trials") or 0)
+    expected_trials = int(
+        job["trials"]
+        if job.get("trials") is not None
+        else classifier.get("optuna_trials", -1)
+    )
     if int(classifier.get("optuna_trials", -1)) != expected_trials:
         raise ReportError(f"Optuna target mismatch for {job['attempt_id']}")
     eval_doc = _read_json(root / "evaluations.json")
     evaluations = eval_doc.get("evaluations")
     if not isinstance(evaluations, list) or not evaluations:
         raise ReportError(f"no evaluations recorded for {job['attempt_id']}")
-    expected_backend = str(job.get("backend") or "")
+    # Older v2 submission plans omitted the backend/trials convenience fields
+    # from their serialized job entries even though the immutable attempt
+    # config records them.  Prefer explicit plan fields, then fall back to the
+    # attempt config so preserved reportable smoke evidence remains usable.
+    expected_backend = str(job.get("backend") or classifier.get("prediction_backend") or "")
     expected_view = EVALUATION_VIEW
     selected: list[dict[str, Any]] = []
     for evaluation in evaluations:
