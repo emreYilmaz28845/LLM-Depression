@@ -130,6 +130,8 @@ def test_remote_workers_source_mn5_dataset_environment() -> None:
     )
     assert expected in prepare
     assert expected in submission
+    assert "--skip-existing-components" in prepare
+    assert "reusing complete existing merged preparation artifacts" in prepare
 
 
 def test_remote_prepare_attaches_set_tokens_to_override_options() -> None:

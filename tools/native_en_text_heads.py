@@ -709,7 +709,7 @@ def payload_b64(value: Any) -> str:
 
 
 def save_plan(plan: dict[str, Any], stage: str) -> Path:
-    path = PROJECT_ROOT / "outputs" / "native_en_text_heads_v2" / stage / "submission_plan.json"
+    path = plan_path(stage, str(plan.get("deployment_id") or ""))
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         old = json.loads(path.read_text(encoding="utf-8"))
@@ -814,6 +814,7 @@ def remote_prepare_script(
                 backbone=backbone,
                 seed=1337,
             )
+            component_targets: list[Path] = []
             for item in config.get("components") or []:
                 dataset = str(item["name"]).lower()
                 key = (condition, backbone, dataset)
@@ -821,17 +822,35 @@ def remote_prepare_script(
                     continue
                 seen.add(key)
                 manifest, metadata = manifest_paths(root, condition, backbone, dataset)
-                lines.append(f"test ! -e {q(manifest)}")
-                lines.append(f"test ! -e {q(metadata)}")
+                component_targets.extend((manifest, metadata))
             config_remote = rel_config(relative, code)
-            command = ["python", "scripts/build_symmetric_merged_manifest.py", "--config", config_remote, "--build-components"]
+            merged_outputs = (
+                merged_root(root, condition, backbone) / "merged_manifest.jsonl",
+                merged_root(root, condition, backbone) / "merged_protocol.json",
+            )
+            lines.append(
+                f"if [ -e {q(merged_outputs[0])} ] || [ -e {q(merged_outputs[1])} ]; then"
+            )
+            for target in (*component_targets, *merged_outputs):
+                lines.append(f"  test -f {q(target)}")
+            lines.append("  echo 'reusing complete existing merged preparation artifacts'")
+            lines.append("else")
+            command = [
+                "python",
+                "scripts/build_symmetric_merged_manifest.py",
+                "--config",
+                config_remote,
+                "--build-components",
+                "--skip-existing-components",
+            ]
             for token in overrides:
                 # Override values are themselves `--set=...` tokens.  Passing
                 # them as the next argv item makes argparse treat the value as
                 # another option; use the equals form so the value remains
                 # attached to `--override` losslessly.
                 command.append(f"--override={token}")
-            lines.append(" ".join(q(token) for token in command))
+            lines.append("  " + " ".join(q(token) for token in command))
+            lines.append("fi")
     lines.extend(
         [
             "python scripts/native_en_text_heads_preflight.py"
@@ -1302,8 +1321,19 @@ def derive_final_epochs(plan: dict[str, Any]) -> Path:
     return audit_path
 
 
-def plan_path(stage: str) -> Path:
-    return PROJECT_ROOT / "outputs" / "native_en_text_heads_v2" / stage / "submission_plan.json"
+def plan_path(stage: str, deployment_id: str | None = None) -> Path:
+    root = PROJECT_ROOT / "outputs" / "native_en_text_heads_v2" / stage
+    if deployment_id:
+        return root / f"submission_plan_{deployment_id}.json"
+    standard = root / "submission_plan.json"
+    if standard.is_file():
+        return standard
+    candidates = sorted(root.glob("submission_plan_*.json"))
+    return candidates[-1] if candidates else standard
+
+
+def preflight_path_for(experiment_id: str, stage: str, deployment_id: str) -> Path:
+    return stage_root(experiment_id, stage) / f"preflight_{deployment_id}.json"
 
 
 def write_local_once(path: Path, text: str) -> None:
@@ -1326,8 +1356,8 @@ def print_plan_summary(plan: dict[str, Any], path: Path) -> None:
     print(f"plan: {path}")
 
 
-def _load_plan_for_status(slug: str | None, stage: str) -> dict[str, Any]:
-    path = plan_path(stage)
+def _load_plan_for_status(slug: str | None, stage: str, deployment_id: str | None = None) -> dict[str, Any]:
+    path = plan_path(stage, deployment_id)
     if not path.is_file():
         raise OrchestrationError(f"no local v2 submission plan exists for stage {stage}: {path}")
     plan = json.loads(path.read_text(encoding="utf-8"))
@@ -1405,7 +1435,7 @@ def command_submit(args: argparse.Namespace) -> int:
             return 0
 
         if args.stage == "production" and phase == "final":
-            plan = _load_plan_for_status(args.slug, args.stage)
+            plan = _load_plan_for_status(args.slug, args.stage, str(deployment.get("deployment_id")))
             if plan.get("deployment_id") != deployment.get("deployment_id"):
                 raise OrchestrationError("existing production plan deployment does not match requested deployment")
             if plan.get("submission_phase") != "cv":
@@ -1413,7 +1443,10 @@ def command_submit(args: argparse.Namespace) -> int:
                     "final production submission requires a completed CV submission phase"
                 )
             derive_final_epochs(plan)
-            preflight_path = Path(plan.get("preflight_path") or stage_root(experiment_id, args.stage) / "preflight.json")
+            preflight_path = Path(
+                plan.get("preflight_path")
+                or preflight_path_for(experiment_id, args.stage, str(deployment["deployment_id"]))
+            )
             preflight = load_remote_preflight(DEFAULT_TRANSFER_HOST, preflight_path)
             if preflight.get("status") != "passed":
                 raise OrchestrationError("final production submission requires a passed remote preflight")
@@ -1426,7 +1459,7 @@ def command_submit(args: argparse.Namespace) -> int:
                 experiment_id=experiment_id,
             )
             add_plan_indexes(plan)
-            preflight_path = stage_root(experiment_id, args.stage) / "preflight.json"
+            preflight_path = preflight_path_for(experiment_id, args.stage, str(deployment["deployment_id"]))
             prepare_script = remote_prepare_script(
                 plan,
                 deployment,
@@ -1534,7 +1567,7 @@ def command_submit(args: argparse.Namespace) -> int:
 
 def command_status(args: argparse.Namespace) -> int:
     try:
-        plan = _load_plan_for_status(args.slug, args.stage)
+        plan = _load_plan_for_status(args.slug, args.stage, getattr(args, "deployment_id", None))
         from src.experiment_tracking.monitor import MonitorError, SchedulerClient, reconcile_job
 
         by_job_id: dict[str, dict[str, Any]] = {}
@@ -1558,7 +1591,7 @@ def command_status(args: argparse.Namespace) -> int:
         if missing:
             raise OrchestrationError(f"jobs missing from both squeue and sacct: {missing}")
         print(f"=== native_en_text_heads_v2 status ({args.stage}) ===")
-        print(f"plan: {plan_path(args.stage)}")
+        print(f"plan: {plan_path(args.stage, plan.get('deployment_id'))}")
         print(f"jobs: {len(ids)}")
         failures = 0
         for job_id in ids:
@@ -1595,7 +1628,7 @@ def command_status(args: argparse.Namespace) -> int:
 
 def command_derive_final_epochs(args: argparse.Namespace) -> int:
     try:
-        plan = _load_plan_for_status(args.slug, "production")
+        plan = _load_plan_for_status(args.slug, "production", getattr(args, "deployment_id", None))
         audit_path = derive_final_epochs(plan)
         add_plan_indexes(plan)
         save_plan(plan, "production")
@@ -1657,6 +1690,7 @@ def parse_args() -> argparse.Namespace:
 
     status_parser = sub.add_parser("status", help="reconcile the plan's recorded jobs with MN5")
     status_parser.add_argument("slug", nargs="?")
+    status_parser.add_argument("--deployment-id", default=None)
     status_parser.add_argument("--stage", choices=("smoke", "production"), default="smoke")
     status_parser.add_argument("--scheduler-host", default=DEFAULT_SCHEDULER_HOST)
     status_parser.set_defaults(function=command_status)
@@ -1666,6 +1700,7 @@ def parse_args() -> argparse.Namespace:
         help="freeze rounded-median CV selected epochs before final production submission",
     )
     epoch_parser.add_argument("slug")
+    epoch_parser.add_argument("--deployment-id", default=None)
     epoch_parser.set_defaults(function=command_derive_final_epochs)
 
     report_parser = sub.add_parser(

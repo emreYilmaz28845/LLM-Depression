@@ -29,6 +29,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run the existing component manifest builders before merging.",
     )
+    parser.add_argument(
+        "--skip-existing-components",
+        action="store_true",
+        help="Reuse complete existing component artifacts and fail closed on partial artifacts.",
+    )
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--inner-val-ratio", type=float)
@@ -54,6 +59,15 @@ def main() -> None:
             print(f"Building component manifest: {component_path}", flush=True)
             manifest_path = resolve_project_path(item["manifest_path"])
             metadata_path = resolve_project_path(item["metadata_path"])
+            manifest_exists = manifest_path.is_file()
+            metadata_exists = metadata_path.is_file()
+            if args.skip_existing_components and (manifest_exists or metadata_exists):
+                if not (manifest_exists and metadata_exists):
+                    raise FileExistsError(
+                        f"partial existing component artifacts: {manifest_path} / {metadata_path}"
+                    )
+                print(f"Reusing existing component artifacts: {manifest_path}", flush=True)
+                continue
             component_overrides = [
                 f"--set=output_dirs.manifest_dir={manifest_path.parent}",
                 f"--set=output_dirs.split_dir={metadata_path.parent}",
