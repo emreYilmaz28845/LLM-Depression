@@ -50,6 +50,10 @@ REMOTE_OUTPUT_ROOT = REMOTE_PROJECT_ROOT / "output_model"
 QWEN_ENV_ACTIVATE = "/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate"
 GEMMA_ENV_ACTIVATE = "/gpfs/projects/etur92/ozu647717/venvs/gemma4_12b_tf5_14_1/bin/activate"
 GEMMA_MODEL_PATH = "/gpfs/projects/etur92/ozu647717/models/gemma-4-12B-it/707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7"
+# Operational safeguard: both first-wave standalone evaluation OOMs occurred
+# on this node, while comparable evaluations succeeded elsewhere.  Keep this
+# in the task-scoped launcher so unrelated campaigns are not changed.
+NATIVE_EN_EXCLUDE_NODES = ("as01r2b12",)
 DATASET_MANIFEST_BASENAMES = {
     "daic": "daic_manifest.jsonl",
     "d3tec": "d3tec_manifest.jsonl",
@@ -65,6 +69,10 @@ class OrchestrationError(RuntimeError):
 
 def q(value: Any) -> str:
     return shlex.quote(str(value))
+
+
+def native_en_exclude_arg() -> str:
+    return "--exclude=" + ",".join(NATIVE_EN_EXCLUDE_NODES)
 
 
 def ssh_script(host: str, script: str, *, timeout: int = 3600) -> subprocess.CompletedProcess[str]:
@@ -1146,7 +1154,8 @@ def remote_submission_script(
             eval_var = f"eval_{index}"
             lines.append(f"write_once {q(job['context_path'])} {q(payload_b64(job['context']))}")
             lines.append(
-                f"{out_var}=$(CONFIG={q(job['config_remote'])}"
+                f"{out_var}=$(SBATCH_EXTRA_ARGS={q(native_en_exclude_arg())}"
+                f" CONFIG={q(job['config_remote'])}"
                 f" FOLD={job['fold']}"
                 f" RUN_NAME={q(job['logical_run_name'])}"
                 f" OVERRIDES_JSON_B64={q(job['overrides_b64'])}"
@@ -1199,6 +1208,7 @@ def remote_submission_script(
                 )
             command = (
                 f"sbatch --parsable --chdir={q(code)}{dependency_arg}"
+                f" {q(native_en_exclude_arg())}"
                 f" --export={q('ALL,' + job_export(job, deployment))} {q(job['script'])}"
             )
             job_var = f"jid_{index}"
