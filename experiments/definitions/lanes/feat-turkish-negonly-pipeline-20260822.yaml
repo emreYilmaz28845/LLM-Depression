@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: feat-turkish-negonly-pipeline-20260822
+slug: turkish-negonly-pipeline
+tier: 2
+branch: agent/feat-turkish-negonly-pipeline
+worktree: /home/emre/worktrees/LLM-Depression-feat-turkish-negonly-pipeline
+parent_branch: origin/main
+parent_sha: 74cf66e79656ab2c6c298743c39bf6c1efb48b2d
+created_at_utc: "2026-08-22T21:40:25Z"
+experiment_group_path: null
+type: complementary

@@ -1,0 +1,24 @@
+dataset: turkish
+dataset_variant: negative_only_t17
+metadata_schema: minimal_t17
+seed: 1337
+recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1
+dataset_root: ${TURKISH_NEGATIVE_ONLY_DATASET_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/Turkish_Negative_Only}
+audio_dir: .
+metadata_csv: metadata_turkish_negative_only_t17.csv
+transcript_file: whisper_transcripts_qwen3_asr.jsonl
+threshold: 17
+model_name_or_path: ${MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instruct}
+quarantine_path: ${PROJECT_ROOT}/configs/quarantines.yaml
+output_dirs:
+  manifest_dir: ${TURKISH_NEGATIVE_ONLY_MANIFEST_DIR:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/outputs/manifests_harmonized/turkish_negative_only_t17_qwen3asr}
+  split_dir: ${TURKISH_NEGATIVE_ONLY_SPLIT_DIR:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/outputs/splits_harmonized/turkish_negative_only_t17_qwen3asr}
+  run_root: ${TURKISH_NEGATIVE_ONLY_RUN_ROOT_AUDIO_ONLY:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/harmonized_v1/audio_only/turkish_negative_only_t17_qwen3asr}
+prompt: {system: "You are a psychologist analyzing speech audio for depression screening.", user_template: "{audio_context_block}\n{transcript_block}Based on the {decision_basis}, determine whether the subject is {label_descriptor}.\n{label_instruction}", prompt_language: english}
+labels: {label_vocab_version: legacy_english_labels}
+data: {use_audio: true, use_text: false, silence_audio: false, sample_mode: harmonized_response_windows, segment_seconds: 30.0, segment_partition: equal_duration, train_chunk_policy: all_windows_hierarchical_weighted, eval_chunk_policy: all_windows, transcript_max_chars: 0, allow_empty_transcript: false}
+split: {mode: cv, cv_protocol: train_val, outer_folds: 5, inner_val_ratio: 0.2, seed: 1337}
+lora: {rank: 16, alpha: 32, dropout: 0.05, bias: none, target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]}
+audio_adapter: {enabled: false, adapter_dim: 512, dropout: 0.1, train_projector: false}
+training: {dist_timeout_minutes: 120, num_train_epochs: 20, learning_rate: 2.0e-4, weight_decay: 0.0, warmup_ratio: 0.03, per_device_train_batch_size: 1, per_device_eval_batch_size: 1, gradient_accumulation_steps: 32, logging_steps: 25, bf16: true, gradient_checkpointing: true, run_final_eval_in_train: true, dataloader_num_workers: 0, audio_budget_audit: true, max_grad_norm: 1.0, class_balance: none, selection_metric: inner_val_macro_f1, selection_metric_mode: max, early_stopping: {enabled: true, metric: inner_val_macro_f1, mode: max, patience: 3, min_delta: 0.0}}
+evaluation: {sample_prediction_mode: original_teacher_forced, headline_mode: original_teacher_forced, aggregation_level: response_subject, hierarchical_score_aggregation: mean, evaluation_view: harmonized_all_windows_full_coverage, generation_max_new_tokens: 8, num_beams: 1, do_sample: false, evaluate_last_checkpoint: false}

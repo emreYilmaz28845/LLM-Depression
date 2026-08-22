@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import re
+import unicodedata
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
@@ -21,11 +22,81 @@ LOGGER = get_logger(__name__)
 DEFAULT_METADATA_CSV = "metadata_turkish_t25_binary_merged.csv"
 DEFAULT_TRANSCRIPT_FILE = "whisper_transcripts_repaired.jsonl"
 SOURCE_THRESHOLD = 25.0
+METADATA_SCHEMA_LEGACY_T25 = "legacy_t25"
+METADATA_SCHEMA_MINIMAL_T17 = "minimal_t17"
+SUPPORTED_METADATA_SCHEMAS = (METADATA_SCHEMA_LEGACY_T25, METADATA_SCHEMA_MINIMAL_T17)
 
 
 def _optional_float(value: Any) -> float | None:
     text = str(value or "").strip()
     return float(text) if text else None
+
+
+def _optional_int(value: Any) -> int | None:
+    parsed = _optional_float(value)
+    return int(parsed) if parsed is not None else None
+
+
+def _required_metadata_fields(schema: str) -> set[str]:
+    if schema == METADATA_SCHEMA_LEGACY_T25:
+        return {
+            "file_name",
+            "label",
+            "depresyon_skoru",
+            "anksiyete_skoru",
+            "patient_id",
+            "w2v2_predicted_score",
+            "label_t25",
+            "target_t25",
+        }
+    if schema == METADATA_SCHEMA_MINIMAL_T17:
+        return {
+            "file_name",
+            "patient_id",
+            "depresyon_skoru",
+            "label_t17",
+            "target_t17",
+        }
+    raise ValueError(
+        f"Unsupported Turkish metadata_schema={schema!r}. "
+        f"Expected one of {', '.join(SUPPORTED_METADATA_SCHEMAS)}."
+    )
+
+
+def _validated_source_label(
+    source_row: dict[str, Any],
+    *,
+    schema: str,
+    basename: str,
+    score: float,
+    threshold: float,
+) -> int:
+    if schema == METADATA_SCHEMA_LEGACY_T25:
+        label_field = "label_t25"
+        target_field = "target_t25"
+        source_threshold = SOURCE_THRESHOLD
+    elif schema == METADATA_SCHEMA_MINIMAL_T17:
+        if threshold != 17.0:
+            raise ValueError(
+                "Turkish minimal_t17 metadata requires threshold=17; "
+                f"received threshold={threshold}."
+            )
+        label_field = "label_t17"
+        target_field = "target_t17"
+        source_threshold = 17.0
+    else:  # guarded by _required_metadata_fields; keep this helper fail-closed.
+        raise ValueError(f"Unsupported Turkish metadata_schema={schema!r}.")
+
+    source_label = int(float(source_row[label_field]))
+    source_target = str(source_row[target_field]).strip().lower()
+    expected_label = int(score >= source_threshold)
+    expected_target = "depressed" if expected_label else "non_depressed"
+    if source_label != expected_label or source_target != expected_target:
+        raise ValueError(
+            f"Turkish source label mismatch for {basename}: score={score} "
+            f"{label_field}={source_label} {target_field}={source_target!r}"
+        )
+    return int(score >= threshold)
 
 
 def _load_whisper_transcripts(path: Path) -> dict[str, dict[str, Any]]:
@@ -127,6 +198,10 @@ def build_turkish_manifest(
     transcript_path = root / str(config.get("transcript_file", DEFAULT_TRANSCRIPT_FILE))
     audio_dir = root / str(config.get("audio_dir", "all-files"))
     threshold = float(config.get("threshold", SOURCE_THRESHOLD))
+    metadata_schema = str(
+        config.get("metadata_schema", METADATA_SCHEMA_LEGACY_T25)
+    ).strip().lower()
+    dataset_variant = str(config.get("dataset_variant", "")).strip()
     split_cfg = config.get("split", {})
     n_splits = int(split_cfg.get("outer_folds", 5))
     split_seed = int(split_cfg.get("seed", config.get("seed", 1337)))
@@ -151,16 +226,7 @@ def build_turkish_manifest(
 
     with metadata_path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
-        required_fields = {
-            "file_name",
-            "label",
-            "depresyon_skoru",
-            "anksiyete_skoru",
-            "patient_id",
-            "w2v2_predicted_score",
-            "label_t25",
-            "target_t25",
-        }
+        required_fields = _required_metadata_fields(metadata_schema)
         missing_fields = sorted(required_fields - set(reader.fieldnames or []))
         if missing_fields:
             raise ValueError(f"Turkish metadata CSV is missing fields: {missing_fields}")
@@ -174,10 +240,13 @@ def build_turkish_manifest(
             metadata_basenames.add(basename)
 
             sample_id = Path(basename).stem
-            subject_id = str(source_row["patient_id"]).strip()
-            if not subject_id:
+            source_subject_id = str(source_row["patient_id"]).strip()
+            if not source_subject_id:
                 raise ValueError(f"Turkish metadata row {row_number} has an empty patient_id.")
-            chunk_id = _parse_chunk_id(basename, subject_id)
+            chunk_id = _parse_chunk_id(basename, source_subject_id)
+            # The original Turkish metadata uses decomposed Unicode. Keep that
+            # canonical form so equivalent subjects receive identical CV folds.
+            subject_id = unicodedata.normalize("NFD", source_subject_id)
             audio_path = audio_dir / basename
             transcript_payload = transcripts.get(basename)
             transcript = str((transcript_payload or {}).get("transcript", "")).strip()
@@ -188,18 +257,13 @@ def build_turkish_manifest(
             transcript_nonempty = bool(transcript)
 
             score = float(source_row["depresyon_skoru"])
-            source_label = int(float(source_row["label_t25"]))
-            source_target = str(source_row["target_t25"]).strip().lower()
-            expected_source_label = int(score >= SOURCE_THRESHOLD)
-            expected_source_target = "depressed" if expected_source_label else "non_depressed"
-            if source_label != expected_source_label or source_target != expected_source_target:
-                raise ValueError(
-                    f"Turkish source label mismatch for {basename}: score={score} "
-                    f"label_t25={source_label} target_t25={source_target!r}"
-                )
-            label = int(score >= threshold)
-            if threshold == SOURCE_THRESHOLD and label != source_label:
-                raise ValueError(f"Turkish threshold-derived label mismatch for {basename}.")
+            label = _validated_source_label(
+                source_row,
+                schema=metadata_schema,
+                basename=basename,
+                score=score,
+                threshold=threshold,
+            )
 
             join_audit_rows.append(
                 {
@@ -262,7 +326,9 @@ def build_turkish_manifest(
             if previous_label != label:
                 raise ValueError(f"Turkish subject has mixed labels: {subject_id}")
 
-            comorbid = int(float(source_row["label"]))
+            comorbid = _optional_int(source_row.get("label"))
+            anxiety_score = _optional_float(source_row.get("anksiyete_skoru"))
+            w2v2_predicted_score = _optional_float(source_row.get("w2v2_predicted_score"))
             subject_metadata.setdefault(
                 subject_id,
                 {
@@ -271,7 +337,7 @@ def build_turkish_manifest(
                     "label_text": label_text_from_int(label),
                     "score": score,
                     "comorbid": comorbid,
-                    "anxiety_score": _optional_float(source_row["anksiyete_skoru"]),
+                    "anxiety_score": anxiety_score,
                     "age": _optional_float(source_row.get("age")),
                     "marital_status": _optional_float(source_row.get("medeni_hal")),
                     "education": _optional_float(source_row.get("egitim")),
@@ -279,8 +345,7 @@ def build_turkish_manifest(
                 },
             )
 
-            manifest_rows.append(
-                {
+            manifest_row = {
                     "dataset": "turkish",
                     "subject_id": subject_id,
                     "sample_id": sample_id,
@@ -301,11 +366,13 @@ def build_turkish_manifest(
                     "gender": None,
                     "modality_mode": "single_audio_single_text",
                     "comorbid": comorbid,
-                    "anxiety_score": _optional_float(source_row["anksiyete_skoru"]),
+                    "anxiety_score": anxiety_score,
                     "threshold": threshold,
-                    "w2v2_predicted_score": _optional_float(source_row["w2v2_predicted_score"]),
+                    "w2v2_predicted_score": w2v2_predicted_score,
                 }
-            )
+            if dataset_variant:
+                manifest_row["dataset_variant"] = dataset_variant
+            manifest_rows.append(manifest_row)
 
     disk_audio_basenames = {path.name for path in audio_dir.glob("*.wav")}
     for basename in sorted(disk_audio_basenames - metadata_basenames):

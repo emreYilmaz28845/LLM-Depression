@@ -72,9 +72,27 @@ E-DAIC was outside the harmonization scope and was not inspected, moved, or rewr
 Count the current inventory with `find configs/main -maxdepth 1 -type f -name '*.yaml' | wc -l`; do not copy an old total into plans or reports. The active families include:
 
 - the 15 core harmonized Qwen configs: five datasets × three modalities;
+- 5 isolated Turkish negative-only t17 secondary configs: three native
+  modalities plus English audio+text and text-only;
 - the 3 Gemma 4 DAIC configs described above;
 - 3 unchanged E-DAIC configs outside the harmonized family;
 - additional active, explicitly named comparison families. Inspect their YAML instead of inferring semantics from the total count.
+
+## Turkish negative-only secondary family
+
+The `turkish_negative_only_t17_*` configs reuse the harmonized Turkish recipe
+for the negative-question recordings. They are a secondary comparison, not an
+independent population: the 120 subjects and their threshold-17 labels are the
+same as canonical Turkish. Keep each subject in the same fold across both
+variants and never pool the variants without cross-variant patient grouping.
+
+The native family has audio-only, audio+text, and text-only configs. The English
+family has audio+text and text-only configs; an English audio-only config would
+be input-identical to native audio-only and is intentionally absent. The loader
+uses `metadata_schema: minimal_t17`, derives the label from
+`depresyon_skoru >= 17`, and does not consume acoustic features, anxiety,
+demographic, or comorbidity fields. Native and English manifests, splits,
+translation caches, and model roots are isolated from canonical Turkish.
 
 See `docs/harmonized_dataset_baseline.md` for the methodology and dataset-specific adapters.
 
