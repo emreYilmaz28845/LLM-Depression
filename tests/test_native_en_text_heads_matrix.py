@@ -239,3 +239,27 @@ def test_merged_optuna100_identity_uses_historical_cli_spelling_at_boundary() ->
     exported = job_export(entry, _fake_deployment())
     assert "METHOD=xgb_optuna" in exported
     assert "METHOD=xgb_optuna100" not in exported
+
+
+def test_smoke_merged_optuna_head_exports_smoke_policy_stage() -> None:
+    entry = {
+        "script": "scripts/run_native_en_merged_head_slurm.sh",
+        "method": "xgb_optuna100",
+        "job_type": "hidden_classifier",
+        "attempt_dir": "/gpfs/attempt",
+        "context_path": "/gpfs/context.json",
+        "config_json_path": "/gpfs/config.json",
+        "parent_json_path": "/gpfs/parent.json",
+        "config_remote": "/gpfs/config.yaml",
+        "stage": "cv",
+        "fold": 0,
+        "run_id": "run",
+        "features_dir": "/gpfs/features",
+        "checkpoint_dir": "/gpfs/best_model",
+        "condition": "native",
+        "backbone": "qwen",
+        "trials": 2,
+        "overrides": [],
+    }
+    exported = job_export(entry, _fake_deployment())
+    assert "OPTUNA_STAGE=smoke" in exported

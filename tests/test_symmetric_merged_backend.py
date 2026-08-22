@@ -157,6 +157,7 @@ class TestMergedHeadsProtocol:
                 None,
             )
         assert heads.resolve_optuna_trials(profile, "smoke", 2) == 2
+        assert heads.resolve_optuna_trials(profile, "cv", 2, policy_stage="smoke") == 2
         with pytest.raises(ValueError, match="exactly two trials"):
             heads.resolve_optuna_trials(profile, "smoke", 3)
         # Historical configs keep the 150-trial contract.
