@@ -1346,6 +1346,9 @@ def _cmd_submit_merged(args) -> int:
             features_dir=paths["features_dir"],
             source_commit=source_commit,
             context_path=context_path,
+            log_root_train=f"{runtime_root}/logs/merged_train/{run_id}",
+            log_root_post=f"{runtime_root}/logs/merged_postprocess/{run_id}",
+            log_root_head=f"{runtime_root}/logs/merged_head/{run_id}",
             epochs=int(epochs) if epochs is not None else None,
             subjects_per_class=getattr(args, "subjects_per_class", None),
             head_trials=0,
@@ -1592,6 +1595,9 @@ def _cmd_submit_hidden(args) -> int:
         exports.append(("ENV_ACTIVATE", ns.GEMMA_ENV_DEFAULT))
         model_path = getattr(args, "model_path", None) or ns.GEMMA4_MODEL_DEFAULT
         exports.append(("MODEL_PATH", model_path))
+    exports.append(
+        ("LOG_ROOT", f"{runtime_root}/logs/logreg/{condition}_{backbone}/{dataset}/{run_name}")
+    )
     script = ns.render_study_job_script(
         code_path=code_path,
         worker_relpath="scripts/run_native_en_logreg_attempt_slurm.sh",
@@ -1784,6 +1790,7 @@ def _cmd_submit_optuna100(args) -> int:
         ("CACHE_DIR", features_dir),
         ("TASK_SPEC_PATH", spec_remote),
         ("TARGET_TRIALS", str(target_trials)),
+        ("LOG_ROOT", f"{runtime_root}/logs/optuna100/{family}/{campaign}/{run_name}-f{fold}{('-' + stage) if stage else ''}"),
     ]
     after_ids = [str(args.after_job_id)] if getattr(args, "after_job_id", None) else []
     if family == "merged":
