@@ -157,6 +157,46 @@ def test_retry_plan_uses_fresh_output_identity_and_links_superseded_attempts() -
     assert "/hidden_features/retry1/" in head["cache_dir"]
 
 
+def test_selective_head_retry_reuses_completed_parent_artifacts() -> None:
+    original = build_plan(
+        stage="smoke",
+        deployment=_fake_deployment(),
+        experiment_id="exp-native-en-text-heads-v2-20260822",
+        output_suffix="retry1",
+    )
+    add_plan_indexes(original)
+    original["submission_complete"] = True
+    for index, job in enumerate(original["jobs"]):
+        job["job_ids"] = {"job": str(5000 + index)}
+    failed_keys = [
+        job["job_key"]
+        for job in original["jobs"]
+        if job.get("method") == "xgb_optuna100"
+    ][:2]
+    retry_deployment = {
+        **_fake_deployment(),
+        "deployment_id": "native-en-text-heads-v2-selective-retry",
+        "git_commit": "047ec597fcafd7ab730b06c8001412f792741494",
+    }
+    retry = build_plan(
+        stage="smoke",
+        deployment=retry_deployment,
+        experiment_id="exp-native-en-text-heads-v2-20260822",
+        output_suffix="retry1",
+        retry_from=original,
+        retry_job_keys=failed_keys,
+    )
+    add_plan_indexes(retry)
+
+    assert len(retry["jobs"]) == 2
+    assert all(job["method"] == "xgb_optuna100" for job in retry["jobs"])
+    assert all(job["dependencies"] == [] for job in retry["jobs"])
+    assert all(job["reuse_parent_artifacts"] for job in retry["jobs"])
+    assert len(retry["retry_reused_dependencies"]) == 2
+    assert retry["counts"]["xgb_optuna100"] == 2
+    assert all("features" not in path for path in retry["collision_paths"])
+
+
 def test_remote_workers_source_mn5_dataset_environment() -> None:
     plan = build_plan(
         stage="smoke",
