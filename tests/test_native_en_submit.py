@@ -270,3 +270,83 @@ class TestScriptRenderers:
         assert "TARGET_TRIALS" in script and "100" in script
         assert 'echo "Submitted optuna attempt job: $JOB_ID"' in script
         assert "--delete" not in script
+
+
+class TestPreflight:
+    def test_local_mode_passes_against_repo(self, tmp_path: Path) -> None:
+        import subprocess
+
+        out = tmp_path / "audit.json"
+        proc = subprocess.run(
+            ["python", "scripts/preflight_native_en_text_heads.py", "--mode", "local", "--output", str(out)],
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        audit = json.loads(out.read_text())
+        assert audit["status"] == "passed"
+        assert (tmp_path / "audit.json.sha256").is_file()
+        assert out.read_text().count("\n") > 5
+
+    def test_translation_cache_counts_enforced(self, tmp_path: Path) -> None:
+        from scripts.preflight_native_en_text_heads import check_translation_caches
+
+        root = tmp_path / "translations"
+        good = root / "harmonized_en_complete_v1" / "cmdc"
+        good.mkdir(parents=True)
+        rows = [
+            json.dumps({"status": "automatic_low", "text": f"r{i}"}) for i in range(923)
+        ]
+        (good / "accepted.jsonl").write_text("\n".join(rows) + "\n")
+        failures, details = check_translation_caches(root)
+        # d3tec/androids/turkish missing entirely; cmdc count is exact.
+        assert any("missing accepted cache for d3tec" in f for f in failures)
+        assert not any("cmdc: accepted" in f for f in failures)
+
+        bad = root / "harmonized_en_complete_v1" / "d3tec"
+        bad.mkdir(parents=True)
+        short = [json.dumps({"status": "automatic_low"}) for _ in range(3676)]
+        (bad / "accepted.jsonl").write_text("\n".join(short) + "\n")
+        (bad / "rejected.jsonl").write_text(json.dumps({"status": "failed"}) + "\n")
+        failures2, _ = check_translation_caches(root)
+        assert any("d3tec: accepted cache has 3676" in f for f in failures2)
+        assert any("d3tec: rejected.jsonl is non-empty" in f for f in failures2)
+
+    def test_paired_membership_requires_identical_subject_labels(self, tmp_path: Path) -> None:
+        from scripts.preflight_native_en_text_heads import check_paired_membership
+
+        def write_manifest(path: Path, subjects):
+            path.write_text(
+                "".join(
+                    json.dumps(
+                        {
+                            "dataset": "cmdc",
+                            "subject_id": s,
+                            "label": lab,
+                        }
+                    )
+                    + "\n"
+                    for s, lab in subjects
+                ),
+                encoding="utf-8",
+            )
+
+        native = tmp_path / "native.jsonl"
+        english = tmp_path / "english.jsonl"
+        subjects = [("c1", 0), ("c2", 1)]
+        write_manifest(native, subjects)
+        write_manifest(english, subjects)
+        failures, details = check_paired_membership({"cmdc": (native, english)})
+        assert failures == []
+        assert details["cmdc"]["native_subjects"] == 2
+
+        english.write_text(
+            "".join(
+                json.dumps({"dataset": "cmdc", "subject_id": s, "label": lab})
+                + "\n"
+                for s, lab in [("c1", 0), ("c2", 0)]
+            ),
+            encoding="utf-8",
+        )
+        failures2, _ = check_paired_membership({"cmdc": (native, english)})
+        assert any("labels differ" in f for f in failures2)
