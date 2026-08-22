@@ -433,9 +433,9 @@ write_status(fold_dir / "status.json", status)
 jobs_path = fold_dir / "jobs.jsonl"
 jobs_path.write_text("", encoding="utf-8")
 chain = [
-    ("train", int(os.environ["STUDY_TRAIN_ID"]), "merged_train", []),
-    ("postprocess", int(os.environ["STUDY_POST_ID"]), "merged_postprocess", [int(os.environ["STUDY_TRAIN_ID"])]),
-    ("head", int(os.environ["STUDY_HEAD_ID"]), "merged_head", [int(os.environ["STUDY_POST_ID"])]),
+    ("train", int(os.environ["STUDY_TRAIN_ID"]), "train", []),
+    ("postprocess", int(os.environ["STUDY_POST_ID"]), "evaluation", [int(os.environ["STUDY_TRAIN_ID"])]),
+    ("head", int(os.environ["STUDY_HEAD_ID"]), "hidden_classifier", [int(os.environ["STUDY_POST_ID"])]),
 ]
 for job_key, job_id, job_type, deps in chain:
     append_job_event(
