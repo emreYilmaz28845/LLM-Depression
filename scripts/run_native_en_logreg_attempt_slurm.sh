@@ -65,7 +65,8 @@ campaign() {
 cleanup() {
     local exit_code=$?
     source "$QWEN_ENV"
-    export PYTHONPATH="$PROJECT_ROOT/.deps/qwen_hidden:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+    QWEN_HIDDEN_DEPS="${QWEN_HIDDEN_DEPS:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/.deps/qwen_hidden}"
+    export PYTHONPATH="$QWEN_HIDDEN_DEPS:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
     if [ "$exit_code" -eq 0 ]; then
         campaign record-job \
             --job-key logreg --job-type hidden_classifier --event-type COMPLETED \
@@ -94,7 +95,8 @@ python src/features/extract_qwen_hidden.py "${EXTRACT_ARGS[@]}"
 
 # --- Stage 2: attempt creation, LogReg fit, evidence materialization ---
 source "$QWEN_ENV"
-export PYTHONPATH="$PROJECT_ROOT/.deps/qwen_hidden:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+QWEN_HIDDEN_DEPS="${QWEN_HIDDEN_DEPS:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/.deps/qwen_hidden}"
+export PYTHONPATH="$QWEN_HIDDEN_DEPS:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
 campaign create-attempt --task-spec "$TASK_SPEC_PATH"
 campaign mark-deployed --reason "extraction finished on $(hostname)"
