@@ -1676,6 +1676,8 @@ def _cmd_submit_hidden(args) -> int:
 
 
 def _cmd_submit_optuna100(args) -> int:
+    from src.experiment_tracking.submit import DEFAULT_SCHEDULER_HOST
+
     """Managed Optuna-100 XGBoost study submission (standalone or merged)."""
 
     execute = bool(args.execute)
