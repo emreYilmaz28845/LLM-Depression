@@ -121,7 +121,7 @@ def main() -> int:
                                 "--scheduler-host", args.scheduler_host, *extra,
                                 "--execute",
                             ]
-                            out = run(cmd, out_dir / key.replace("/", "_") + ".log")
+                            out = run(cmd, out_dir / (key.replace("/", "_") + ".log"))
                             m = re.findall(r"submitted jobs: (\{[^\n]*\})", out)[-1]
                             ids = json.loads(m.replace("'", '"'))
                             state["chains"][key] = {
@@ -148,7 +148,7 @@ def main() -> int:
                         "--folds", str(fold), "--deployment-id", dep,
                         "--scheduler-host", args.scheduler_host, "--execute",
                     ]
-                    out = run(cmd, out_dir / key.replace("/", "_") + ".log")
+                    out = run(cmd, out_dir / (key.replace("/", "_") + ".log"))
                     m = re.findall(r"fold (\d+) jobs: (\{[^\n]*\})", out)[-1]
                     ids = json.loads(m[1].replace("'", '"'))
                     state["chains"][key] = {
@@ -185,7 +185,7 @@ def main() -> int:
                     "--deployment-id", dep, "--scheduler-host", args.scheduler_host,
                     "--execute",
                 ]
-                out = run(cmd, out_dir / hkey.replace("/", "_") + ".log")
+                out = run(cmd, out_dir / (hkey.replace("/", "_") + ".log"))
                 jid = re.search(r"submitted logreg attempt job (\d+)", out).group(1)
                 state["heads"][hkey] = {"job": jid}
                 submitted += 1
@@ -205,7 +205,7 @@ def main() -> int:
                     "--deployment-id", dep, "--scheduler-host", args.scheduler_host,
                     "--execute",
                 ]
-                out = run(cmd, out_dir / okey.replace("/", "_") + ".log")
+                out = run(cmd, out_dir / (okey.replace("/", "_") + ".log"))
                 jid = re.search(r"submitted optuna attempt job (\d+)", out).group(1)
                 state["heads"][okey] = {"job": jid}
                 submitted += 1
@@ -241,7 +241,7 @@ def main() -> int:
                 "--deployment-id", dep, "--scheduler-host", args.scheduler_host,
                 "--execute",
             ]
-            out = run(cmd, out_dir / okey.replace("/", "_") + ".log")
+            out = run(cmd, out_dir / (okey.replace("/", "_") + ".log"))
             jid = re.search(r"submitted optuna attempt job (\d+)", out).group(1)
             state["heads"][okey] = {"job": jid}
             submitted += 1
