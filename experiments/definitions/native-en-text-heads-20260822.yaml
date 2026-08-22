@@ -179,5 +179,9 @@ exclusions:
   - Subject-OS experiments
   - fixed non-Optuna XGBoost as a headline comparison
   - the separate mechanism question about converting the multilingual merged corpus into one transcript language to improve DAIC transfer, and any new test designed specifically to answer it
+naming_convention:
+  standalone_run_name: tnh-{nat|en}-{qwen|gemma4}-{dataset}-s{seed}
+  merged_run_id: tmh-{nat|en}-{qwen|gemma4}-s{seed}
+  generator: scripts/preflight_native_en_text_heads.py (run_name_for / merged_run_id_for)
 github_issue: null
 github_pr: null
