@@ -3,7 +3,7 @@ workbook:
   path: depression_results_clean.xlsx
   sha256: ed09a2abfb8026d85bc18c2a9eed14a3b82800a055c218f087dad24ee0f0d1c0
   builder_path: scripts/build_clean_workbook.py
-  builder_sha256: 9679892fe4c770978906740b7066e1bc572fceb45fc6efcdbcdf57d2b6ffe3c6
+  builder_sha256: 8a1682cdfe89550d8a3682e2e662b6e077e67fba5f5e91db2c10da044d6872b9
   provenance_sheet: Provenance
 entries:
 - selection_id: Standalone|DAIC|Audio + Text|Fine-tuned Qwen

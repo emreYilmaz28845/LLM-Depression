@@ -41,6 +41,29 @@ FIXED_HEAD = "xgb_fixed"
 HEADS = ("logreg", FIXED_HEAD, "xgb_optuna")
 
 
+def resolve_fixed_head_seed(config: dict[str, Any]) -> int:
+    """Resolve classifier randomness while preserving old merged configs."""
+
+    settings = config.get("heads") or {}
+    value = settings.get("fixed_seed", config.get("seed", 1337))
+    return int(value)
+
+
+def merged_method_prediction_backend(method: str, model_backend: str) -> str | None:
+    """Return the backend qualifier for one merged head method."""
+
+    from src.features import optuna100_policy as policy
+
+    backend = "gemma4" if str(model_backend).lower() == "gemma4" else "qwen"
+    if method == "logreg":
+        return f"{backend}_hidden_logreg_raw_symmetric_merged"
+    if method == "xgb_optuna":
+        return policy.prediction_backend(model_backend, merged=True)
+    if method == FIXED_HEAD:
+        return f"{backend}_hidden_xgb_fixed_symmetric_merged"
+    raise ValueError(f"Unsupported merged head method: {method!r}")
+
+
 def _load_features(features_dir: Path, partition: str) -> tuple[np.ndarray, list[dict[str, Any]]]:
     matrix_path = features_dir / f"{partition}.npz"
     rows_path = features_dir / f"{partition}_rows.jsonl"
@@ -102,7 +125,11 @@ def _prediction_response_id(row: dict[str, Any]) -> str:
 
 
 def aggregate_head_predictions(
-    rows: list[dict[str, Any]], probabilities: np.ndarray, *, threshold: float = 0.5
+    rows: list[dict[str, Any]],
+    probabilities: np.ndarray,
+    *,
+    threshold: float = 0.5,
+    prediction_backend: str | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, dict[str, Any]]]:
     """Reduce feature predictions using the component's response hierarchy."""
 
@@ -121,6 +148,8 @@ def aggregate_head_predictions(
                 "prediction": int(float(probability) >= float(threshold)),
             }
         )
+        if prediction_backend is not None:
+            sample_rows[-1]["prediction_backend"] = prediction_backend
     subject_rows_by_dataset: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for dataset in sorted({str(row["dataset"]).lower() for row in sample_rows}):
         dataset_rows = [row for row in sample_rows if row["dataset"] == dataset]
@@ -154,6 +183,8 @@ def aggregate_head_predictions(
                     "invalid_qwen_outputs": 0,
                 }
             )
+            if prediction_backend is not None:
+                subject_rows_by_dataset[dataset][-1]["prediction_backend"] = prediction_backend
     metrics_by_dataset: dict[str, dict[str, Any]] = {}
     for dataset, subject_rows in sorted(subject_rows_by_dataset.items()):
         y_true = [int(row["label"]) for row in subject_rows]
@@ -170,6 +201,7 @@ def aggregate_head_predictions(
                 "invalid_qwen_outputs": 0,
                 "subject_count": len(subject_rows),
                 "confusion_matrix": metrics["confusion_matrix"],
+                "prediction_backend": prediction_backend,
             }
         )
         metrics_by_dataset[dataset] = metrics
@@ -409,9 +441,14 @@ def resolve_optuna_trials(
     if expected_trial_count == 0:
         return 0
     if protocol_profile == policy.PROTOCOL_PROFILE:
-        policy.assert_production_target(expected_trial_count)
         if stage == "smoke":
-            raise ValueError("Smoke merged Optuna studies must not use the production 100-trial profile.")
+            if expected_trial_count != 2:
+                raise ValueError(
+                    "Smoke merged Optuna studies using the production profile "
+                    "must use exactly two trials."
+                )
+            return expected_trial_count
+        policy.assert_production_target(expected_trial_count)
         return expected_trial_count
     if stage != "smoke" and expected_trial_count != 150:
         raise ValueError("Historical production merged Optuna is fixed to 150 trials.")
@@ -426,8 +463,19 @@ def run_merged_heads(
     run_id: str,
     features_dir: str | Path,
     trials: int | None = None,
+    method: str | None = None,
+    overrides: list[str] | None = None,
+    output_root_override: str | Path | None = None,
 ) -> dict[str, Any]:
-    merged_config = load_merged_config(config_path)
+    if method is not None and method not in {"logreg", FIXED_HEAD, "xgb_optuna"}:
+        raise ValueError(f"Unsupported merged head method: {method!r}")
+    # Preserve the one-argument call shape for legacy callers and test doubles;
+    # managed v2 passes the explicit override array when it has one.
+    merged_config = (
+        load_merged_config(config_path, overrides)
+        if overrides
+        else load_merged_config(config_path)
+    )
     records, protocol = load_records_and_protocol(merged_config)
     model_backend = validate_shared_backend(merged_config, records)
     del records
@@ -453,7 +501,12 @@ def run_merged_heads(
         raise ValueError("Merged train/holdout feature dimensions do not match.")
     if stage == "final" and {str(row["dataset"]) for row in holdout_rows} != {"daic"}:
         raise ValueError("Final merged heads may evaluate only the untouched DAIC official test.")
-    expected_trial_count = resolve_optuna_trials(merged_config, stage, trials)
+    selected_methods = (method,) if method is not None else HEADS
+    expected_trial_count = (
+        0
+        if method == "logreg"
+        else resolve_optuna_trials(merged_config, stage, trials)
+    )
     from src.features import optuna100_policy as policy
 
     optuna_cfg = (merged_config.get("heads") or {}).get("optuna") or {}
@@ -461,11 +514,21 @@ def run_merged_heads(
     if expected_trial_count == 0:
         print("Optuna disabled (trials=0); fitting logreg and fixed XGBoost only.", flush=True)
     prediction_backend = (
-        policy.prediction_backend(model_backend, merged=True)
-        if protocol_profile == policy.PROTOCOL_PROFILE
-        else None
+        merged_method_prediction_backend(method, model_backend)
+        if method is not None
+        else (
+            policy.prediction_backend(model_backend, merged=True)
+            if protocol_profile == policy.PROTOCOL_PROFILE
+            else None
+        )
     )
-    output_root = feature_dir.parent / "heads"
+    output_root = (
+        Path(output_root_override).resolve()
+        if output_root_override is not None
+        else feature_dir.parent / "heads"
+    )
+    if method is not None and output_root_override is None:
+        output_root = output_root / method
     identity = {
         "schema_version": "symmetric_merged_heads_identity.v1",
         "stage": stage,
@@ -492,7 +555,17 @@ def run_merged_heads(
         if existing_identity != identity:
             raise ValueError(f"Incompatible completed merged heads: {output_root}")
         return {"status": "skipped_compatible_complete", "output_root": str(output_root)}
-    if output_root.exists() and any(output_root.iterdir()) and not identity_path.is_file():
+    tracking_files = {
+        "run_config.yaml",
+        "metadata.json",
+        "status.json",
+        "jobs.jsonl",
+        "artifacts.json",
+        "evaluations.json",
+    }
+    if output_root.exists() and any(
+        path.name not in tracking_files for path in output_root.iterdir()
+    ) and not identity_path.is_file():
         raise ValueError(f"Refusing to overwrite incomplete merged heads: {output_root}")
     ensure_dir(output_root)
     save_json(identity, identity_path)
@@ -515,18 +588,18 @@ def run_merged_heads(
     )
     save_json(assignments, output_root / "inner_folds.json")
     y_train = np.asarray([int(row["label"]) for row in train_rows], dtype=np.int64)
-    seed = int(merged_config.get("seed", 1337))
+    seed = resolve_fixed_head_seed(merged_config)
     method_summaries: dict[str, Any] = {}
-    for method in HEADS:
-        if expected_trial_count == 0 and method == "xgb_optuna":
+    for method_name in selected_methods:
+        if expected_trial_count == 0 and method_name == "xgb_optuna":
             print("Skipping xgb_optuna (trials=0).", flush=True)
             continue
-        method_dir = ensure_dir(output_root / method)
-        if method == "logreg":
+        method_dir = output_root if method is not None else ensure_dir(output_root / method_name)
+        if method_name == "logreg":
             estimator = _new_logreg(seed)
             weight_audit = _fit_weighted(estimator, train_x, y_train, train_rows)
             params = {"C": 1.0, "standardized": True}
-        elif method == FIXED_HEAD:
+        elif method_name == FIXED_HEAD:
             params = fixed_xgb_params(merged_config, seed, int(((merged_config.get("heads") or {}).get("optuna") or {}).get("xgb_threads", 20)))
             estimator = _new_xgb(params)
             weight_audit = _fit_weighted(estimator, train_x, y_train, train_rows)
@@ -546,6 +619,7 @@ def run_merged_heads(
             holdout_rows,
             probabilities,
             threshold=float((merged_config.get("protocol_settings") or {}).get("threshold", 0.5)),
+            prediction_backend=merged_method_prediction_backend(method_name, model_backend),
         )
         all_prediction_rows = [row for dataset in sorted(prediction_groups) for row in prediction_groups[dataset]]
         write_jsonl(all_prediction_rows, method_dir / "predictions_subject_level.jsonl")
@@ -553,7 +627,7 @@ def run_merged_heads(
         save_json(metrics, method_dir / "metrics_by_dataset.json")
         save_json(
             {
-                "method": method,
+                "method": method_name,
                 "params": params,
                 "weight_audit": weight_audit,
                 "threshold": float((merged_config.get("protocol_settings") or {}).get("threshold", 0.5)),
@@ -563,26 +637,26 @@ def run_merged_heads(
                 "manifest_hash": feature_metadata.get("manifest_hash"),
                 "split_hash": feature_metadata.get("split_hash"),
                 "model_backend": model_backend,
-                "prediction_backend": prediction_backend,
+                "prediction_backend": merged_method_prediction_backend(method_name, model_backend),
             },
             method_dir / "classifier_metadata.json",
         )
         import joblib
 
         joblib.dump(estimator, method_dir / "classifier.joblib")
-        method_summaries[method] = {"metrics": metrics, "output_dir": str(method_dir)}
+        method_summaries[method_name] = {"metrics": metrics, "output_dir": str(method_dir)}
     save_json(method_summaries, output_root / "summary.json")
     save_json(
         {
             "status": "completed",
             "identity": identity,
-            "methods": list(HEADS),
+            "methods": list(selected_methods),
             "optuna_trials": expected_trial_count,
             "method_summaries": method_summaries,
         },
         complete_path,
     )
-    return {"status": "completed", "output_root": str(output_root), "methods": list(HEADS)}
+    return {"status": "completed", "output_root": str(output_root), "methods": list(selected_methods)}
 
 
 def parse_args() -> argparse.Namespace:
@@ -593,6 +667,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--features-dir", required=True, type=Path)
     parser.add_argument("--trials", type=int)
+    parser.add_argument("--method", choices=("logreg", FIXED_HEAD, "xgb_optuna"))
+    parser.add_argument("--override", action="append", default=[])
+    parser.add_argument("--output-root", type=Path)
     return parser.parse_args()
 
 
@@ -606,6 +683,9 @@ def main() -> None:
         run_id=args.run_id,
         features_dir=args.features_dir,
         trials=args.trials,
+        method=args.method,
+        overrides=args.override,
+        output_root_override=args.output_root,
     )
     print(json.dumps(result, indent=2), flush=True)
 

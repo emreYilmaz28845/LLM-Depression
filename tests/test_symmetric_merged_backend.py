@@ -136,8 +136,9 @@ class TestMergedHeadsProtocol:
                 "cv",
                 None,
             )
-        with pytest.raises(ValueError, match="must not use the production"):
-            heads.resolve_optuna_trials(profile, "smoke", None)
+        assert heads.resolve_optuna_trials(profile, "smoke", 2) == 2
+        with pytest.raises(ValueError, match="exactly two trials"):
+            heads.resolve_optuna_trials(profile, "smoke", 3)
         # Historical configs keep the 150-trial contract.
         historical = {"heads": {"optuna": {"target_trials": 150}}}
         assert heads.resolve_optuna_trials(historical, "cv", None) == 150

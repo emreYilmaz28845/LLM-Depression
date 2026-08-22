@@ -16,6 +16,7 @@ from src.merged.protocol import (
     compute_hierarchical_example_weights,
     limit_examples_by_dataset_subjects_per_class,
     resolve_head_inner_folds,
+    resolve_protocol_split_seed,
 )
 from src.merged.runtime import fold_subject_ids
 from src.merged.heads import aggregate_head_predictions
@@ -108,6 +109,21 @@ def test_protocol_has_exact_outer_coverage_and_disjoint_inner_partitions() -> No
             holdouts.extend(payload["outer_holdout_subject_ids"])
         assert len(holdouts) == len(set(holdouts))
         assert not any(subject.startswith("daic::") for subject in holdouts if dataset == "daic" and subject.endswith("10"))
+
+
+def test_explicit_merged_split_seed_is_independent_of_training_seed() -> None:
+    fixed = {"seed": 7, "protocol_settings": {"split_seed": 1337}}
+    changed = {"seed": 2024, "protocol_settings": {"split_seed": 1337}}
+    assert resolve_protocol_split_seed(fixed) == 1337
+    assert resolve_protocol_split_seed(changed) == 1337
+    first = build_protocol_splits(_records(), seed=resolve_protocol_split_seed(fixed))
+    second = build_protocol_splits(_records(), seed=resolve_protocol_split_seed(changed))
+    assert first["split_hash"] == second["split_hash"]
+
+
+def test_merged_split_seed_preserves_legacy_top_level_seed_fallback() -> None:
+    assert resolve_protocol_split_seed({"seed": 7}) == 7
+    assert resolve_protocol_split_seed({}) == 1337
 
 
 def test_fixed_daic_component_folds_expand_to_complete_non_test_pool() -> None:

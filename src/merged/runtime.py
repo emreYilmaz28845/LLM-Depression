@@ -13,14 +13,47 @@ from src.merged.protocol import (
 from src.utils import load_yaml_with_overrides, read_json, resolve_project_path
 
 
-def load_merged_config(config_path: str | Path) -> dict[str, Any]:
-    config = load_yaml_with_overrides(resolve_project_path(config_path), [])
+def load_merged_config(
+    config_path: str | Path, overrides: list[str] | None = None
+) -> dict[str, Any]:
+    """Load a merged config with the managed lossless override array.
+
+    Existing callers omit ``overrides`` and retain the historical behavior.
+    Managed v2 workers pass the same ``--set`` tokens to every stage so seeds
+    and writable paths cannot drift between training, evaluation, and heads.
+    """
+
+    config = load_yaml_with_overrides(
+        resolve_project_path(config_path), list(overrides or [])
+    )
     if str(config.get("protocol", "")) != "symmetric_merged":
         raise ValueError("Expected protocol=symmetric_merged config.")
     modality = str(config.get("modality", "")).strip().lower()
     if modality not in {"audio_text", "audio_only", "text_only"}:
         raise ValueError(f"Unsupported merged modality: {modality!r}")
     return config
+
+
+def merged_fold_root(
+    config: dict[str, Any], *, run_id: str, stage: str, fold: int
+) -> Path:
+    """Resolve one merged training fold, preserving legacy layout by default."""
+
+    root = resolve_project_path(config["output_dirs"]["run_root"])
+    if str(config.get("output_dirs", {}).get("layout", "legacy")) == "canonical_v2":
+        return root / run_id / f"fold_{int(fold)}"
+    return root / run_id / stage / f"fold_{int(fold)}"
+
+
+def merged_aux_root(
+    config: dict[str, Any], *, run_id: str, stage: str, fold: int
+) -> Path:
+    """Resolve merged feature/evaluation artifacts with the same layout rule."""
+
+    root = resolve_project_path(config["output_dirs"]["merged_root"])
+    if str(config.get("output_dirs", {}).get("layout", "legacy")) == "canonical_v2":
+        return root / run_id / f"fold_{int(fold)}"
+    return root / run_id / stage / f"fold_{int(fold)}"
 
 
 def protocol_artifact_path(config: dict[str, Any]) -> Path:

@@ -36,6 +36,9 @@ RUN_ID="${RUN_ID:?RUN_ID is required}"
 FEATURES_DIR="${FEATURES_DIR:?FEATURES_DIR is required}"
 TRIALS="${TRIALS:-}"
 LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/symmetric_merged}"
+OVERRIDES_JSON_B64="${OVERRIDES_JSON_B64:-}"
+METHOD="${METHOD:-}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-}"
 
 if [ ! -f "$ENV_ACTIVATE" ]; then
     echo "Environment activate script not found: $ENV_ACTIVATE" >&2
@@ -44,6 +47,16 @@ fi
 # shellcheck disable=SC1090
 source "$ENV_ACTIVATE"
 cd "$PROJECT_ROOT"
+if [ -n "$OVERRIDES_JSON_B64" ]; then
+    mapfile -t OVERRIDE_ARGS < <(python - "$OVERRIDES_JSON_B64" <<'PY'
+import base64, json, sys
+for token in json.loads(base64.b64decode(sys.argv[1]).decode("utf-8")):
+    print(token)
+PY
+)
+else
+    OVERRIDE_ARGS=()
+fi
 mkdir -p "$LOG_ROOT"
 exec > >(tee -a "$LOG_ROOT/head-${SLURM_JOB_ID}.out")
 exec 2> >(tee -a "$LOG_ROOT/head-${SLURM_JOB_ID}.err" >&2)
@@ -51,4 +64,7 @@ export PROJECT_ROOT PYTHONHASHSEED="${PYTHONHASHSEED:-0}"
 export PYTHONPATH="$PROJECT_ROOT/.deps/qwen_hidden:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 CMD=(python -m src.merged.heads --config "$CONFIG" --stage "$STAGE" --fold "$FOLD" --run-id "$RUN_ID" --features-dir "$FEATURES_DIR")
 if [ -n "$TRIALS" ]; then CMD+=(--trials "$TRIALS"); fi
+if [ -n "$METHOD" ]; then CMD+=(--method "$METHOD"); fi
+if [ -n "$OUTPUT_ROOT" ]; then CMD+=(--output-root "$OUTPUT_ROOT"); fi
+for token in "${OVERRIDE_ARGS[@]}"; do CMD+=(--override "$token"); done
 "${CMD[@]}"

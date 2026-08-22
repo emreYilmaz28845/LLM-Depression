@@ -39,6 +39,7 @@ EPOCHS="${EPOCHS:-}"
 SUBJECTS_PER_CLASS="${SUBJECTS_PER_CLASS:-}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
 LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/symmetric_merged}"
+OVERRIDES_JSON_B64="${OVERRIDES_JSON_B64:-}"
 
 if [ ! -f "$ENV_ACTIVATE" ]; then
     echo "Environment activate script not found: $ENV_ACTIVATE" >&2
@@ -47,6 +48,16 @@ fi
 # shellcheck disable=SC1090
 source "$ENV_ACTIVATE"
 cd "$PROJECT_ROOT"
+if [ -n "$OVERRIDES_JSON_B64" ]; then
+    mapfile -t OVERRIDE_ARGS < <(python - "$OVERRIDES_JSON_B64" <<'PY'
+import base64, json, sys
+for token in json.loads(base64.b64decode(sys.argv[1]).decode("utf-8")):
+    print(token)
+PY
+)
+else
+    OVERRIDE_ARGS=()
+fi
 mkdir -p "$LOG_ROOT"
 exec > >(tee -a "$LOG_ROOT/train-${SLURM_JOB_ID}.out")
 exec 2> >(tee -a "$LOG_ROOT/train-${SLURM_JOB_ID}.err" >&2)
@@ -65,4 +76,5 @@ CMD=(torchrun --standalone --nnodes=1 --nproc_per_node="$NPROC_PER_NODE" -m src.
     --config "$CONFIG" --stage "$STAGE" --fold "$FOLD" --run-id "$RUN_ID")
 if [ -n "$EPOCHS" ]; then CMD+=(--epochs "$EPOCHS"); fi
 if [ -n "$SUBJECTS_PER_CLASS" ]; then CMD+=(--subjects-per-class "$SUBJECTS_PER_CLASS"); fi
+for token in "${OVERRIDE_ARGS[@]}"; do CMD+=(--override "$token"); done
 "${CMD[@]}"

@@ -1134,96 +1134,191 @@ def _fill_cell(ws, row: int, experiment: str, dataset: str, modality: str, metho
         _body_cell(ws, row, 7, None)
 
 
-def build_native_vs_english(wb: Workbook) -> None:
-    """Paired native-vs-English comparison for both current backends.
+NATIVE_EN_REPORT_PATH = PROJECT_ROOT / "outputs/native_en_text_heads_v2/reports/native_en_text_heads_v2_report.json"
+NATIVE_EN_DATASET_LABELS = {
+    "d3tec": "D3TEC",
+    "androids_interview": "Androids Interview",
+    "cmdc": "CMDC",
+    "turkish": "Turkish",
+    "merged": "Merged five-dataset CV",
+    "daic": "DAIC",
+}
+NATIVE_EN_ENDPOINT_LABELS = {
+    "standalone": "Standalone",
+    "merged_cv": "Merged CV",
+    "merged_final": "Final merged DAIC",
+}
+NATIVE_EN_HEAD_LABELS = {"logreg": "LogReg", "xgb_optuna100": "Optuna-100 XGBoost"}
+NATIVE_EN_SUMMARY_METRICS = (
+    "native_macro_mean", "native_macro_sd", "english_macro_mean", "english_macro_sd",
+    "delta_macro_mean", "delta_macro_sd", "native_positive_mean", "native_positive_sd",
+    "english_positive_mean", "english_positive_sd", "delta_positive_mean", "delta_positive_sd",
+)
 
-    Translation changes transcript-bearing inputs only, so the sheet contains
-    Audio + Text and Text only. Audio-only would be the same native control,
-    not a separate English experiment. XGBoost values use the standardized
-    Optuna-100 protocol, matching the main comparison sheets.
-    """
+
+def _load_native_en_report(report_path: Path | None = None) -> dict[str, Any] | None:
+    path = report_path or NATIVE_EN_REPORT_PATH
+    if not path.is_file():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("schema_version") != "native_en_text_heads_v2_report.v1" or payload.get("status") != "passed":
+        raise ValueError(f"native-vs-English report is not a passed v2 report: {path}")
+    if len(payload.get("summary", [])) != 24 or len(payload.get("seed_details", [])) != 72:
+        raise ValueError(f"native-vs-English report has the wrong row counts: {path}")
+    return payload
+
+
+def _native_en_placeholder_report() -> dict[str, Any]:
+    """Return blank rows until local reportable evidence exists."""
+    summary: list[dict[str, Any]] = []
+    details: list[dict[str, Any]] = []
+    for endpoint in ("standalone", "merged_cv", "merged_final"):
+        datasets = ("d3tec", "androids_interview", "cmdc", "turkish") if endpoint == "standalone" else ("merged",)
+        for dataset in datasets:
+            for backbone in ("qwen", "gemma4"):
+                for head in ("logreg", "xgb_optuna100"):
+                    row = {
+                        "endpoint": endpoint,
+                        "dataset": dataset,
+                        "backbone": backbone,
+                        "head": head,
+                        "aggregation": "pending local evidence",
+                        "seed_count": 3,
+                        "provenance_key": f"native-en-text-heads-v2-20260822|{endpoint}|{dataset}|{backbone}|{head}",
+                        "provenance_status": "pending_local_evidence",
+                        **{metric: None for metric in NATIVE_EN_SUMMARY_METRICS},
+                    }
+                    summary.append(row)
+                    for seed in (7, 1337, 2024):
+                        details.append({
+                            "endpoint": endpoint,
+                            "dataset": "daic" if endpoint == "merged_final" else dataset,
+                            "backbone": backbone,
+                            "head": head,
+                            "seed": seed,
+                            "native_macro_f1": None,
+                            "english_macro_f1": None,
+                            "delta_macro_f1": None,
+                            "native_positive_f1": None,
+                            "english_positive_f1": None,
+                            "delta_positive_f1": None,
+                            "split_seed": 1337,
+                            "head_seed": 1337,
+                            "head_protocol": "native_en_text_heads_v2",
+                            "evaluation_view": "harmonized_all_windows_full_coverage",
+                            "aggregation": "pending local evidence",
+                            "status": "pending_local_evidence",
+                            "native_provenance": [],
+                            "english_provenance": [],
+                        })
+    return {"schema_version": "native_en_text_heads_v2_report.v1", "status": "pending", "summary": summary, "seed_details": details}
+
+
+def _native_en_report_or_placeholder(report_path: Path | None = None) -> dict[str, Any]:
+    return _load_native_en_report(report_path) or _native_en_placeholder_report()
+
+
+def _report_provenance_text(row: dict[str, Any]) -> str:
+    return f"{row.get('provenance_key', '')} [{row.get('provenance_status', '')}]"
+
+
+def build_native_vs_english(wb: Workbook, *, report_path: Path | None = None) -> None:
+    """Render the locked 24-row summary and 72-row seed-detail report."""
+    report = _native_en_report_or_placeholder(report_path)
     ws = wb.create_sheet("Native vs EN")
+    summary_headers = [
+        "Endpoint", "Dataset / target", "Backbone", "Head",
+        "Native macro mean", "Native macro SD", "English macro mean", "English macro SD",
+        "Δ macro mean", "Δ macro SD", "Native positive mean", "Native positive SD",
+        "English positive mean", "English positive SD", "Δ positive mean", "Δ positive SD",
+        "Aggregation", "Seeds", "Provenance key / status",
+    ]
+    detail_headers = [
+        "Endpoint", "Dataset / target", "Backbone", "Head", "Training seed",
+        "Native macro-F1", "English macro-F1", "Δ macro-F1", "Native positive-F1",
+        "English positive-F1", "Δ positive-F1", "Split seed", "Head seed", "Head protocol",
+        "Evaluation view", "Aggregation", "Native provenance", "English provenance", "Status",
+    ]
     _widths(ws, {
-        "A": 22, "B": 18, "C": 17,
-        "D": 14, "E": 14, "F": 16,
-        "G": 14, "H": 14, "I": 16, "J": 24,
+        "A": 18, "B": 24, "C": 12, "D": 20,
+        "E": 15, "F": 14, "G": 16, "H": 15, "I": 13, "J": 12,
+        "K": 17, "L": 16, "M": 18, "N": 17, "O": 15, "P": 14,
+        "Q": 46, "R": 9, "S": 72,
     })
-    _title(ws, "Native vs English-translated transcripts — macro-F1", 10)
+    _title(ws, "Native versus English text-only LogReg and Optuna-100 XGBoost", len(summary_headers))
     _note(
         ws, 2,
-        "Paired native and English-translated transcript conditions for Qwen and Gemma 4. "
-        "Delta = EN minus native; positive means translation improved macro-F1. Teacher-forced "
-        "and LogReg use the harmonized best_model evidence; XGBoost uses the standardized "
-        "100-trial Optuna search, seed 1337. D3TEC/Androids = pooled 5-fold subject-level; "
-        "CMDC/Turkish = 5-fold mean (train_val). Audio-only is omitted because transcript "
-        "translation does not create a distinct audio-only experiment. Per-cell evidence is in "
-        "the Provenance sheet.",
-        10, height=92,
+        "This sheet is generated from the deterministic v2 report. It contains 24 paired summary rows "
+        "and 72 seed-detail rows. Delta = English minus native. All displayed metric cells remain blank "
+        "until the corresponding attempts are locally validated and REPORTABLE; the Provenance sheet "
+        "contains the attempt, evaluation, artifact, job, and source references.",
+        len(summary_headers), height=60,
     )
-    _header_row(ws, 4, [
-        "Dataset", "Modality", "Method",
-        "Qwen native", "Qwen EN", "Qwen Δ (EN − native)",
-        "Gemma native", "Gemma EN", "Gemma Δ (EN − native)",
-        "Direction",
-    ])
-    row = 5
-    for dataset in ("D3TEC", "Androids Interview", "CMDC", "Turkish"):
-        for modality in ("Audio + Text", "Text only"):
-            native_lr = STANDALONE_HEADS[(dataset, modality)][0]
-            comparisons = (
-                (
-                    "Teacher-forced",
-                    STANDALONE_QWEN[(dataset, modality)],
-                    EN_TF[(dataset, modality)][0],
-                    GEMMA_NATIVE_TF[(dataset, modality)],
-                    EN_TF[(dataset, modality)][1],
-                ),
-                (
-                    "LogReg head",
-                    native_lr,
-                    EN_LR[(dataset, modality)][0],
-                    GEMMA_NATIVE_LR[(dataset, modality)],
-                    EN_LR[(dataset, modality)][1],
-                ),
-                (
-                    "XGBoost",
-                    QWEN_OPTUNA[(dataset, modality)],
-                    EN_XGB[(dataset, modality)][0],
-                    GEMMA_OPTUNA[(dataset, modality)],
-                    EN_XGB[(dataset, modality)][1],
-                ),
-            )
-            for method, q_native, q_en, g_native, g_en in comparisons:
-                q_delta = q_en - q_native
-                g_delta = g_en - g_native
-                _body_cell(ws, row, 1, dataset)
-                _body_cell(ws, row, 2, modality)
-                _body_cell(ws, row, 3, method)
-                _body_cell(ws, row, 4, q_native, fmt="0.0000")
-                _body_cell(ws, row, 5, q_en, fmt="0.0000")
-                _delta_cell(ws, row, 6, q_delta)
-                _body_cell(ws, row, 7, g_native, fmt="0.0000")
-                _body_cell(ws, row, 8, g_en, fmt="0.0000")
-                _delta_cell(ws, row, 9, g_delta)
-                if abs(q_delta) < 0.03 and abs(g_delta) < 0.03:
-                    direction = "~tie for both"
-                elif q_delta >= 0.03 and g_delta >= 0.03:
-                    direction = "EN better for both"
-                elif q_delta <= -0.03 and g_delta <= -0.03:
-                    direction = "Native better for both"
-                elif q_delta > g_delta:
-                    direction = "EN helps Qwen more"
-                else:
-                    direction = "EN helps Gemma more"
-                _body_cell(ws, row, 10, direction)
-                row += 1
+    _section(ws, 4, "24-row paired summary", len(summary_headers))
+    _header_row(ws, 5, summary_headers)
+    row = 6
+    for item in report["summary"]:
+        values = [
+            NATIVE_EN_ENDPOINT_LABELS.get(item.get("endpoint"), item.get("endpoint")),
+            NATIVE_EN_DATASET_LABELS.get(item.get("dataset"), item.get("dataset")),
+            "Gemma 4" if item.get("backbone") == "gemma4" else "Qwen",
+            NATIVE_EN_HEAD_LABELS.get(item.get("head"), item.get("head")),
+        ]
+        for column, value in enumerate(values, start=1):
+            _body_cell(ws, row, column, value)
+        for column, metric in enumerate(NATIVE_EN_SUMMARY_METRICS, start=5):
+            if "delta" in metric:
+                _delta_cell(ws, row, column, item.get(metric))
+            else:
+                _body_cell(ws, row, column, item.get(metric), fmt="0.0000")
+        _body_cell(ws, row, 17, item.get("aggregation"))
+        _body_cell(ws, row, 18, item.get("seed_count"))
+        _body_cell(ws, row, 19, _report_provenance_text(item))
+        ws.cell(row, 19).alignment = WRAP
+        row += 1
+    detail_start = row + 1
+    _section(ws, detail_start, "72-row seed detail", len(detail_headers))
+    _header_row(ws, detail_start + 1, detail_headers)
+    row = detail_start + 2
+    for item in report["seed_details"]:
+        values = [
+            NATIVE_EN_ENDPOINT_LABELS.get(item.get("endpoint"), item.get("endpoint")),
+            NATIVE_EN_DATASET_LABELS.get(item.get("dataset"), item.get("dataset")),
+            "Gemma 4" if item.get("backbone") == "gemma4" else "Qwen",
+            NATIVE_EN_HEAD_LABELS.get(item.get("head"), item.get("head")),
+            item.get("seed"), item.get("native_macro_f1"), item.get("english_macro_f1"),
+            item.get("delta_macro_f1"), item.get("native_positive_f1"), item.get("english_positive_f1"),
+            item.get("delta_positive_f1"), item.get("split_seed"), item.get("head_seed"),
+            item.get("head_protocol"), item.get("evaluation_view"), item.get("aggregation"),
+            "; ".join(
+                f"{ref.get('attempt_id')} / {','.join(ref.get('evaluation_ids', []))}"
+                for ref in item.get("native_provenance", [])
+            ),
+            "; ".join(
+                f"{ref.get('attempt_id')} / {','.join(ref.get('evaluation_ids', []))}"
+                for ref in item.get("english_provenance", [])
+            ),
+            item.get("status"),
+        ]
+        for column, value in enumerate(values, start=1):
+            if column in (8, 11):
+                _delta_cell(ws, row, column, value)
+            elif column in (6, 7, 9, 10):
+                _body_cell(ws, row, column, value, fmt="0.0000")
+            else:
+                _body_cell(ws, row, column, value)
+        for column in (17, 18):
+            ws.cell(row, column).alignment = WRAP
+        row += 1
     _note(
-        ws, row,
-        "Direction uses |Δ| < 0.03 as a practical tie for the compact label only; the exact "
-        "deltas remain visible. This is descriptive and is not a significance test.",
-        10, height=42,
+        ws, row + 1,
+        "The aggregation conventions are locked by the execution plan: D3TEC/Androids use pooled "
+        "subject-level predictions, CMDC/Turkish use unweighted five-fold means, merged CV uses an "
+        "unweighted dataset mean within fold followed by a five-fold mean, and final merged results "
+        "use the DAIC subject-level evaluation. Missing evidence is shown as blank, never as zero.",
+        len(detail_headers), height=48,
     )
-    ws.freeze_panes = "A5"
+    ws.freeze_panes = "A6"
 
 
 # --------------------------------------------------------------------------- sheets
@@ -1656,7 +1751,46 @@ def build_merged_vs_standalone(wb: Workbook) -> None:
     ws.freeze_panes = "A4"
 
 
-def build_provenance(wb: Workbook, *, detailed: bool) -> None:
+def build_native_en_provenance(ws, put, *, report_path: Path | None = None) -> None:
+    """Add report-backed provenance rows for every v2 summary metric."""
+    report = _native_en_report_or_placeholder(report_path)
+    source_path = str(report_path or NATIVE_EN_REPORT_PATH)
+    metric_labels = {
+        "native_macro_mean": "Native macro mean",
+        "native_macro_sd": "Native macro sample SD",
+        "english_macro_mean": "English macro mean",
+        "english_macro_sd": "English macro sample SD",
+        "delta_macro_mean": "English-minus-native macro mean",
+        "delta_macro_sd": "English-minus-native macro sample SD",
+        "native_positive_mean": "Native positive-F1 mean",
+        "native_positive_sd": "Native positive-F1 sample SD",
+        "english_positive_mean": "English positive-F1 mean",
+        "english_positive_sd": "English positive-F1 sample SD",
+        "delta_positive_mean": "English-minus-native positive-F1 mean",
+        "delta_positive_sd": "English-minus-native positive-F1 sample SD",
+    }
+    for item in report["summary"]:
+        dataset = NATIVE_EN_DATASET_LABELS.get(item.get("dataset"), item.get("dataset"))
+        modality = f"{NATIVE_EN_ENDPOINT_LABELS.get(item.get('endpoint'), item.get('endpoint'))} / {'Gemma 4' if item.get('backbone') == 'gemma4' else 'Qwen'}"
+        method = NATIVE_EN_HEAD_LABELS.get(item.get("head"), item.get("head"))
+        source = f"report {source_path}; provenance key {item.get('provenance_key')}"
+        aggregation = f"{item.get('aggregation')}; evaluation view harmonized_all_windows_full_coverage; namespace headline/binary_strict"
+        verification = str(item.get("provenance_status"))
+        for metric in NATIVE_EN_SUMMARY_METRICS:
+            put(
+                "Native vs EN v2",
+                dataset,
+                modality,
+                f"{method} — {metric_labels[metric]}",
+                item.get(metric),
+                source,
+                aggregation,
+                source_path,
+                verification,
+            )
+
+
+def build_provenance(wb: Workbook, *, detailed: bool, native_en_report_path: Path | None = None) -> None:
     ws = wb.create_sheet("Provenance")
     widths = {"A": 13, "B": 11, "C": 14, "D": 12, "E": 13, "F": 52, "G": 40, "H": 30, "I": 40}
     _widths(ws, widths)
@@ -1835,6 +1969,7 @@ def build_provenance(wb: Workbook, *, detailed: bool) -> None:
     build_optuna100_provenance(ws, put)
     build_en_merged_gemma_provenance(ws, put)
     build_daic_officialdev_provenance(ws, put)
+    build_native_en_provenance(ws, put, report_path=native_en_report_path)
 
     ws.freeze_panes = "A3"
 
@@ -2253,8 +2388,14 @@ def main() -> None:
                         help="include XGBoost Optuna and Subject-OS columns/rows; write the detailed workbook")
     parser.add_argument("--validate-selected", default=None,
                         help="cross-check an explicit selected-results JSON against workbook cells; never rewrites cells")
+    parser.add_argument(
+        "--native-en-report",
+        default=str(NATIVE_EN_REPORT_PATH),
+        help="deterministic v2 report JSON used for the Native vs EN sheet",
+    )
     args = parser.parse_args()
     detailed = args.detailed
+    native_en_report_path = Path(args.native_en_report)
 
     if args.validate_selected is not None:
         cell_values: dict[tuple[str, str], float | None] = {
@@ -2307,9 +2448,9 @@ def main() -> None:
     wb.remove(wb.active)
     build_summary(wb, detailed=detailed)
     build_gemma_vs_qwen(wb)
-    build_native_vs_english(wb)
+    build_native_vs_english(wb, report_path=native_en_report_path)
     build_packed30(wb)
-    build_provenance(wb, detailed=detailed)
+    build_provenance(wb, detailed=detailed, native_en_report_path=native_en_report_path)
     out = OUT_DETAILED if detailed else OUT
     out.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out)

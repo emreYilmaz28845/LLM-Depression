@@ -48,11 +48,18 @@ GEMMA4_VARIANTS = ("logreg_raw", "xgb_raw")
 OFFICIALDEV_PROTOCOL = "daic_official_train_inner_split_dev_evaluation"
 
 
-def resolve_prediction_backend(metadata: dict[str, Any], variant: str) -> str:
+def resolve_prediction_backend(
+    metadata: dict[str, Any], variant: str, *, protocol_backend_mode: str | None = None
+) -> str:
     """Map the extraction backend and classifier variant to the exact
     prediction-backend identity written into every prediction, metric, and
     evaluation record."""
     if str(metadata.get("model_backend", "")).strip().lower() != "gemma4":
+        if protocol_backend_mode == "native_en_text_heads_v2":
+            if variant == "logreg_raw":
+                return QWEN_LOGREG_PREDICTION_BACKEND
+            if variant == "xgb_raw":
+                return QWEN_XGB_PREDICTION_BACKEND
         if (
             str(metadata.get("evaluation_provenance", {}).get("evaluation_protocol", ""))
             == OFFICIALDEV_PROTOCOL
@@ -352,6 +359,7 @@ def run_variant(
     sampling_mode: str = LEGACY_SAMPLING_MODE,
     oversampling_ratio: float | None = None,
     oversampling_seed: int = 1337,
+    protocol_backend_mode: str | None = None,
 ) -> dict[str, Any]:
     train_x, train_rows = _load_partition(cache_dir, "outer_train")
     test_x, test_rows = _load_partition(cache_dir, "final_eval")
@@ -365,7 +373,9 @@ def run_variant(
     if set(train_y.tolist()) != {0, 1}:
         raise ValueError("Training cache must contain both classes.")
     metadata = read_json(cache_dir / "extraction_metadata.json")
-    prediction_backend = resolve_prediction_backend(metadata, variant)
+    prediction_backend = resolve_prediction_backend(
+        metadata, variant, protocol_backend_mode=protocol_backend_mode
+    )
     evaluation_protocol = str(
         metadata.get("evaluation_provenance", {}).get("evaluation_protocol", "")
     )
@@ -640,6 +650,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--oversampling-ratio", type=float)
     parser.add_argument("--oversampling-seed", type=int, default=1337)
+    parser.add_argument(
+        "--protocol-backend-mode",
+        choices=("native_en_text_heads_v2",),
+        default=None,
+        help="Use method-specific Qwen backend qualifiers for the v2 text-head study.",
+    )
     return parser.parse_args()
 
 
@@ -655,6 +671,7 @@ def main() -> None:
             sampling_mode=args.sampling_mode,
             oversampling_ratio=args.oversampling_ratio,
             oversampling_seed=args.oversampling_seed,
+            protocol_backend_mode=args.protocol_backend_mode,
         )
         for variant in args.variants
     ]

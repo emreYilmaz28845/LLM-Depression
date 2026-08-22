@@ -289,15 +289,29 @@ def apply_config_overrides(config: dict[str, Any], overrides: list[str] | None) 
         path, value = parse_config_override(override)
         cursor: Any = resolved
         for part in path[:-1]:
-            if not isinstance(cursor, dict) or part not in cursor:
+            if isinstance(cursor, dict):
+                if part not in cursor:
+                    raise ValueError(f"Unknown config override path: {'.'.join(path)}")
+                cursor = cursor[part]
+            elif isinstance(cursor, list) and part.isdigit():
+                index = int(part)
+                if index >= len(cursor):
+                    raise ValueError(f"Unknown config override path: {'.'.join(path)}")
+                cursor = cursor[index]
+            else:
                 raise ValueError(f"Unknown config override path: {'.'.join(path)}")
-            cursor = cursor[part]
         leaf_key = path[-1]
-        if not isinstance(cursor, dict):
+        if isinstance(cursor, dict):
+            if leaf_key not in cursor and tuple(path) not in OPTIONAL_OVERRIDE_PATHS:
+                raise ValueError(f"Unknown config override path: {'.'.join(path)}")
+            cursor[leaf_key] = expand_env_vars(value)
+        elif isinstance(cursor, list) and leaf_key.isdigit():
+            index = int(leaf_key)
+            if index >= len(cursor):
+                raise ValueError(f"Unknown config override path: {'.'.join(path)}")
+            cursor[index] = expand_env_vars(value)
+        else:
             raise ValueError(f"Unknown config override path: {'.'.join(path)}")
-        if leaf_key not in cursor and tuple(path) not in OPTIONAL_OVERRIDE_PATHS:
-            raise ValueError(f"Unknown config override path: {'.'.join(path)}")
-        cursor[leaf_key] = expand_env_vars(value)
     return resolved
 
 

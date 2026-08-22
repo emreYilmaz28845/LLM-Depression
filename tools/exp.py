@@ -678,6 +678,20 @@ def _cmd_submit(args) -> int:
     return 0
 
 
+def _cmd_submit_merged(args) -> int:
+    """Route the locked native/English text-head graph through its manager."""
+
+    from tools.native_en_text_heads import command_submit
+
+    return command_submit(args)
+
+
+def _cmd_derive_final_epochs(args) -> int:
+    from tools.native_en_text_heads import command_derive_final_epochs
+
+    return command_derive_final_epochs(args)
+
+
 def _cmd_verify_deployment(args) -> int:
     deployment_id = args.deployment_id
     expected_commit = getattr(args, "expected_git_commit", None)
@@ -1173,28 +1187,28 @@ def _cmd_collect(args) -> int:
         if chosen is None:
             print("ERROR: no recorded submission contract found; pass --fold-dir or run exp submit first", file=sys.stderr)
             return 1
-        fold_dir = chosen["fold_dir"]
+        fold_dir = chosen.get("remote_evidence_root") or chosen["fold_dir"]
         contract_holder = chosen
         if attempt_id is None:
             attempt_id = chosen.get("attempt_id")
 
     local_fold = getattr(args, "output", None)
     if not local_fold:
-        if contract_holder.get("local_fold_rel"):
-            local_fold = str(PROJECT_ROOT / contract_holder["local_fold_rel"])
+        local_rel = contract_holder.get("local_evidence_rel") or contract_holder.get("local_fold_rel")
+        if local_rel:
+            local_fold = str(PROJECT_ROOT / local_rel)
         elif attempt_id:
             local_fold = str(PROJECT_ROOT / "output_model" / "collected" / attempt_id / Path(fold_dir).name)
         else:
             print("ERROR: --output required when the local destination cannot be resolved", file=sys.stderr)
             return 1
 
+    custom_root = bool(contract_holder.get("remote_evidence_root"))
     try:
-        validate_fold_path(fold_dir)
+        plan = plan_collection(fold_dir, local_fold, allow_non_fold_root=custom_root)
     except CollectionError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
-
-    plan = plan_collection(fold_dir, local_fold)
     evidence_dir = PROJECT_ROOT / "outputs" / "exp_collect" / (attempt_id or "adhoc")
     evidence_dir.mkdir(parents=True, exist_ok=True)
     (evidence_dir / "plan.json").write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -1256,7 +1270,10 @@ def _resolve_attempt_fold_dir(args):
             break
         if contract is None:
             return None, None, "no recorded submission contract found; pass --attempt-id or --fold-dir"
-        fold_dir = str(PROJECT_ROOT / contract["local_fold_rel"])
+        local_rel = contract.get("local_evidence_rel") or contract.get("local_fold_rel")
+        if not local_rel:
+            return None, None, "submission contract has no local evidence path"
+        fold_dir = str(PROJECT_ROOT / local_rel)
         attempt_id = contract.get("attempt_id")
     try:
         validate_fold_path(str(fold_dir))
@@ -1277,6 +1294,29 @@ def _cmd_validate(args) -> int:
     if err:
         print(f"ERROR: {err}", file=sys.stderr)
         return 1
+    if contract and contract.get("kind") != "standalone_backbone":
+        from src.native_en_text_heads_tracking import (
+            HeadTrackingError,
+            validate_head_attempt,
+            validate_job_attempt,
+        )
+
+        validator = (
+            validate_head_attempt
+            if contract.get("job_type") == "hidden_classifier"
+            else validate_job_attempt
+        )
+        try:
+            result = validator(fold_dir)
+        except (HeadTrackingError, OSError, ValueError) as exc:
+            print(f"VALIDATE FAILED: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(result, indent=2, sort_keys=True))
+        if not result.get("ok"):
+            print("VALIDATE FAILED", file=sys.stderr)
+            return 1
+        print(f"VALIDATE OK (state: {result.get('state')})")
+        return 0
     qualifiers = (contract or {}).get("qualifiers", {})
     try:
         result = validate_attempt(
@@ -1325,12 +1365,37 @@ def _cmd_validate(args) -> int:
 
 
 def _cmd_finish(args) -> int:
+    _fold_dir, contract, _err = _resolve_attempt_fold_dir(args)
+    if _err:
+        print(f"ERROR: {_err}", file=sys.stderr)
+        return 1
+    if contract and contract.get("kind") != "standalone_backbone":
+        from src.native_en_text_heads_tracking import (
+            HeadTrackingError,
+            finish_head_attempt,
+            finish_job_attempt,
+        )
+
+        finisher = (
+            finish_head_attempt
+            if contract.get("job_type") == "hidden_classifier"
+            else finish_job_attempt
+        )
+        try:
+            result = finisher(_fold_dir)
+        except (HeadTrackingError, OSError, ValueError) as exc:
+            print(f"FINISH FAILED: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(result, indent=2, sort_keys=True))
+        if not result.get("ok"):
+            print(f"FINISH INCOMPLETE — next action: {result.get('next_action', 'validate again')}", file=sys.stderr)
+            return 1
+        print(f"FINISH OK: {result.get('state')}")
+        return 0
+
     from src.experiment_tracking.validate import finish_gates
 
-    fold_dir, contract, err = _resolve_attempt_fold_dir(args)
-    if err:
-        print(f"ERROR: {err}", file=sys.stderr)
-        return 1
+    fold_dir, contract, err = _fold_dir, contract, _err
     qualifiers = (contract or {}).get("qualifiers", {})
     result = finish_gates(
         fold_dir,
@@ -1483,6 +1548,31 @@ def main() -> int:
     submit_parser.add_argument("--dry-run", action="store_true", help="print the full resolved contract and exact commands without mutation")
     submit_parser.add_argument("--execute", action="store_true", help="verify deployment, transfer context, and submit through Slurm")
     submit_parser.set_defaults(func=_cmd_submit)
+
+    merged_submit_parser = subparsers.add_parser(
+        "submit-merged",
+        help="submit the locked native-versus-English text-only head matrix (dry-run first)",
+    )
+    merged_submit_parser.add_argument("slug", help="managed v2 lane slug")
+    merged_submit_parser.add_argument("--stage", choices=("smoke", "production"), default="smoke")
+    merged_submit_parser.add_argument("--deployment-id", default=None)
+    merged_submit_parser.add_argument("--scheduler-host", default="ozu647717@alogin2.bsc.es")
+    merged_submit_parser.add_argument(
+        "--phase",
+        choices=("all", "cv", "final"),
+        default="all",
+        help="production: submit CV first, then final after derive-final-epochs; smoke uses all",
+    )
+    merged_submit_parser.add_argument("--dry-run", action="store_true")
+    merged_submit_parser.add_argument("--execute", action="store_true")
+    merged_submit_parser.set_defaults(func=_cmd_submit_merged)
+
+    epoch_parser = subparsers.add_parser(
+        "derive-final-epochs",
+        help="freeze rounded-median merged-CV epochs before final native/English submission",
+    )
+    epoch_parser.add_argument("slug", help="managed v2 lane slug")
+    epoch_parser.set_defaults(func=_cmd_derive_final_epochs)
 
     collect_parser = subparsers.add_parser("collect", help="collect compact evidence from MN5 (dry-run first)")
     collect_parser.add_argument("slug", nargs="?", default=None, help="experiment slug")
