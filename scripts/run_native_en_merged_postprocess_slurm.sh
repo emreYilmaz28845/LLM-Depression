@@ -69,7 +69,7 @@ fi
 CMD=(python -m src.merged.postprocess --config "$CONFIG" --stage "$STAGE" --fold "$FOLD" \
     --run-id "$RUN_ID" --checkpoint-dir "$CHECKPOINT_DIR")
 if [ -n "$SUBJECTS_PER_CLASS" ]; then CMD+=(--subjects-per-class "$SUBJECTS_PER_CLASS"); fi
-for token in "${OVERRIDE_ARGS[@]}"; do CMD+=(--override "$token"); done
+for token in "${OVERRIDE_ARGS[@]}"; do CMD+=(--override="$token"); done
 "${CMD[@]}"
 
 ARTIFACTS=(postprocess_identity.json resolved_merged_config.json slurm_provenance.json postprocess_complete.json \

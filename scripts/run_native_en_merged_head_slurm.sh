@@ -70,7 +70,7 @@ CMD=(python -m src.merged.heads --config "$CONFIG" --stage "$STAGE" --fold "$FOL
     --run-id "$RUN_ID" --features-dir "$FEATURES_DIR" --method "$METHOD" \
     --output-root "$ATTEMPT_DIR")
 if [ -n "$TRIALS" ]; then CMD+=(--trials "$TRIALS"); fi
-for token in "${OVERRIDE_ARGS[@]}"; do CMD+=(--override "$token"); done
+for token in "${OVERRIDE_ARGS[@]}"; do CMD+=(--override="$token"); done
 echo "Merged head command: ${CMD[*]}"
 "${CMD[@]}"
 
