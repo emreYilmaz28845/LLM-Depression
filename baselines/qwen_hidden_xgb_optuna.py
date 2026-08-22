@@ -492,6 +492,7 @@ def build_study_config(
     oversampling_seed: int = 1337,
     protocol_profile: str | None = None,
     prediction_backend: str | None = None,
+    allow_smoke_trials: bool = False,
 ) -> tuple[dict[str, Any], str]:
     try:
         import optuna
@@ -505,7 +506,8 @@ def build_study_config(
         from src.features import optuna100_policy as policy
 
         search_space = policy.resolved_search_space()
-        policy.assert_production_target(target_trials)
+        if not (allow_smoke_trials and int(target_trials) == 2):
+            policy.assert_production_target(target_trials)
     else:
         search_space = resolved_oversampling_search_space(search_profile, sampling_mode)
     if protocol_profile is not None or sampling_mode == LEGACY_SAMPLING_MODE:
@@ -744,6 +746,7 @@ def run_optuna_raw_xgb(
     oversampling_ratio: float | None = None,
     oversampling_seed: int = 1337,
     protocol_profile: str | None = None,
+    allow_smoke_trials: bool = False,
 ) -> dict[str, Any]:
     if objective_name not in SUPPORTED_OBJECTIVES:
         raise ValueError(f"Unsupported objective {objective_name!r}; expected one of {SUPPORTED_OBJECTIVES}.")
@@ -766,7 +769,9 @@ def run_optuna_raw_xgb(
     prediction_backend: str | None = None
     protocol_profile_value: str | None = None
     if protocol_profile == policy.PROTOCOL_PROFILE:
-        policy.assert_production_target(target_trials)
+        if int(target_trials) != policy.PRODUCTION_TARGET_TRIALS:
+            if not (allow_smoke_trials and int(target_trials) == 2):
+                policy.assert_production_target(target_trials)
         policy.assert_protocol_settings(
             inner_folds=inner_folds,
             seed=seed,
@@ -1126,6 +1131,7 @@ def main() -> None:
         oversampling_ratio=args.oversampling_ratio,
         oversampling_seed=args.oversampling_seed,
         protocol_profile=args.protocol_profile or None,
+        allow_smoke_trials=bool(getattr(args, "allow_smoke_trials", False)),
     )
     print(json.dumps(summary, indent=2), flush=True)
 
