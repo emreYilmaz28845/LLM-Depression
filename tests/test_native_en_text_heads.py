@@ -231,7 +231,6 @@ def test_study_merged_output_roots_are_distinct_and_new() -> None:
 
 
 def test_manifest_builder_uses_resolve_split_seed() -> None:
-    from scripts.build_symmetric_merged_manifest import main as _manifest_main  # noqa: F401
     import inspect
 
     source = Path(
@@ -239,3 +238,52 @@ def test_manifest_builder_uses_resolve_split_seed() -> None:
     ).read_text(encoding="utf-8")
     assert "resolve_split_seed(config)" in source
     assert 'args.seed if args.seed is not None else resolve_split_seed(config)' in source
+
+
+class TestMergedOptunaSmokeGate:
+    def _features(self, tmp_path: Path) -> Path:
+        return tmp_path / "missing_features"
+
+    def test_production_refuses_non_100_target(self, tmp_path: Path) -> None:
+        from src.merged.optuna100 import run_merged_optuna100
+
+        with pytest.raises(ValueError, match="exactly"):
+            run_merged_optuna100(
+                features_dir=self._features(tmp_path),
+                output_dir=tmp_path / "xgb_optuna100_harmonized_v1",
+                merged_config_path=tmp_path / "merged.yaml",
+                stage="cv",
+                fold=0,
+                run_id="r",
+                target_trials=50,
+            )
+
+    def test_smoke_allows_exactly_two_trials_and_passes_gate(self, tmp_path: Path) -> None:
+        from src.merged.optuna100 import run_merged_optuna100
+
+        # The gate must pass (no ValueError) and fail later on missing
+        # feature metadata, proving the two-trial smoke route opens.
+        with pytest.raises(FileNotFoundError):
+            run_merged_optuna100(
+                features_dir=self._features(tmp_path),
+                output_dir=tmp_path / "xgb_optuna100_harmonized_v1",
+                merged_config_path=tmp_path / "merged.yaml",
+                stage="smoke",
+                fold=0,
+                run_id="r",
+                target_trials=2,
+            )
+
+    def test_two_trials_refused_outside_smoke_stage(self, tmp_path: Path) -> None:
+        from src.merged.optuna100 import run_merged_optuna100
+
+        with pytest.raises(ValueError, match="exactly"):
+            run_merged_optuna100(
+                features_dir=self._features(tmp_path),
+                output_dir=tmp_path / "xgb_optuna100_harmonized_v1",
+                merged_config_path=tmp_path / "merged.yaml",
+                stage="final",
+                fold=0,
+                run_id="r",
+                target_trials=2,
+            )
