@@ -67,6 +67,46 @@ LOGGER = get_logger(__name__)
 _model_config = model_config
 
 
+_MERGED_TRACKING_FILES = frozenset(
+    {
+        "run_config.yaml",
+        "metadata.json",
+        "status.json",
+        "jobs.jsonl",
+        "artifacts.json",
+        "evaluations.json",
+    }
+)
+_MANAGED_CHILD_ATTEMPT_FILES = _MERGED_TRACKING_FILES
+
+
+def _is_managed_child_attempt(path: Path) -> bool:
+    """Recognize a child head initialized by the managed v2 orchestration."""
+
+    return path.is_dir() and all(
+        (path / name).is_file() for name in _MANAGED_CHILD_ATTEMPT_FILES
+    )
+
+
+def _unexpected_incomplete_output_entries(run_root: Path) -> list[Path]:
+    """Return entries that make an incomplete merged output unsafe to resume.
+
+    Managed merged head attempts live below the training fold root so their
+    parent checkpoint can be recorded in the same output tree.  They are safe
+    to coexist with the parent's tracking sidecars; unrelated files and
+    directories remain collision errors.
+    """
+
+    if not run_root.exists():
+        return []
+    return [
+        path
+        for path in run_root.iterdir()
+        if path.name not in _MERGED_TRACKING_FILES
+        and not _is_managed_child_attempt(path)
+    ]
+
+
 def _relaunch_four_gpu_slurm_worker() -> None:
     """Guard against a stale plain-Python batch-script submission.
 
@@ -315,17 +355,7 @@ def train_merged_fold(
                 archive_root,
             )
         accelerator.wait_for_everyone()
-    tracking_files = {
-        "run_config.yaml",
-        "metadata.json",
-        "status.json",
-        "jobs.jsonl",
-        "artifacts.json",
-        "evaluations.json",
-    }
-    if run_root.exists() and any(
-        path.name not in tracking_files for path in run_root.iterdir()
-    ) and not complete_path.is_file():
+    if _unexpected_incomplete_output_entries(run_root) and not complete_path.is_file():
         raise ValueError(f"Refusing to overwrite an incomplete merged training output: {run_root}")
     ensure_dir(run_root)
     ensure_dir(logs_dir)

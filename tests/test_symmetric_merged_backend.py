@@ -111,6 +111,26 @@ class TestGemmaMergedConfigs:
 
 
 class TestMergedTrainBackendDispatch:
+    def test_incomplete_output_guard_allows_managed_child_attempts_only(self, tmp_path: Path) -> None:
+        from src.merged.train import _unexpected_incomplete_output_entries
+
+        child = tmp_path / "managed_head_attempt"
+        child.mkdir()
+        for name in (
+            "run_config.yaml",
+            "metadata.json",
+            "status.json",
+            "jobs.jsonl",
+            "artifacts.json",
+            "evaluations.json",
+        ):
+            (child / name).write_text("{}\n", encoding="utf-8")
+        assert _unexpected_incomplete_output_entries(tmp_path) == []
+
+        unexpected = tmp_path / "partial_best_model"
+        unexpected.mkdir()
+        assert _unexpected_incomplete_output_entries(tmp_path) == [unexpected]
+
     def test_train_uses_runtime_collator_factory_and_backend_preparation(self) -> None:
         source = (ROOT / "src/merged/train.py").read_text(encoding="utf-8")
         assert "from src.model.collator import Qwen2AudioSFTCollator" not in source

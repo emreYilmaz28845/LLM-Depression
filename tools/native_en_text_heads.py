@@ -7,6 +7,7 @@ import argparse
 import base64
 import json
 import math
+import re
 import shlex
 import statistics
 import subprocess
@@ -113,20 +114,42 @@ def manifest_paths(root: Path, condition: str, backbone: str, dataset: str) -> t
     return manifest_dir / DATASET_MANIFEST_BASENAMES[dataset], split_dir / f"{dataset}_manifest_metadata.json"
 
 
-def merged_root(root: Path, condition: str, backbone: str) -> Path:
-    return root / "merged" / condition / backbone
+def merged_root(
+    root: Path, condition: str, backbone: str, output_suffix: str | None = None
+) -> Path:
+    suffix = _normalize_output_suffix(output_suffix)
+    base = root / "merged"
+    if suffix:
+        base = base / suffix
+    return base / condition / backbone
 
 
-def campaign(stage: str, condition: str, backbone: str) -> str:
+def _normalize_output_suffix(output_suffix: str | None) -> str:
+    if output_suffix is None or not str(output_suffix).strip():
+        return ""
+    value = str(output_suffix).strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,31}", value):
+        raise OrchestrationError(
+            "output suffix must be 1-32 characters of letters, digits, '_' or '-'; "
+            f"got {value!r}"
+        )
+    return value
+
+
+def campaign(stage: str, condition: str, backbone: str, output_suffix: str | None = None) -> str:
     prefix = "native_en_text_heads_v2" if stage == "production" else "native_en_text_heads_v2_smoke"
+    suffix = _normalize_output_suffix(output_suffix)
+    if suffix:
+        prefix = f"{prefix}_{suffix}"
     return f"{prefix}_{condition}_{backbone}"
 
 
 def standalone_overrides(
-    *, root: Path, stage: str, condition: str, backbone: str, dataset: str, seed: int
+    *, root: Path, stage: str, condition: str, backbone: str, dataset: str, seed: int,
+    output_suffix: str | None = None,
 ) -> list[str]:
     manifest, metadata = manifest_paths(root, condition, backbone, dataset)
-    run_root = REMOTE_OUTPUT_ROOT / campaign(stage, condition, backbone) / "text_only" / dataset
+    run_root = REMOTE_OUTPUT_ROOT / campaign(stage, condition, backbone, output_suffix) / "text_only" / dataset
     values = [
         f"--set=output_dirs.manifest_dir={manifest.parent}",
         f"--set=output_dirs.split_dir={metadata.parent}",
@@ -140,12 +163,13 @@ def standalone_overrides(
 
 
 def merged_overrides(
-    *, root: Path, stage: str, condition: str, backbone: str, seed: int
+    *, root: Path, stage: str, condition: str, backbone: str, seed: int,
+    output_suffix: str | None = None,
 ) -> list[str]:
     config = load_yaml_with_overrides(PROJECT_ROOT / MERGED_CONFIGS[(condition, backbone)], [])
     values = [
-        f"--set=output_dirs.run_root={REMOTE_OUTPUT_ROOT / campaign(stage, condition, backbone) / 'text_only' / 'merged'}",
-        f"--set=output_dirs.merged_root={merged_root(root, condition, backbone)}",
+        f"--set=output_dirs.run_root={REMOTE_OUTPUT_ROOT / campaign(stage, condition, backbone, output_suffix) / 'text_only' / 'merged'}",
+        f"--set=output_dirs.merged_root={merged_root(root, condition, backbone, output_suffix)}",
         f"--set=seed={int(seed)}",
     ]
     for index, item in enumerate(config.get("components") or []):
@@ -329,11 +353,32 @@ def entry(
 
 
 def build_plan(
-    *, stage: str, deployment: dict[str, Any], experiment_id: str, preflight: dict[str, Any] | None = None
+    *,
+    stage: str,
+    deployment: dict[str, Any],
+    experiment_id: str,
+    preflight: dict[str, Any] | None = None,
+    output_suffix: str | None = None,
+    retry_from: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     validate_configs(PROJECT_ROOT)
     if stage not in {"smoke", "production"}:
         raise OrchestrationError(f"unsupported stage {stage!r}")
+    output_suffix = _normalize_output_suffix(output_suffix)
+    if retry_from is not None:
+        if retry_from.get("experiment_id") != experiment_id:
+            raise OrchestrationError(
+                "retry source plan experiment_id does not match the linked lane: "
+                f"{retry_from.get('experiment_id')!r} != {experiment_id!r}"
+            )
+        if retry_from.get("stage") != stage:
+            raise OrchestrationError(
+                f"retry source plan stage {retry_from.get('stage')!r} does not match {stage!r}"
+            )
+        if not retry_from.get("submission_complete"):
+            raise OrchestrationError("retry source plan is not a completed submission plan")
+        if not output_suffix:
+            raise OrchestrationError("retries require a fresh --output-suffix")
     root = stage_root(experiment_id, stage)
     preflight = preflight or {}
     jobs: list[dict[str, Any]] = []
@@ -341,9 +386,26 @@ def build_plan(
     by_key: dict[str, dict[str, Any]] = {}
     seeds = (1337,) if stage == "smoke" else (7, 1337, 2024)
 
+    supersedes_by_job_key: dict[str, str] = {}
+    if retry_from is not None:
+        for old_job in retry_from.get("jobs", []):
+            old_attempt_id = old_job.get("attempt_id")
+            if not old_attempt_id:
+                continue
+            for key in (old_job.get("job_key"), old_job.get("eval_job_key")):
+                if key:
+                    supersedes_by_job_key[str(key)] = str(old_attempt_id)
+
     def register(job: dict[str, Any]) -> None:
         if job["job_key"] in by_key:
             raise OrchestrationError(f"duplicate job key: {job['job_key']}")
+        supersedes_attempt_id = supersedes_by_job_key.get(str(job["job_key"]))
+        if supersedes_attempt_id:
+            job["supersedes_attempt_id"] = supersedes_attempt_id
+            if job.get("kind") == "standalone_backbone":
+                job.setdefault("context", {})["supersedes_attempt_id"] = supersedes_attempt_id
+            else:
+                job.setdefault("context_payload", {})["supersedes_attempt_id"] = supersedes_attempt_id
         by_key[job["job_key"]] = job
         jobs.append(job)
 
@@ -358,10 +420,16 @@ def build_plan(
                     logical = f"native_en_text_heads_v2_{condition}_{backbone}_{dataset}_s{seed}"
                     for fold in ((0,) if stage == "smoke" else (0, 1, 2, 3, 4)):
                         overrides = standalone_overrides(
-                            root=root, stage=stage, condition=condition, backbone=backbone, dataset=dataset, seed=seed
+                            root=root,
+                            stage=stage,
+                            condition=condition,
+                            backbone=backbone,
+                            dataset=dataset,
+                            seed=seed,
+                            output_suffix=output_suffix,
                         )
                         attempt_id = new_attempt_id(logical, str(deployment["git_commit"]))
-                        run_root = REMOTE_OUTPUT_ROOT / campaign(stage, condition, backbone) / "text_only" / dataset
+                        run_root = REMOTE_OUTPUT_ROOT / campaign(stage, condition, backbone, output_suffix) / "text_only" / dataset
                         fold_dir = run_root / logical / f"fold_{fold}"
                         context_path = root / "contexts" / attempt_id / f"fold_{fold}" / "context.json"
                         pair = pair_hashes(preflight, condition, backbone, dataset)
@@ -502,7 +570,12 @@ def build_plan(
                     logical = f"native_en_text_heads_v2_{condition}_{backbone}_merged_{merged_stage}_s{seed}"
                     folds = (0,) if stage == "smoke" or merged_stage == "final" else (0, 1, 2, 3, 4)
                     overrides = merged_overrides(
-                        root=root, stage=stage, condition=condition, backbone=backbone, seed=seed
+                        root=root,
+                        stage=stage,
+                        condition=condition,
+                        backbone=backbone,
+                        seed=seed,
+                        output_suffix=output_suffix,
                     )
                     base_config = resolved_config(relative, overrides, extra={"dataset": "merged"})
                     merged_info = next(
@@ -515,7 +588,7 @@ def build_plan(
                     protocol_manifest_hash = (merged_info.get("protocol") or {}).get("manifest_hash")
                     protocol_split_hash = (merged_info.get("protocol") or {}).get("split_hash")
                     for fold in folds:
-                        run_root = REMOTE_OUTPUT_ROOT / campaign(stage, condition, backbone) / "text_only" / "merged"
+                        run_root = REMOTE_OUTPUT_ROOT / campaign(stage, condition, backbone, output_suffix) / "text_only" / "merged"
                         train_dir = run_root / logical / f"fold_{fold}"
                         train_id = new_attempt_id(logical, str(deployment["git_commit"]))
                         tp = root / "contexts" / train_id / f"fold_{fold}" / "context.json"
@@ -559,7 +632,7 @@ def build_plan(
                         train.update({"context_payload": tctx, "config_payload": tcfg, "parent_payload": {}, "parent_attempt_id": None})
                         register(train)
                         collision_paths.update((str(train_dir), str(tp)))
-                        aux = merged_root(root, condition, backbone) / logical / f"fold_{fold}"
+                        aux = merged_root(root, condition, backbone, output_suffix) / logical / f"fold_{fold}"
                         post_id = new_attempt_id(f"{logical}_postprocess", str(deployment["git_commit"]))
                         pp = root / "contexts" / post_id / f"fold_{fold}" / "context.json"
                         post_config_path = pp.with_name("config.json")
@@ -695,6 +768,8 @@ def build_plan(
         "deployment_id": deployment["deployment_id"],
         "source_commit": deployment.get("git_commit"),
         "stage": stage,
+        "output_suffix": output_suffix or None,
+        "retry_from_deployment_id": retry_from.get("deployment_id") if retry_from else None,
         "stage_root": str(root),
         "counts": expected,
         "matrix": matrix_payload(stage),
@@ -752,7 +827,9 @@ PY
 }"""
 
 
-def manifest_map(experiment_id: str, stage: str) -> dict[str, Any]:
+def manifest_map(
+    experiment_id: str, stage: str, output_suffix: str | None = None
+) -> dict[str, Any]:
     root = stage_root(experiment_id, stage)
     result: dict[str, Any] = {}
     for condition in CONDITIONS:
@@ -764,7 +841,7 @@ def manifest_map(experiment_id: str, stage: str) -> dict[str, Any]:
                     "metadata": str(metadata),
                 }
             result[f"merged/{condition}/{backbone}"] = {
-                "merged_root": str(merged_root(root, condition, backbone))
+                "merged_root": str(merged_root(root, condition, backbone, output_suffix))
             }
     return result
 
@@ -813,6 +890,7 @@ def remote_prepare_script(
                 condition=condition,
                 backbone=backbone,
                 seed=1337,
+                output_suffix=plan.get("output_suffix"),
             )
             component_targets: list[Path] = []
             for item in config.get("components") or []:
@@ -825,8 +903,8 @@ def remote_prepare_script(
                 component_targets.extend((manifest, metadata))
             config_remote = rel_config(relative, code)
             merged_outputs = (
-                merged_root(root, condition, backbone) / "merged_manifest.jsonl",
-                merged_root(root, condition, backbone) / "merged_protocol.json",
+                merged_root(root, condition, backbone, plan.get("output_suffix")) / "merged_manifest.jsonl",
+                merged_root(root, condition, backbone, plan.get("output_suffix")) / "merged_protocol.json",
             )
             lines.append(
                 f"if [ -e {q(merged_outputs[0])} ] || [ -e {q(merged_outputs[1])} ]; then"
@@ -1351,6 +1429,9 @@ def print_plan_summary(plan: dict[str, Any], path: Path) -> None:
     print(f"experiment_id: {plan['experiment_id']}")
     print(f"deployment_id: {plan['deployment_id']}")
     print(f"source_commit: {plan['source_commit']}")
+    print(f"output_suffix: {plan.get('output_suffix') or '<canonical>'}")
+    if plan.get("retry_from_plan"):
+        print(f"retry_from_plan: {plan['retry_from_plan']}")
     print(f"stage_root: {plan['stage_root']}")
     print(f"counts: {json.dumps(plan['counts'], sort_keys=True)}")
     print(f"plan: {path}")
@@ -1373,14 +1454,40 @@ def _load_plan_for_status(slug: str | None, stage: str, deployment_id: str | Non
     return plan
 
 
+def _load_retry_source(
+    path_value: str | None, *, stage: str, experiment_id: str
+) -> dict[str, Any] | None:
+    if not path_value:
+        return None
+    path = Path(path_value)
+    if not path.is_file():
+        raise OrchestrationError(f"retry source plan does not exist: {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("stage") != stage or payload.get("experiment_id") != experiment_id:
+        raise OrchestrationError(
+            "retry source plan does not match the requested lane/stage: "
+            f"experiment_id={payload.get('experiment_id')!r}, stage={payload.get('stage')!r}"
+        )
+    payload["_source_plan_path"] = str(path)
+    return payload
+
+
 def command_plan(args: argparse.Namespace) -> int:
     try:
         _worktree, _pin, deployment = load_deployment(args.slug, args.deployment_id, execute=False)
+        experiment_id = str(deployment.get("experiment_id") or args.slug)
+        retry_from = _load_retry_source(
+            getattr(args, "retry_from", None), stage=args.stage, experiment_id=experiment_id
+        )
         plan = build_plan(
             stage=args.stage,
             deployment=deployment,
-            experiment_id=str(deployment.get("experiment_id") or args.slug),
+            experiment_id=experiment_id,
+            output_suffix=getattr(args, "output_suffix", None),
+            retry_from=retry_from,
         )
+        if retry_from:
+            plan["retry_from_plan"] = retry_from["_source_plan_path"]
         add_plan_indexes(plan)
         path = save_plan(plan, args.stage)
     except (OrchestrationError, ValueError, OSError) as exc:
@@ -1406,6 +1513,11 @@ def command_submit(args: argparse.Namespace) -> int:
     try:
         _worktree, _pin, deployment = load_deployment(args.slug, args.deployment_id, execute=execute)
         experiment_id = str(deployment.get("experiment_id") or args.slug)
+        retry_from = _load_retry_source(
+            getattr(args, "retry_from", None), stage=args.stage, experiment_id=experiment_id
+        )
+        if retry_from and args.stage == "production" and phase == "final":
+            raise OrchestrationError("retry source plans are supported for a new CV/all submission, not final phase")
         if execute:
             transfer = RemoteRunner(host=DEFAULT_TRANSFER_HOST)
             verified = verify_deployment(
@@ -1425,7 +1537,11 @@ def command_submit(args: argparse.Namespace) -> int:
                 stage=args.stage,
                 deployment=deployment,
                 experiment_id=experiment_id,
+                output_suffix=getattr(args, "output_suffix", None),
+                retry_from=retry_from,
             )
+            if retry_from:
+                plan["retry_from_plan"] = retry_from["_source_plan_path"]
             add_plan_indexes(plan)
             path = save_plan(plan, args.stage)
             print_plan_summary(plan, path)
@@ -1457,13 +1573,17 @@ def command_submit(args: argparse.Namespace) -> int:
                 stage=args.stage,
                 deployment=deployment,
                 experiment_id=experiment_id,
+                output_suffix=getattr(args, "output_suffix", None),
+                retry_from=retry_from,
             )
+            if retry_from:
+                plan["retry_from_plan"] = retry_from["_source_plan_path"]
             add_plan_indexes(plan)
             preflight_path = preflight_path_for(experiment_id, args.stage, str(deployment["deployment_id"]))
             prepare_script = remote_prepare_script(
                 plan,
                 deployment,
-                manifest_map(experiment_id, args.stage),
+                manifest_map(experiment_id, args.stage, plan.get("output_suffix")),
                 preflight_path,
             )
             evidence_root = PROJECT_ROOT / "outputs" / "native_en_text_heads_v2" / args.stage
@@ -1494,7 +1614,11 @@ def command_submit(args: argparse.Namespace) -> int:
                 deployment=deployment,
                 experiment_id=experiment_id,
                 preflight=preflight,
+                output_suffix=getattr(args, "output_suffix", None),
+                retry_from=retry_from,
             )
+            if retry_from:
+                plan["retry_from_plan"] = retry_from["_source_plan_path"]
             add_plan_indexes(plan)
             plan["preflight_path"] = str(preflight_path)
             plan["preflight_audit_sha256"] = preflight.get("audit_sha256")
@@ -1671,12 +1795,16 @@ def parse_args() -> argparse.Namespace:
     plan_parser.add_argument("slug")
     plan_parser.add_argument("--stage", choices=("smoke", "production"), default="smoke")
     plan_parser.add_argument("--deployment-id")
+    plan_parser.add_argument("--output-suffix", default=None)
+    plan_parser.add_argument("--retry-from", default=None, help="completed local submission plan to supersede")
     plan_parser.set_defaults(function=command_plan)
 
     submit_parser = sub.add_parser("submit", help="prepare, preflight, and submit the locked v2 graph")
     submit_parser.add_argument("slug")
     submit_parser.add_argument("--stage", choices=("smoke", "production"), default="smoke")
     submit_parser.add_argument("--deployment-id")
+    submit_parser.add_argument("--output-suffix", default=None)
+    submit_parser.add_argument("--retry-from", default=None, help="completed local submission plan to supersede")
     submit_parser.add_argument("--scheduler-host", default=DEFAULT_SCHEDULER_HOST)
     submit_parser.add_argument(
         "--phase",
