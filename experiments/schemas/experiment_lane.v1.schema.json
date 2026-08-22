@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://audiollm.local/schemas/experiment_lane.v1.schema.json",
+  "title": "experiment_lane.v1",
+  "description": "Operational identity for one managed parallel-worktree lane.",
+  "type": "object",
+  "required": [
+    "schema_version", "experiment_id", "slug", "tier", "type", "branch",
+    "worktree", "parent_branch", "parent_sha", "created_at_utc",
+    "experiment_group_path"
+  ],
+  "properties": {
+    "schema_version": { "const": "audiollm.experiment_lane.v1" },
+    "experiment_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+    "slug": { "type": "string", "minLength": 1 },
+    "tier": { "enum": [1, 2] },
+    "type": { "enum": ["competing", "complementary"] },
+    "branch": { "type": "string", "minLength": 1 },
+    "worktree": { "type": "string", "minLength": 1 },
+    "parent_branch": { "type": ["string", "null"] },
+    "parent_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "created_at_utc": { "type": "string", "minLength": 1 },
+    "experiment_group_path": { "type": ["string", "null"], "minLength": 1 }
+  },
+  "additionalProperties": false
+}

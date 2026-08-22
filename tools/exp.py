@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
 import os
+import hashlib
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -260,6 +261,51 @@ def _deploy_evidence_dir(deployment_id: str) -> Path:
     return evidence_dir
 
 
+def _load_linked_experiment_group(worktree_path: Path, pin: dict) -> dict:
+    """Load and validate the scientific group linked by an operational lane."""
+    import yaml
+    from src.experiment_tracking.constants import SCHEMA_VERSION_EXPERIMENT_LANE
+    from src.experiment_tracking.schemas import validate_experiment_group, validate_experiment_lane
+
+    definition_rel = pin.get("definition_path")
+    if not isinstance(definition_rel, str) or not definition_rel:
+        raise ValueError("lane pin has no definition_path; recreate or migrate this legacy lane")
+    lane_path = worktree_path / definition_rel
+    try:
+        lane = yaml.safe_load(lane_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"could not load lane definition {definition_rel}: {exc}") from exc
+    valid, errors = validate_experiment_lane(lane)
+    if not valid or lane.get("schema_version") != SCHEMA_VERSION_EXPERIMENT_LANE:
+        raise ValueError("invalid experiment lane: " + "; ".join(errors))
+    group_rel_value = lane.get("experiment_group_path")
+    if not group_rel_value:
+        raise ValueError(
+            f"lane {lane['experiment_id']} has no experiment_group_path; link a complete "
+            "audiollm.experiment_group.v1 definition before deploy or submit"
+        )
+    group_rel = Path(group_rel_value)
+    definitions_root = (worktree_path / "experiments" / "definitions").resolve()
+    group_path = (worktree_path / group_rel).resolve()
+    if group_rel.is_absolute() or ".." in group_rel.parts or definitions_root not in group_path.parents:
+        raise ValueError("experiment_group_path must be a relative file under experiments/definitions/")
+    if "lanes" in group_path.relative_to(definitions_root).parts:
+        raise ValueError("experiment_group_path cannot point into the operational lanes directory")
+    try:
+        raw = group_path.read_bytes()
+        group = yaml.safe_load(raw)
+    except Exception as exc:
+        raise ValueError(f"could not load experiment group {group_rel_value}: {exc}") from exc
+    valid, errors = validate_experiment_group(group)
+    if not valid:
+        raise ValueError("invalid linked experiment group: " + "; ".join(errors))
+    return {
+        "experiment_group_id": group["group_id"],
+        "experiment_group_path": group_path.relative_to(worktree_path.resolve()).as_posix(),
+        "experiment_group_sha256": hashlib.sha256(raw).hexdigest(),
+    }
+
+
 def _cmd_deploy(args) -> int:
     slug = args.slug
     allow_dirty = getattr(args, "allow_dirty", False)
@@ -281,6 +327,12 @@ def _cmd_deploy(args) -> int:
         print(f"ERROR: pin check failed: {message}", file=sys.stderr)
         return 1
 
+    try:
+        group_identity = _load_linked_experiment_group(worktree_path, pin)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
     ok, message = _capture_provenance(worktree_path)
     if not ok:
         print(f"ERROR: provenance capture failed: {message}", file=sys.stderr)
@@ -299,6 +351,9 @@ def _cmd_deploy(args) -> int:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
 
+    plan.update(group_identity)
+    plan["record"].update(group_identity)
+
     evidence_dir = _deploy_evidence_dir(plan["deployment_id"])
     plan_path = evidence_dir / "plan.json"
     plan_path.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -309,6 +364,7 @@ def _cmd_deploy(args) -> int:
     for key in (
         "experiment_id", "deployment_id", "git_commit", "branch", "git_dirty",
         "reportable_allowed", "source_manifest_sha256", "source_manifest_file_count",
+        "experiment_group_id", "experiment_group_path", "experiment_group_sha256",
         "deployed_code_path", "deployment_record_path", "runtime_root",
         "estimated_transfer_bytes",
     ):
@@ -437,11 +493,33 @@ def _cmd_submit(args) -> int:
         print(f"ERROR: pin check failed: {message}", file=sys.stderr)
         return 1
 
+    try:
+        group_identity = _load_linked_experiment_group(worktree_path, pin)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
     found = _find_deployment_record(experiment_id, getattr(args, "deployment_id", None), allow_plan=not execute)
     if isinstance(found, tuple) and len(found) == 2 and isinstance(found[0], Path):
         _record_path, deployment = found
     else:
         print(f"ERROR: {found}", file=sys.stderr)
+        return 1
+
+    for key in ("experiment_group_id", "experiment_group_path", "experiment_group_sha256"):
+        if deployment.get(key) != group_identity[key]:
+            print(
+                f"ERROR: deployment {key}={deployment.get(key)!r} does not match current lane "
+                f"{group_identity[key]!r}; deploy the reviewed scientific definition",
+                file=sys.stderr,
+            )
+            return 1
+    requested_group_id = getattr(args, "group_id", None)
+    if requested_group_id and requested_group_id != group_identity["experiment_group_id"]:
+        print(
+            f"ERROR: --group-id {requested_group_id!r} does not match linked experiment group "
+            f"{group_identity['experiment_group_id']!r}", file=sys.stderr,
+        )
         return 1
 
     # Resolve config locally with the user's scientific overrides only.
@@ -489,7 +567,7 @@ def _cmd_submit(args) -> int:
             extra_overrides=[f"--set={t}" if "=" in t and not t.startswith("--set") else t for t in user_overrides],
             scheduler_host=getattr(args, "scheduler_host", None) or DEFAULT_SCHEDULER_HOST,
             supersedes_attempt_id=getattr(args, "supersedes_attempt_id", None),
-            group_id=getattr(args, "group_id", None),
+            group_id=group_identity["experiment_group_id"],
             github_issue=os.environ.get("GITHUB_ISSUE"),
             github_pr=os.environ.get("GITHUB_PR"),
         )
@@ -710,7 +788,7 @@ def _cmd_create(args) -> int:
         experiment_id = f"{branch_suffix}-{date_str}"
 
     # Definition file path
-    definitions_dir = worktree_path / "experiments" / "definitions"
+    definitions_dir = worktree_path / "experiments" / "definitions" / "lanes"
     definition_path = definitions_dir / f"{experiment_id}.yaml"
     # Alternative: use slug as file name? Spec says tracked definitions under experiments/definitions/
     # Use experiment_id as file name, but ensure unique
@@ -722,7 +800,7 @@ def _cmd_create(args) -> int:
         errors.append(f"branch {branch} already exists")
     if worktree_path.exists():
         errors.append(f"worktree path {worktree_path} already exists")
-    definition_relpath = f"experiments/definitions/{experiment_id}.yaml"
+    definition_relpath = f"experiments/definitions/lanes/{experiment_id}.yaml"
     parent_definition = _run_git(["cat-file", "-e", f"{parent_sha}:{definition_relpath}"], cwd=project_root)
     if parent_definition.returncode == 0:
         errors.append(f"definition file {definition_relpath} already exists in parent {parent_sha[:8]}")
@@ -789,7 +867,7 @@ def _cmd_create(args) -> int:
 
     # Create definition file in the new worktree so the pin checker and the
     # eventual commit see the same tracked experiment identity.
-    definition_content = f"""schema_version: audiollm.experiment_group.v1
+    definition_content = f"""schema_version: audiollm.experiment_lane.v1
 experiment_id: {experiment_id}
 slug: {slug}
 tier: {tier}
@@ -797,7 +875,8 @@ branch: {branch}
 worktree: {worktree_path}
 parent_branch: {parent_branch or 'null'}
 parent_sha: {parent_sha}
-created_at_utc: {datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+created_at_utc: "{datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}"
+experiment_group_path: null
 """
     if tier == 1:
         definition_content += "type: competing\n"
@@ -822,6 +901,7 @@ created_at_utc: {datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
         "branch": branch,
         "parent_branch": parent_branch,
         "parent_sha": parent_sha,
+        "definition_path": definition_relpath,
         "allowed_paths": [str(worktree_path)],
         "protected_paths": [str(p) for p in PROTECTED_PATHS],
     }

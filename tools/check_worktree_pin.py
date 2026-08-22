@@ -129,11 +129,21 @@ def validate_pin(pin_data: dict, pin_path: Path, cwd: Path, target_path: Path | 
     elif branch and git_branch != branch:
         errors.append(f"checked-out branch {git_branch!r} does not equal pinned branch {branch!r}")
 
-    # Check the exact definition emitted for this experiment. Older pins may
-    # lack parent/tier fields; compare those only when the pin records them.
+    # Check the exact operational lane definition emitted for this experiment.
+    # Older pins use the original definition location and mislabeled schema;
+    # keep them usable, but new pins must point at the dedicated lane schema.
     if experiment_id:
         project_root = git_top if git_top else cwd
-        definition_path = project_root / "experiments" / "definitions" / f"{experiment_id}.yaml"
+        definition_rel = pin_data.get("definition_path")
+        if definition_rel:
+            rel_path = Path(definition_rel)
+            if rel_path.is_absolute() or ".." in rel_path.parts:
+                errors.append(f"invalid definition_path {definition_rel!r}")
+                definition_path = project_root / "__invalid_definition_path__"
+            else:
+                definition_path = project_root / rel_path
+        else:
+            definition_path = project_root / "experiments" / "definitions" / f"{experiment_id}.yaml"
         if not definition_path.is_file():
             errors.append(f"experiment definition for {experiment_id!r} not found at {definition_path}")
         else:
@@ -143,7 +153,10 @@ def validate_pin(pin_data: dict, pin_path: Path, cwd: Path, target_path: Path | 
                 errors.append(f"could not parse experiment definition {definition_path}: {exc}")
             else:
                 expected = {
-                    "schema_version": "audiollm.experiment_group.v1",
+                    "schema_version": (
+                        "audiollm.experiment_lane.v1" if definition_rel
+                        else "audiollm.experiment_group.v1"
+                    ),
                     "experiment_id": experiment_id,
                     "branch": branch,
                     "worktree": str(worktree) if worktree else None,

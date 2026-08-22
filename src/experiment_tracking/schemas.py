@@ -15,6 +15,7 @@ from .constants import (
     SCHEMA_VERSION_ARTIFACTS,
     SCHEMA_VERSION_EVALUATIONS,
     SCHEMA_VERSION_EXPERIMENT_GROUP,
+    SCHEMA_VERSION_EXPERIMENT_LANE,
     SCHEMA_VERSION_JOB_EVENT,
     SCHEMA_VERSION_METADATA,
     SCHEMA_VERSION_REPORT,
@@ -509,6 +510,42 @@ def validate_experiment_group(record: Any) -> tuple[bool, list[str]]:
     return errors.result()
 
 
+def validate_experiment_lane(record: Any) -> tuple[bool, list[str]]:
+    errors = _FieldErrors()
+    if not isinstance(record, dict):
+        errors.require(False, "experiment lane record must be an object")
+        return errors.result()
+    errors.require(
+        record.get("schema_version") == SCHEMA_VERSION_EXPERIMENT_LANE,
+        f"schema_version must be {SCHEMA_VERSION_EXPERIMENT_LANE}",
+    )
+    for key in ("experiment_id", "slug", "branch", "worktree", "parent_sha", "created_at_utc"):
+        errors.require(
+            isinstance(record.get(key), str) and bool(record[key]),
+            f"{key} must be a non-empty string",
+        )
+    errors.require(record.get("tier") in (1, 2), "tier must be 1 or 2")
+    errors.require(record.get("type") in ("competing", "complementary"),
+                   "type must be competing or complementary")
+    errors.require(
+        record.get("parent_branch") is None or isinstance(record.get("parent_branch"), str),
+        "parent_branch must be a string or null",
+    )
+    errors.require(
+        record.get("experiment_group_path") is None
+        or (isinstance(record.get("experiment_group_path"), str)
+            and bool(record["experiment_group_path"])),
+        "experiment_group_path must be a non-empty string or null",
+    )
+    if isinstance(record.get("experiment_id"), str):
+        errors.require(bool(_SAFE_ID_PATTERN.fullmatch(record["experiment_id"])),
+                       "experiment_id must use lowercase letters, digits, dots, underscores, or hyphens")
+    if isinstance(record.get("parent_sha"), str):
+        errors.require(bool(_GIT_COMMIT_PATTERN.fullmatch(record["parent_sha"])),
+                       "parent_sha must be a 40-character lowercase Git SHA")
+    return errors.result()
+
+
 def validate_report(record: Any) -> tuple[bool, list[str]]:
     errors = _FieldErrors()
     if not isinstance(record, dict):
@@ -556,6 +593,7 @@ _VALIDATORS: dict[str, Any] = {
     SCHEMA_VERSION_ARTIFACTS: validate_artifacts,
     SCHEMA_VERSION_EVALUATIONS: validate_evaluations,
     SCHEMA_VERSION_EXPERIMENT_GROUP: validate_experiment_group,
+    SCHEMA_VERSION_EXPERIMENT_LANE: validate_experiment_lane,
     SCHEMA_VERSION_REPORT: validate_report,
 }
 
