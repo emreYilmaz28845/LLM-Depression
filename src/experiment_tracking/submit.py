@@ -91,6 +91,7 @@ def resolve_contract(
     github_issue: str | None = None,
     github_pr: str | None = None,
     attempt_id: str | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Resolve the complete submission contract without touching the network."""
     if dataset != config_dict.get("dataset"):
@@ -202,6 +203,7 @@ def resolve_contract(
         "log_root_eval": log_root_eval,
         "overrides": overrides,
         "overrides_b64": encode_overrides(overrides),
+        "env_exports": dict(extra_env or {}),
         "qualifiers": {
             "evaluation_view": evaluation_view,
             "backend": backend,
@@ -251,6 +253,10 @@ def build_remote_submit_script(contract: dict[str, Any]) -> str:
     lines = [
         "set -euo pipefail",
         "export PYTHONDONTWRITEBYTECODE=1",
+    ]
+    for key, value in sorted((contract.get("env_exports") or {}).items()):
+        lines.append(f"export {key}={q(str(value))}")
+    lines += [
         f"cd {q(contract['deployed_code_path'])}",
         f"export PROJECT_ROOT={q(contract['deployed_code_path'])}",
         f"export CONFIG={q(contract['config_path_remote'])}",

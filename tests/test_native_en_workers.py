@@ -120,3 +120,67 @@ class TestVendoredDepsResolution:
         text = LOGREG_SCRIPT.read_text()
         assert "$PROJECT_ROOT/.deps/qwen_hidden" not in text
         assert "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/.deps/qwen_hidden" in text
+
+
+class TestMergedSidecarJobTypes:
+    def test_sidecar_writer_uses_valid_job_type_enum(self) -> None:
+        import tools.native_en_submit as ns2
+
+        script = ns2.render_merged_chain_script(
+            code_path="/code", derived_config_path="/cfg.yaml",
+            derived_config_sha256="c" * 64, condition="native", backbone="qwen",
+            run_id="r", stage="smoke", fold=0,
+            fold_dir="/out/fold_0", checkpoint_dir="/out/fold_0/best_model",
+            features_dir="/outs/fold_0/features", source_commit="a" * 40,
+            context_path="/ctx.json",
+        )
+        assert '"train"' in script
+        assert '"evaluation"' in script
+        assert '"hidden_classifier"' in script
+        for invalid in ("merged_train", "merged_postprocess", "merged_head"):
+            assert f'"{invalid}"' not in script
+
+
+class TestGemmaEnvForwarding:
+    def test_builder_emits_env_exports(self) -> None:
+        from src.experiment_tracking.submit import build_remote_submit_script
+
+        contract = {
+            "deployed_code_path": "/code",
+            "config_path_remote": "/code/configs/x.yaml",
+            "fold": 0,
+            "run_name": "r",
+            "overrides": [],
+            "overrides_b64": "",
+            "log_root_train": "/logs/train",
+            "context_path": "/ctx.json",
+            "env_exports": {
+                "ENV_ACTIVATE": "/gpfs/venvs/gemma4_12b_tf5_14_1/bin/activate",
+                "MODEL_PATH": "/gpfs/models/gemma-4-12B-it/707f0a3b8a3c7ad5",
+            },
+        }
+        script = build_remote_submit_script(contract)
+        assert "export ENV_ACTIVATE=/gpfs/venvs/gemma4_12b_tf5_14_1/bin/activate" in script
+        assert "export MODEL_PATH=/gpfs/models/gemma-4-12B-it/707f0a3b8a3c7ad5" in script
+
+    def test_resolve_contract_carries_extra_env(self, tmp_path) -> None:
+        from src.experiment_tracking.submit import resolve_contract
+
+        deployment = {
+            "deployment_id": "dep", "git_commit": "a" * 40,
+            "git_branch_at_deploy": "b", "git_dirty": False,
+            "source_manifest_sha256": "s" * 64,
+            "deployed_code_path": "/code",
+            "experiment_id": "exp",
+        }
+        contract = resolve_contract(
+            experiment_id="exp", deployment=deployment,
+            config_path_remote="/code/configs/main/x.yaml",
+            config_dict={"dataset": "d3tec",
+                         "evaluation": {"evaluation_view": "v",
+                                        "sample_prediction_mode": "original_teacher_forced"}},
+            fold=0, seed=1337, run_name="r", campaign="c", modality="text_only",
+            dataset="d3tec", extra_overrides=[],
+            extra_env={"MODEL_PATH": "/m"},
+        )
+        assert contract["env_exports"] == {"MODEL_PATH": "/m"}

@@ -552,9 +552,22 @@ def _cmd_submit(args) -> int:
         remote_rel = f"configs/main/{rel_config.name}"
     config_path_remote = f"{deployment['deployed_code_path']}/{remote_rel}"
 
+    env_exports: dict[str, str] = {}
+    if str(config_dict.get("model_backend", "")).strip().lower() == "gemma4":
+        gemma_env = os.environ.get("GEMMA_ENV", "/gpfs/projects/etur92/ozu647717/venvs/gemma4_12b_tf5_14_1")
+        env_exports["ENV_ACTIVATE"] = (
+            gemma_env if gemma_env.endswith("/bin/activate") else f"{gemma_env}/bin/activate"
+        )
+        model_path = os.environ.get("GEMMA4_MODEL_PATH") or str(
+            config_dict.get("model_name_or_path") or ""
+        )
+        if model_path:
+            env_exports["MODEL_PATH"] = model_path
+
     try:
         contract = resolve_contract(
             experiment_id=experiment_id,
+            extra_env=env_exports,
             deployment=deployment,
             config_path_remote=config_path_remote,
             config_dict=config_dict,
@@ -1421,6 +1434,10 @@ def _cmd_submit_merged(args) -> int:
         if collisions:
             print(f"ERROR: collision(s): {collisions}", file=sys.stderr)
             return 1
+        derived_parent = str(Path(plans[0]["derived_config_remote"]).parent)
+        proc = transfer_runner.run("mkdir -p " + shlex.quote(derived_parent))
+        if proc.returncode != 0:
+            raise DeploymentError(f"config dir mkdir failed: {proc.stderr.strip()}")
         write_remote_file_once(
             transfer_runner,
             plans[0]["derived_config_remote"],
