@@ -1,0 +1,105 @@
+schema_version: audiollm.experiment_group.v1
+group_id: native-en-text-heads-v2-20260822
+title: Text-only native versus complete-English hidden-state heads
+research_question: >-
+  Under text-only input, how do native transcripts compare with complete English
+  translations for Qwen and Gemma 4 using Logistic Regression and exactly
+  100-trial Optuna XGBoost heads in standalone and symmetric five-dataset
+  merged training?
+dataset: daic,d3tec,androids_interview,cmdc,turkish
+baseline: native transcripts with text-only Qwen or Gemma 4 backbone training
+treatment: complete accepted English translations for D3TEC, Androids, CMDC, and Turkish; DAIC remains original English
+expected_seeds:
+  - 7
+  - 1337
+  - 2024
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: method-specific-head
+  aggregation: merged_five_dataset_cv_unweighted_fold_dataset_mean
+  evaluation_view: harmonized_all_windows_full_coverage
+github_issue: null
+github_pr: null
+scope:
+  modality: text_only
+  backbones:
+    - qwen
+    - gemma4
+  transcript_conditions:
+    - native
+    - english
+  heads:
+    - logreg
+    - xgb_optuna100
+  standalone_datasets:
+    - d3tec
+    - androids_interview
+    - cmdc
+    - turkish
+  merged_components:
+    - daic
+    - d3tec
+    - androids_interview
+    - cmdc
+    - turkish
+  training_seeds:
+    - 7
+    - 1337
+    - 2024
+  split_seed: 1337
+  head_seed: 1337
+  xgb_completed_trials: 100
+endpoints:
+  primary:
+    - merged_cross_validation
+  supporting:
+    - standalone
+    - final_merged_daic
+  metrics:
+    - macro_f1
+    - positive_f1
+  evaluation_backend: original_teacher_forced
+  checkpoint_role: best_model
+  aggregation:
+    standalone_d3tec_androids: pooled_subject_level_per_seed_then_seed_mean
+    standalone_cmdc_turkish: fold_mean_per_seed_then_seed_mean
+    merged_cv: unweighted_dataset_mean_then_fold_mean_per_seed_then_seed_mean
+    final_merged_daic: subject_level_per_seed_then_seed_mean
+protocols:
+  standalone_logreg:
+    qwen: qwen_hidden_logreg_raw
+    gemma4: gemma4_hidden_logreg_raw
+  merged_logreg:
+    qwen: qwen_hidden_logreg_raw_symmetric_merged
+    gemma4: gemma4_hidden_logreg_raw_symmetric_merged
+  standalone_xgb_optuna100:
+    qwen: qwen_hidden_xgb_optuna100
+    gemma4: gemma4_hidden_xgb_optuna100
+  merged_xgb_optuna100:
+    qwen: qwen_hidden_xgb_optuna100_symmetric_merged
+    gemma4: gemma4_hidden_xgb_optuna100_symmetric_merged
+  optuna:
+    completed_trials: 100
+    inner_folds: 3
+    sampler_seed: 1337
+    model_seed: 1337
+    inner_split_seed: 1337
+    threshold: 0.5
+    sampling_mode: none
+exclusions:
+  - audio_only
+  - audio_text
+  - selective_translation_ablations
+  - extra_backbones
+  - extra_heads
+  - extra_training_seeds
+  - subject_os
+  - fixed_xgboost_headline
+  - daic_transfer_mechanism_test

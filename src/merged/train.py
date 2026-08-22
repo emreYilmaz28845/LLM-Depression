@@ -38,6 +38,7 @@ from src.merged.runtime import (
     load_records_and_protocol,
     make_final_partitions,
     make_fold_partitions,
+    merged_fold_root,
 )
 from src.model.runtime import (
     build_collator,
@@ -171,10 +172,11 @@ def train_merged_fold(
     run_id: str,
     epochs_override: int | None = None,
     subjects_per_class: int | None = None,
+    overrides: list[str] | None = None,
 ) -> dict[str, Any]:
     if stage not in {"smoke", "cv", "final"}:
         raise ValueError(f"Unsupported merged training stage: {stage}")
-    merged_config = load_merged_config(config_path)
+    merged_config = load_merged_config(config_path, overrides)
     records, protocol = load_records_and_protocol(merged_config)
     model_config = _model_config(merged_config, records)
     resolved_config_path = resolve_project_path(config_path)
@@ -234,7 +236,9 @@ def train_merged_fold(
     )
     accelerator.wait_for_everyone()
 
-    run_root = Path(merged_config["output_dirs"]["run_root"]) / run_id / stage / f"fold_{int(fold)}"
+    run_root = merged_fold_root(
+        merged_config, run_id=run_id, stage=stage, fold=int(fold)
+    )
     logs_dir = run_root / "logs"
     best_dir = run_root / "best_model"
     complete_path = run_root / "training_complete.json"
@@ -311,7 +315,17 @@ def train_merged_fold(
                 archive_root,
             )
         accelerator.wait_for_everyone()
-    if run_root.exists() and any(run_root.iterdir()) and not complete_path.is_file():
+    tracking_files = {
+        "run_config.yaml",
+        "metadata.json",
+        "status.json",
+        "jobs.jsonl",
+        "artifacts.json",
+        "evaluations.json",
+    }
+    if run_root.exists() and any(
+        path.name not in tracking_files for path in run_root.iterdir()
+    ) and not complete_path.is_file():
         raise ValueError(f"Refusing to overwrite an incomplete merged training output: {run_root}")
     ensure_dir(run_root)
     ensure_dir(logs_dir)
@@ -574,6 +588,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--subjects-per-class", type=int)
+    parser.add_argument("--override", action="append", default=[])
     return parser.parse_args()
 
 
@@ -587,6 +602,7 @@ def main() -> None:
         run_id=args.run_id,
         epochs_override=args.epochs,
         subjects_per_class=args.subjects_per_class,
+        overrides=args.override,
     )
     print(json.dumps(result, indent=2), flush=True)
 

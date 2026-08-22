@@ -35,6 +35,19 @@ WEIGHT_SCHEMA_VERSION = "symmetric_hierarchical_weights.v1"
 SCHEDULE_SCHEMA_VERSION = "symmetric_dataset_schedule.v1"
 
 
+def resolve_protocol_split_seed(config: dict[str, Any]) -> int:
+    """Resolve the merged split seed without coupling it to training seed.
+
+    New study configs declare ``protocol_settings.split_seed`` explicitly.
+    Older merged configs retain their historical behaviour by falling back to
+    the top-level ``seed`` and finally to 1337.
+    """
+
+    settings = config.get("protocol_settings") or {}
+    value = settings.get("split_seed", config.get("seed", 1337))
+    return int(value)
+
+
 def canonical_sha256(value: Any) -> str:
     encoded = json.dumps(
         value, sort_keys=True, separators=(",", ":"), ensure_ascii=True

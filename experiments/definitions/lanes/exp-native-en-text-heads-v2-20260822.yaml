@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: exp-native-en-text-heads-v2-20260822
+slug: native-en-text-heads-v2
+tier: 1
+branch: agent/exp-native-en-text-heads-v2
+worktree: /home/emre/worktrees/LLM-Depression-exp-native-en-text-heads-v2
+parent_branch: origin/main
+parent_sha: d0b9a0074a7da1a2402855e00cada5b21ea518f7
+created_at_utc: "2026-08-22T14:28:57Z"
+experiment_group_path: experiments/definitions/native-en-text-heads-v2-20260822.yaml
+type: competing

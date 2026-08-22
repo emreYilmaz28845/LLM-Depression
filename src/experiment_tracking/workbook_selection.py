@@ -70,6 +70,7 @@ _FAMILY_RULES: tuple[tuple[str, str | None, str], ...] = (
     ("Harmonized heads", None, "hidden_classifier"),
     ("Harmonized merged final", None, "merged"),
     ("Harmonized merged CV", None, "merged"),
+    ("Native vs EN v2", None, "hidden_classifier"),
     ("Gemma 4 DAIC", "Gemma 4 macro-F1", "ordinary_qwen"),
     ("Gemma 4 DAIC", "Gemma 4 positive-F1", "ordinary_qwen"),
     ("Gemma 4 DAIC", "Gemma 4 accuracy", "ordinary_qwen"),

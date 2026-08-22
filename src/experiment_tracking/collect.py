@@ -29,13 +29,39 @@ FILTER_RULES: list[str] = [
     "--include=artifacts.json",
     "--include=evaluations.json",
     "--include=final_summary.json",
+    "--include=final_and_best_validation_metrics.json",
     "--include=predictions_subject_level.csv",
     "--include=predictions_subject_level.json",
+    "--include=predictions_subject_level.jsonl",
+    "--include=subject_predictions.csv",
+    "--include=metrics.json",
+    "--include=metrics_*.json",
+    "--include=metrics_by_dataset.json",
+    "--include=confusion_matrix.json",
+    "--include=classifier_metadata.json",
+    "--include=training_identity.json",
+    "--include=postprocess_identity.json",
+    "--include=postprocess_complete.json",
+    "--include=training_complete.json",
+    "--include=selected_checkpoint.json",
+    "--include=study_config.json",
+    "--include=best_params.json",
+    "--include=trials.csv",
+    "--include=feature_metadata.json",
+    "--include=*_identity.json",
+    "--include=*_complete.json",
+    "--include=*summary.json",
+    "--include=*rows.jsonl",
     "--include=*.audit.json",
+    "--include=*.audit.jsonl",
+    "--include=eval_config.yaml",
+    "--include=resolved_merged_config.json",
+    "--include=slurm_provenance.json",
     "--include=eval/**",
     "--include=best_model/standalone_eval/**",
     "--include=logs/*.json",
     "--include=logs/*.jsonl",
+    "--include=logs/*.yaml",
     "--exclude=best_model/**",
     "--exclude=last_model/**",
     "--exclude=*",
@@ -217,8 +243,33 @@ def verify_compact_hash_agreement(
     }
 
 
-def plan_collection(remote_fold: str, local_fold: str) -> dict[str, Any]:
-    validate_fold_path(remote_fold)
+def validate_evidence_root(remote_root: str) -> None:
+    """Validate an exact managed attempt root used by custom v2 jobs."""
+    if PLACEHOLDER_PATTERN.search(remote_root):
+        raise CollectionError(
+            f"remote evidence path contains an unresolved placeholder: {remote_root}"
+        )
+    path = Path(remote_root)
+    if not path.is_absolute() or ".." in path.parts:
+        raise CollectionError(f"remote evidence path must be absolute and normalized: {remote_root}")
+    allowed = (
+        "/gpfs/projects/etur92/ozu647717/AudioLLM/output_model/",
+        "/gpfs/projects/etur92/ozu647717/AudioLLM/experiment_runtime/",
+    )
+    if not any(str(path).startswith(prefix) for prefix in allowed):
+        raise CollectionError(f"remote evidence path is outside managed roots: {remote_root}")
+
+
+def plan_collection(
+    remote_fold: str,
+    local_fold: str,
+    *,
+    allow_non_fold_root: bool = False,
+) -> dict[str, Any]:
+    if allow_non_fold_root:
+        validate_evidence_root(remote_fold)
+    else:
+        validate_fold_path(remote_fold)
     return {
         "remote_fold": remote_fold,
         "local_fold": str(Path(local_fold).resolve()),

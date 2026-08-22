@@ -15,6 +15,7 @@ PROTOCOL_PROFILE = "harmonized_optuna100_v1"
 EXPERIMENT_ID = "xgb_optuna100_harmonized_v1"
 
 PRODUCTION_TARGET_TRIALS = 100
+SMOKE_TARGET_TRIALS = 2
 SAMPLER = "TPESampler"
 SAMPLER_SEED = 1337
 MODEL_SEED = 1337
@@ -56,11 +57,22 @@ def resolved_search_space() -> dict[str, dict[str, Any]]:
 
 def assert_production_target(trials: int) -> None:
     """Refuse any production study target other than 100."""
-    if int(trials) != PRODUCTION_TARGET_TRIALS:
+    assert_target(trials, stage="production")
+
+
+def assert_target(trials: int, *, stage: str = "production") -> None:
+    """Validate the only two supported execution targets.
+
+    Smoke is deliberately resumability-only and is never reportable.  Every
+    production/headline invocation still goes through the fixed 100-trial
+    gate.
+    """
+
+    expected = SMOKE_TARGET_TRIALS if str(stage).lower() == "smoke" else PRODUCTION_TARGET_TRIALS
+    if int(trials) != expected:
         raise ValueError(
-            f"harmonized_optuna100_v1 production studies require exactly "
-            f"{PRODUCTION_TARGET_TRIALS} completed trials, got {int(trials)}. "
-            "Never extend a headline study beyond the fixed protocol."
+            f"harmonized_optuna100_v1 {stage} studies require exactly "
+            f"{expected} completed trials, got {int(trials)}."
         )
 
 

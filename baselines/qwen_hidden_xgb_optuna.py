@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import os
 import json
 import re
 import sys
@@ -466,12 +467,23 @@ def validate_experiment_output(
             f"{experiment_id!r}."
         )
     expected_fold = f"fold_{int(metadata['fold'])}"
-    if output_dir.parent.name != expected_fold:
-        raise ValueError(
-            f"Output directory must be directly below {expected_fold}, found "
-            f"{output_dir.parent.name!r}."
-        )
-    return output_dir.parent.parent.name
+    if output_dir.parent.name == expected_fold:
+        return output_dir.parent.parent.name
+    # The v2 managed head is a post-hoc attempt nested below the parent fold.
+    # Keep the canonical experiment-id directory required by the Optuna
+    # artifact contract, while placing it inside the unique attempt directory
+    # that carries modern sidecars and the retry identity.
+    if os.environ.get("NATIVE_EN_TEXT_HEADS_V2_ATTEMPT_DIR"):
+        attempt_dir = Path(os.environ["NATIVE_EN_TEXT_HEADS_V2_ATTEMPT_DIR"]).resolve()
+        if output_dir.parent.resolve() != attempt_dir or not (attempt_dir / "metadata.json").is_file():
+            raise ValueError(
+                "v2 Optuna output must be directly below its tracked attempt directory"
+            )
+        return attempt_dir.name
+    raise ValueError(
+        f"Output directory must be directly below {expected_fold}, found "
+        f"{output_dir.parent.name!r}."
+    )
 
 
 def build_study_config(
@@ -505,7 +517,8 @@ def build_study_config(
         from src.features import optuna100_policy as policy
 
         search_space = policy.resolved_search_space()
-        policy.assert_production_target(target_trials)
+        stage = str(os.environ.get("NATIVE_EN_TEXT_HEADS_STAGE", "production")).lower()
+        policy.assert_target(target_trials, stage=stage)
     else:
         search_space = resolved_oversampling_search_space(search_profile, sampling_mode)
     if protocol_profile is not None or sampling_mode == LEGACY_SAMPLING_MODE:
@@ -766,7 +779,10 @@ def run_optuna_raw_xgb(
     prediction_backend: str | None = None
     protocol_profile_value: str | None = None
     if protocol_profile == policy.PROTOCOL_PROFILE:
-        policy.assert_production_target(target_trials)
+        policy.assert_target(
+            target_trials,
+            stage=str(os.environ.get("NATIVE_EN_TEXT_HEADS_STAGE", "production")),
+        )
         policy.assert_protocol_settings(
             inner_folds=inner_folds,
             seed=seed,

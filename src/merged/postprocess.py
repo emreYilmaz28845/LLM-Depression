@@ -25,6 +25,7 @@ from src.merged.runtime import (
     load_records_and_protocol,
     make_final_partitions,
     make_fold_partitions,
+    merged_aux_root,
 )
 from src.merged.configuration import model_config as _model_config
 from src.merged.provenance import write_slurm_provenance
@@ -166,10 +167,11 @@ def postprocess_merged_fold(
     run_id: str,
     checkpoint_dir: str | Path,
     subjects_per_class: int | None = None,
+    overrides: list[str] | None = None,
 ) -> dict[str, Any]:
     if stage not in {"smoke", "cv", "final"}:
         raise ValueError(f"Unsupported merged postprocess stage: {stage}")
-    merged_config = load_merged_config(config_path)
+    merged_config = load_merged_config(config_path, overrides)
     records, protocol = load_records_and_protocol(merged_config)
     model_config = _model_config(merged_config, records)
     resolved_config_path = resolve_project_path(config_path)
@@ -200,7 +202,9 @@ def postprocess_merged_fold(
     train_grouped = _prepare_examples(train_grouped, fold=fold, partition="outer_train")
     holdout_grouped = _prepare_examples(holdout_grouped, fold=fold, partition="outer_holdout")
 
-    output_root = Path(merged_config["output_dirs"]["merged_root"]) / run_id / stage / f"fold_{int(fold)}"
+    output_root = merged_aux_root(
+        merged_config, run_id=run_id, stage=stage, fold=int(fold)
+    )
     features_dir = output_root / "features"
     identity = {
         "schema_version": "symmetric_merged_postprocess_identity.v1",
@@ -229,8 +233,22 @@ def postprocess_merged_fold(
         if existing != identity:
             raise ValueError(f"Incompatible merged postprocess output: {output_root}")
         return {"status": "skipped_compatible_complete", "output_root": str(output_root)}
+    tracking_files = {
+        "run_config.yaml",
+        "metadata.json",
+        "status.json",
+        "jobs.jsonl",
+        "artifacts.json",
+        "evaluations.json",
+    }
+    # Keep the explicit preflight guard easy to audit: tracking sidecars are
+    # created before the worker starts and are therefore allowed to exist.
     if output_root.exists() and any(output_root.iterdir()) and not identity_path.is_file():
-        raise ValueError(f"Refusing to overwrite incomplete merged postprocess output: {output_root}")
+        non_tracking = [
+            path for path in output_root.iterdir() if path.name not in tracking_files
+        ]
+        if non_tracking:
+            raise ValueError(f"Refusing to overwrite incomplete merged postprocess output: {output_root}")
     ensure_dir(output_root)
     ensure_dir(features_dir)
     save_json(identity, identity_path)
@@ -369,6 +387,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--checkpoint-dir", required=True, type=Path)
     parser.add_argument("--subjects-per-class", type=int)
+    parser.add_argument("--override", action="append", default=[])
     return parser.parse_args()
 
 
@@ -382,6 +401,7 @@ def main() -> None:
         run_id=args.run_id,
         checkpoint_dir=args.checkpoint_dir,
         subjects_per_class=args.subjects_per_class,
+        overrides=args.override,
     )
     print(json.dumps(result, indent=2), flush=True)
 
