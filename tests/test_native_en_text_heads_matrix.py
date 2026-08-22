@@ -109,6 +109,48 @@ def test_managed_smoke_plan_has_four_job_chains_and_parseable_markers() -> None:
     assert all(job["job_ids"] for job in plan["jobs"])
 
 
+def test_retry_plan_uses_fresh_output_identity_and_links_superseded_attempts() -> None:
+    original = build_plan(
+        stage="smoke",
+        deployment=_fake_deployment(),
+        experiment_id="exp-native-en-text-heads-v2-20260822",
+    )
+    add_plan_indexes(original)
+    original["submission_complete"] = True
+    retry_deployment = {
+        **_fake_deployment(),
+        "deployment_id": "native-en-text-heads-v2-retry-deployment",
+        "git_commit": "47d163f44f72586a2f905798af885b15955be519",
+    }
+    retry = build_plan(
+        stage="smoke",
+        deployment=retry_deployment,
+        experiment_id="exp-native-en-text-heads-v2-20260822",
+        output_suffix="retry1",
+        retry_from=original,
+    )
+    add_plan_indexes(retry)
+
+    assert retry["output_suffix"] == "retry1"
+    assert retry["retry_from_deployment_id"] == original["deployment_id"]
+    old_paths = {
+        job.get("fold_dir") if job.get("kind") == "standalone_backbone" else job.get("attempt_dir")
+        for job in original["jobs"]
+    }
+    retry_paths = {
+        job.get("fold_dir") if job.get("kind") == "standalone_backbone" else job.get("attempt_dir")
+        for job in retry["jobs"]
+    }
+    assert old_paths.isdisjoint(retry_paths)
+    assert all(job.get("supersedes_attempt_id") for job in retry["jobs"])
+    assert all(
+        (job.get("context") or job.get("context_payload") or {}).get("supersedes_attempt_id")
+        for job in retry["jobs"]
+    )
+    standalone = next(job for job in retry["jobs"] if job.get("kind") == "standalone_backbone")
+    assert "native_en_text_heads_v2_smoke_retry1" in standalone["run_root"]
+
+
 def test_remote_workers_source_mn5_dataset_environment() -> None:
     plan = build_plan(
         stage="smoke",
