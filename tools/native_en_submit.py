@@ -470,6 +470,9 @@ def render_merged_chain_script(
     features_dir: str,
     source_commit: str,
     context_path: str,
+    log_root_train: str = "",
+    log_root_post: str = "",
+    log_root_head: str = "",
     epochs: int | None = None,
     subjects_per_class: int | None = None,
     head_trials: int | None = 0,
@@ -520,11 +523,13 @@ unset EPOCHS SUBJECTS_PER_CLASS || true
 
 # --- postprocess: best-model evaluation + features (1 GPU) ---
 export CHECKPOINT_DIR={_q(checkpoint_dir)}
+export LOG_ROOT={_q(log_root_post)}
 POST_ID=$(sbatch --parsable --chdir="$CODE" --dependency=afterok:$TRAIN_ID scripts/run_symmetric_merged_postprocess_slurm.sh)
 echo "Submitted postprocess job: $POST_ID"
 
 # --- heads logreg+xgb_fixed with Optuna disabled (CPU-only) ---
 export FEATURES_DIR={_q(features_dir)}
+export LOG_ROOT={_q(log_root_head)}
 export TRIALS={head_trials_value}
 HEAD_ID=$(sbatch --parsable --chdir="$CODE" --dependency=afterok:$POST_ID scripts/run_symmetric_merged_head_slurm.sh)
 echo "Submitted head job: $HEAD_ID"
