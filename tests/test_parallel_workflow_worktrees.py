@@ -9,6 +9,9 @@ from datetime import datetime, timezone
 
 import pytest
 
+from src.experiment_tracking.schemas import validate_experiment_lane
+from tools.exp import _load_linked_experiment_group
+
 # Test helpers for worktree pin and lane creation
 
 TOOL_PIN = pathlib.Path("tools/check_worktree_pin.py")
@@ -213,7 +216,7 @@ def test_exp_create_writes_definition_into_new_worktree_and_pin_passes(tmp_path)
     date = datetime.now(timezone.utc).strftime("%Y%m%d")
     experiment_id = f"exp-definition-location-{date}"
     worktree = pathlib.Path(env["HOME"]) / "worktrees" / "LLM-Depression-exp-definition-location"
-    definition = worktree / "experiments" / "definitions" / f"{experiment_id}.yaml"
+    definition = worktree / "experiments" / "definitions" / "lanes" / f"{experiment_id}.yaml"
     pin = worktree / ".agent-pin.json"
 
     assert definition.is_file()
@@ -225,6 +228,9 @@ def test_exp_create_writes_definition_into_new_worktree_and_pin_passes(tmp_path)
     assert pin_payload["parent_branch"] == "main"
     assert len(pin_payload["parent_sha"]) == 40
     assert pin_payload["tier"] == 1
+    assert pin_payload["definition_path"] == f"experiments/definitions/lanes/{experiment_id}.yaml"
+    assert "schema_version: audiollm.experiment_lane.v1" in definition.read_text(encoding="utf-8")
+    assert "experiment_group_path: null" in definition.read_text(encoding="utf-8")
 
     checked = run_cmd(
         [sys.executable, str(repo / TOOL_PIN), "--cwd", str(worktree), "--pin", str(pin)],
@@ -232,6 +238,89 @@ def test_exp_create_writes_definition_into_new_worktree_and_pin_passes(tmp_path)
         env=env,
     )
     assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+def test_lane_schema_accepts_operational_identity_without_scientific_group():
+    ok, errors = validate_experiment_lane(
+        {
+            "schema_version": "audiollm.experiment_lane.v1",
+            "experiment_id": "feat-lane-20260822",
+            "slug": "lane",
+            "tier": 2,
+            "type": "complementary",
+            "branch": "agent/feat-lane",
+            "worktree": "/tmp/lane",
+            "parent_branch": "origin/main",
+            "parent_sha": "a" * 40,
+            "created_at_utc": "2026-08-22T00:00:00Z",
+            "experiment_group_path": None,
+        }
+    )
+    assert ok, errors
+
+
+def test_linked_scientific_group_is_required_and_hashed(tmp_path):
+    worktree = tmp_path / "lane"
+    lane_rel = pathlib.Path("experiments/definitions/lanes/feat-lane.yaml")
+    lane_path = worktree / lane_rel
+    lane_path.parent.mkdir(parents=True)
+    lane_path.write_text(
+        "\n".join(
+            [
+                "schema_version: audiollm.experiment_lane.v1",
+                "experiment_id: feat-lane-20260822",
+                "slug: lane",
+                "tier: 2",
+                "type: complementary",
+                "branch: agent/feat-lane",
+                f"worktree: {worktree}",
+                "parent_branch: origin/main",
+                f"parent_sha: {'a' * 40}",
+                'created_at_utc: "2026-08-22T00:00:00Z"',
+                "experiment_group_path: null",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    pin = {"definition_path": lane_rel.as_posix()}
+    with pytest.raises(ValueError, match="has no experiment_group_path"):
+        _load_linked_experiment_group(worktree, pin)
+
+    group_rel = pathlib.Path("experiments/definitions/language-comparison.yaml")
+    group_path = worktree / group_rel
+    group_path.parent.mkdir(parents=True, exist_ok=True)
+    group_path.write_text(
+        """schema_version: audiollm.experiment_group.v1
+group_id: language-comparison
+title: Language comparison
+research_question: Does transcript language affect classification?
+dataset: daic
+baseline: native transcripts
+treatment: English-translated transcripts
+expected_seeds: [7]
+expected_folds: [0]
+primary_metric:
+  namespace: headline
+  name: binary_strict_macro_f1
+  backend: original_teacher_forced
+  aggregation: subject
+  evaluation_view: harmonized_all_windows_full_coverage
+github_issue: null
+github_pr: null
+""",
+        encoding="utf-8",
+    )
+    lane_path.write_text(
+        lane_path.read_text(encoding="utf-8").replace(
+            "experiment_group_path: null", f"experiment_group_path: {group_rel.as_posix()}"
+        ),
+        encoding="utf-8",
+    )
+    identity = _load_linked_experiment_group(worktree, pin)
+    assert identity["experiment_group_id"] == "language-comparison"
+    assert identity["experiment_group_path"] == group_rel.as_posix()
+    assert len(identity["experiment_group_sha256"]) == 64
 
 
 def test_exp_create_rejects_missing_explicit_parent_without_mutation(tmp_path):
@@ -288,7 +377,7 @@ def test_pin_rejects_definition_identity_mismatch(tmp_path):
     worktree = pathlib.Path(env["HOME"]) / "worktrees" / "LLM-Depression-exp-pin-mismatch"
     pin = worktree / ".agent-pin.json"
     payload = json.loads(pin.read_text(encoding="utf-8"))
-    definition = worktree / "experiments" / "definitions" / f"{payload['experiment_id']}.yaml"
+    definition = worktree / payload["definition_path"]
     definition.write_text(
         definition.read_text(encoding="utf-8").replace(
             "branch: agent/exp-pin-mismatch", "branch: agent/exp-wrong"
