@@ -15,6 +15,9 @@ from scripts.audit_turkish_negative_only_pipeline import (
     _subject_scores_from_source,
 )
 from scripts.prepare_translation_retry import prepare as prepare_translation_retry
+from scripts.apply_reviewed_transcript_corrections import apply_corrections
+from scripts.prepare_reviewed_translation_correction import prepare as prepare_reviewed_correction
+from src.utils import sha256_text
 from src.data.turkish import build_turkish_manifest
 from src.translation.prompts import user_prompt
 from src.translation.units import unit_rows_for_dataset
@@ -210,6 +213,89 @@ def test_translation_retry_preserves_parent_and_only_requeues_rejected(tmp_path:
     directive = json.loads((retry / "validation_retries.jsonl").read_text().strip())
     assert directive["reason_codes"] == ["turkish_only_characters"]
     assert "translation" not in directive
+
+
+def test_reviewed_transcript_correction_preserves_source_and_writes_audit(tmp_path: Path) -> None:
+    source = tmp_path / "raw.jsonl"
+    source.write_text(
+        json.dumps({"audio_path": "/data/a.wav", "transcript": "wrong words", "repair_status": "RAW"})
+        + "\n",
+        encoding="utf-8",
+    )
+    corrections = tmp_path / "corrections.jsonl"
+    corrections.write_text(
+        json.dumps(
+            {
+                "audio_filename": "a.wav",
+                "expected_transcript_sha256": sha256_text("wrong words"),
+                "corrected_transcript": "correct words",
+                "reviewed_by": "native_speaker",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "reviewed.jsonl"
+    audit_path = tmp_path / "reviewed.audit.json"
+
+    audit = apply_corrections(source, corrections, output, audit_path)
+
+    assert json.loads(source.read_text())["transcript"] == "wrong words"
+    row = json.loads(output.read_text())
+    assert row["transcript"] == "correct words"
+    assert row["repair_status"] == "HUMAN_VERIFIED"
+    assert audit["correction_count"] == 1
+    assert "wrong words" not in audit_path.read_text()
+    assert "correct words" not in audit_path.read_text()
+
+
+def test_reviewed_translation_correction_updates_only_changed_source(tmp_path: Path) -> None:
+    parent = tmp_path / "parent"
+    output = tmp_path / "output"
+    parent.mkdir()
+    old_units = [
+        {"unit_id": "u1", "field": "transcript", "part_index": 0, "source_sha256": "a" * 64, "context_sha256": "c" * 64},
+        {"unit_id": "u2", "field": "transcript", "part_index": 0, "source_sha256": "b" * 64, "context_sha256": "d" * 64},
+    ]
+    candidates = [
+        {**row, "translation": f"translation {index}", "translation_sha256": sha256_text(f"translation {index}"), "model": "Qwen/Qwen3.6-27B", "model_revision": "rev", "status": "translated"}
+        for index, row in enumerate(old_units)
+    ]
+    for name, rows in (
+        ("units.jsonl", old_units),
+        ("candidates.jsonl", candidates),
+        ("accepted.jsonl", [candidates[0]]),
+        ("rejected.jsonl", [candidates[1]]),
+    ):
+        (parent / name).write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    (parent / "audit.json").write_text("{}\n", encoding="utf-8")
+    new_units = tmp_path / "units.jsonl"
+    new_rows = [dict(old_units[0]), {**old_units[1], "source_sha256": "e" * 64, "context_sha256": "f" * 64}]
+    new_units.write_text("".join(json.dumps(row) + "\n" for row in new_rows), encoding="utf-8")
+    corrections = tmp_path / "translation_corrections.jsonl"
+    corrections.write_text(
+        json.dumps(
+            {
+                "unit_id": "u2",
+                "field": "transcript",
+                "part_index": 0,
+                "expected_source_sha256": "e" * 64,
+                "corrected_translation": "correct translation",
+                "reviewed_by": "native_speaker",
+            }
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    provenance = prepare_reviewed_correction(parent, new_units, corrections, output)
+
+    output_candidates = [json.loads(line) for line in (output / "candidates.jsonl").read_text().splitlines()]
+    assert output_candidates[0] == candidates[0]
+    assert output_candidates[1]["translation"] == "correct translation"
+    assert output_candidates[1]["source_sha256"] == "e" * 64
+    assert provenance["retained_candidate_count"] == 1
+    assert provenance["corrected_candidate_count"] == 1
+    assert json.loads((output / "reviewed.jsonl").read_text())["status"] == "human_verified"
 
 
 def test_validation_retry_prompt_explicitly_removes_turkish_lexical_content() -> None:

@@ -34,7 +34,8 @@ from src.utils import (
 
 
 EXPECTED_METADATA_SHA256 = "196bb9b706ff477587559f98b444c8f522f1bb86cc7381698eb64a354e557df0"
-EXPECTED_TRANSCRIPT_SHA256 = "3d99f48b2dbbb6e27040d5e5e561d0cfd35d70e1888543bc75182a58ce22f99e"
+EXPECTED_RAW_TRANSCRIPT_SHA256 = "3d99f48b2dbbb6e27040d5e5e561d0cfd35d70e1888543bc75182a58ce22f99e"
+EXPECTED_REVIEWED_TRANSCRIPT_SHA256 = "80dce20e9e36062596344a96aca821a79631e098b0b017394f730457155b8798"
 EXPECTED_MODEL = "Qwen/Qwen3.6-27B"
 EXPECTED_MODEL_REVISION = "6a9e13bd6fc8f0983b9b99948120bc37f49c13e9"
 EXPECTED_ACCEPTED_STATUSES = {
@@ -89,6 +90,9 @@ def _audit_native(
     root = Path(config["dataset_root"])
     source_metadata = root / str(config["metadata_csv"])
     transcript_path = root / str(config["transcript_file"])
+    raw_transcript_path = root / "whisper_transcripts_qwen3_asr.jsonl"
+    transcript_audit_path = root / "whisper_transcripts_qwen3_asr_reviewed.audit.json"
+    transcript_audit = read_json(transcript_audit_path) if transcript_audit_path.is_file() else {}
     subjects = {str(row["subject_id"]): int(row["label"]) for row in rows}
     sample_counts = Counter(int(row["label"]) for row in rows)
     subject_counts = Counter(subjects.values())
@@ -110,7 +114,20 @@ def _audit_native(
         "audio_paths_exist": all(Path(str(row["audio_path"])).is_file() for row in rows),
         "harmonized_windows": windows == 1172,
         "metadata_sha256": sha256_file(source_metadata) == EXPECTED_METADATA_SHA256,
-        "transcript_sha256": sha256_file(transcript_path) == EXPECTED_TRANSCRIPT_SHA256,
+        "raw_transcript_sha256": (
+            raw_transcript_path.is_file()
+            and sha256_file(raw_transcript_path) == EXPECTED_RAW_TRANSCRIPT_SHA256
+        ),
+        "reviewed_transcript_sha256": (
+            sha256_file(transcript_path) == EXPECTED_REVIEWED_TRANSCRIPT_SHA256
+        ),
+        "reviewed_transcript_audit": (
+            transcript_audit.get("schema_version") == "reviewed_transcript_corrections.v1"
+            and transcript_audit.get("source_sha256") == EXPECTED_RAW_TRANSCRIPT_SHA256
+            and transcript_audit.get("output_sha256") == sha256_file(transcript_path)
+            and int(transcript_audit.get("row_count", -1)) == 1170
+            and int(transcript_audit.get("correction_count", -1)) == 1
+        ),
         "metadata_record_count": int(metadata.get("manifest_row_count", -1)) == len(rows),
         "metadata_subject_count": int(metadata.get("manifest_subject_count", -1)) == len(subjects),
     }
@@ -185,13 +202,10 @@ def _audit_translation(
     repair_provenance = None
     if require_retry_provenance:
         repair_path = cache_root / "repair_provenance.json"
-        retry_directives_path = cache_root / "validation_retries.jsonl"
         if not repair_path.is_file():
             failures.append("translation_repair_provenance_missing")
         else:
             repair_provenance = read_json(repair_path)
-        if not retry_directives_path.is_file():
-            failures.append("translation_validation_retries_missing")
     unit_hashes = {
         (str(row["unit_id"]), str(row["field"]), int(row.get("part_index", 0))): str(row["source_sha256"])
         for row in units
@@ -216,25 +230,52 @@ def _audit_translation(
         "audit_extra_candidates": int(audit.get("extra_candidates", -1)) == 0,
     }
     if require_retry_provenance and repair_provenance is not None:
-        pending = int(repair_provenance.get("pending_rejected_count", -1))
-        retained = int(repair_provenance.get("retained_candidate_count", -1))
-        checks.update(
-            {
-                "repair_schema": repair_provenance.get("schema_version")
-                == "translation_validation_retry.v1",
-                "repair_units": int(repair_provenance.get("unit_count", -1))
-                == expected_units,
-                "repair_coverage": pending > 0 and retained + pending == expected_units,
-                "repair_seed": isinstance(repair_provenance.get("retry_seed"), int),
-                "repair_parent_hashes": set(repair_provenance.get("parent_hashes", {}))
-                == {"units.jsonl", "candidates.jsonl", "accepted.jsonl", "rejected.jsonl", "audit.json"},
-                "repair_directives_hash": (
-                    (cache_root / "validation_retries.jsonl").is_file()
-                    and repair_provenance.get("validation_retry_directives_sha256")
-                    == sha256_file(cache_root / "validation_retries.jsonl")
-                ),
-            }
-        )
+        schema = repair_provenance.get("schema_version")
+        common = {
+            "repair_units": int(repair_provenance.get("unit_count", -1)) == expected_units,
+            "repair_parent_hashes": set(repair_provenance.get("parent_hashes", {}))
+            == {"units.jsonl", "candidates.jsonl", "accepted.jsonl", "rejected.jsonl", "audit.json"},
+        }
+        if schema == "translation_validation_retry.v1":
+            pending = int(repair_provenance.get("pending_rejected_count", -1))
+            retained = int(repair_provenance.get("retained_candidate_count", -1))
+            checks.update(
+                {
+                    "repair_schema": True,
+                    **common,
+                    "repair_coverage": pending > 0 and retained + pending == expected_units,
+                    "repair_seed": isinstance(repair_provenance.get("retry_seed"), int),
+                    "repair_directives_hash": (
+                        (cache_root / "validation_retries.jsonl").is_file()
+                        and repair_provenance.get("validation_retry_directives_sha256")
+                        == sha256_file(cache_root / "validation_retries.jsonl")
+                    ),
+                }
+            )
+        elif schema == "translation_reviewed_correction.v1":
+            corrected = int(repair_provenance.get("corrected_candidate_count", -1))
+            retained = int(repair_provenance.get("retained_candidate_count", -1))
+            checks.update(
+                {
+                    "repair_schema": True,
+                    **common,
+                    "repair_coverage": corrected > 0 and retained + corrected == expected_units,
+                    "repair_source_changes": int(
+                        repair_provenance.get("source_changed_unit_count", -1)
+                    ) == corrected,
+                    "repair_reviewed_hash": (
+                        (cache_root / "reviewed.jsonl").is_file()
+                        and repair_provenance.get("reviewed_sha256")
+                        == sha256_file(cache_root / "reviewed.jsonl")
+                    ),
+                    "repair_units_hash": repair_provenance.get("units_sha256")
+                    == sha256_file(cache_root / "units.jsonl"),
+                    "repair_candidates_hash": repair_provenance.get("candidates_sha256")
+                    == sha256_file(cache_root / "candidates.jsonl"),
+                }
+            )
+        else:
+            checks["repair_schema"] = False
     failures.extend(f"translation_{name}" for name, passed in checks.items() if not passed)
     return {
         "cache_root": str(cache_root),

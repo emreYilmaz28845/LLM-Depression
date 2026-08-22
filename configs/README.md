@@ -93,10 +93,13 @@ uses `metadata_schema: minimal_t17`, derives the label from
 `depresyon_skoru >= 17`, and does not consume acoustic features, anxiety,
 demographic, or comorbidity fields. Native and English manifests, splits,
 translation caches, and model roots are isolated from canonical Turkish.
-The English configs use `harmonized_en_complete_v3/turkish_negative_only_t17`;
-v3 preserves the failed first production attempt and cancelled same-output
-retry, then records the selective validation-repair lineage in
-`repair_provenance.json`.
+The configs read `whisper_transcripts_qwen3_asr_reviewed.jsonl`, an audited
+derivative of the immutable Qwen3-ASR output. Native-speaker corrections are
+applied with `scripts/apply_reviewed_transcript_corrections.py`. The English
+configs use `harmonized_en_complete_v3/turkish_negative_only_t17`; v3 preserves
+the failed first production attempt and cancelled same-output retry, keeps the
+1,169 unaffected translations, and records the reviewed transcript/translation
+correction in `repair_provenance.json`.
 
 See `docs/harmonized_dataset_baseline.md` for the methodology and dataset-specific adapters.
 

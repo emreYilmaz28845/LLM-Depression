@@ -6,7 +6,7 @@ recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1
 dataset_root: ${TURKISH_NEGATIVE_ONLY_DATASET_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/Turkish_Negative_Only}
 audio_dir: .
 metadata_csv: metadata_turkish_negative_only_t17.csv
-transcript_file: whisper_transcripts_qwen3_asr.jsonl
+transcript_file: whisper_transcripts_qwen3_asr_reviewed.jsonl
 threshold: 17
 model_name_or_path: ${TEXT_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen2-7B-Instruct}
 quarantine_path: ${PROJECT_ROOT}/configs/quarantines.yaml
