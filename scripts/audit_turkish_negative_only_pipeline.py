@@ -164,7 +164,12 @@ def _audit_native(
     )
 
 
-def _audit_translation(cache_root: Path, expected_units: int) -> tuple[dict[str, Any], list[str]]:
+def _audit_translation(
+    cache_root: Path,
+    expected_units: int,
+    *,
+    require_retry_provenance: bool = False,
+) -> tuple[dict[str, Any], list[str]]:
     failures: list[str] = []
     required = ("units.jsonl", "candidates.jsonl", "accepted.jsonl", "rejected.jsonl", "audit.json")
     missing = [name for name in required if not (cache_root / name).is_file()]
@@ -177,6 +182,13 @@ def _audit_translation(cache_root: Path, expected_units: int) -> tuple[dict[str,
     accepted = read_jsonl(cache_root / "accepted.jsonl")
     rejected = read_jsonl(cache_root / "rejected.jsonl")
     audit = read_json(cache_root / "audit.json")
+    repair_provenance = None
+    if require_retry_provenance:
+        repair_path = cache_root / "repair_provenance.json"
+        if not repair_path.is_file():
+            failures.append("translation_repair_provenance_missing")
+        else:
+            repair_provenance = read_json(repair_path)
     unit_hashes = {
         (str(row["unit_id"]), str(row["field"]), int(row.get("part_index", 0))): str(row["source_sha256"])
         for row in units
@@ -200,6 +212,21 @@ def _audit_translation(cache_root: Path, expected_units: int) -> tuple[dict[str,
         "audit_accepted": int(audit.get("accepted_cache_record_count", -1)) == expected_units,
         "audit_extra_candidates": int(audit.get("extra_candidates", -1)) == 0,
     }
+    if require_retry_provenance and repair_provenance is not None:
+        pending = int(repair_provenance.get("pending_rejected_count", -1))
+        retained = int(repair_provenance.get("retained_candidate_count", -1))
+        checks.update(
+            {
+                "repair_schema": repair_provenance.get("schema_version")
+                == "translation_validation_retry.v1",
+                "repair_units": int(repair_provenance.get("unit_count", -1))
+                == expected_units,
+                "repair_coverage": pending > 0 and retained + pending == expected_units,
+                "repair_seed": isinstance(repair_provenance.get("retry_seed"), int),
+                "repair_parent_hashes": set(repair_provenance.get("parent_hashes", {}))
+                == {"units.jsonl", "candidates.jsonl", "accepted.jsonl", "rejected.jsonl", "audit.json"},
+            }
+        )
     failures.extend(f"translation_{name}" for name, passed in checks.items() if not passed)
     return {
         "cache_root": str(cache_root),
@@ -210,6 +237,11 @@ def _audit_translation(cache_root: Path, expected_units: int) -> tuple[dict[str,
         "statuses": sorted(statuses),
         "accepted_sha256": sha256_file(cache_root / "accepted.jsonl"),
         "audit_sha256": sha256_file(cache_root / "audit.json"),
+        "repair_provenance_sha256": (
+            sha256_file(cache_root / "repair_provenance.json")
+            if (cache_root / "repair_provenance.json").is_file()
+            else None
+        ),
         "model": audit.get("model"),
         "model_revision": audit.get("model_revision"),
         "checks": checks,
@@ -229,7 +261,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     translation = None
     if args.require_translation or args.build_english:
-        translation, translation_failures = _audit_translation(args.translation_cache, 1170)
+        translation, translation_failures = _audit_translation(
+            args.translation_cache,
+            1170,
+            require_retry_provenance=True,
+        )
         failures.extend(translation_failures)
 
     equivalence = None
@@ -287,7 +323,7 @@ def parse_args() -> argparse.Namespace:
         default=Path(
             os.environ.get(
                 "TURKISH_NEGATIVE_ONLY_TRANSLATION_CACHE",
-                "/gpfs/projects/etur92/ozu647717/AudioLLM/translations/harmonized_en_complete_v1/turkish_negative_only_t17",
+                "/gpfs/projects/etur92/ozu647717/AudioLLM/translations/harmonized_en_complete_v2/turkish_negative_only_t17",
             )
         ),
     )

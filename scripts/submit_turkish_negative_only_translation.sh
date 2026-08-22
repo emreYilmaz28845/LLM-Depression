@@ -8,6 +8,7 @@ STAGE="${STAGE:-smoke}"
 RUN_ID="${RUN_ID:-turkish-negative-only-qwen36-v1}"
 DRY_RUN="${DRY_RUN:-1}"
 RESUME="${RESUME:-0}"
+PRODUCTION_RUN_ROOT="${PRODUCTION_RUN_ROOT:-$TRANSLATION_ROOT/harmonized_en_complete_v1/turkish_negative_only_t17}"
 WORKER="${WORKER:-$PROJECT_ROOT/scripts/run_translation_slurm.sh}"
 MANIFEST_CONFIG="${MANIFEST_CONFIG:-$PROJECT_ROOT/configs/main/turkish_negative_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml}"
 
@@ -32,7 +33,7 @@ case "$STAGE" in
     JOB_NAME="tr-neg-en-smoke"
     ;;
   production)
-    RUN_ROOT="$TRANSLATION_ROOT/harmonized_en_complete_v1/turkish_negative_only_t17"
+    RUN_ROOT="$PRODUCTION_RUN_ROOT"
     UNIT_LIMIT=0
     EXPECTED_UNIT_COUNT=1170
     JOB_NAME="tr-neg-en-full"

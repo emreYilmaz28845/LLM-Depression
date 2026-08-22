@@ -93,6 +93,9 @@ uses `metadata_schema: minimal_t17`, derives the label from
 `depresyon_skoru >= 17`, and does not consume acoustic features, anxiety,
 demographic, or comorbidity fields. Native and English manifests, splits,
 translation caches, and model roots are isolated from canonical Turkish.
+The English configs use `harmonized_en_complete_v2/turkish_negative_only_t17`;
+v2 preserves the failed first production attempt and records the selective
+validation-retry lineage in `repair_provenance.json`.
 
 See `docs/harmonized_dataset_baseline.md` for the methodology and dataset-specific adapters.
 

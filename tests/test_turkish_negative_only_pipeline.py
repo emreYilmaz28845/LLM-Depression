@@ -14,6 +14,7 @@ from scripts.audit_turkish_negative_only_pipeline import (
     _audit_translation,
     _subject_scores_from_source,
 )
+from scripts.prepare_translation_retry import prepare as prepare_translation_retry
 from src.data.turkish import build_turkish_manifest
 from src.translation.units import unit_rows_for_dataset
 
@@ -168,6 +169,36 @@ def test_translation_audit_uses_official_qwen36_model_identity(tmp_path: Path) -
     assert evidence["model"] == "Qwen/Qwen3.6-27B"
 
 
+def test_translation_retry_preserves_parent_and_only_requeues_rejected(tmp_path: Path) -> None:
+    parent = tmp_path / "parent"
+    retry = tmp_path / "retry"
+    parent.mkdir()
+    units = [
+        {"unit_id": "u1", "field": "transcript", "part_index": 0},
+        {"unit_id": "u2", "field": "transcript", "part_index": 0},
+    ]
+    candidates = [{**row, "status": "translated"} for row in units]
+    for name, rows in (
+        ("units.jsonl", units),
+        ("candidates.jsonl", candidates),
+        ("accepted.jsonl", [candidates[0]]),
+        ("rejected.jsonl", [{**candidates[1], "status": "failed"}]),
+    ):
+        (parent / name).write_text(
+            "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+        )
+    (parent / "audit.json").write_text("{}\n", encoding="utf-8")
+    parent_hash = (parent / "candidates.jsonl").read_bytes()
+
+    provenance = prepare_translation_retry(parent, retry, retry_seed=43)
+
+    assert provenance["retained_candidate_count"] == 1
+    assert provenance["pending_rejected_count"] == 1
+    assert json.loads((retry / "candidates.jsonl").read_text().splitlines()[0])["unit_id"] == "u1"
+    assert (parent / "candidates.jsonl").read_bytes() == parent_hash
+    assert not (retry / "accepted.jsonl").exists()
+
+
 def _variant_configs() -> tuple[list[Path], list[Path]]:
     native = sorted(
         path
@@ -206,7 +237,7 @@ def test_negative_only_configs_are_isolated_and_recipe_matched() -> None:
         transcripts = config["transcripts"]
         assert transcripts == {
             "variant": "english",
-            "cache_path": "${TRANSLATION_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/translations}/harmonized_en_complete_v1/turkish_negative_only_t17/accepted.jsonl",
+            "cache_path": "${TRANSLATION_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/translations}/harmonized_en_complete_v2/turkish_negative_only_t17/accepted.jsonl",
             "minimum_status": "automatic_low",
             "require_complete": True,
             "include_failed": False,
