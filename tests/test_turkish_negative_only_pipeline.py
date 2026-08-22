@@ -10,7 +10,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-from scripts.audit_turkish_negative_only_pipeline import _subject_scores_from_source
+from scripts.audit_turkish_negative_only_pipeline import (
+    _audit_translation,
+    _subject_scores_from_source,
+)
 from src.data.turkish import build_turkish_manifest
 from src.translation.units import unit_rows_for_dataset
 
@@ -123,6 +126,46 @@ def test_reference_score_audit_normalizes_turkish_subject_ids(tmp_path: Path) ->
             writer.writerow({"patient_id": subject, "depresyon_skoru": 23})
 
     assert _subject_scores_from_source(composed) == _subject_scores_from_source(decomposed)
+
+
+def test_translation_audit_uses_official_qwen36_model_identity(tmp_path: Path) -> None:
+    unit = {
+        "unit_id": "u1",
+        "field": "transcript",
+        "part_index": 0,
+        "source_sha256": "a" * 64,
+    }
+    accepted = {
+        **unit,
+        "status": "automatic_high",
+    }
+    for name, rows in (
+        ("units.jsonl", [unit]),
+        ("candidates.jsonl", [accepted]),
+        ("accepted.jsonl", [accepted]),
+        ("rejected.jsonl", []),
+    ):
+        (tmp_path / name).write_text(
+            "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+        )
+    (tmp_path / "audit.json").write_text(
+        json.dumps(
+            {
+                "model": "Qwen/Qwen3.6-27B",
+                "model_revision": "6a9e13bd6fc8f0983b9b99948120bc37f49c13e9",
+                "unit_count": 1,
+                "candidate_count": 1,
+                "accepted_cache_record_count": 1,
+                "extra_candidates": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    evidence, failures = _audit_translation(tmp_path, 1)
+
+    assert failures == []
+    assert evidence["model"] == "Qwen/Qwen3.6-27B"
 
 
 def _variant_configs() -> tuple[list[Path], list[Path]]:
