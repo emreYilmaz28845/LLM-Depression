@@ -1106,6 +1106,8 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Fixed 100-trial harmonized Optuna-100 protocol (production only).",
     )
+    parser.add_argument("--allow-smoke-trials", action="store_true",
+                        help="permit exactly two trials for the locked resumability smoke")
     return parser.parse_args()
 
 
@@ -1126,6 +1128,7 @@ def main() -> None:
         oversampling_ratio=args.oversampling_ratio,
         oversampling_seed=args.oversampling_seed,
         protocol_profile=args.protocol_profile or None,
+        allow_smoke_trials=bool(getattr(args, "allow_smoke_trials", False)),
     )
     print(json.dumps(summary, indent=2), flush=True)
 

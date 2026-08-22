@@ -119,6 +119,7 @@ python baselines/qwen_hidden_classifier.py \
 
 mv "$STAGING_DIR"/logreg_raw/* "$ATTEMPT_DIR"/
 mv "$STAGING_DIR"/variant_summary.json* "$ATTEMPT_DIR"/ 2>/dev/null || true
-rm -rf "$STAGING_DIR"
+find "$STAGING_DIR" -mindepth 1 -delete
+rmdir "$STAGING_DIR"
 
 campaign materialize-mn5-evidence
