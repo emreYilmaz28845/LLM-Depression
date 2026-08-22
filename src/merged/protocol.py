@@ -42,21 +42,6 @@ def canonical_sha256(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def resolve_split_seed(config: dict[str, Any]) -> int:
-    """Resolve the merged protocol split-construction seed.
-
-    ``protocol_settings.split_seed`` takes precedence so the outer folds stay
-    fixed while top-level training seeds vary. Without the key this falls
-    back to the historical behavior of using the top-level seed.
-    """
-
-    protocol_settings = config.get("protocol_settings") or {}
-    split_seed = protocol_settings.get("split_seed")
-    if split_seed is not None:
-        return int(split_seed)
-    return int(config.get("seed", 1337))
-
-
 def resolve_head_inner_folds(config: dict[str, Any], stage: str) -> int:
     """Resolve grouped head folds, using a valid tiny smoke override.
 

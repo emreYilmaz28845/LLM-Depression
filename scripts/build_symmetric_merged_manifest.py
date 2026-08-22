@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data.build_manifest import build_for_config
-from src.merged.protocol import load_component_records, resolve_split_seed, save_protocol_artifacts
+from src.merged.protocol import load_component_records, save_protocol_artifacts
 from src.utils import configure_logging, load_yaml_with_overrides, resolve_project_path
 
 
@@ -50,7 +50,7 @@ def main() -> None:
         config,
         records,
         output_dir,
-        seed=int(args.seed if args.seed is not None else resolve_split_seed(config)),
+        seed=int(args.seed if args.seed is not None else config.get("seed", 1337)),
         inner_val_ratio=float(
             args.inner_val_ratio
             if args.inner_val_ratio is not None

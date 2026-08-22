@@ -104,56 +104,6 @@ def _inner_folds(train_rows: list[dict[str, Any]], *, inner_folds: int, seed: in
     }
 
 
-def _inner_folds_smoke_two_fold(
-    train_rows: list[dict[str, Any]]
-) -> dict[str, Any]:
-    """Deterministic two-fold inner split for the resumability smoke.
-
-    At the locked smoke cohort (two subjects per class per dataset) a plain
-    three-fold stratified split can leave an inner-train side without any
-    subject of some dataset, which makes the locked five-dataset objective
-    undefined. Round-robin assignment per dataset keeps every dataset on
-    both sides of both folds.
-    """
-
-    subjects_by_dataset: dict[str, set[str]] = defaultdict(set)
-    rows_by_subject: dict[str, list[int]] = defaultdict(list)
-    for index, row in enumerate(train_rows):
-        dataset = str(row["dataset"]).lower()
-        subject = str(row["subject_id"])
-        subjects_by_dataset[dataset].add(subject)
-        rows_by_subject[subject].append(index)
-    fold_of_subject: dict[str, int] = {}
-    for dataset in sorted(subjects_by_dataset):
-        for position, subject in enumerate(sorted(subjects_by_dataset[dataset])):
-            fold_of_subject[subject] = position % 2
-    folds: list[dict[str, Any]] = []
-    for fold_index in (0, 1):
-        train_rows_idx = [
-            index for subject, fold in fold_of_subject.items() if fold != fold_index
-            for index in rows_by_subject[subject]
-        ]
-        val_idx = [
-            index for subject, fold in fold_of_subject.items() if fold == fold_index
-            for index in rows_by_subject[subject]
-        ]
-        train_datasets = {train_rows[i]["dataset"] for i in train_rows_idx}
-        val_datasets = {train_rows[i]["dataset"] for i in val_idx}
-        missing = {d for d in DATASETS} - (train_datasets & val_datasets)
-        if missing:
-            raise ValueError(f"Smoke inner fold {fold_index} lost datasets: {sorted(missing)}")
-        folds.append(
-            {
-                "fold": fold_index,
-                "train_subject_ids": [s for s, f in fold_of_subject.items() if f != fold_index],
-                "validation_subject_ids": [s for s, f in fold_of_subject.items() if f == fold_index],
-                "train_row_indices": sorted(set(train_rows_idx)),
-                "validation_row_indices": sorted(set(val_idx)),
-            }
-        )
-    return {"schema_version": "merged_inner_assignments.v1", "folds": folds}
-
-
 def _inner_objective(
     train_x: np.ndarray,
     train_rows: list[dict[str, Any]],
@@ -217,24 +167,8 @@ def run_merged_optuna100(
     stage: str,
     fold: int,
     run_id: str,
-    target_trials: int | None = None,
 ) -> dict[str, Any]:
-    target = (
-        policy.PRODUCTION_TARGET_TRIALS
-        if target_trials is None
-        else int(target_trials)
-    )
-    if target == policy.PRODUCTION_TARGET_TRIALS:
-        policy.assert_production_target(target)
-    else:
-        # The locked smoke gate exercises Optuna resumability with exactly
-        # two completed trials; any other non-production count is invalid.
-        if stage != "smoke" or target != 2:
-            raise ValueError(
-                "Merged Optuna-100 production studies require exactly "
-                f"{policy.PRODUCTION_TARGET_TRIALS} completed trials; got "
-                f"target={target} at stage={stage!r}."
-            )
+    policy.assert_production_target(policy.PRODUCTION_TARGET_TRIALS)
     merged_config = load_merged_config(merged_config_path)
     modality = str(merged_config.get("modality") or "")
     features = Path(features_dir)
@@ -258,12 +192,7 @@ def run_merged_optuna100(
         raise ValueError(f"output dir must end with {policy.EXPERIMENT_ID!r}: {output}")
     output.mkdir(parents=True, exist_ok=True)
 
-    if target == policy.PRODUCTION_TARGET_TRIALS:
-        assignments = _inner_folds(
-            train_rows, inner_folds=policy.INNER_FOLDS, seed=policy.INNER_SPLIT_SEED
-        )
-    else:
-        assignments = _inner_folds_smoke_two_fold(train_rows)
+    assignments = _inner_folds(train_rows, inner_folds=policy.INNER_FOLDS, seed=policy.INNER_SPLIT_SEED)
     protocol = policy.protocol_block(
         dataset="merged",
         condition=modality,
@@ -330,14 +259,14 @@ def run_merged_optuna100(
         return value
 
     completed = [trial for trial in study.trials if trial.state.name == "COMPLETE"]
-    remaining = target - len(completed)
+    remaining = policy.PRODUCTION_TARGET_TRIALS - len(completed)
     if remaining > 0:
         study.optimize(objective, n_trials=remaining, n_jobs=1)
     completed = [trial for trial in study.trials if trial.state.name == "COMPLETE"]
-    if len(completed) != target:
+    if len(completed) != policy.PRODUCTION_TARGET_TRIALS:
         raise RuntimeError(
             f"Merged study has {len(completed)} completed trials; expected "
-            f"{target}."
+            f"{policy.PRODUCTION_TARGET_TRIALS}."
         )
 
     rows: list[dict[str, Any]] = []
@@ -419,7 +348,7 @@ def run_merged_optuna100(
             "prediction_backend": prediction_backend,
             "model_backend": model_backend or None,
             "objective": policy.OBJECTIVE_MERGED,
-            "target_trials": target,
+            "target_trials": policy.PRODUCTION_TARGET_TRIALS,
             "completed_trials": len(completed),
             "best_value": float(best.value),
             "best_trial_number": int(best.number),
@@ -450,16 +379,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--features-dir", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--merged-config", required=True)
-    parser.add_argument("--stage", choices=("smoke", "cv", "final"), required=True)
+    parser.add_argument("--stage", choices=("cv", "final"), required=True)
     parser.add_argument("--fold", type=int, required=True)
     parser.add_argument("--run-id", required=True)
-    parser.add_argument(
-        "--target-trials",
-        type=int,
-        default=None,
-        help="Completed-trial target. Defaults to the production 100; only "
-        "the smoke stage may use exactly two trials.",
-    )
     return parser.parse_args()
 
 
@@ -472,7 +394,6 @@ def main() -> None:
         stage=args.stage,
         fold=args.fold,
         run_id=args.run_id,
-        target_trials=args.target_trials,
     )
     print(json.dumps(result, indent=2), flush=True)
 

@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: feat-clean-native-en-restart-20260822
+slug: clean-native-en-restart
+tier: 2
+branch: agent/feat-clean-native-en-restart
+worktree: /home/emre/worktrees/LLM-Depression-feat-clean-native-en-restart
+parent_branch: origin/main
+parent_sha: 917b0415bdd6a150d163bc21184e1b5a46a85aa9
+created_at_utc: "2026-08-22T13:59:50Z"
+experiment_group_path: null
+type: complementary

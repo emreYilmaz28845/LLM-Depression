@@ -46,25 +46,12 @@ GEMMA4_LOGREG_PREDICTION_BACKEND = "gemma4_hidden_logreg_raw"
 GEMMA4_XGB_PREDICTION_BACKEND = "gemma4_hidden_xgb_raw"
 GEMMA4_VARIANTS = ("logreg_raw", "xgb_raw")
 OFFICIALDEV_PROTOCOL = "daic_official_train_inner_split_dev_evaluation"
-HARMONIZED_LOGREG_BACKEND_POLICY = "harmonized_hidden_logreg_raw_v1"
 
 
-def resolve_prediction_backend(
-    metadata: dict[str, Any], variant: str, *, backend_policy: str | None = None
-) -> str:
+def resolve_prediction_backend(metadata: dict[str, Any], variant: str) -> str:
     """Map the extraction backend and classifier variant to the exact
     prediction-backend identity written into every prediction, metric, and
     evaluation record."""
-    if backend_policy == HARMONIZED_LOGREG_BACKEND_POLICY:
-        if variant != "logreg_raw":
-            raise ValueError(
-                f"Backend policy {backend_policy!r} accepts only 'logreg_raw', "
-                f"got {variant!r}."
-            )
-        is_gemma4 = str(metadata.get("model_backend", "")).strip().lower() == "gemma4"
-        return (
-            GEMMA4_LOGREG_PREDICTION_BACKEND if is_gemma4 else QWEN_LOGREG_PREDICTION_BACKEND
-        )
     if str(metadata.get("model_backend", "")).strip().lower() != "gemma4":
         if (
             str(metadata.get("evaluation_provenance", {}).get("evaluation_protocol", ""))
@@ -365,7 +352,6 @@ def run_variant(
     sampling_mode: str = LEGACY_SAMPLING_MODE,
     oversampling_ratio: float | None = None,
     oversampling_seed: int = 1337,
-    backend_policy: str | None = None,
 ) -> dict[str, Any]:
     train_x, train_rows = _load_partition(cache_dir, "outer_train")
     test_x, test_rows = _load_partition(cache_dir, "final_eval")
@@ -379,9 +365,7 @@ def run_variant(
     if set(train_y.tolist()) != {0, 1}:
         raise ValueError("Training cache must contain both classes.")
     metadata = read_json(cache_dir / "extraction_metadata.json")
-    prediction_backend = resolve_prediction_backend(
-        metadata, variant, backend_policy=backend_policy
-    )
+    prediction_backend = resolve_prediction_backend(metadata, variant)
     evaluation_protocol = str(
         metadata.get("evaluation_provenance", {}).get("evaluation_protocol", "")
     )
@@ -409,8 +393,6 @@ def run_variant(
         "cache_identity": cache_identity(cache_dir),
         "aggregation_policy": classifier_aggregation_policy(metadata),
     }
-    if backend_policy is not None:
-        result_identity["head_backend_policy"] = str(backend_policy)
     result_identity["config_sha256"] = canonical_sha256(result_identity)
     variant_dir = output_root / variant
     identity_path = variant_dir / "result_config.json"
@@ -658,20 +640,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--oversampling-ratio", type=float)
     parser.add_argument("--oversampling-seed", type=int, default=1337)
-    parser.add_argument(
-        "--head-backend-policy",
-        choices=("", HARMONIZED_LOGREG_BACKEND_POLICY),
-        default="",
-        help="Require a qualified prediction-backend policy (e.g. the "
-        "harmonized LogReg policy) instead of protocol inference.",
-    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    backend_policy = str(args.head_backend_policy) or None
     summaries = [
         run_variant(
             args.cache_dir,
@@ -681,7 +655,6 @@ def main() -> None:
             sampling_mode=args.sampling_mode,
             oversampling_ratio=args.oversampling_ratio,
             oversampling_seed=args.oversampling_seed,
-            backend_policy=backend_policy,
         )
         for variant in args.variants
     ]
