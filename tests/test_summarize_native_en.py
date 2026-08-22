@@ -68,15 +68,34 @@ def _manifest(tmp_path: Path, cells: list[dict]) -> Path:
 
 def _standalone_cell(tmp_path: Path, dataset: str, condition: str, head_seed_macro: dict[int, tuple[float, float]]) -> dict:
     seeds = []
+    pooled = dataset in summ.POOL_DATASETS
     for seed, (macro, pos) in head_seed_macro.items():
         folds = []
         for fold in range(5):
-            d = _attempt_dir(
-                tmp_path,
-                f"{dataset}-{condition}-{seed}-f{fold}",
-                macro=macro + fold * 0.01,
-                pos=pos + fold * 0.01,
-            )
+            name = f"{dataset}-{condition}-{seed}-f{fold}"
+            if pooled:
+                d = tmp_path / name
+                d.mkdir(parents=True, exist_ok=True)
+                (d / "status.json").write_text(json.dumps({"state": "REPORTABLE"}))
+                rows = [
+                    {
+                        "dataset": dataset,
+                        "subject_id": f"s{seed}-f{fold}-{i}",
+                        "label": i % 2,
+                        "prediction": i % 2,
+                    }
+                    for i in range(10)
+                ]
+                (d / "predictions_subject_level.jsonl").write_text(
+                    "".join(json.dumps(r) + "\n" for r in rows)
+                )
+            else:
+                d = _attempt_dir(
+                    tmp_path,
+                    name,
+                    macro=macro + fold * 0.01,
+                    pos=pos + fold * 0.01,
+                )
             folds.append({"fold": fold, "attempt_dir": str(d)})
         seeds.append({"seed": seed, "folds": folds})
     aggregation = (
