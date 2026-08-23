@@ -1853,9 +1853,12 @@ def command_submit(args: argparse.Namespace) -> int:
             return 0
 
         if resume_after is not None:
-            plan = _load_plan_for_status(args.slug, args.stage, str(deployment.get("deployment_id")))
-            if plan.get("deployment_id") != deployment.get("deployment_id"):
-                raise OrchestrationError("resume plan deployment does not match requested deployment")
+            plan_path_value = Path(getattr(args, "resume_plan", None) or plan_path(args.stage, str(deployment.get("deployment_id"))))
+            if not plan_path_value.is_file():
+                raise OrchestrationError(f"resume plan does not exist: {plan_path_value}")
+            plan = json.loads(plan_path_value.read_text(encoding="utf-8"))
+            if plan.get("experiment_id") != experiment_id or plan.get("stage") != args.stage:
+                raise OrchestrationError("resume plan does not match the requested lane or stage")
             if plan.get("output_suffix") != getattr(args, "output_suffix", None):
                 raise OrchestrationError("resume output suffix does not match the saved submission plan")
             marker_path = Path(resume_log)
@@ -2181,6 +2184,11 @@ def parse_args() -> argparse.Namespace:
         "--resume-log",
         default=None,
         help="append-only marker log from the interrupted submission prefix",
+    )
+    submit_parser.add_argument(
+        "--resume-plan",
+        default=None,
+        help="saved plan to continue when the clean recovery deployment differs from the original prefix deployment",
     )
     submit_parser.add_argument("--scheduler-host", default=DEFAULT_SCHEDULER_HOST)
     submit_parser.add_argument(
