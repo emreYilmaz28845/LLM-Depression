@@ -27,13 +27,14 @@ STAGE="${STAGE:?STAGE is required}"
 BACKBONE="${BACKBONE:?BACKBONE is required}"
 LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/experiment_runtime/tqcond/logs/xgb}"
 QWEN_ENV_ACTIVATE="${QWEN_ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate}"
+QWEN_DEPS_ROOT="${QWEN_DEPS_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/.deps/qwen_hidden}"
 
 # XGBoost and Optuna are run in the project environment; this worker has no
 # GPU request and remains downstream of the one-GPU hidden extraction job.
 # shellcheck disable=SC1090
 source "$QWEN_ENV_ACTIVATE"
 cd "$PROJECT_ROOT"
-export PYTHONPATH="$PROJECT_ROOT/.deps/qwen_hidden:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$QWEN_DEPS_ROOT:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 mkdir -p "$LOG_ROOT"
 exec > >(tee -a "$LOG_ROOT/xgb-${SLURM_JOB_ID:-local}.out")
 exec 2> >(tee -a "$LOG_ROOT/xgb-${SLURM_JOB_ID:-local}.err" >&2)

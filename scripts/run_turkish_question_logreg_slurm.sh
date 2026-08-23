@@ -33,6 +33,7 @@ MODEL_PATH="${MODEL_PATH:-}"
 LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/experiment_runtime/tqcond/logs/logreg}"
 QWEN_ENV_ACTIVATE="${QWEN_ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate}"
 GEMMA_ENV_ACTIVATE="${GEMMA_ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/gemma4_12b_tf5_14_1/bin/activate}"
+QWEN_DEPS_ROOT="${QWEN_DEPS_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/.deps/qwen_hidden}"
 
 if [ "$BACKBONE" = "gemma4" ]; then
     # shellcheck disable=SC1090
@@ -42,7 +43,7 @@ else
     source "$QWEN_ENV_ACTIVATE"
 fi
 cd "$PROJECT_ROOT"
-export PYTHONPATH="$PROJECT_ROOT/.deps/qwen_hidden:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$QWEN_DEPS_ROOT:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 mkdir -p "$LOG_ROOT" "$CACHE_DIR"
 exec > >(tee -a "$LOG_ROOT/logreg-${SLURM_JOB_ID:-local}.out")
 exec 2> >(tee -a "$LOG_ROOT/logreg-${SLURM_JOB_ID:-local}.err" >&2)
