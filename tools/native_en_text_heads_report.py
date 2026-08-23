@@ -379,7 +379,7 @@ def _matrix_key(record: dict[str, Any]) -> tuple[str, str, str, str, str, int, i
     evaluations = record.get("evaluations") or []
     if not evaluations:
         raise ReportError(f"head attempt has no evaluations: {record.get('attempt_id')}")
-    dataset = str(evaluations[0]["dataset"]) if endpoint == "standalone" else "merged"
+    dataset = str(evaluations[0]["dataset"]).lower() if endpoint == "standalone" else "merged"
     return (
         endpoint,
         str(job["condition"]),
@@ -388,6 +388,15 @@ def _matrix_key(record: dict[str, Any]) -> tuple[str, str, str, str, str, int, i
         dataset,
         int(job["seed"]),
         int(job["fold"]),
+    )
+
+
+def _record_has_dataset(record: dict[str, Any], endpoint: str, dataset: str) -> bool:
+    if endpoint != "standalone":
+        return True
+    return any(
+        str(item.get("dataset") or "").lower() == dataset
+        for item in record.get("evaluations") or []
     )
 
 
@@ -423,6 +432,7 @@ def _validate_matrix(records: list[dict[str, Any]], plan: dict[str, Any]) -> Non
                                     and record["method"] == method
                                     and record["seed"] == seed
                                     and record["fold"] == fold
+                                    and _record_has_dataset(record, endpoint, dataset)
                                 ]
                                 if len(matching) != 1:
                                     raise ReportError(

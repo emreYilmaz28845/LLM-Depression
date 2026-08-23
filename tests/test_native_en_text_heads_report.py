@@ -57,6 +57,8 @@ def test_matrix_key_keeps_standalone_datasets_distinct() -> None:
     androids = {"job": job, "evaluations": [{"dataset": "androids_interview"}]}
 
     assert report._matrix_key(d3tec) != report._matrix_key(androids)
+    assert report._record_has_dataset(d3tec, "standalone", "d3tec")
+    assert not report._record_has_dataset(d3tec, "standalone", "cmdc")
 
 
 def test_report_rejects_incomplete_plan(tmp_path) -> None:
