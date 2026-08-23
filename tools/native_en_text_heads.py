@@ -1834,8 +1834,9 @@ def _validate_resume_dependencies(
     job_ids = sorted(set(dependencies.values()))
     scheduler = SchedulerClient(host=scheduler_host)
     try:
-        queue = scheduler.squeue(job_ids)
         accounting = scheduler.sacct(job_ids)
+        queue_ids = sorted(set(job_ids) - set(accounting))
+        queue = scheduler.squeue(queue_ids)
     except MonitorError as exc:
         raise OrchestrationError(f"could not validate resume dependencies: {exc}") from exc
     missing = sorted(set(job_ids) - set(queue) - set(accounting))
