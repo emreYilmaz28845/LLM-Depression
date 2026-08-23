@@ -137,19 +137,57 @@ def _contract_for(job: dict[str, Any]) -> tuple[dict[str, Any], Path]:
     return contract, _path_from_rel(PROJECT_ROOT, str(local_rel)).resolve()
 
 
-def _source_provenance(metadata: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
+def _expected_source(plan: dict[str, Any], attempt_id: str) -> dict[str, Any]:
+    """Resolve the source expected for one evidence attempt.
+
+    A completed study can legitimately contain preserved evidence from the
+    original deployment plus bounded, new-identity retries.  The effective
+    plan must state that provenance explicitly; this helper keeps the normal
+    single-source behavior as the fallback and fails closed on malformed
+    policies.
+    """
+
+    default = plan.get("evidence_default_source")
+    if default is None:
+        default = {
+            "git_commit": plan.get("source_commit"),
+            "deployment_id": plan.get("deployment_id"),
+            "source_manifest_sha256": plan.get("source_manifest_sha256"),
+        }
+    overrides = plan.get("evidence_source_overrides") or {}
+    if not isinstance(default, dict) or not isinstance(overrides, dict):
+        raise ReportError("malformed effective-plan evidence source policy")
+    expected = overrides.get(attempt_id, default)
+    if not isinstance(expected, dict) or not expected.get("git_commit"):
+        raise ReportError(f"missing expected source policy for {attempt_id}")
+    return expected
+
+
+def _source_provenance(
+    metadata: dict[str, Any], plan: dict[str, Any], job: dict[str, Any]
+) -> dict[str, Any]:
     source = metadata.get("source") if isinstance(metadata.get("source"), dict) else {}
-    if source.get("git_commit") != plan.get("source_commit"):
+    expected = _expected_source(plan, str(job.get("attempt_id") or ""))
+    for key in ("git_commit", "deployment_id", "source_manifest_sha256"):
+        expected_key = "deployed_source_sha256" if key == "source_manifest_sha256" else key
+        expected_value = expected.get(key)
+        if expected_value and source.get(expected_key) != expected_value:
+            raise ReportError(
+                f"source {expected_key} mismatch for {metadata.get('attempt_id')}: "
+                f"{source.get(expected_key)} != {expected_value}"
+            )
+    if source.get("git_commit") != expected.get("git_commit"):
         raise ReportError(
             f"source commit mismatch for {metadata.get('attempt_id')}: "
-            f"{source.get('git_commit')} != {plan.get('source_commit')}"
+            f"{source.get('git_commit')} != {expected.get('git_commit')}"
         )
-    deployment_id = source.get("deployment_id") or plan.get("deployment_id")
+    deployment_id = source.get("deployment_id") or expected.get("deployment_id")
     return {
         "branch": source.get("git_branch"),
         "git_commit": source.get("git_commit"),
         "deployment_id": deployment_id,
         "source_manifest_sha256": source.get("deployed_source_sha256"),
+        "evidence_source_policy": expected,
     }
 
 
@@ -208,7 +246,7 @@ def _qualify_attempt(
     tracking = run_config.get("tracking") if isinstance(run_config.get("tracking"), dict) else {}
     if str(tracking.get("attempt_id")) != str(job["attempt_id"]):
         raise ReportError(f"tracking attempt ID mismatch at {root}")
-    source = _source_provenance(_read_json(root / "metadata.json"), plan)
+    source = _source_provenance(_read_json(root / "metadata.json"), plan, job)
     classifier = scientific.get("classifier") if isinstance(scientific.get("classifier"), dict) else {}
     method = str(job.get("method"))
     expected_method = METHOD_TO_CONFIG[method]
@@ -649,6 +687,8 @@ def build_report(plan_path: str | Path, attempts: set[str] | None = None) -> dic
         "plan_path": str(Path(plan_path).resolve()),
         "deployment_id": plan.get("deployment_id"),
         "source_commit": plan.get("source_commit"),
+        "evidence_default_source": plan.get("evidence_default_source"),
+        "evidence_source_overrides": plan.get("evidence_source_overrides") or {},
         "aggregation": {
             "d3tec_androids_interview": "pooled subject-level across five outer folds",
             "cmdc_turkish": "unweighted mean of five outer-fold subject-level scores",

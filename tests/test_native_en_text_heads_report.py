@@ -68,3 +68,59 @@ def test_report_rejects_incomplete_plan(tmp_path) -> None:
 
     with pytest.raises(report.ReportError, match="submission contract is missing"):
         report.build_report(path)
+
+
+def test_source_provenance_accepts_explicit_retry_source_policy() -> None:
+    plan = {
+        "source_commit": "new" * 10,
+        "deployment_id": "dep-final",
+        "evidence_default_source": {
+            "git_commit": "old" * 10,
+            "deployment_id": "dep-old",
+            "source_manifest_sha256": "old-manifest",
+        },
+        "evidence_source_overrides": {
+            "retry-attempt": {
+                "git_commit": "retry" * 8,
+                "deployment_id": "dep-retry",
+                "source_manifest_sha256": "retry-manifest",
+                "reason": "bounded replacement",
+            }
+        },
+    }
+    metadata = {
+        "attempt_id": "retry-attempt",
+        "source": {
+            "git_commit": "retry" * 8,
+            "deployment_id": "dep-retry",
+            "deployed_source_sha256": "retry-manifest",
+            "git_branch": "agent/test",
+        },
+    }
+    result = report._source_provenance(
+        metadata,
+        plan,
+        {"attempt_id": "retry-attempt"},
+    )
+
+    assert result["git_commit"] == "retry" * 8
+    assert result["deployment_id"] == "dep-retry"
+    assert result["evidence_source_policy"]["reason"] == "bounded replacement"
+
+
+def test_source_provenance_rejects_unlisted_source_mismatch() -> None:
+    plan = {
+        "source_commit": "new" * 10,
+        "deployment_id": "dep-final",
+    }
+    metadata = {
+        "attempt_id": "unlisted-attempt",
+        "source": {"git_commit": "old" * 10},
+    }
+
+    with pytest.raises(report.ReportError, match="source git_commit mismatch"):
+        report._source_provenance(
+            metadata,
+            plan,
+            {"attempt_id": "unlisted-attempt"},
+        )
