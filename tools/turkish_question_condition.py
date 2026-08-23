@@ -39,6 +39,7 @@ TRANSFER_HOST = "ozu647717@transfer1.bsc.es"
 QWEN_ENV_ACTIVATE = "/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate"
 GEMMA_ENV_ACTIVATE = "/gpfs/projects/etur92/ozu647717/venvs/gemma4_12b_tf5_14_1/bin/activate"
 GEMMA_MODEL_PATH = "/gpfs/projects/etur92/ozu647717/models/gemma-4-12B-it/707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7"
+QWEN_HIDDEN_DEPS = REMOTE_PROJECT_ROOT / ".deps" / "qwen_hidden"
 SUBMISSION_SCHEMA = "audiollm.turkish_question_condition_submission.v1"
 LOCAL_ROOT = PROJECT_ROOT / "outputs" / "turkish_question_condition" / EXPERIMENT_ID
 
@@ -363,7 +364,7 @@ def _preflight_script(deployment: dict[str, Any]) -> str:
         f"source {q(QWEN_ENV_ACTIVATE)}",
         f"export PROJECT_ROOT={q(code)}",
         f"cd {q(code)}",
-        f"export PYTHONPATH=\"$PROJECT_ROOT/.deps/qwen_hidden:$PROJECT_ROOT${{PYTHONPATH:+:$PYTHONPATH}}\"",
+        f"export PYTHONPATH=\"{q(QWEN_HIDDEN_DEPS)}:$PROJECT_ROOT${{PYTHONPATH:+:$PYTHONPATH}}\"",
         f"audit_dir={q(audit_dir)}",
         "audit=\"$audit_dir/audit.json\"",
         "reuse_args=()",
@@ -499,6 +500,7 @@ def _head_export(job: dict[str, Any], deployment: dict[str, Any], *, logreg: boo
         "BACKBONE": job["backbone"],
         "MODEL_PATH": job["model_path"],
         "LOG_ROOT": job["log_root"],
+        "QWEN_DEPS_ROOT": str(QWEN_HIDDEN_DEPS),
     }
     if not logreg:
         values.update({"TRIALS": job["trials"], "STAGE": job["stage"]})
