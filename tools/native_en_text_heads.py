@@ -1792,9 +1792,12 @@ def _validate_resume_dependencies(
     selected_jobs = [
         job
         for job in plan["jobs"]
-        if phase == "all"
-        or (phase == "cv" and job.get("endpoint") != "merged_final")
-        or (phase == "final" and job.get("endpoint") == "merged_final")
+        if int(job["plan_index"]) > resume_after
+        and (
+            phase == "all"
+            or (phase == "cv" and job.get("endpoint") != "merged_final")
+            or (phase == "final" and job.get("endpoint") == "merged_final")
+        )
     ]
     dependencies: dict[int, str] = {}
     for job in selected_jobs:
