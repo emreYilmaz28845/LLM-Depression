@@ -975,6 +975,13 @@ PY
 }"""
 
 
+def write_once_stdin_function() -> str:
+    return """write_once_stdin() {
+  target=$1
+  python -c 'import base64, pathlib, sys; target = pathlib.Path(sys.argv[1]); data = base64.b64decode(sys.stdin.buffer.read()); same = target.exists() and target.is_file() and target.read_bytes() == data; bad = target.exists() and not same; bad and sys.exit(f"collision or incompatible existing target: {target}"); same and sys.exit(0); target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(data)' "$target"
+}"""
+
+
 def manifest_map(
     experiment_id: str, stage: str, output_suffix: str | None = None
 ) -> dict[str, Any]:
@@ -1260,6 +1267,7 @@ def remote_submission_script(
         f"source {q(code)}/scripts/native_en_text_heads_env.sh",
         f"cd {q(code)}",
         write_once_function(),
+        write_once_stdin_function(),
         f"test -f {q(preflight_path)}",
         f"python - {q(preflight_path)} <<'PY'",
         "import json, sys",
@@ -1311,7 +1319,10 @@ def remote_submission_script(
             Path(plan["stage_root"])
             / f"head_init_batch_{deployment['deployment_id']}_{batch_index // batch_size}.json"
         )
-        lines.append(f"write_once {q(batch_path)} {q(payload_b64(batch_payload))}")
+        marker = f"__HEAD_INIT_BATCH_{batch_index // batch_size}__"
+        lines.append(f"write_once_stdin {q(batch_path)} <<'{marker}'")
+        lines.append(payload_b64(batch_payload))
+        lines.append(marker)
         lines.append(
             f"{q(python)} tools/native_en_text_heads_worker.py init-batch"
             f" --manifest {q(batch_path)}"

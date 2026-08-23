@@ -132,6 +132,8 @@ def test_submission_batches_custom_attempt_initialization_before_sbatch() -> Non
     init_pos = script.index("tools/native_en_text_heads_worker.py init-batch")
     sbatch_pos = script.index("sbatch --parsable", init_pos)
     assert init_pos < sbatch_pos
+    assert "write_once_stdin" in script
+    assert "write_once_stdin" in script[:init_pos]
 
 
 def test_batch_head_initialization_writes_sidecars_and_deploys(tmp_path: Path) -> None:
