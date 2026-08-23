@@ -201,7 +201,8 @@ def _runtime_pair(plan: dict[str, Any], backbone: dict[str, Any]) -> dict[str, A
         raise ReportError(f"local manifest hash does not match preflight evidence: {manifest}")
     if hashlib.sha256(metadata.read_bytes()).hexdigest() != str(pair.get("metadata_sha256")):
         raise ReportError(f"local split metadata hash does not match preflight evidence: {metadata}")
-    audit = _local_runtime_path(plan, Path(str(plan["runtime_root"])) / "preflight" / "audit.json")
+    audit_remote = Path(str(plan.get("preflight_audit_path") or (Path(str(plan["runtime_root"])) / "preflight" / "audit.json")))
+    audit = _local_runtime_path(plan, audit_remote)
     return {
         "condition": condition,
         "language": language,

@@ -42,6 +42,7 @@ else
     source "$QWEN_ENV_ACTIVATE"
 fi
 cd "$PROJECT_ROOT"
+export PYTHONPATH="$PROJECT_ROOT/.deps/qwen_hidden:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 mkdir -p "$LOG_ROOT" "$CACHE_DIR"
 exec > >(tee -a "$LOG_ROOT/logreg-${SLURM_JOB_ID:-local}.out")
 exec 2> >(tee -a "$LOG_ROOT/logreg-${SLURM_JOB_ID:-local}.err" >&2)

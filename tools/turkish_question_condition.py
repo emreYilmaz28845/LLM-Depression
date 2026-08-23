@@ -354,7 +354,7 @@ def _write_matrix_plan(args: argparse.Namespace) -> int:
 
 def _preflight_script(deployment: dict[str, Any]) -> str:
     code = str(deployment["deployed_code_path"])
-    audit = REMOTE_RUNTIME_ROOT / "preflight" / "audit.json"
+    audit_dir = REMOTE_RUNTIME_ROOT / "preflight"
     lines = [
         "set -euo pipefail",
         "module purge",
@@ -363,12 +363,61 @@ def _preflight_script(deployment: dict[str, Any]) -> str:
         f"source {q(QWEN_ENV_ACTIVATE)}",
         f"export PROJECT_ROOT={q(code)}",
         f"cd {q(code)}",
-        f"test ! -e {q(REMOTE_RUNTIME_ROOT)} || test -z \"$(find {q(REMOTE_RUNTIME_ROOT)} -type f -print -quit)\"",
+        f"export PYTHONPATH=\"$PROJECT_ROOT/.deps/qwen_hidden:$PROJECT_ROOT${{PYTHONPATH:+:$PYTHONPATH}}\"",
+        f"audit_dir={q(audit_dir)}",
+        "audit=\"$audit_dir/audit.json\"",
+        "reuse_args=()",
+        "if [ -e \"$audit\" ]; then",
+        "  reuse_args+=(--reuse-existing)",
+        "  retry=1",
+        "  while [ -e \"$audit_dir/audit_retry_${retry}.json\" ]; do retry=$((retry + 1)); done",
+        "  audit=\"$audit_dir/audit_retry_${retry}.json\"",
+        "else",
+        f"  test ! -e {q(REMOTE_RUNTIME_ROOT)} || test -z \"$(find {q(REMOTE_RUNTIME_ROOT)} -type f -print -quit)\"",
+        "fi",
         "python scripts/turkish_question_condition_preflight.py"
         f" --stage production --output-root {q(REMOTE_RUNTIME_ROOT)}"
-        f" --output {q(audit)} --require-models --require-environment",
+        " \"${reuse_args[@]}\""
+        " --output \"$audit\" --require-models --require-environment",
+        "echo \"__PREFLIGHT_AUDIT__ $audit\"",
     ]
     return "\n".join(lines) + "\n"
+
+
+def _remote_preflight_audit_path(host: str) -> str:
+    script = f"""set -euo pipefail
+module purge
+module load bsc/1.0
+module load miniforge/24.3.0-0
+source {q(QWEN_ENV_ACTIVATE)}
+python - <<'PY'
+import json
+from pathlib import Path
+root = Path({str(REMOTE_RUNTIME_ROOT / 'preflight')!r})
+passed = []
+for path in sorted(root.glob('audit*.json')):
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        continue
+    if payload.get('status') == 'passed' and payload.get('group_id') == {GROUP_ID!r}:
+        passed.append(path)
+if not passed:
+    raise SystemExit('no passed Turkish question-condition preflight audit')
+print(passed[-1])
+PY
+"""
+    result = ssh_bash(host, script, timeout=1800)
+    if result.returncode != 0:
+        raise CampaignError(f"could not resolve passed remote preflight audit: {result.stderr.strip()}")
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if not lines:
+        raise CampaignError("remote preflight audit resolver returned no path")
+    path = lines[-1]
+    expected_root = str(REMOTE_RUNTIME_ROOT / "preflight") + "/"
+    if not path.startswith(expected_root) or not path.endswith(".json"):
+        raise CampaignError(f"remote preflight audit path escaped the runtime root: {path}")
+    return path
 
 
 def _run_preflight(args: argparse.Namespace) -> int:
@@ -387,6 +436,8 @@ def _run_preflight(args: argparse.Namespace) -> int:
             command.append("--require-models")
         if args.require_environment:
             command.append("--require-environment")
+        if args.reuse_existing:
+            command.append("--reuse-existing")
         return subprocess.run(command, cwd=PROJECT_ROOT).returncode
     _, _, deployment = _lane_and_deployment(args.slug, args.deployment_id, execute=args.execute)
     if not args.execute:
@@ -397,10 +448,18 @@ def _run_preflight(args: argparse.Namespace) -> int:
     sys.stderr.write(result.stderr)
     if result.returncode != 0:
         return result.returncode
-    audit = json.loads(ssh_cat(args.scheduler_host, str(REMOTE_RUNTIME_ROOT / "preflight/audit.json")))
+    audit_path = next(
+        (
+            line.split(" ", 1)[1].strip()
+            for line in reversed(result.stdout.splitlines())
+            if line.startswith("__PREFLIGHT_AUDIT__ ")
+        ),
+        None,
+    ) or _remote_preflight_audit_path(args.scheduler_host)
+    audit = json.loads(ssh_cat(args.scheduler_host, audit_path))
     if audit.get("status") != "passed":
         raise CampaignError(f"remote preflight did not pass: {audit.get('failures')}")
-    print(json.dumps({"status": audit["status"], "audit_sha256": audit["audit_sha256"]}, indent=2, sort_keys=True))
+    print(json.dumps({"status": audit["status"], "audit": audit_path, "audit_sha256": audit["audit_sha256"]}, indent=2, sort_keys=True))
     return 0
 
 
@@ -459,8 +518,25 @@ def _remote_submission_script(plan: dict[str, Any], deployment: dict[str, Any]) 
         f"export PROJECT_ROOT={q(code)}",
         f"cd {q(code)}",
         _remote_write_once(),
-        f"test -f {q(REMOTE_RUNTIME_ROOT / 'preflight/audit.json')}",
-        f"python - {q(str(REMOTE_RUNTIME_ROOT / 'preflight/audit.json'))} <<'PY'",
+        "preflight_audit=$(python - <<'PY'",
+        "import json",
+        "from pathlib import Path",
+        f"root = Path({str(REMOTE_RUNTIME_ROOT / 'preflight')!r})",
+        "passed = []",
+        "for path in sorted(root.glob('audit*.json')):",
+        "    try:",
+        "        payload = json.loads(path.read_text(encoding='utf-8'))",
+        "    except (OSError, json.JSONDecodeError):",
+        "        continue",
+        f"    if payload.get('status') == 'passed' and payload.get('group_id') == {GROUP_ID!r}:",
+        "        passed.append(path)",
+        "if not passed:",
+        "    raise SystemExit('no passed Turkish question-condition preflight audit')",
+        "print(passed[-1])",
+        "PY",
+        ")",
+        "test -f \"$preflight_audit\"",
+        "python - \"$preflight_audit\" <<'PY'",
         "import json, sys",
         "payload=json.load(open(sys.argv[1], encoding='utf-8'))",
         f"assert payload.get('status') == 'passed', payload.get('failures')",
@@ -582,7 +658,8 @@ def _submit(args: argparse.Namespace) -> int:
         repo_root=PROJECT_ROOT,
     )
     if args.execute:
-        preflight = json.loads(ssh_cat(args.scheduler_host, str(REMOTE_RUNTIME_ROOT / "preflight/audit.json")))
+        audit_path = _remote_preflight_audit_path(args.scheduler_host)
+        preflight = json.loads(ssh_cat(args.scheduler_host, audit_path))
     elif args.preflight:
         preflight = json.loads(Path(args.preflight).read_text(encoding="utf-8"))
     else:
@@ -593,6 +670,9 @@ def _submit(args: argparse.Namespace) -> int:
         }
         raise CampaignError("--preflight is required for a dry-run submission")
     submission = _make_submission_plan(matrix=matrix, deployment=deployment, preflight=preflight)
+    if args.execute:
+        submission["preflight_audit_path"] = audit_path
+        submission["submission_plan_sha256"] = _canonical_sha(submission)
     print(json.dumps({
         "stage": args.stage,
         "deployment_id": deployment.get("deployment_id"),
@@ -919,6 +999,7 @@ def parse_args() -> argparse.Namespace:
     preflight.add_argument("--output", type=Path, default=LOCAL_ROOT / "local_preflight.json")
     preflight.add_argument("--require-models", action="store_true")
     preflight.add_argument("--require-environment", action="store_true")
+    preflight.add_argument("--reuse-existing", action="store_true")
     preflight.set_defaults(function=_run_preflight)
 
     submit = sub.add_parser("submit")

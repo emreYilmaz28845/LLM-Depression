@@ -208,11 +208,15 @@ def _build_pair(
     output_root: Path,
     dataset_root: Path | None,
     translation_root: Path | None,
+    reuse_existing: bool,
 ) -> dict[str, Any]:
     manifest_dir = output_root / "manifests" / condition / language
     split_dir = output_root / "splits" / condition / language
-    if manifest_dir.exists() or split_dir.exists():
+    existing_pair = manifest_dir.exists() or split_dir.exists()
+    if existing_pair and not reuse_existing:
         raise PreflightError(f"refusing to overwrite existing preflight outputs: {manifest_dir} / {split_dir}")
+    if existing_pair and (not manifest_dir.is_dir() or not split_dir.is_dir()):
+        raise PreflightError(f"existing preflight pair is not two directories: {manifest_dir} / {split_dir}")
     overrides = [
         f"--set=output_dirs.manifest_dir={manifest_dir}",
         f"--set=output_dirs.split_dir={split_dir}",
@@ -227,7 +231,8 @@ def _build_pair(
             f"--set=transcripts.cache_path={translation_root / cache_family / cache_dataset / 'accepted.jsonl'}"
         )
     config = _read_yaml(config_path, overrides)
-    build_for_config(config_path, overrides)
+    if not existing_pair:
+        build_for_config(config_path, overrides)
     metadata_path = split_dir / "turkish_manifest_metadata.json"
     manifest_path, metadata = _manifest_location(metadata_path)
     rows = read_jsonl(manifest_path)
@@ -270,7 +275,7 @@ def run_preflight(args: argparse.Namespace) -> dict[str, Any]:
     output_root = args.output_root.resolve()
     if output_root.exists():
         existing_files = [path for path in output_root.rglob("*") if path.is_file()]
-        if existing_files:
+        if existing_files and not args.reuse_existing:
             raise PreflightError(
                 f"preflight output root already contains files: {existing_files[:3]}"
             )
@@ -287,6 +292,7 @@ def run_preflight(args: argparse.Namespace) -> dict[str, Any]:
                         output_root=output_root,
                         dataset_root=dataset_roots[condition],
                         translation_root=args.translation_root,
+                        reuse_existing=args.reuse_existing,
                     )
                 )
             except Exception as exc:
@@ -353,6 +359,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--translation-root", type=Path)
     parser.add_argument("--require-models", action="store_true")
     parser.add_argument("--require-environment", action="store_true")
+    parser.add_argument("--reuse-existing", action="store_true", help="re-audit existing manifest/split pairs without overwriting them")
     parser.add_argument("--output", required=True, type=Path)
     return parser.parse_args()
 
