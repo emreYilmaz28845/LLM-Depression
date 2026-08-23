@@ -179,6 +179,31 @@ def _load_candidates(path: Path | None) -> dict[tuple[str, str, int], dict[str, 
     return index
 
 
+def _load_validation_retries(path: Path | None) -> dict[tuple[str, str, int], dict[str, Any]]:
+    if path is None or not path.is_file():
+        return {}
+    retries: dict[tuple[str, str, int], dict[str, Any]] = {}
+    for row in read_jsonl(path):
+        key = (str(row["unit_id"]), str(row["field"]), int(row.get("part_index", 0)))
+        if key in retries:
+            raise ValueError(f"Duplicate validation retry key in {path}: {key}")
+        codes = row.get("reason_codes")
+        if not isinstance(codes, list) or not codes:
+            raise ValueError(f"Validation retry {key} must contain reason_codes.")
+        supported = {
+            "turkish_only_characters",
+            "source_script_characters",
+            "numbers_not_preserved",
+            "named_entities_not_preserved",
+            "sensitive_term_not_preserved",
+        }
+        unknown_codes = {str(code) for code in codes} - supported
+        if unknown_codes:
+            raise ValueError(f"Validation retry {key} has unsupported reason codes: {sorted(unknown_codes)}")
+        retries[key] = row
+    return retries
+
+
 def _write_candidates(candidates: dict[tuple[str, str, int], dict[str, Any]], path: str | Path) -> None:
     write_jsonl(
         sorted(candidates.values(), key=lambda row: (row["unit_id"], row["part_index"])),
@@ -198,11 +223,33 @@ def run_translation(
     seed: int,
     max_retries: int,
     force_resync: bool,
+    validation_retries_path: str | Path | None = None,
 ) -> dict[str, Any]:
     units = _load_units(resolve_project_path(units_path))
     for unit in units:
         unit["_model_revision"] = model_revision
     candidates = _load_candidates(resolve_project_path(candidates_path))
+    validation_retries = _load_validation_retries(
+        resolve_project_path(validation_retries_path) if validation_retries_path else None
+    )
+    units_by_key = {
+        (str(unit["unit_id"]), str(unit["field"]), int(unit.get("part_index", 0))): unit
+        for unit in units
+    }
+    unknown_retry_keys = set(validation_retries) - set(units_by_key)
+    if unknown_retry_keys:
+        raise ValueError(f"Validation retries contain unknown unit keys: {sorted(unknown_retry_keys)[:10]}")
+    completed_retry_keys = set(validation_retries) & set(candidates)
+    if completed_retry_keys:
+        raise ValueError(
+            "Validation retry directives still have completed candidates; "
+            f"omit those candidates before retrying: {sorted(completed_retry_keys)[:10]}"
+        )
+    for key, retry in validation_retries.items():
+        unit = units_by_key[key]
+        if str(retry.get("source_sha256", "")) != str(unit["source_sha256"]):
+            raise ValueError(f"Validation retry source hash mismatch for {key}.")
+        unit["_validation_retry_codes"] = [str(code) for code in retry["reason_codes"]]
 
     pending: list[dict[str, Any]] = []
     skipped = 0
@@ -306,6 +353,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-retries", type=int, default=2)
     parser.add_argument("--force-resync", action="store_true", help="Regenerate candidates whose source changed.")
+    parser.add_argument(
+        "--validation-retries",
+        help="Optional label-free retry directives for candidates omitted after validation failure.",
+    )
     return parser.parse_args()
 
 
@@ -323,6 +374,7 @@ def main() -> None:
         seed=args.seed,
         max_retries=args.max_retries,
         force_resync=args.force_resync,
+        validation_retries_path=args.validation_retries,
     )
     LOGGER.info(
         "Translation summary: completed=%s failed=%s skipped=%s",

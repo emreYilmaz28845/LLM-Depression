@@ -16,6 +16,7 @@ def harmonized_configs():
         if not path.name.endswith("_en.yaml")
         and "_gemma4_12b" not in path.name
         and "_officialdev" not in path.name
+        and "turkish_negative_only" not in path.name
     )
 
 

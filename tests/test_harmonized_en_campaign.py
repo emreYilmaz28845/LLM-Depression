@@ -41,7 +41,11 @@ EN_CONFIGS = {
 
 
 def en_config_paths() -> list[Path]:
-    return sorted(MAIN.glob("*harmonized_selmacrof1_tf*_en.yaml"))
+    return sorted(
+        path
+        for path in MAIN.glob("*harmonized_selmacrof1_tf*_en.yaml")
+        if "turkish_negative_only" not in path.name
+    )
 
 
 def test_exactly_eight_english_configs_exist() -> None:
