@@ -519,6 +519,7 @@ def _remote_submission_script(plan: dict[str, Any], deployment: dict[str, Any]) 
         f"source {q(QWEN_ENV_ACTIVATE)}",
         f"export PROJECT_ROOT={q(code)}",
         f"cd {q(code)}",
+        'export PYTHONPATH="$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"',
         _remote_write_once(),
         "preflight_audit=$(python - <<'PY'",
         "import json",
