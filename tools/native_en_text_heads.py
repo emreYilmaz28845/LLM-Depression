@@ -1992,7 +1992,11 @@ def command_submit(args: argparse.Namespace) -> int:
         else:
             if submit_plan.get("retry_reused_dependencies"):
                 _validate_reused_dependencies(submit_plan, args.scheduler_host)
-            local_contracts(submit_plan)
+            if resume_after is None:
+                # Resume reuses the contracts minted by the interrupted
+                # submission; recreating their destination directories would
+                # turn preserved evidence into a collision.
+                local_contracts(submit_plan)
 
         submit_script = remote_submission_script(
             submit_plan,
