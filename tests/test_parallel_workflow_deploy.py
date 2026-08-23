@@ -342,6 +342,29 @@ def test_unexpected_file_in_clean_deployment_fails(tmp_path):
         execute_deployment(plan, runner, rsync_executor=_rsync_ok_factory([]))
 
 
+def test_interpreter_generated_python_cache_is_allowed(tmp_path):
+    repo = _init_repo(tmp_path)
+    manifest = _write_provenance(repo)
+    plan = plan_deployment(worktree=repo, experiment_id="exp-x", branch="agent/exp-x",
+                           allow_dirty=False, deployment_id="dep-pycache")
+    runner = FakeRunner()
+    _populate_deployed_tree(
+        runner,
+        repo,
+        plan["deployed_code_path"],
+        manifest,
+        extras=["src/__pycache__/module.cpython-311.pyc"],
+    )
+
+    result = execute_deployment(plan, runner, rsync_executor=_rsync_ok_factory([]))
+
+    assert result["verification"]["unexpected"] == []
+    assert result["verification"]["allowed_extras"] == [
+        ".provenance/source_manifest.json",
+        "src/__pycache__/module.cpython-311.pyc",
+    ]
+
+
 def test_missing_file_in_deployment_fails(tmp_path):
     repo = _init_repo(tmp_path)
     manifest = _write_provenance(repo)
