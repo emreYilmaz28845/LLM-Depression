@@ -893,6 +893,14 @@ def _local_output_fold(remote_fold: str) -> Path:
         raise CampaignError(f"local evidence path is outside the canonical output root: {remote}") from exc
 
 
+def _expected_teacher_aggregation(backbone: dict[str, Any]) -> str:
+    """Return the config spelling for the locked teacher aggregation route."""
+
+    if str(backbone.get("modality")) in {"audio_only", "audio_text"}:
+        return "response_subject"
+    return "subject_level"
+
+
 def _validate_teacher(fold_dir: Path, backbone: dict[str, Any]) -> dict[str, Any]:
     from src.experiment_tracking.evidence import verify_artifacts_locally, verify_evaluations_locally
     from src.experiment_tracking.validate import ValidationError, advance_lifecycle, read_state, validate_attempt
@@ -904,7 +912,7 @@ def _validate_teacher(fold_dir: Path, backbone: dict[str, Any]) -> dict[str, Any
             expected_dataset="turkish",
             expected_evaluation_view=EVALUATION_VIEW,
             expected_backend=EVALUATION_BACKEND,
-            expected_aggregation="subject_level",
+            expected_aggregation=_expected_teacher_aggregation(backbone),
             require_standalone_eval=True,
         )
     except (ValidationError, OSError, ValueError) as exc:
