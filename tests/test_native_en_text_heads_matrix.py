@@ -16,6 +16,7 @@ from src.native_en_text_heads import (
 from tools.native_en_text_heads import (
     add_plan_indexes,
     build_plan,
+    derive_final_epochs,
     job_export,
     parse_submission_markers,
     _reconcile_collected_standalone_sidecars,
@@ -486,6 +487,60 @@ def test_native_worker_environment_sets_cuda_reproducibility_defaults() -> None:
     assert 'export CUBLAS_WORKSPACE_CONFIG="${CUBLAS_WORKSPACE_CONFIG:-:4096:8}"' in env_script
     assert 'export PYTHONHASHSEED="${PYTHONHASHSEED:-0}"' in env_script
     assert 'export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"' in env_script
+
+
+def test_final_epoch_derivation_uses_merged_epochs_launcher_without_config_override(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import tools.native_en_text_heads as orchestration
+
+    monkeypatch.setattr(orchestration, "PROJECT_ROOT", tmp_path)
+    remote_root = orchestration.REMOTE_PROJECT_ROOT / "output_model" / "finalfix" / "text_only" / "merged"
+    cv_jobs = []
+    for fold, selected_epoch in enumerate((1, 2, 3, 4, 5)):
+        attempt_dir = remote_root / f"cv_fold_{fold}"
+        local_selection = tmp_path / attempt_dir.relative_to(orchestration.REMOTE_PROJECT_ROOT) / "logs"
+        local_selection.mkdir(parents=True)
+        (local_selection / "selected_checkpoint.json").write_text(
+            json.dumps({"selected_epoch": selected_epoch}), encoding="utf-8"
+        )
+        cv_jobs.append(
+            {
+                "endpoint": "merged_cv",
+                "job_type": "train",
+                "condition": "native",
+                "backbone": "qwen",
+                "seed": 7,
+                "fold": fold,
+                "attempt_id": f"cv-{fold}",
+                "attempt_dir": str(attempt_dir),
+            }
+        )
+    final_job = {
+        "endpoint": "merged_final",
+        "job_type": "train",
+        "condition": "native",
+        "backbone": "qwen",
+        "seed": 7,
+        "fold": 0,
+        "attempt_id": "final",
+        "attempt_dir": str(remote_root / "final"),
+        "overrides": ["--set=seed=7"],
+        "config_payload": {"training": {"num_train_epochs": 20}},
+    }
+    plan = {
+        "stage": "production",
+        "deployment_id": "dep",
+        "source_commit": "commit",
+        "group_id": "group",
+        "jobs": cv_jobs + [final_job],
+    }
+
+    derive_final_epochs(plan)
+
+    assert final_job["epochs"] == 3
+    assert not any("training.final_epoch_count" in token for token in final_job["overrides"])
+    assert "final_epoch_count" not in final_job["config_payload"]["training"]
 
 
 def test_remote_prepare_attaches_set_tokens_to_override_options() -> None:
