@@ -488,6 +488,115 @@ def _select_retry_jobs(
     plan["collision_paths"] = sorted(collision_paths)
 
 
+def _select_retry_chains(
+    plan: dict[str, Any],
+    retry_from: dict[str, Any],
+    retry_chain_job_keys: list[str] | tuple[str, ...],
+) -> None:
+    """Restrict a retry plan to failed training jobs and their full descendants.
+
+    Training retries cannot reuse a parent checkpoint or feature cache.  They
+    therefore receive a fresh output namespace and a fresh attempt identity
+    for the training job, its evaluation, and every dependent head.  The
+    source plan is retained only for supersession and failure provenance.
+    """
+
+    requested = {str(key) for key in retry_chain_job_keys if str(key).strip()}
+    if not requested:
+        return
+    source_by_key = {
+        str(job["job_key"]): job
+        for job in retry_from.get("jobs", [])
+        if job.get("job_key")
+    }
+    unknown = sorted(requested - set(source_by_key))
+    if unknown:
+        raise OrchestrationError(f"retry chain job keys are not in the locked plan: {unknown}")
+
+    selected_keys: set[str] = set()
+    standalone_descendant_keys: set[str] = set()
+    source_job_ids: dict[str, str] = {}
+    source_attempt_ids: dict[str, str] = {}
+    for key in sorted(requested):
+        old_job = source_by_key[key]
+        if old_job.get("kind") != "standalone_backbone" and old_job.get("job_type") != "train":
+            raise OrchestrationError(
+                "training-chain retries require a standalone or merged training job key: "
+                f"{key}"
+            )
+        old_job_ids = old_job.get("job_ids") or {}
+        old_job_id = str(old_job_ids.get("train") or old_job_ids.get("job") or "")
+        if not old_job_id:
+            raise OrchestrationError(f"retry source training job has no Slurm ID: {key}")
+        old_attempt_id = str(old_job.get("attempt_id") or "")
+        if not old_attempt_id:
+            raise OrchestrationError(f"retry source training job has no attempt ID: {key}")
+        source_job_ids[key] = old_job_id
+        source_attempt_ids[key] = old_attempt_id
+
+        new_job = next((job for job in plan["jobs"] if str(job.get("job_key")) == key), None)
+        if new_job is None:
+            raise OrchestrationError(f"retry plan has no matching training job: {key}")
+        selected_keys.add(key)
+        if new_job.get("kind") == "standalone_backbone":
+            new_attempt_id = str(new_job.get("attempt_id") or "")
+            if not new_attempt_id:
+                raise OrchestrationError(f"retry plan training job has no fresh attempt ID: {key}")
+            descendants = {
+                str(job["job_key"])
+                for job in plan["jobs"]
+                if str(job.get("parent_attempt_id") or "") == new_attempt_id
+            }
+            selected_keys.update(descendants)
+            standalone_descendant_keys.update(descendants)
+
+    # Merged evaluation and head jobs form a dependency closure from the
+    # selected train key.  Repeatedly adding jobs keeps this tied to the
+    # locked graph rather than to positional assumptions.
+    changed = True
+    while changed:
+        changed = False
+        for job in plan["jobs"]:
+            key = str(job.get("job_key") or "")
+            if not key or key in selected_keys:
+                continue
+            dependencies = {str(dep) for dep in (job.get("dependencies") or [])}
+            if dependencies & selected_keys:
+                selected_keys.add(key)
+                changed = True
+
+    selected = [job for job in plan["jobs"] if str(job.get("job_key")) in selected_keys]
+    if not selected:
+        raise OrchestrationError("training-chain retry selected no jobs")
+    expected_parent_ids = {
+        str(job.get("attempt_id") or "")
+        for job in selected
+        if job.get("kind") == "standalone_backbone"
+    }
+    for job in selected:
+        if str(job.get("job_key")) in standalone_descendant_keys and str(job.get("parent_attempt_id") or "") not in expected_parent_ids:
+            raise OrchestrationError(
+                "training-chain retry selected a standalone descendant with a different parent: "
+                f"{job.get('job_key')}"
+            )
+
+    plan["full_counts"] = dict(plan["counts"])
+    plan["retry_chain_job_keys"] = sorted(requested)
+    plan["retry_chain_source_job_ids"] = dict(sorted(source_job_ids.items()))
+    plan["retry_chain_source_attempt_ids"] = dict(sorted(source_attempt_ids.items()))
+    plan["jobs"] = selected
+    plan["counts"] = _counts_for_jobs(selected)
+    collision_paths: set[str] = set()
+    for job in selected:
+        for key in ("attempt_dir", "context_path"):
+            if job.get(key):
+                collision_paths.add(str(job[key]))
+        for key in ("cache_dir", "features_dir"):
+            if job.get(key):
+                collision_paths.add(str(job[key]))
+    plan["collision_paths"] = sorted(collision_paths)
+
+
 def build_plan(
     *,
     stage: str,
@@ -497,14 +606,18 @@ def build_plan(
     output_suffix: str | None = None,
     retry_from: dict[str, Any] | None = None,
     retry_job_keys: list[str] | tuple[str, ...] | None = None,
+    retry_chain_job_keys: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     validate_configs(PROJECT_ROOT)
     if stage not in {"smoke", "production"}:
         raise OrchestrationError(f"unsupported stage {stage!r}")
     output_suffix = _normalize_output_suffix(output_suffix)
     retry_job_keys = tuple(retry_job_keys or ())
-    if retry_job_keys and retry_from is None:
-        raise OrchestrationError("--retry-job-key requires --retry-from")
+    retry_chain_job_keys = tuple(retry_chain_job_keys or ())
+    if (retry_job_keys or retry_chain_job_keys) and retry_from is None:
+        raise OrchestrationError("retry selection requires --retry-from")
+    if retry_job_keys and retry_chain_job_keys:
+        raise OrchestrationError("head and training-chain retry selections cannot be combined")
     if retry_from is not None:
         if retry_from.get("experiment_id") != experiment_id:
             raise OrchestrationError(
@@ -515,8 +628,8 @@ def build_plan(
             raise OrchestrationError(
                 f"retry source plan stage {retry_from.get('stage')!r} does not match {stage!r}"
             )
-        if not retry_from.get("submission_complete"):
-            raise OrchestrationError("retry source plan is not a completed submission plan")
+        if not retry_from.get("submission_complete") and retry_from.get("submission_phase") not in {"cv", "complete"}:
+            raise OrchestrationError("retry source plan is not a completed submission phase")
         if not output_suffix:
             raise OrchestrationError("retries require a fresh --output-suffix")
     root = stage_root(experiment_id, stage, output_suffix)
@@ -924,6 +1037,8 @@ def build_plan(
     }
     if retry_job_keys:
         _select_retry_jobs(plan, retry_from or {}, retry_job_keys)
+    if retry_chain_job_keys:
+        _select_retry_chains(plan, retry_from or {}, retry_chain_job_keys)
     return plan
 
 
@@ -1698,6 +1813,12 @@ def print_plan_summary(plan: dict[str, Any], path: Path) -> None:
             "retry_reused_dependencies: "
             + json.dumps(plan.get("retry_reused_dependencies") or {}, sort_keys=True)
         )
+    if plan.get("retry_chain_job_keys"):
+        print(f"retry_chain_job_keys: {json.dumps(plan['retry_chain_job_keys'])}")
+        print(
+            "retry_chain_source_job_ids: "
+            + json.dumps(plan.get("retry_chain_source_job_ids") or {}, sort_keys=True)
+        )
     print(f"stage_root: {plan['stage_root']}")
     print(f"counts: {json.dumps(plan['counts'], sort_keys=True)}")
     print(f"plan: {path}")
@@ -1768,6 +1889,42 @@ def _validate_reused_dependencies(plan: dict[str, Any], scheduler_host: str) -> 
             "selective retry requires completed reused dependencies: " + ", ".join(incomplete)
         )
     print(f"verified reused retry dependencies: {len(reused)} completed Slurm jobs")
+
+
+def _validate_retry_chain_sources(plan: dict[str, Any], scheduler_host: str) -> None:
+    """Require each selected retry source to be a recorded failed train job."""
+
+    source_jobs = plan.get("retry_chain_source_job_ids") or {}
+    if not source_jobs:
+        return
+    from src.experiment_tracking.monitor import MonitorError, SchedulerClient
+
+    job_ids = sorted({str(job_id) for job_id in source_jobs.values()})
+    scheduler = SchedulerClient(host=scheduler_host)
+    try:
+        accounting = scheduler.sacct(job_ids)
+        queue_ids = sorted(set(job_ids) - set(accounting))
+        queue = scheduler.squeue(queue_ids) if queue_ids else {}
+    except MonitorError as exc:
+        raise OrchestrationError(f"could not validate retry chain sources: {exc}") from exc
+    missing = sorted(set(job_ids) - set(queue) - set(accounting))
+    if missing:
+        raise OrchestrationError(
+            f"retry chain source jobs are missing from both squeue and sacct: {missing}"
+        )
+    invalid: list[str] = []
+    for job_key, job_id in sorted(source_jobs.items()):
+        record = accounting.get(str(job_id)) or queue.get(str(job_id)) or {}
+        state = str(record.get("State") or "UNKNOWN")
+        exit_code = str(record.get("ExitCode") or "")
+        if state != "FAILED" or exit_code != "1:0":
+            invalid.append(f"{job_key}={job_id} ({state}, {exit_code or '-'})")
+    if invalid:
+        raise OrchestrationError(
+            "training-chain retries require failed source jobs with exit 1:0: "
+            + ", ".join(invalid)
+        )
+    print(f"verified failed retry chain sources: {len(source_jobs)} train jobs")
 
 
 def _validate_resume_dependencies(
@@ -1880,6 +2037,7 @@ def command_plan(args: argparse.Namespace) -> int:
             output_suffix=getattr(args, "output_suffix", None),
             retry_from=retry_from,
             retry_job_keys=getattr(args, "retry_job_key", None),
+            retry_chain_job_keys=getattr(args, "retry_chain_job_key", None),
         )
         if retry_from:
             plan["retry_from_plan"] = retry_from["_source_plan_path"]
@@ -1916,7 +2074,7 @@ def command_submit(args: argparse.Namespace) -> int:
         if not resume_log:
             print("ERROR: --resume-after requires --resume-log", file=sys.stderr)
             return 1
-        if args.retry_from or args.retry_job_key:
+        if args.retry_from or args.retry_job_key or args.retry_chain_job_key:
             print("ERROR: resume cannot be combined with retry options", file=sys.stderr)
             return 1
     execute = bool(args.execute)
@@ -1927,8 +2085,11 @@ def command_submit(args: argparse.Namespace) -> int:
             getattr(args, "retry_from", None), stage=args.stage, experiment_id=experiment_id
         )
         retry_job_keys = tuple(getattr(args, "retry_job_key", None) or ())
-        if retry_job_keys and retry_from is None:
-            raise OrchestrationError("--retry-job-key requires --retry-from")
+        retry_chain_job_keys = tuple(getattr(args, "retry_chain_job_key", None) or ())
+        if (retry_job_keys or retry_chain_job_keys) and retry_from is None:
+            raise OrchestrationError("retry selection requires --retry-from")
+        if retry_job_keys and retry_chain_job_keys:
+            raise OrchestrationError("head and training-chain retry selections cannot be combined")
         if retry_from and args.stage == "production" and phase == "final":
             raise OrchestrationError("retry source plans are supported for a new CV/all submission, not final phase")
         if execute:
@@ -1953,6 +2114,7 @@ def command_submit(args: argparse.Namespace) -> int:
                 output_suffix=getattr(args, "output_suffix", None),
                 retry_from=retry_from,
                 retry_job_keys=retry_job_keys,
+                retry_chain_job_keys=retry_chain_job_keys,
             )
             if retry_from:
                 plan["retry_from_plan"] = retry_from["_source_plan_path"]
@@ -2035,6 +2197,7 @@ def command_submit(args: argparse.Namespace) -> int:
                 output_suffix=getattr(args, "output_suffix", None),
                 retry_from=retry_from,
                 retry_job_keys=retry_job_keys,
+                retry_chain_job_keys=retry_chain_job_keys,
             )
             if retry_from:
                 plan["retry_from_plan"] = retry_from["_source_plan_path"]
@@ -2082,6 +2245,7 @@ def command_submit(args: argparse.Namespace) -> int:
                 output_suffix=getattr(args, "output_suffix", None),
                 retry_from=retry_from,
                 retry_job_keys=retry_job_keys,
+                retry_chain_job_keys=retry_chain_job_keys,
             )
             if retry_from:
                 plan["retry_from_plan"] = retry_from["_source_plan_path"]
@@ -2103,6 +2267,8 @@ def command_submit(args: argparse.Namespace) -> int:
         else:
             if submit_plan.get("retry_reused_dependencies"):
                 _validate_reused_dependencies(submit_plan, args.scheduler_host)
+            if submit_plan.get("retry_chain_source_job_ids"):
+                _validate_retry_chain_sources(submit_plan, args.scheduler_host)
             if resume_after is None:
                 # Resume reuses the contracts minted by the interrupted
                 # submission; recreating their destination directories would
@@ -2285,6 +2451,12 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="select one failed hidden-classifier head job key for a parent-reusing retry (repeatable)",
     )
+    plan_parser.add_argument(
+        "--retry-chain-job-key",
+        action="append",
+        default=[],
+        help="select one failed training job key and its full downstream chain for a fresh retry (repeatable)",
+    )
     plan_parser.set_defaults(function=command_plan)
 
     submit_parser = sub.add_parser("submit", help="prepare, preflight, and submit the locked v2 graph")
@@ -2298,6 +2470,12 @@ def parse_args() -> argparse.Namespace:
         action="append",
         default=[],
         help="select one failed hidden-classifier head job key for a parent-reusing retry (repeatable)",
+    )
+    submit_parser.add_argument(
+        "--retry-chain-job-key",
+        action="append",
+        default=[],
+        help="select one failed training job key and its full downstream chain for a fresh retry (repeatable)",
     )
     submit_parser.add_argument(
         "--resume-after",

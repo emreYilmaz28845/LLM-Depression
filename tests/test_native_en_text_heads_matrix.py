@@ -272,7 +272,8 @@ def test_retry_plan_uses_fresh_output_identity_and_links_superseded_attempts() -
         experiment_id="exp-native-en-text-heads-v2-20260822",
     )
     add_plan_indexes(original)
-    original["submission_complete"] = True
+    original["submission_phase"] = "cv"
+    original["submission_complete"] = False
     retry_deployment = {
         **_fake_deployment(),
         "deployment_id": "native-en-text-heads-v2-retry-deployment",
@@ -356,6 +357,92 @@ def test_selective_head_retry_reuses_completed_parent_artifacts() -> None:
     assert len(retry["retry_reused_dependencies"]) == 2
     assert retry["counts"]["xgb_optuna100"] == 2
     assert all("features" not in path for path in retry["collision_paths"])
+
+
+def test_training_chain_retry_selects_fresh_standalone_descendants() -> None:
+    original = build_plan(
+        stage="smoke",
+        deployment=_fake_deployment(),
+        experiment_id="exp-native-en-text-heads-v2-20260822",
+    )
+    add_plan_indexes(original)
+    original["submission_complete"] = True
+    for index, job in enumerate(original["jobs"]):
+        job["job_ids"] = (
+            {"train": str(5000 + index), "best_eval": str(6000 + index)}
+            if job.get("kind") == "standalone_backbone"
+            else {"job": str(7000 + index)}
+        )
+    failed_parent = next(job for job in original["jobs"] if job.get("kind") == "standalone_backbone")
+    retry_deployment = {
+        **_fake_deployment(),
+        "deployment_id": "native-en-text-heads-v2-chain-retry",
+        "git_commit": "47d163f44f72586a2f905798af885b15955be519",
+    }
+    retry = build_plan(
+        stage="smoke",
+        deployment=retry_deployment,
+        experiment_id="exp-native-en-text-heads-v2-20260822",
+        output_suffix="chainretry1",
+        retry_from=original,
+        retry_chain_job_keys=[failed_parent["job_key"]],
+    )
+    add_plan_indexes(retry)
+
+    assert len(retry["jobs"]) == 3
+    assert retry["counts"] == {
+        "total": 4,
+        "train": 1,
+        "best_eval": 1,
+        "postprocess": 0,
+        "logreg": 1,
+        "xgb_optuna100": 1,
+    }
+    assert retry["retry_chain_source_job_ids"] == {failed_parent["job_key"]: "5000"}
+    assert all(job.get("supersedes_attempt_id") for job in retry["jobs"])
+    assert all(not job.get("reuse_parent_artifacts") for job in retry["jobs"])
+    assert all("chainretry1" in str(job.get("attempt_dir") or job.get("run_root")) for job in retry["jobs"])
+
+
+def test_training_chain_retry_closes_over_merged_dependencies() -> None:
+    original = build_plan(
+        stage="smoke",
+        deployment=_fake_deployment(),
+        experiment_id="exp-native-en-text-heads-v2-20260822",
+    )
+    add_plan_indexes(original)
+    original["submission_complete"] = True
+    for index, job in enumerate(original["jobs"]):
+        job["job_ids"] = (
+            {"train": str(5000 + index), "best_eval": str(6000 + index)}
+            if job.get("kind") == "standalone_backbone"
+            else {"job": str(7000 + index)}
+        )
+    failed_parent = next(
+        job
+        for job in original["jobs"]
+        if job.get("job_type") == "train" and job.get("kind") != "standalone_backbone"
+    )
+    retry_deployment = {
+        **_fake_deployment(),
+        "deployment_id": "native-en-text-heads-v2-merged-chain-retry",
+        "git_commit": "47d163f44f72586a2f905798af885b15955be519",
+    }
+    retry = build_plan(
+        stage="smoke",
+        deployment=retry_deployment,
+        experiment_id="exp-native-en-text-heads-v2-20260822",
+        output_suffix="mergedchainretry1",
+        retry_from=original,
+        retry_chain_job_keys=[failed_parent["job_key"]],
+    )
+
+    assert [job["job_type"] for job in retry["jobs"]] == ["train", "evaluation", "hidden_classifier", "hidden_classifier"]
+    assert retry["jobs"][1]["dependencies"] == [failed_parent["job_key"]]
+    assert retry["counts"]["train"] == 1
+    assert retry["counts"]["postprocess"] == 1
+    assert retry["counts"]["logreg"] == 1
+    assert retry["counts"]["xgb_optuna100"] == 1
 
 
 def test_remote_workers_source_mn5_dataset_environment() -> None:
