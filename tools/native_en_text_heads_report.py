@@ -373,23 +373,31 @@ def _load_jobs(plan_path: Path, attempts: set[str] | None) -> tuple[dict[str, An
     return plan, jobs
 
 
+def _matrix_key(record: dict[str, Any]) -> tuple[str, str, str, str, str, int, int]:
+    job = record["job"]
+    endpoint = str(job["endpoint"])
+    evaluations = record.get("evaluations") or []
+    if not evaluations:
+        raise ReportError(f"head attempt has no evaluations: {record.get('attempt_id')}")
+    dataset = str(evaluations[0]["dataset"]) if endpoint == "standalone" else "merged"
+    return (
+        endpoint,
+        str(job["condition"]),
+        str(job["backbone"]),
+        str(job["method"]),
+        dataset,
+        int(job["seed"]),
+        int(job["fold"]),
+    )
+
+
 def _validate_matrix(records: list[dict[str, Any]], plan: dict[str, Any]) -> None:
-    expected: dict[tuple[str, str, str, str, int, int], dict[str, Any]] = {}
+    expected: dict[tuple[str, str, str, str, str, int, int], dict[str, Any]] = {}
     for record in records:
-        job = record["job"]
-        for evaluation in record["evaluations"]:
-            key = (
-                str(job["endpoint"]),
-                str(job["condition"]),
-                str(job["backbone"]),
-                str(job["method"]),
-                int(job["seed"]),
-                int(job["fold"]),
-            )
-            if key in expected:
-                raise ReportError(f"duplicate attempt for matrix cell {key}")
-            expected[key] = record
-            break
+        key = _matrix_key(record)
+        if key in expected:
+            raise ReportError(f"duplicate attempt for matrix cell {key}")
+        expected[key] = record
     for endpoint in ENDPOINT_ORDER:
         for condition in CONDITIONS:
             for backbone in BACKBONES:

@@ -44,6 +44,21 @@ def test_summary_pair_uses_three_seed_sample_sd_and_paired_deltas() -> None:
     assert summary["seed_details"][0]["delta_positive_f1"] == pytest.approx(0.05)
 
 
+def test_matrix_key_keeps_standalone_datasets_distinct() -> None:
+    job = {
+        "endpoint": "standalone",
+        "condition": "native",
+        "backbone": "qwen",
+        "method": "logreg",
+        "seed": 7,
+        "fold": 0,
+    }
+    d3tec = {"job": job, "evaluations": [{"dataset": "d3tec"}]}
+    androids = {"job": job, "evaluations": [{"dataset": "androids_interview"}]}
+
+    assert report._matrix_key(d3tec) != report._matrix_key(androids)
+
+
 def test_report_rejects_incomplete_plan(tmp_path) -> None:
     plan = {
         "schema_version": "native_en_text_heads_v2_submission_plan.v1",
