@@ -748,21 +748,27 @@ def _collect(args: argparse.Namespace) -> int:
     if not target.is_file():
         raise CampaignError(f"submission plan is missing: {target}")
     plan = json.loads(target.read_text(encoding="utf-8"))
-    targets: list[tuple[str, Path]] = []
+    targets: list[tuple[str, Path, str]] = []
     for backbone in plan["backbones"]:
         remote = Path(backbone["fold_dir"])
         try:
             relative = remote.relative_to(REMOTE_PROJECT_ROOT)
         except ValueError as exc:
             raise CampaignError(f"collection path is outside the canonical output root: {remote}") from exc
-        targets.append((str(remote), PROJECT_ROOT / relative))
+        targets.append((str(remote), PROJECT_ROOT / relative, "fold"))
+    runtime = Path(str(plan.get("runtime_root", "")))
+    if runtime != REMOTE_RUNTIME_ROOT:
+        raise CampaignError(f"submission plan runtime root is not locked: {runtime}")
+    local_runtime = LOCAL_ROOT / str(plan.get("stage")) / "runtime"
+    for name in ("manifests", "splits", "preflight"):
+        targets.append((str(runtime / name), local_runtime / name, "runtime"))
     if args.dry_run:
-        print(json.dumps({"targets": [{"remote": remote, "local": str(local)} for remote, local in targets]}, indent=2, sort_keys=True))
+        print(json.dumps({"targets": [{"remote": remote, "local": str(local), "kind": kind} for remote, local, kind in targets]}, indent=2, sort_keys=True))
         return 0
-    for _, local in targets:
+    for _, local, _ in targets:
         if local.exists():
             raise CampaignError(f"refusing to overwrite existing local collection target: {local}")
-    for remote, local in targets:
+    for remote, local, _ in targets:
         local.parent.mkdir(parents=True, exist_ok=True)
         command = [
             "rsync", "-avh", "--itemize-changes",
@@ -779,7 +785,111 @@ def _collect(args: argparse.Namespace) -> int:
         sys.stderr.write(result.stderr)
         if result.returncode != 0:
             raise CampaignError(f"collection failed for {remote}")
-    print(json.dumps({"collected_folds": len(targets), "root": str(PROJECT_ROOT / "output_model")}, indent=2, sort_keys=True))
+    print(json.dumps({"collected_folds": sum(kind == "fold" for _, _, kind in targets), "collected_runtime_targets": sum(kind == "runtime" for _, _, kind in targets), "root": str(PROJECT_ROOT / "output_model"), "runtime": str(local_runtime)}, indent=2, sort_keys=True))
+    return 0
+
+
+def _submission_target(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
+    target = Path(args.plan or (LOCAL_ROOT / f"{args.stage}_submission.json"))
+    if not target.is_file():
+        raise CampaignError(f"submission plan is missing: {target}")
+    plan = json.loads(target.read_text(encoding="utf-8"))
+    if plan.get("group_id") != GROUP_ID or plan.get("experiment_id") != EXPERIMENT_ID:
+        raise CampaignError("submission plan does not belong to the locked campaign")
+    return target, plan
+
+
+def _local_output_fold(remote_fold: str) -> Path:
+    remote = Path(remote_fold)
+    try:
+        return PROJECT_ROOT / remote.relative_to(REMOTE_PROJECT_ROOT)
+    except ValueError as exc:
+        raise CampaignError(f"local evidence path is outside the canonical output root: {remote}") from exc
+
+
+def _validate_teacher(fold_dir: Path, backbone: dict[str, Any]) -> dict[str, Any]:
+    from src.experiment_tracking.evidence import verify_artifacts_locally, verify_evaluations_locally
+    from src.experiment_tracking.validate import ValidationError, advance_lifecycle, read_state, validate_attempt
+
+    try:
+        result = validate_attempt(
+            fold_dir,
+            expected_attempt_id=str(backbone["backbone_attempt_id"]),
+            expected_dataset="turkish",
+            expected_evaluation_view=EVALUATION_VIEW,
+            expected_backend=EVALUATION_BACKEND,
+            expected_aggregation="subject_level",
+            require_standalone_eval=True,
+        )
+    except (ValidationError, OSError, ValueError) as exc:
+        raise CampaignError(f"teacher validation failed for {fold_dir}: {exc}") from exc
+    if not result.get("ok"):
+        raise CampaignError(f"teacher validation failed for {fold_dir}: {result.get('issues')}")
+    verify_artifacts_locally(fold_dir)
+    verify_evaluations_locally(fold_dir)
+    state, _ = read_state(fold_dir)
+    if state == "COMPLETED_ON_MN5":
+        advance_lifecycle(fold_dir, "SYNCED_LOCALLY")
+        state = "SYNCED_LOCALLY"
+    if state == "SYNCED_LOCALLY":
+        advance_lifecycle(fold_dir, "LOCALLY_VALIDATED")
+        state = "LOCALLY_VALIDATED"
+    return {"attempt_id": backbone["backbone_attempt_id"], "kind": "teacher_forced", "state": state}
+
+
+def _validate_head(attempt_dir: Path, *, attempt_id: str) -> dict[str, Any]:
+    from src.turkish_question_condition_tracking import HeadTrackingError, validate_head_attempt
+
+    metadata_path = attempt_dir / "metadata.json"
+    if not metadata_path.is_file():
+        raise CampaignError(f"head metadata is missing: {attempt_dir}")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if str(metadata.get("attempt_id")) != attempt_id:
+        raise CampaignError(f"head attempt identity mismatch: {attempt_dir}")
+    try:
+        result = validate_head_attempt(attempt_dir)
+    except (HeadTrackingError, OSError, ValueError) as exc:
+        raise CampaignError(f"head validation failed for {attempt_dir}: {exc}") from exc
+    if not result.get("ok"):
+        raise CampaignError(f"head validation failed for {attempt_dir}: {result.get('issues')}")
+    return {"attempt_id": attempt_id, "kind": "head", "state": result.get("state")}
+
+
+def _validate_plan(args: argparse.Namespace, *, finish: bool) -> int:
+    _, plan = _submission_target(args)
+    if finish and plan.get("stage") != "production":
+        raise CampaignError("smoke evidence is deliberately non-reportable")
+    validated: list[dict[str, Any]] = []
+    for backbone in plan["backbones"]:
+        fold_dir = _local_output_fold(str(backbone["fold_dir"]))
+        validated.append(_validate_teacher(fold_dir, backbone))
+        validated.append(_validate_head(fold_dir / str(backbone["logreg_attempt_id"]), attempt_id=str(backbone["logreg_attempt_id"])))
+        validated.append(_validate_head(fold_dir / str(backbone["xgb_attempt_id"]), attempt_id=str(backbone["xgb_attempt_id"])))
+    if finish:
+        from src.experiment_tracking.validate import finish_gates
+        from src.turkish_question_condition_tracking import HeadTrackingError, finish_head_attempt
+
+        for backbone in plan["backbones"]:
+            fold_dir = _local_output_fold(str(backbone["fold_dir"]))
+            result = finish_gates(
+                fold_dir,
+                expected_attempt_id=str(backbone["backbone_attempt_id"]),
+                expected_dataset="turkish",
+                expected_evaluation_view=EVALUATION_VIEW,
+                expected_backend=EVALUATION_BACKEND,
+                expected_aggregation="subject_level",
+            )
+            if not result.get("ok"):
+                raise CampaignError(f"teacher finish gate failed for {fold_dir}: {result.get('next_action')}")
+            for attempt_id in (str(backbone["logreg_attempt_id"]), str(backbone["xgb_attempt_id"])):
+                try:
+                    head_result = finish_head_attempt(fold_dir / attempt_id)
+                except (HeadTrackingError, OSError, ValueError) as exc:
+                    raise CampaignError(f"head finish gate failed for {fold_dir / attempt_id}: {exc}") from exc
+                if not head_result.get("ok"):
+                    raise CampaignError(f"head finish gate failed for {fold_dir / attempt_id}: {head_result.get('next_action')}")
+        validated = [{**item, "state": "REPORTABLE"} for item in validated]
+    print(json.dumps({"stage": plan.get("stage"), "finished": finish, "attempts": len(validated), "states": sorted({str(item.get('state')) for item in validated})}, indent=2, sort_keys=True))
     return 0
 
 
@@ -833,6 +943,16 @@ def parse_args() -> argparse.Namespace:
     collect.add_argument("--dry-run", action="store_true")
     collect.add_argument("--execute", action="store_true")
     collect.set_defaults(function=_collect)
+
+    validate = sub.add_parser("validate")
+    validate.add_argument("--stage", choices=("smoke", "production"), default="smoke")
+    validate.add_argument("--plan")
+    validate.set_defaults(function=lambda args: _validate_plan(args, finish=False))
+
+    finish = sub.add_parser("finish")
+    finish.add_argument("--stage", choices=("smoke", "production"), default="production")
+    finish.add_argument("--plan")
+    finish.set_defaults(function=lambda args: _validate_plan(args, finish=True))
     return parser.parse_args()
 
 

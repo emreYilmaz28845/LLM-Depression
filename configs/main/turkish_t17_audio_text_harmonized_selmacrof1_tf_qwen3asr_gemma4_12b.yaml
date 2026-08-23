@@ -82,10 +82,10 @@ evaluation:
   headline_mode: original_teacher_forced
   aggregation_level: response_subject
   hierarchical_score_aggregation: mean
+  evaluation_view: harmonized_all_windows_full_coverage
   generation_max_new_tokens: 8
   num_beams: 1
   do_sample: false
   evaluate_last_checkpoint: false
-  evaluation_view: harmonized_all_windows_full_coverage
 model_backend: gemma4
 model_revision: 707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7

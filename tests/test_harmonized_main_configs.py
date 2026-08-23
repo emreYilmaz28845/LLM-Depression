@@ -38,13 +38,14 @@ def test_gemma4_variants_cover_daic_and_the_harmonized_non_daic_family() -> None
     daic = [path for path in gemma if path.name.startswith("daic_")]
     assert len(daic) == 3
     assert all(path.name.startswith("daic_") for path in daic)
-    # 12 native non-DAIC (four datasets x three modalities) + 8 English
-    # (four datasets x audio+text/text-only).
+    # 15 native non-DAIC (the 12 harmonized-family cells plus three fresh
+    # negative-only Turkish cells) + 10 English (the eight harmonized-family
+    # cells plus two fresh negative-only Turkish cells).
     non_daic = [path for path in gemma if not path.name.startswith("daic_")]
-    assert len(non_daic) == 20
-    assert len([path for path in non_daic if "_en_" in path.name]) == 8
-    assert len([path for path in non_daic if "_en_" not in path.name]) == 12
-    assert len(gemma) == 23
+    assert len(non_daic) == 25
+    assert len([path for path in non_daic if "_en_" in path.name]) == 10
+    assert len([path for path in non_daic if "_en_" not in path.name]) == 15
+    assert len(gemma) == 28
 
 
 def test_harmonized_selection_and_teacher_forced_recipe_is_locked() -> None:

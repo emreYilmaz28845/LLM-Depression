@@ -40,6 +40,20 @@ GEMMA_EN_CONFIGS = [
     f"turkish_t17_{modality}_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml"
     for modality in ("audio_text", "text_only")
 ]
+GEMMA_NEGATIVE_ONLY_NATIVE_CONFIGS = [
+    f"turkish_negative_only_t17_{modality}_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml"
+    for modality in ("audio_text", "audio_only", "text_only")
+]
+GEMMA_NEGATIVE_ONLY_EN_CONFIGS = [
+    f"turkish_negative_only_t17_{modality}_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml"
+    for modality in ("audio_text", "text_only")
+]
+GEMMA_CAMPAIGN_CONFIGS = (
+    GEMMA_NATIVE_CONFIGS
+    + GEMMA_EN_CONFIGS
+    + GEMMA_NEGATIVE_ONLY_NATIVE_CONFIGS
+    + GEMMA_NEGATIVE_ONLY_EN_CONFIGS
+)
 
 ALLOWED_NEW_KEYS = ("model_backend", "model_revision")
 ALLOWED_DIFFERING_KEYS = {
@@ -83,21 +97,24 @@ def test_exact_gemma_config_sets_exist() -> None:
     )
     english = sorted(name for name in all_names if "_en_" in name)
     daic = sorted(name for name in all_names if name.startswith("daic_"))
-    assert native == sorted(GEMMA_NATIVE_CONFIGS)
-    assert english == sorted(GEMMA_EN_CONFIGS)
+    assert native == sorted(GEMMA_NATIVE_CONFIGS + GEMMA_NEGATIVE_ONLY_NATIVE_CONFIGS)
+    assert english == sorted(GEMMA_EN_CONFIGS + GEMMA_NEGATIVE_ONLY_EN_CONFIGS)
     assert len(daic) == 3
-    assert len(all_names) == 23
+    assert len(all_names) == 28
 
 
 def test_gemma_configs_validate_and_differ_only_by_backend_allowlist() -> None:
-    for name in GEMMA_NATIVE_CONFIGS + GEMMA_EN_CONFIGS:
+    for name in GEMMA_CAMPAIGN_CONFIGS:
         gemma = load_yaml(MAIN / name)
         validate_gemma4_config(gemma)
         assert gemma["model_backend"] == "gemma4"
         assert gemma["model_revision"] == GEMMA4_MODEL_REVISION
         assert gemma["lora"]["target_modules"] == GEMMA4_LORA_TARGET_REGEX
         assert gemma["evaluation"]["evaluation_view"] == GEMMA4_EVALUATION_VIEW
-        assert "harmonized_v1" in gemma["output_dirs"]["run_root"]
+        if "negative_only" in name:
+            assert "turkish_qcond_v1_gemma4_negonly" in gemma["output_dirs"]["run_root"]
+        else:
+            assert "harmonized_v1" in gemma["output_dirs"]["run_root"]
         assert "gemma4" in gemma["output_dirs"]["run_root"]
         base = load_yaml(MAIN / qwen_base_name(name))
         differences = []
@@ -127,7 +144,7 @@ def test_gemma_configs_validate_and_differ_only_by_backend_allowlist() -> None:
 
 
 def test_gemma_configs_preserve_scientific_fields() -> None:
-    for name in GEMMA_NATIVE_CONFIGS + GEMMA_EN_CONFIGS:
+    for name in GEMMA_CAMPAIGN_CONFIGS:
         gemma = load_yaml(MAIN / name)
         base = load_yaml(MAIN / qwen_base_name(name))
         for key in ("dataset", "seed", "recipe_id", "labels", "prompt", "split", "data", "training"):
@@ -138,7 +155,7 @@ def test_gemma_configs_preserve_scientific_fields() -> None:
 
 
 def test_gemma_en_configs_keep_transcript_overlay_and_no_audio_only() -> None:
-    for name in GEMMA_EN_CONFIGS:
+    for name in GEMMA_EN_CONFIGS + GEMMA_NEGATIVE_ONLY_EN_CONFIGS:
         gemma = load_yaml(MAIN / name)
         assert (gemma.get("transcripts") or {}).get("variant") == "english"
         assert not gemma["data"]["use_audio"] or gemma["data"]["use_text"]
