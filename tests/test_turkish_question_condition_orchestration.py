@@ -9,6 +9,7 @@ from tools.turkish_question_condition import (
     _make_submission_plan,
     _remote_submission_script,
     _terminal_update_script,
+    _expected_teacher_aggregation,
 )
 
 
@@ -96,3 +97,9 @@ def test_gemma_logreg_switches_to_pinned_classifier_runtime() -> None:
     script = (Path(__file__).parents[1] / "scripts/run_turkish_question_logreg_slurm.sh").read_text()
     assert 'source "$QWEN_ENV_ACTIVATE"' in script
     assert 'export PYTHONPATH="$QWEN_DEPS_ROOT:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"' in script
+
+
+def test_teacher_validation_uses_locked_modality_aggregation() -> None:
+    assert _expected_teacher_aggregation({"modality": "audio_only"}) == "response_subject"
+    assert _expected_teacher_aggregation({"modality": "audio_text"}) == "response_subject"
+    assert _expected_teacher_aggregation({"modality": "text_only"}) == "subject_level"
