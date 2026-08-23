@@ -1255,10 +1255,12 @@ def remote_submission_script(
     phase: str = "all",
     resume_after: int | None = None,
     existing_job_ids: dict[int, dict[str, str]] | None = None,
+    completed_existing_indexes: set[int] | None = None,
 ) -> str:
     code = str(deployment["deployed_code_path"])
     by_index = {int(job["plan_index"]): job for job in plan["jobs"]}
     by_key = dict(plan["dependency_index"])
+    completed_existing_indexes = set(completed_existing_indexes or ())
     lines = [
         "set -euo pipefail",
         "module purge",
@@ -1400,6 +1402,7 @@ def remote_submission_script(
             )
         else:
             dep_vars: list[str] = []
+            scheduled_dep_vars: list[str] = []
             for dependency in job.get("dependencies", []):
                 dep_index = by_key.get(dependency)
                 if dep_index is None:
@@ -1412,9 +1415,13 @@ def remote_submission_script(
                     if dep_job.get("kind") == "standalone_backbone"
                     else f"jid_{dep_index}"
                 )
+                if int(dep_index) not in completed_existing_indexes:
+                    scheduled_dep_vars.append(dep_vars[-1])
             dependency_arg = ""
-            if dep_vars:
-                dependency_arg = " --dependency=afterok:" + ":".join("$" + name for name in dep_vars)
+            if scheduled_dep_vars:
+                dependency_arg = " --dependency=afterok:" + ":".join(
+                    "$" + name for name in scheduled_dep_vars
+                )
             if job.get("endpoint") == "merged_final" and not job.get("epochs"):
                 raise OrchestrationError(
                     f"final merged job {job['job_key']} has no CV-derived epoch count"
@@ -1763,6 +1770,98 @@ def _validate_reused_dependencies(plan: dict[str, Any], scheduler_host: str) -> 
     print(f"verified reused retry dependencies: {len(reused)} completed Slurm jobs")
 
 
+def _validate_resume_dependencies(
+    plan: dict[str, Any],
+    existing_job_ids: dict[int, dict[str, str]],
+    scheduler_host: str,
+    *,
+    phase: str,
+    resume_after: int,
+) -> set[int]:
+    """Validate prefix dependencies and identify completed jobs to elide.
+
+    Slurm rejects a newly submitted ``afterok`` dependency on some already
+    completed jobs after the original submission has aged out of the active
+    dependency table.  A resumed job still needs the dependency recorded in
+    its sidecar, but it does not need to wait on a successful terminal job.
+    Failed or missing prefix dependencies remain a hard stop.
+    """
+
+    by_index = {int(job["plan_index"]): job for job in plan["jobs"]}
+    by_key = dict(plan["dependency_index"])
+    selected_jobs = [
+        job
+        for job in plan["jobs"]
+        if phase == "all"
+        or (phase == "cv" and job.get("endpoint") != "merged_final")
+        or (phase == "final" and job.get("endpoint") == "merged_final")
+    ]
+    dependencies: dict[int, str] = {}
+    for job in selected_jobs:
+        for dependency in job.get("dependencies") or []:
+            dep_index = by_key.get(str(dependency))
+            if dep_index is None:
+                raise OrchestrationError(
+                    f"unknown dependency {dependency} for {job['job_key']}"
+                )
+            dep_index = int(dep_index)
+            if dep_index > resume_after or dep_index in dependencies:
+                continue
+            dep_job = by_index[dep_index]
+            prefix_ids = existing_job_ids.get(dep_index)
+            if prefix_ids is None:
+                raise OrchestrationError(
+                    f"resume prefix has no recorded IDs for dependency index {dep_index}"
+                )
+            dependency_id = (
+                prefix_ids.get("best_eval")
+                if dep_job.get("kind") == "standalone_backbone"
+                else prefix_ids.get("job")
+            )
+            if not dependency_id:
+                raise OrchestrationError(
+                    f"resume prefix has no dependency Slurm ID for index {dep_index}"
+                )
+            dependencies[dep_index] = str(dependency_id)
+    if not dependencies:
+        return set()
+
+    from src.experiment_tracking.monitor import MonitorError, SchedulerClient
+
+    job_ids = sorted(set(dependencies.values()))
+    scheduler = SchedulerClient(host=scheduler_host)
+    try:
+        queue = scheduler.squeue(job_ids)
+        accounting = scheduler.sacct(job_ids)
+    except MonitorError as exc:
+        raise OrchestrationError(f"could not validate resume dependencies: {exc}") from exc
+    missing = sorted(set(job_ids) - set(queue) - set(accounting))
+    if missing:
+        raise OrchestrationError(
+            f"resume dependencies are missing from both squeue and sacct: {missing}"
+        )
+
+    completed: set[int] = set()
+    invalid: list[str] = []
+    for dep_index, job_id in sorted(dependencies.items()):
+        record = accounting.get(job_id) or queue.get(job_id) or {}
+        state = str(record.get("State") or "UNKNOWN")
+        exit_code = str(record.get("ExitCode") or "")
+        if state == "COMPLETED" and exit_code == "0:0":
+            completed.add(dep_index)
+            continue
+        if state.startswith(("PENDING", "RUNNING", "CONFIGURING", "COMPLETING", "SUSPENDED")):
+            continue
+        invalid.append(f"index {dep_index}={job_id} ({state}, {exit_code or '-'})")
+    if invalid:
+        raise OrchestrationError(
+            "resume has failed or terminally invalid prefix dependencies: " + ", ".join(invalid)
+        )
+    live = len(dependencies) - len(completed)
+    print(f"verified resume dependencies: {len(completed)} completed prefix jobs, {live} live prefix jobs")
+    return completed
+
+
 def command_plan(args: argparse.Namespace) -> int:
     try:
         _worktree, _pin, deployment = load_deployment(args.slug, args.deployment_id, execute=False)
@@ -1861,6 +1960,7 @@ def command_submit(args: argparse.Namespace) -> int:
             )
             return 0
 
+        completed_existing_indexes: set[int] = set()
         if resume_after is not None:
             plan_path_value = Path(getattr(args, "resume_plan", None) or plan_path(args.stage, str(deployment.get("deployment_id"))))
             if not plan_path_value.is_file():
@@ -1892,6 +1992,13 @@ def command_submit(args: argparse.Namespace) -> int:
             if preflight.get("status") != "passed":
                 raise OrchestrationError("resume requires a passed remote preflight")
             add_plan_indexes(plan)
+            completed_existing_indexes = _validate_resume_dependencies(
+                plan,
+                existing_job_ids,
+                args.scheduler_host,
+                phase=phase,
+                resume_after=int(resume_after),
+            )
             submit_plan = plan
         elif args.stage == "production" and phase == "final":
             plan = _load_plan_for_status(args.slug, args.stage, str(deployment.get("deployment_id")))
@@ -2005,6 +2112,7 @@ def command_submit(args: argparse.Namespace) -> int:
             phase=phase,
             resume_after=int(resume_after) if resume_after is not None else None,
             existing_job_ids=existing_job_ids if resume_after is not None else None,
+            completed_existing_indexes=completed_existing_indexes,
         )
         evidence_root = PROJECT_ROOT / "outputs" / "native_en_text_heads_v2" / args.stage
         submit_stem = (
