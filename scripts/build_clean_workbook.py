@@ -1154,6 +1154,20 @@ NATIVE_EN_SUMMARY_METRICS = (
     "delta_macro_mean", "delta_macro_sd", "native_positive_mean", "native_positive_sd",
     "english_positive_mean", "english_positive_sd", "delta_positive_mean", "delta_positive_sd",
 )
+NATIVE_EN_METRIC_LABELS = {
+    "native_macro_mean": "Native macro mean",
+    "native_macro_sd": "Native macro sample SD",
+    "english_macro_mean": "English macro mean",
+    "english_macro_sd": "English macro sample SD",
+    "delta_macro_mean": "English-minus-native macro mean",
+    "delta_macro_sd": "English-minus-native macro sample SD",
+    "native_positive_mean": "Native positive-F1 mean",
+    "native_positive_sd": "Native positive-F1 sample SD",
+    "english_positive_mean": "English positive-F1 mean",
+    "english_positive_sd": "English positive-F1 sample SD",
+    "delta_positive_mean": "English-minus-native positive-F1 mean",
+    "delta_positive_sd": "English-minus-native positive-F1 sample SD",
+}
 
 
 def _load_native_en_report(report_path: Path | None = None) -> dict[str, Any] | None:
@@ -1220,6 +1234,16 @@ def _native_en_report_or_placeholder(report_path: Path | None = None) -> dict[st
 
 def _report_provenance_text(row: dict[str, Any]) -> str:
     return f"{row.get('provenance_key', '')} [{row.get('provenance_status', '')}]"
+
+
+def _native_en_workbook_key(item: dict[str, Any], metric: str) -> str:
+    dataset = NATIVE_EN_DATASET_LABELS.get(item.get("dataset"), item.get("dataset"))
+    modality = (
+        f"{NATIVE_EN_ENDPOINT_LABELS.get(item.get('endpoint'), item.get('endpoint'))} / "
+        f"{'Gemma 4' if item.get('backbone') == 'gemma4' else 'Qwen'}"
+    )
+    method = NATIVE_EN_HEAD_LABELS.get(item.get("head"), item.get("head"))
+    return f"Native vs EN v2|{dataset}|{modality}|{method} — {NATIVE_EN_METRIC_LABELS[metric]}"
 
 
 def build_native_vs_english(wb: Workbook, *, report_path: Path | None = None) -> None:
@@ -1755,20 +1779,6 @@ def build_native_en_provenance(ws, put, *, report_path: Path | None = None) -> N
     """Add report-backed provenance rows for every v2 summary metric."""
     report = _native_en_report_or_placeholder(report_path)
     source_path = str(report_path or NATIVE_EN_REPORT_PATH)
-    metric_labels = {
-        "native_macro_mean": "Native macro mean",
-        "native_macro_sd": "Native macro sample SD",
-        "english_macro_mean": "English macro mean",
-        "english_macro_sd": "English macro sample SD",
-        "delta_macro_mean": "English-minus-native macro mean",
-        "delta_macro_sd": "English-minus-native macro sample SD",
-        "native_positive_mean": "Native positive-F1 mean",
-        "native_positive_sd": "Native positive-F1 sample SD",
-        "english_positive_mean": "English positive-F1 mean",
-        "english_positive_sd": "English positive-F1 sample SD",
-        "delta_positive_mean": "English-minus-native positive-F1 mean",
-        "delta_positive_sd": "English-minus-native positive-F1 sample SD",
-    }
     for item in report["summary"]:
         dataset = NATIVE_EN_DATASET_LABELS.get(item.get("dataset"), item.get("dataset"))
         modality = f"{NATIVE_EN_ENDPOINT_LABELS.get(item.get('endpoint'), item.get('endpoint'))} / {'Gemma 4' if item.get('backbone') == 'gemma4' else 'Qwen'}"
@@ -1781,7 +1791,7 @@ def build_native_en_provenance(ws, put, *, report_path: Path | None = None) -> N
                 "Native vs EN v2",
                 dataset,
                 modality,
-                f"{method} — {metric_labels[metric]}",
+                f"{method} — {NATIVE_EN_METRIC_LABELS[metric]}",
                 item.get(metric),
                 source,
                 aggregation,
@@ -2356,8 +2366,11 @@ def validate_selected_results(selected_results: Path, cell_values: dict[tuple[st
     checked = 0
     for selection in selections:
         cell = str(selection.get("cell"))
-        dataset_label, modality_label = cell.split("|", 1)
-        key = (dataset_label.strip(), modality_label.strip())
+        if selection.get("source_type") == "native_en_report" or selection.get("sheet") == "Native vs EN":
+            key: Any = cell
+        else:
+            dataset_label, modality_label = cell.split("|", 1)
+            key = (dataset_label.strip(), modality_label.strip())
         status = selection.get("status")
         if status != "selected":
             legacy_unmigrated.append(f"{cell}: {status} ({selection.get('reason', 'no record')})")
@@ -2398,7 +2411,7 @@ def main() -> None:
     native_en_report_path = Path(args.native_en_report)
 
     if args.validate_selected is not None:
-        cell_values: dict[tuple[str, str], float | None] = {
+        cell_values: dict[Any, float | None] = {
             (dataset_label, modality_label): value
             for (dataset_label, modality_label), value in STANDALONE_QWEN.items()
         }
@@ -2437,6 +2450,11 @@ def main() -> None:
                     cell_values[("DAIC Head Ablation", f"{MODALITY_LABELS[modality]} — {variant_label}")] = (
                         DAIC_OFFICIALDEV_HEADS[(modality, backbone, variant)]["macro_f1"]
                     )
+        native_report = _load_native_en_report(native_en_report_path)
+        if native_report is not None:
+            for item in native_report["summary"]:
+                for metric in NATIVE_EN_SUMMARY_METRICS:
+                    cell_values[_native_en_workbook_key(item, metric)] = item.get(metric)
         ok, report = validate_selected_results(Path(args.validate_selected), cell_values)
         print("\n".join(report))
         print(f"checked={sum(1 for s in json.loads(Path(args.validate_selected).read_text())['selections'] if s['status'] == 'selected')} "
