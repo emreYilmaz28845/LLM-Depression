@@ -75,6 +75,15 @@ if [ -n "$MODEL_PATH" ]; then EXTRACT+=(--model-name-or-path "$MODEL_PATH"); fi
 echo "Extraction command: ${EXTRACT[*]}"
 "${EXTRACT[@]}"
 
+# Gemma hidden extraction needs the Gemma runtime, but the fixed classifier
+# contract is pinned to the existing Qwen runtime's scikit-learn 1.7.0 and
+# project-provided XGBoost 2.1.4. No model work remains after extraction.
+if [ "$BACKBONE" = "gemma4" ]; then
+    # shellcheck disable=SC1090
+    source "$QWEN_ENV_ACTIVATE"
+    export PYTHONPATH="$QWEN_DEPS_ROOT:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+fi
+
 python "$PROJECT_ROOT/baselines/qwen_hidden_classifier.py" \
     --cache-dir "$CACHE_DIR" --output-dir "$ATTEMPT_DIR/classifier" \
     --variants logreg_raw --seed 1337 --sampling-mode none \

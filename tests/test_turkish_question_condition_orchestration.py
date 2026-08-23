@@ -8,6 +8,7 @@ from tools.turkish_question_condition import (
     GROUP_ID,
     _make_submission_plan,
     _remote_submission_script,
+    _terminal_update_script,
 )
 
 
@@ -70,3 +71,28 @@ def test_submission_script_is_dependency_aware_and_non_destructive() -> None:
     assert 'export PYTHONPATH="$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"' in script
     checked = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
     assert checked.returncode == 0, checked.stderr
+
+
+def test_terminal_update_normalizes_slurm_cancellation_suffix() -> None:
+    script = _terminal_update_script(
+        [{
+            "attempt_dir": "/tmp/attempt",
+            "backbone_fold_dir": "/tmp/fold",
+            "attempt_id": "attempt",
+            "fold": 0,
+            "job_key": "head",
+            "job_type": "hidden_classifier",
+            "slurm_job_id": "123",
+            "state": "CANCELLED by 42",
+            "exit_code": "0:0",
+        }],
+        _deployment(),
+    )
+    assert "normalized_state = raw_state.split()[0].rstrip('+')" in script
+    assert "status=normalized_state" in script
+
+
+def test_gemma_logreg_switches_to_pinned_classifier_runtime() -> None:
+    script = (Path(__file__).parents[1] / "scripts/run_turkish_question_logreg_slurm.sh").read_text()
+    assert 'source "$QWEN_ENV_ACTIVATE"' in script
+    assert 'export PYTHONPATH="$QWEN_DEPS_ROOT:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"' in script
