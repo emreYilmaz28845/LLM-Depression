@@ -234,9 +234,35 @@ def initialize_head_attempt_batch(items: list[dict[str, Any]]) -> list[dict[str,
 
     if not items:
         return []
+    item_by_path = {str(Path(item["attempt_dir"])): item for item in items}
+    if len(item_by_path) != len(items):
+        raise HeadTrackingError("duplicate head attempt destination in batch")
+    shared_ancestry = [
+        item
+        for path, item in item_by_path.items()
+        if any(Path(path) in Path(other).parents for other in item_by_path if other != path)
+    ]
+    # A merged train attempt owns the fold directory that also contains its
+    # postprocess and hidden-head children. Initialize those owners first so
+    # a child cannot create the owner's leaf as recursive ancestry.
+    shared_ancestry.sort(key=lambda item: (len(Path(item["attempt_dir"]).parts), str(item["attempt_dir"])))
+    results: dict[str, dict[str, Any]] = {}
+    for item in shared_ancestry:
+        results[str(Path(item["attempt_dir"]))] = _initialize_head_attempt_item(item)
+    remaining = [
+        item
+        for item in items
+        if str(Path(item["attempt_dir"])) not in results
+    ]
     workers = min(8, len(items))
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        return list(executor.map(_initialize_head_attempt_item, items))
+    if remaining:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            for item, result in zip(
+                remaining,
+                executor.map(_initialize_head_attempt_item, remaining),
+            ):
+                results[str(Path(item["attempt_dir"]))] = result
+    return [results[str(Path(item["attempt_dir"]))] for item in items]
 
 
 def _sidecar(target: str | Path):
