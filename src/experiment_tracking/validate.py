@@ -73,6 +73,13 @@ def _close(a: float, b: float, tol: float = 1e-6) -> bool:
     return abs(a - b) <= tol
 
 
+def _canonical_aggregation(value: str | None) -> str | None:
+    """Map the config spelling to the evidence qualifier spelling."""
+    if value == "subject_level":
+        return "subject"
+    return value
+
+
 def validate_attempt(
     fold_dir: str | Path,
     *,
@@ -133,7 +140,7 @@ def validate_attempt(
             f"backend {evaluation_cfg.get('sample_prediction_mode')!r} != expected {expected_backend!r}"
         )
     agg = evaluation_cfg.get("aggregation_level", "subject")
-    if expected_aggregation and agg != expected_aggregation:
+    if expected_aggregation and _canonical_aggregation(agg) != _canonical_aggregation(expected_aggregation):
         issues.append(f"aggregation {agg!r} != expected {expected_aggregation!r}")
 
     # Standalone evaluation requirement: train-time-only evidence cannot pass.
