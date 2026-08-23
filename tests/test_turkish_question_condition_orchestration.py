@@ -63,5 +63,9 @@ def test_submission_script_is_dependency_aware_and_non_destructive() -> None:
     assert "scripts/run_turkish_question_xgb_slurm.sh" in script
     assert "--delete" not in script
     assert "__SUBMISSION_COMPLETE__ 6 12" in script
+    assert "/manifests/negative_only/native" in script
+    assert "/splits/negative_only/native" in script
+    assert "/manifests/negonly/" not in script
+    assert "/splits/negonly/" not in script
     checked = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
     assert checked.returncode == 0, checked.stderr
