@@ -255,6 +255,8 @@ def validate_evidence_root(remote_root: str) -> None:
     allowed = (
         "/gpfs/projects/etur92/ozu647717/AudioLLM/output_model/",
         "/gpfs/projects/etur92/ozu647717/AudioLLM/experiment_runtime/",
+        "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/",
+        "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/experiment_runtime/",
     )
     if not any(str(path).startswith(prefix) for prefix in allowed):
         raise CollectionError(f"remote evidence path is outside managed roots: {remote_root}")

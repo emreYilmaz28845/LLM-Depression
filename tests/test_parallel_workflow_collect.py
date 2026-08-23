@@ -19,6 +19,7 @@ from src.experiment_tracking.collect import (
     local_inventory,
     plan_collection,
     remote_inventory,
+    validate_evidence_root,
     validate_fold_path,
     verify_compact_hash_agreement,
     verify_required_evidence,
@@ -91,6 +92,15 @@ def test_validate_rejects_placeholders_and_bad_paths():
         validate_fold_path("/gpfs/x/output_model/<modality>/<dataset>/run/fold_0")
     with pytest.raises(CollectionError, match="fold_<n>"):
         validate_fold_path("/gpfs/x/output_model/camp/daic/run1")
+
+
+def test_validate_accepts_managed_repository_root():
+    validate_evidence_root(
+        "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/camp/run/fold_0"
+    )
+    validate_evidence_root(
+        "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/experiment_runtime/lane/attempt"
+    )
 
 
 def test_argv_never_contains_delete_and_orders_filters():
