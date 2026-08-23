@@ -1291,10 +1291,13 @@ def remote_submission_script(
     for path in sorted(selected_collision_paths):
         lines.append(f"test ! -e {q(path)}")
     for job in selected_jobs:
+        index = int(job["plan_index"])
+        # Initialize each hidden-head attempt immediately before its own
+        # sbatch call.  The old all-initialization prefix made a large
+        # production graph spend the launcher timeout minting sidecars before
+        # submitting its first job.
         if job.get("kind") != "standalone_backbone":
             custom_init_lines(lines, job)
-    for job in selected_jobs:
-        index = int(job["plan_index"])
         if job.get("kind") == "standalone_backbone":
             out_var = f"standalone_{index}"
             train_var = f"train_{index}"

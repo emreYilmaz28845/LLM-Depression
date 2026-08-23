@@ -115,6 +115,23 @@ def test_managed_smoke_plan_has_four_job_chains_and_parseable_markers() -> None:
     assert all(job["job_ids"] for job in plan["jobs"])
 
 
+def test_submission_initializes_each_custom_attempt_near_its_sbatch() -> None:
+    plan = build_plan(
+        stage="smoke",
+        deployment=_fake_deployment(),
+        experiment_id="exp-native-en-text-heads-v2-20260822",
+    )
+    add_plan_indexes(plan)
+    script = remote_submission_script(
+        plan,
+        _fake_deployment(),
+        Path(plan["stage_root"]) / "preflight.json",
+    )
+    init_pos = script.index("tools/native_en_text_heads_worker.py init")
+    sbatch_pos = script.index("sbatch --parsable", init_pos)
+    assert init_pos < sbatch_pos
+
+
 def test_retry_plan_uses_fresh_output_identity_and_links_superseded_attempts() -> None:
     original = build_plan(
         stage="smoke",
