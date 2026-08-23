@@ -12,6 +12,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -188,42 +189,49 @@ def initialize_head_attempt(
     return {"attempt_id": attempt_id, "attempt_dir": str(target), "state": "PLANNED"}
 
 
-def initialize_head_attempt_batch(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Initialize a batch of independent head attempts in one interpreter.
+def _write_once_json(path_value: str, payload: dict[str, Any]) -> None:
+    path = Path(path_value)
+    data = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    if path.exists():
+        if path.is_file() and path.read_bytes() == data:
+            return
+        raise HeadTrackingError(f"refusing to overwrite incompatible {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
 
-    The scheduler launcher uses this to avoid starting several Python
-    interpreters for every attempt.  Each destination is still write-once and
-    each lifecycle transition goes through the same official helpers.
+
+def _initialize_head_attempt_item(item: dict[str, Any]) -> dict[str, Any]:
+    _write_once_json(str(item["context_path"]), dict(item["context"]))
+    _write_once_json(str(item["config_path"]), dict(item["config"]))
+    parent = item.get("parent")
+    if parent is not None:
+        _write_once_json(str(item["parent_path"]), dict(parent))
+    result = initialize_head_attempt(
+        item["attempt_dir"],
+        context=dict(item["context"]),
+        config=dict(item["config"]),
+        parent=dict(parent) if parent is not None else None,
+    )
+    transition = transition_head_attempt(
+        item["attempt_dir"], "DEPLOYED", reason="managed v2 deployment prepared"
+    )
+    return {**result, "state": transition["state"]}
+
+
+def initialize_head_attempt_batch(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Initialize independent head attempts with bounded filesystem parallelism.
+
+    The scheduler launcher uses one interpreter per batch and a small bounded
+    thread pool so GPFS sidecar initialization stays below the remote launcher
+    timeout. Each destination is still write-once and each lifecycle
+    transition goes through the same official helpers.
     """
 
-    results: list[dict[str, Any]] = []
-    for item in items:
-        def write_once_json(path_value: str, payload: dict[str, Any]) -> None:
-            path = Path(path_value)
-            data = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
-            if path.exists():
-                if path.is_file() and path.read_bytes() == data:
-                    return
-                raise HeadTrackingError(f"refusing to overwrite incompatible {path}")
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(data)
-
-        write_once_json(str(item["context_path"]), dict(item["context"]))
-        write_once_json(str(item["config_path"]), dict(item["config"]))
-        parent = item.get("parent")
-        if parent is not None:
-            write_once_json(str(item["parent_path"]), dict(parent))
-        result = initialize_head_attempt(
-            item["attempt_dir"],
-            context=dict(item["context"]),
-            config=dict(item["config"]),
-            parent=dict(parent) if parent is not None else None,
-        )
-        transition = transition_head_attempt(
-            item["attempt_dir"], "DEPLOYED", reason="managed v2 deployment prepared"
-        )
-        results.append({**result, "state": transition["state"]})
-    return results
+    if not items:
+        return []
+    workers = min(8, len(items))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        return list(executor.map(_initialize_head_attempt_item, items))
 
 
 def _sidecar(target: str | Path):
