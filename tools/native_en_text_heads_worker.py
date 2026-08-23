@@ -9,6 +9,7 @@ from pathlib import Path
 
 from src.native_en_text_heads_tracking import (
     finish_head_attempt,
+    initialize_head_attempt_batch,
     initialize_head_attempt,
     materialize_head_evidence,
     materialize_job_evidence,
@@ -27,6 +28,9 @@ def parse_args() -> argparse.Namespace:
     init.add_argument("--context", required=True, type=Path)
     init.add_argument("--config", required=True, type=Path)
     init.add_argument("--parent", required=True, type=Path)
+
+    init_batch = sub.add_parser("init-batch")
+    init_batch.add_argument("--manifest", required=True, type=Path)
 
     record = sub.add_parser("record")
     record.add_argument("--attempt-dir", required=True, type=Path)
@@ -70,6 +74,10 @@ def main() -> None:
             context=json.loads(args.context.read_text(encoding="utf-8")),
             config=json.loads(args.config.read_text(encoding="utf-8")),
             parent=json.loads(args.parent.read_text(encoding="utf-8")),
+        )
+    elif args.command == "init-batch":
+        result = initialize_head_attempt_batch(
+            json.loads(args.manifest.read_text(encoding="utf-8"))
         )
     elif args.command == "record":
         result = record_head_job(

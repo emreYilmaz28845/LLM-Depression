@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from src.native_en_text_heads import (
@@ -21,6 +22,7 @@ from tools.native_en_text_heads import (
     remote_prepare_script,
     remote_submission_script,
 )
+from src.native_en_text_heads_tracking import initialize_head_attempt_batch
 
 
 def test_locked_smoke_and_production_counts() -> None:
@@ -115,7 +117,7 @@ def test_managed_smoke_plan_has_four_job_chains_and_parseable_markers() -> None:
     assert all(job["job_ids"] for job in plan["jobs"])
 
 
-def test_submission_initializes_each_custom_attempt_near_its_sbatch() -> None:
+def test_submission_batches_custom_attempt_initialization_before_sbatch() -> None:
     plan = build_plan(
         stage="smoke",
         deployment=_fake_deployment(),
@@ -127,9 +129,42 @@ def test_submission_initializes_each_custom_attempt_near_its_sbatch() -> None:
         _fake_deployment(),
         Path(plan["stage_root"]) / "preflight.json",
     )
-    init_pos = script.index("tools/native_en_text_heads_worker.py init")
+    init_pos = script.index("tools/native_en_text_heads_worker.py init-batch")
     sbatch_pos = script.index("sbatch --parsable", init_pos)
     assert init_pos < sbatch_pos
+
+
+def test_batch_head_initialization_writes_sidecars_and_deploys(tmp_path: Path) -> None:
+    attempt = tmp_path / "attempt"
+    context_path = tmp_path / "context.json"
+    config_path = tmp_path / "config.json"
+    parent_path = tmp_path / "parent.json"
+    context = {
+        "attempt_id": "20260823T000000Z-test-head",
+        "logical_run_name": "test-head",
+        "fold": 0,
+        "seed": 1337,
+    }
+    config = {"classifier": {"method": "logreg"}}
+    parent = {"parent_attempt_id": "parent-1", "parent_checkpoint_path": "/tmp/best_model"}
+    result = initialize_head_attempt_batch(
+        [
+            {
+                "attempt_dir": str(attempt),
+                "context_path": str(context_path),
+                "config_path": str(config_path),
+                "parent_path": str(parent_path),
+                "context": context,
+                "config": config,
+                "parent": parent,
+            }
+        ]
+    )
+    assert result[0]["state"] == "DEPLOYED"
+    assert json.loads(context_path.read_text()) == context
+    assert json.loads(config_path.read_text()) == config
+    assert json.loads(parent_path.read_text()) == parent
+    assert json.loads((attempt / "status.json").read_text())["state"] == "DEPLOYED"
 
 
 def test_retry_plan_uses_fresh_output_identity_and_links_superseded_attempts() -> None:
