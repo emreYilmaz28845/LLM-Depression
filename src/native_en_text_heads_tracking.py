@@ -101,7 +101,12 @@ def initialize_head_attempt(
         raise HeadTrackingError(f"head context is missing {missing}")
     if parent and not parent.get("parent_attempt_id"):
         raise HeadTrackingError("parent evidence requires parent_attempt_id")
-    target.mkdir(parents=True, exist_ok=False)
+    # Sibling head attempts can share a fold directory. Create only the
+    # ancestry idempotently, then keep the attempt leaf collision-safe. This
+    # also prevents a child attempt's recursive mkdir from racing a parent
+    # attempt in the bounded batch initializer.
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.mkdir(exist_ok=False)
     attempt_id = str(context["attempt_id"])
     fold = int(context["fold"])
     tracking = {

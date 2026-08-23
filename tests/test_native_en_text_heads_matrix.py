@@ -169,6 +169,46 @@ def test_batch_head_initialization_writes_sidecars_and_deploys(tmp_path: Path) -
     assert json.loads((attempt / "status.json").read_text())["state"] == "DEPLOYED"
 
 
+def test_batch_head_initialization_allows_shared_fold_ancestry(tmp_path: Path) -> None:
+    fold_dir = tmp_path / "fold_0"
+    parent_attempt = fold_dir
+    child_attempt = fold_dir / "child_attempt"
+    items = []
+    for index, attempt_dir in enumerate((parent_attempt, child_attempt)):
+        context_path = tmp_path / f"context_{index}.json"
+        config_path = tmp_path / f"config_{index}.json"
+        parent_path = tmp_path / f"parent_{index}.json"
+        context = {
+            "attempt_id": f"20260823T00000{index}Z-test-head",
+            "logical_run_name": f"test-head-{index}",
+            "fold": 0,
+            "seed": 1337,
+        }
+        parent = (
+            None
+            if index == 0
+            else {
+                "parent_attempt_id": "parent-1",
+                "parent_checkpoint_path": "/tmp/best_model",
+            }
+        )
+        items.append(
+            {
+                "attempt_dir": str(attempt_dir),
+                "context_path": str(context_path),
+                "config_path": str(config_path),
+                "parent_path": str(parent_path),
+                "context": context,
+                "config": {"classifier": {"method": "logreg"}},
+                "parent": parent,
+            }
+        )
+    results = initialize_head_attempt_batch(items)
+    assert [result["state"] for result in results] == ["DEPLOYED", "DEPLOYED"]
+    assert (parent_attempt / "status.json").is_file()
+    assert (child_attempt / "status.json").is_file()
+
+
 def test_retry_plan_uses_fresh_output_identity_and_links_superseded_attempts() -> None:
     original = build_plan(
         stage="smoke",
