@@ -22,6 +22,18 @@ from scripts.monitor_experiment import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+
+def test_normalized_native_text_head_collection_path_does_not_mutate_contract():
+    from tools.exp import _normalized_local_evidence_rel
+
+    contract = {
+        "local_evidence_rel": "output_model/output_model/campaign/text_only/d3tec/run/fold_2",
+    }
+    assert _normalized_local_evidence_rel(contract) == (
+        "output_model/campaign/text_only/d3tec/run/fold_2"
+    )
+    assert contract["local_evidence_rel"].startswith("output_model/output_model/")
+
 SQUEUE_FIXTURE = """JOBID STATE TIME NODELIST JOBNAME REASON
 1843921 RUNNING 01:23:45 as01r2b25 llm-depression-train None
 1843922 PENDING 00:00:00 (null) llm-depression-eval Dependency
