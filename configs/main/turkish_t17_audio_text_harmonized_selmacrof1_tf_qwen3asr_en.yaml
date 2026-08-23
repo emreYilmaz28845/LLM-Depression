@@ -80,6 +80,7 @@ evaluation:
   headline_mode: original_teacher_forced
   aggregation_level: response_subject
   hierarchical_score_aggregation: mean
+  evaluation_view: harmonized_all_windows_full_coverage
   generation_max_new_tokens: 8
   num_beams: 1
   do_sample: false

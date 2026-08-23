@@ -1,0 +1,90 @@
+schema_version: audiollm.experiment_group.v1
+group_id: turkish-mixed-vs-negonly-native-en-multimodal-heads-v1-20260823
+title: Turkish mixed-question versus negative-only multimodal comparison
+research_question: >-
+  Under the harmonized Turkish threshold-17 recipe, how does restricting the
+  recordings to negative-question responses change teacher-forced and hidden-
+  state depression classification for Qwen and Gemma 4 across audio-only,
+  native-text, English-text, native audio+text, and English audio+text input?
+dataset: turkish,turkish_negative_only_t17
+baseline: mixed-question Turkish recordings from the canonical threshold-17 dataset
+treatment: negative-question-only Turkish recordings for the same 120 subjects and labels
+expected_seeds:
+  - 7
+  - 1337
+  - 2024
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: original_teacher_forced
+  aggregation: fold_mean_subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+github_issue: null
+github_pr: null
+scope:
+  population_subject_count: 120
+  mixed_selected_clip_count: 1051
+  negative_only_selected_clip_count: 1170
+  negative_only_excluded_wav_count: 145
+  threshold: 17
+  split_protocol: train_val
+  split_seed: 1337
+  audio_encoder: frozen
+  checkpoint_role: best_model
+  backbone_selection_metric: inner_val_macro_f1
+  backbone_selection_mode: max
+  evaluation_backend: original_teacher_forced
+  evaluation_view: harmonized_all_windows_full_coverage
+  aggregation: fold_mean_subject_level
+  training_seeds:
+    - 7
+    - 1337
+    - 2024
+  heads:
+    - teacher_forced
+    - logreg
+    - xgb_optuna100
+  posthoc:
+    logreg_seed: 1337
+    xgb_completed_trials: 100
+    xgb_inner_folds: 3
+    xgb_sampler_seed: 1337
+    xgb_model_seed: 1337
+    xgb_inner_split_seed: 1337
+    xgb_threshold: 0.5
+    xgb_sampling_mode: none
+  backbone_cells:
+    - {id: M01, recording_condition: mixed, transcript_condition: not_applicable, modality: audio_only, backbone: qwen, config: configs/main/turkish_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml}
+    - {id: M02, recording_condition: mixed, transcript_condition: native, modality: text_only, backbone: qwen, config: configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml}
+    - {id: M03, recording_condition: mixed, transcript_condition: english, modality: text_only, backbone: qwen, config: configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml}
+    - {id: M04, recording_condition: mixed, transcript_condition: native, modality: audio_text, backbone: qwen, config: configs/main/turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml}
+    - {id: M05, recording_condition: mixed, transcript_condition: english, modality: audio_text, backbone: qwen, config: configs/main/turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml}
+    - {id: M06, recording_condition: mixed, transcript_condition: not_applicable, modality: audio_only, backbone: gemma4, config: configs/main/turkish_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
+    - {id: M07, recording_condition: mixed, transcript_condition: native, modality: text_only, backbone: gemma4, config: configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
+    - {id: M08, recording_condition: mixed, transcript_condition: english, modality: text_only, backbone: gemma4, config: configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml}
+    - {id: M09, recording_condition: mixed, transcript_condition: native, modality: audio_text, backbone: gemma4, config: configs/main/turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
+    - {id: M10, recording_condition: mixed, transcript_condition: english, modality: audio_text, backbone: gemma4, config: configs/main/turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml}
+    - {id: N01, recording_condition: negative_only, transcript_condition: not_applicable, modality: audio_only, backbone: qwen, config: configs/main/turkish_negative_only_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml}
+    - {id: N02, recording_condition: negative_only, transcript_condition: native, modality: text_only, backbone: qwen, config: configs/main/turkish_negative_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml}
+    - {id: N03, recording_condition: negative_only, transcript_condition: english, modality: text_only, backbone: qwen, config: configs/main/turkish_negative_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml}
+    - {id: N04, recording_condition: negative_only, transcript_condition: native, modality: audio_text, backbone: qwen, config: configs/main/turkish_negative_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml}
+    - {id: N05, recording_condition: negative_only, transcript_condition: english, modality: audio_text, backbone: qwen, config: configs/main/turkish_negative_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml}
+    - {id: N06, recording_condition: negative_only, transcript_condition: not_applicable, modality: audio_only, backbone: gemma4, config: configs/main/turkish_negative_only_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
+    - {id: N07, recording_condition: negative_only, transcript_condition: native, modality: text_only, backbone: gemma4, config: configs/main/turkish_negative_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
+    - {id: N08, recording_condition: negative_only, transcript_condition: english, modality: text_only, backbone: gemma4, config: configs/main/turkish_negative_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml}
+    - {id: N09, recording_condition: negative_only, transcript_condition: native, modality: audio_text, backbone: gemma4, config: configs/main/turkish_negative_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
+    - {id: N10, recording_condition: negative_only, transcript_condition: english, modality: audio_text, backbone: gemma4, config: configs/main/turkish_negative_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml}
+exclusions:
+  - english_audio_only
+  - pooled_mixed_and_negative_training
+  - historical_checkpoint_or_hidden_cache_reuse
+  - subject_os
+  - fixed_xgboost_headline
+  - additional_backbones
+  - additional_training_seeds
