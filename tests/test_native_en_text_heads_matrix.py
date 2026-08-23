@@ -541,6 +541,7 @@ def test_final_epoch_derivation_uses_merged_epochs_launcher_without_config_overr
     assert final_job["epochs"] == 3
     assert not any("training.final_epoch_count" in token for token in final_job["overrides"])
     assert "final_epoch_count" not in final_job["config_payload"]["training"]
+    assert plan["final_epoch_audit_path"].endswith("final_epoch_audit_dep.json")
 
 
 def test_remote_prepare_attaches_set_tokens_to_override_options() -> None:
