@@ -1345,6 +1345,196 @@ def build_native_vs_english(wb: Workbook, *, report_path: Path | None = None) ->
     ws.freeze_panes = "A6"
 
 
+def _load_turkish_question_condition_report(report_path: Path) -> dict[str, Any]:
+    if not report_path.is_file():
+        raise ValueError(f"Turkish question-condition report does not exist: {report_path}")
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read Turkish question-condition report: {report_path}: {exc}") from exc
+    if report.get("schema_version") != "audiollm.turkish_question_condition_report.v1":
+        raise ValueError("unsupported Turkish question-condition report schema")
+    if report.get("validation", {}).get("status") != "passed":
+        raise ValueError("Turkish question-condition report is not validated")
+    expected = {
+        "table1_dataset_condition": 30,
+        "table2_translation": 24,
+        "table3_translation_interaction": 12,
+        "table4_model_comparison": 30,
+        "table5_seed_details": 180,
+        "table6_fold_details": 900,
+    }
+    tables = report.get("tables") or {}
+    for name, count in expected.items():
+        if len(tables.get(name, [])) != count:
+            raise ValueError(f"Turkish report table {name} has {len(tables.get(name, []))} rows; expected {count}")
+    return report
+
+
+def _route_label(route: Any) -> str:
+    return {
+        "teacher_forced": "Teacher-forced",
+        "logreg": "LogReg raw hidden head",
+        "xgb_optuna100": "XGBoost Optuna-100 raw hidden head",
+    }.get(str(route), str(route))
+
+
+def _condition_label(condition: Any) -> str:
+    return "Negative-only" if str(condition) == "negative_only" else "Mixed questions"
+
+
+def _modality_label(modality: Any, transcript: Any = None) -> str:
+    base = {"audio_only": "Audio only", "text_only": "Text only", "audio_text": "Audio + text"}.get(str(modality), str(modality))
+    if transcript in {"native", "english"}:
+        return f"{base} / {str(transcript).title()}"
+    return base
+
+
+def build_turkish_question_condition(wb: Workbook, *, report_path: Path) -> None:
+    """Render compact Tables 1–4 and the execution audit from the locked report.
+
+    Seed and fold detail remain in the report CSVs; this sheet is deliberately
+    compact enough to review while preserving a direct report/provenance path.
+    """
+    report = _load_turkish_question_condition_report(report_path)
+    ws = wb.create_sheet("Turkish Mixed vs NegOnly")
+    widths = {
+        "A": 18, "B": 18, "C": 22, "D": 32, "E": 14, "F": 14, "G": 14,
+        "H": 14, "I": 14, "J": 14, "K": 12, "L": 74,
+    }
+    _widths(ws, widths)
+    _title(ws, "Turkish mixed questions versus negative-only", 12)
+    _note(
+        ws, 2,
+        f"Generated from {report_path}. Group {report.get('group_id')}; deployment {report.get('deployment_id')}; "
+        "teacher-forced original_teacher_forced, harmonized_all_windows_full_coverage, headline/binary_strict. "
+        "Metrics are recomputed from local subject predictions; each seed is a five-fold mean and the headline "
+        "is the mean across seeds with sample SD. See the report provenance index for run, fold, config, and artifact paths.",
+        12, height=62,
+    )
+
+    row = 4
+    table1_headers = [
+        "Model", "Input", "Route", "Mixed macro-F1", "Negative-only macro-F1", "Δ macro-F1",
+        "Mixed positive-F1", "Negative-only positive-F1", "Δ positive-F1", "Seeds × folds", "Provenance key",
+    ]
+    _section(ws, row, "Table 1 — paired dataset-condition comparison (30 rows)", len(table1_headers))
+    _header_row(ws, row + 1, table1_headers)
+    row += 2
+    for item in report["tables"]["table1_dataset_condition"]:
+        values = [
+            item.get("model"), _modality_label(item.get("modality"), item.get("transcript_condition")),
+            _route_label(item.get("route")), item.get("mixed_macro_f1_mean"), item.get("negative_only_macro_f1_mean"),
+            item.get("paired_macro_f1_delta"), item.get("mixed_positive_f1_mean"), item.get("negative_only_positive_f1_mean"),
+            item.get("paired_positive_f1_delta"), item.get("complete_seed_fold_count"), item.get("provenance_key"),
+        ]
+        for col, value in enumerate(values, start=1):
+            if col in {4, 5, 6, 7, 8, 9}:
+                _delta_cell(ws, row, col, value) if col in {6, 9} else _body_cell(ws, row, col, value, fmt="0.0000")
+            else:
+                _body_cell(ws, row, col, value)
+        ws.cell(row, 11).alignment = WRAP
+        row += 1
+
+    table2_headers = [
+        "Condition", "Model", "Input", "Route", "Native macro-F1", "English macro-F1", "Δ macro-F1",
+        "Native positive-F1", "English positive-F1", "Δ positive-F1", "Provenance key",
+    ]
+    _section(ws, row + 1, "Table 2 — native versus English translation (24 rows)", len(table2_headers))
+    _header_row(ws, row + 2, table2_headers)
+    row += 3
+    for item in report["tables"]["table2_translation"]:
+        values = [
+            _condition_label(item.get("condition")), item.get("model"), _modality_label(item.get("modality")),
+            _route_label(item.get("route")), item.get("native_macro_f1_mean"), item.get("english_macro_f1_mean"),
+            item.get("english_minus_native_macro_f1"), item.get("native_positive_f1_mean"), item.get("english_positive_f1_mean"),
+            item.get("english_minus_native_positive_f1"), item.get("provenance_key"),
+        ]
+        for col, value in enumerate(values, start=1):
+            if col in {5, 6, 8, 9}:
+                _body_cell(ws, row, col, value, fmt="0.0000")
+            elif col in {7, 10}:
+                _delta_cell(ws, row, col, value)
+            else:
+                _body_cell(ws, row, col, value)
+        ws.cell(row, 11).alignment = WRAP
+        row += 1
+
+    table3_headers = [
+        "Model", "Input", "Route", "Mixed EN−native macro", "Negative-only EN−native macro", "Interaction macro",
+        "Mixed EN−native positive", "Negative-only EN−native positive", "Interaction positive", "Provenance key",
+    ]
+    _section(ws, row + 1, "Table 3 — translation interaction (12 rows)", len(table3_headers))
+    _header_row(ws, row + 2, table3_headers)
+    row += 3
+    for item in report["tables"]["table3_translation_interaction"]:
+        values = [
+            item.get("model"), _modality_label(item.get("modality")), _route_label(item.get("route")),
+            item.get("mixed_translation_macro_f1"), item.get("negative_only_translation_macro_f1"), item.get("interaction_macro_f1"),
+            item.get("mixed_translation_positive_f1"), item.get("negative_only_translation_positive_f1"), item.get("interaction_positive_f1"),
+            item.get("provenance_key"),
+        ]
+        for col, value in enumerate(values, start=1):
+            if col in {4, 5, 6, 7, 8, 9}:
+                _delta_cell(ws, row, col, value)
+            else:
+                _body_cell(ws, row, col, value)
+        ws.cell(row, 10).alignment = WRAP
+        row += 1
+
+    table4_headers = [
+        "Condition", "Input", "Route", "Qwen macro-F1", "Gemma 4 macro-F1", "Δ macro-F1",
+        "Qwen positive-F1", "Gemma 4 positive-F1", "Δ positive-F1", "Provenance key",
+    ]
+    _section(ws, row + 1, "Table 4 — model comparison (30 rows)", len(table4_headers))
+    _header_row(ws, row + 2, table4_headers)
+    row += 3
+    for item in report["tables"]["table4_model_comparison"]:
+        values = [
+            _condition_label(item.get("condition")), _modality_label(item.get("modality"), item.get("transcript_condition")),
+            _route_label(item.get("route")), item.get("qwen_macro_f1_mean"), item.get("gemma4_macro_f1_mean"),
+            item.get("gemma4_minus_qwen_macro_f1"), item.get("qwen_positive_f1_mean"), item.get("gemma4_positive_f1_mean"),
+            item.get("gemma4_minus_qwen_positive_f1"), item.get("provenance_key"),
+        ]
+        for col, value in enumerate(values, start=1):
+            if col in {4, 5, 7, 8}:
+                _body_cell(ws, row, col, value, fmt="0.0000")
+            elif col in {6, 9}:
+                _delta_cell(ws, row, col, value)
+            else:
+                _body_cell(ws, row, col, value)
+        ws.cell(row, 10).alignment = WRAP
+        row += 1
+
+    audit_headers = ["Job type", "Planned", "Submitted", "Successful", "Failed", "Cancelled", "Retried", "Superseded", "Locally validated", "REPORTABLE"]
+    _section(ws, row + 1, "Table 7 — execution audit", len(audit_headers))
+    _header_row(ws, row + 2, audit_headers)
+    row += 3
+    execution = report["job_audit"]["execution"].get("by_job_type", {})
+    for job_type in ("train", "evaluation", "hidden_extraction", "hidden_classifier"):
+        item = execution.get(job_type, {})
+        values = [job_type, item.get("planned"), item.get("submitted"), item.get("successful"), item.get("failed"), item.get("cancelled"), item.get("retried"), item.get("superseded"), item.get("locally_validated"), item.get("reportable")]
+        for col, value in enumerate(values, start=1):
+            _body_cell(ws, row, col, value)
+        row += 1
+    _note(ws, row + 1, "Tables 5 and 6 (seed and fold details), the complete provenance index, and the raw execution audit are kept in the deterministic report directory referenced above. Missing evidence is refused by the report generator; it is never written as zero.", len(audit_headers), height=42)
+    ws.freeze_panes = "A6"
+
+
+def build_turkish_question_condition_provenance(ws, put, *, report_path: Path) -> None:
+    report = _load_turkish_question_condition_report(report_path)
+    source = f"report {report_path}; group {report.get('group_id')}; deployment {report.get('deployment_id')}; source {report.get('source_git_sha')}"
+    aggregation = "three-seed mean of five-fold means; teacher-forced original_teacher_forced; headline/binary_strict; harmonized_all_windows_full_coverage"
+    artifact = f"{report_path} + {report_path.parent / 'provenance_index.json'}"
+    for item in report["tables"]["table1_dataset_condition"]:
+        label = f"{item.get('model')} {_modality_label(item.get('modality'), item.get('transcript_condition'))} {_route_label(item.get('route'))}"
+        key = item.get("provenance_key")
+        put("Turkish Mixed vs NegOnly", "Turkish", label + " mixed macro-F1", item.get("mixed_macro_f1_mean"), f"{source}; provenance key {key}", aggregation, artifact, "recomputed from local subject predictions; all 15 seed-fold units REPORTABLE")
+        put("Turkish Mixed vs NegOnly", "Turkish", label + " negative-only macro-F1", item.get("negative_only_macro_f1_mean"), f"{source}; provenance key {key}", aggregation, artifact, "recomputed from local subject predictions; all 15 seed-fold units REPORTABLE")
+        put("Turkish Mixed vs NegOnly", "Turkish", label + " mixed positive-F1", item.get("mixed_positive_f1_mean"), f"{source}; provenance key {key}", aggregation, artifact, "recomputed from local subject predictions; all 15 seed-fold units REPORTABLE")
+        put("Turkish Mixed vs NegOnly", "Turkish", label + " negative-only positive-F1", item.get("negative_only_positive_f1_mean"), f"{source}; provenance key {key}", aggregation, artifact, "recomputed from local subject predictions; all 15 seed-fold units REPORTABLE")
+
+
 # --------------------------------------------------------------------------- sheets
 def build_summary(wb: Workbook, *, detailed: bool) -> None:
     """Compact headline: the standardized XGBoost macro-F1 for the three main
@@ -1800,7 +1990,13 @@ def build_native_en_provenance(ws, put, *, report_path: Path | None = None) -> N
             )
 
 
-def build_provenance(wb: Workbook, *, detailed: bool, native_en_report_path: Path | None = None) -> None:
+def build_provenance(
+    wb: Workbook,
+    *,
+    detailed: bool,
+    native_en_report_path: Path | None = None,
+    turkish_question_condition_report_path: Path | None = None,
+) -> None:
     ws = wb.create_sheet("Provenance")
     widths = {"A": 13, "B": 11, "C": 14, "D": 12, "E": 13, "F": 52, "G": 40, "H": 30, "I": 40}
     _widths(ws, widths)
@@ -1980,6 +2176,8 @@ def build_provenance(wb: Workbook, *, detailed: bool, native_en_report_path: Pat
     build_en_merged_gemma_provenance(ws, put)
     build_daic_officialdev_provenance(ws, put)
     build_native_en_provenance(ws, put, report_path=native_en_report_path)
+    if turkish_question_condition_report_path is not None:
+        build_turkish_question_condition_provenance(ws, put, report_path=turkish_question_condition_report_path)
 
     ws.freeze_panes = "A3"
 
@@ -2406,9 +2604,19 @@ def main() -> None:
         default=str(NATIVE_EN_REPORT_PATH),
         help="deterministic v2 report JSON used for the Native vs EN sheet",
     )
+    parser.add_argument(
+        "--turkish-question-condition-report",
+        default=None,
+        help="validated Turkish mixed-vs-negative-only report JSON used for its workbook sheet",
+    )
     args = parser.parse_args()
     detailed = args.detailed
     native_en_report_path = Path(args.native_en_report)
+    turkish_question_condition_report_path = (
+        Path(args.turkish_question_condition_report)
+        if args.turkish_question_condition_report is not None
+        else None
+    )
 
     if args.validate_selected is not None:
         cell_values: dict[Any, float | None] = {
@@ -2467,8 +2675,15 @@ def main() -> None:
     build_summary(wb, detailed=detailed)
     build_gemma_vs_qwen(wb)
     build_native_vs_english(wb, report_path=native_en_report_path)
+    if turkish_question_condition_report_path is not None:
+        build_turkish_question_condition(wb, report_path=turkish_question_condition_report_path)
     build_packed30(wb)
-    build_provenance(wb, detailed=detailed, native_en_report_path=native_en_report_path)
+    build_provenance(
+        wb,
+        detailed=detailed,
+        native_en_report_path=native_en_report_path,
+        turkish_question_condition_report_path=turkish_question_condition_report_path,
+    )
     out = OUT_DETAILED if detailed else OUT
     out.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out)

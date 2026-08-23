@@ -82,11 +82,11 @@ evaluation:
   headline_mode: original_teacher_forced
   aggregation_level: response_subject
   hierarchical_score_aggregation: mean
+  evaluation_view: harmonized_all_windows_full_coverage
   generation_max_new_tokens: 8
   num_beams: 1
   do_sample: false
   evaluate_last_checkpoint: false
-  evaluation_view: harmonized_all_windows_full_coverage
 transcripts:
   variant: english
   cache_path: ${TRANSLATION_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/translations}/harmonized_en_complete_v1/turkish/accepted.jsonl

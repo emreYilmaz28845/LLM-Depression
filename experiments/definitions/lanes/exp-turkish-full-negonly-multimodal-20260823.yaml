@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: exp-turkish-full-negonly-multimodal-20260823
+slug: turkish-full-negonly-multimodal
+tier: 1
+branch: agent/exp-turkish-full-negonly-multimodal
+worktree: /home/emre/worktrees/LLM-Depression-exp-turkish-full-negonly-multimodal
+parent_branch: null
+parent_sha: e176da5e0595464bc44320d32e04f7fe0a7adf5e
+created_at_utc: "2026-08-23T15:16:06Z"
+experiment_group_path: experiments/definitions/turkish-mixed-vs-negonly-native-en-multimodal-heads-v1-20260823.yaml
+type: competing

@@ -72,6 +72,7 @@ evaluation:
   sample_prediction_mode: original_teacher_forced
   headline_mode: original_teacher_forced
   aggregation_level: subject
+  evaluation_view: harmonized_all_windows_full_coverage
   generation_max_new_tokens: 8
   num_beams: 1
   do_sample: false
