@@ -1138,6 +1138,14 @@ def _mirror_terminal_to_fold(record: dict, rec) -> None:
         lifecycle.write_status(status_path, record_obj)
         print(f"  fold lifecycle advanced to COMPLETED_ON_MN5 ({fold_dir.name})")
 
+def _normalized_local_evidence_rel(contract: dict) -> str | None:
+    """Resolve legacy duplicate-prefix paths without mutating recorded contracts."""
+    local_rel = contract.get("local_evidence_rel") or contract.get("local_fold_rel")
+    if local_rel and local_rel.startswith("output_model/output_model/"):
+        return local_rel[len("output_model/"):]
+    return local_rel
+
+
 def _cmd_collect(args) -> int:
     from src.experiment_tracking.collect import (
         CollectionError,
@@ -1194,7 +1202,7 @@ def _cmd_collect(args) -> int:
 
     local_fold = getattr(args, "output", None)
     if not local_fold:
-        local_rel = contract_holder.get("local_evidence_rel") or contract_holder.get("local_fold_rel")
+        local_rel = _normalized_local_evidence_rel(contract_holder)
         if local_rel:
             local_fold = str(PROJECT_ROOT / local_rel)
         elif attempt_id:
@@ -1270,7 +1278,7 @@ def _resolve_attempt_fold_dir(args):
             break
         if contract is None:
             return None, None, "no recorded submission contract found; pass --attempt-id or --fold-dir"
-        local_rel = contract.get("local_evidence_rel") or contract.get("local_fold_rel")
+        local_rel = _normalized_local_evidence_rel(contract)
         if not local_rel:
             return None, None, "submission contract has no local evidence path"
         fold_dir = str(PROJECT_ROOT / local_rel)
