@@ -1253,6 +1253,8 @@ def remote_submission_script(
     preflight_path: Path,
     *,
     phase: str = "all",
+    resume_after: int | None = None,
+    existing_job_ids: dict[int, dict[str, str]] | None = None,
 ) -> str:
     code = str(deployment["deployed_code_path"])
     by_index = {int(job["plan_index"]): job for job in plan["jobs"]}
@@ -1282,9 +1284,15 @@ def remote_submission_script(
         or (phase == "cv" and job.get("endpoint") != "merged_final")
         or (phase == "final" and job.get("endpoint") == "merged_final")
     ]
+    if resume_after is not None:
+        selected_jobs = [job for job in selected_jobs if int(job["plan_index"]) > resume_after]
     selected_indexes = {int(job["plan_index"]) for job in selected_jobs}
     selected_collision_paths: set[str] = set()
     for job in selected_jobs:
+        if resume_after is not None and job.get("kind") != "standalone_backbone":
+            # Custom attempt sidecars were initialized before the interrupted
+            # prefix submission. Reuse them without a second initialization.
+            continue
         for key in ("attempt_dir", "context_path"):
             value = job.get(key)
             if value:
@@ -1298,7 +1306,21 @@ def remote_submission_script(
             selected_collision_paths.add(str(job["fold_dir"]))
     for path in sorted(selected_collision_paths):
         lines.append(f"test ! -e {q(path)}")
-    custom_jobs = [job for job in selected_jobs if job.get("kind") != "standalone_backbone"]
+    if existing_job_ids:
+        for index, job_ids in sorted(existing_job_ids.items()):
+            job = by_index.get(int(index))
+            if job is None:
+                raise OrchestrationError(f"resume prefix contains unknown plan index {index}")
+            if job.get("kind") == "standalone_backbone":
+                lines.append(f"train_{index}={q(job_ids['train'])}")
+                lines.append(f"eval_{index}={q(job_ids['best_eval'])}")
+            else:
+                lines.append(f"jid_{index}={q(job_ids['job'])}")
+    custom_jobs = (
+        []
+        if resume_after is not None
+        else [job for job in selected_jobs if job.get("kind") != "standalone_backbone"]
+    )
     python = "/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/python"
     batch_size = 64
     for batch_index in range(0, len(custom_jobs), batch_size):
@@ -1463,6 +1485,31 @@ def parse_submission_markers(
     missing = sorted(index for index in expected if index not in seen)
     if missing:
         raise OrchestrationError(f"submission output is missing job markers for plan indexes: {missing[:20]}")
+
+
+def resume_job_ids(
+    plan: dict[str, Any], marker_text: str, resume_after: int, *, phase: str
+) -> dict[int, dict[str, str]]:
+    """Read an interrupted prefix without minting or reusing identities."""
+
+    if resume_after < 0:
+        raise OrchestrationError("--resume-after must be non-negative")
+    expected = {
+        int(job["plan_index"])
+        for job in plan["jobs"]
+        if int(job["plan_index"]) <= resume_after
+        and (
+            phase == "all"
+            or (phase == "cv" and job.get("endpoint") != "merged_final")
+            or (phase == "final" and job.get("endpoint") == "merged_final")
+        )
+    }
+    parse_submission_markers(plan, marker_text, expected)
+    return {
+        int(job["plan_index"]): dict(job["job_ids"])
+        for job in plan["jobs"]
+        if int(job["plan_index"]) in expected
+    }
 
 
 def _local_source_path(remote_path: str) -> Path:
@@ -1745,6 +1792,21 @@ def command_submit(args: argparse.Namespace) -> int:
     if args.stage == "production" and phase not in {"cv", "final", "all"}:
         print(f"ERROR: unsupported production phase {phase!r}", file=sys.stderr)
         return 1
+    resume_after = getattr(args, "resume_after", None)
+    resume_log = getattr(args, "resume_log", None)
+    if resume_after is not None:
+        if not args.execute:
+            print("ERROR: --resume-after is execute-only", file=sys.stderr)
+            return 1
+        if args.stage != "production" or phase != "cv":
+            print("ERROR: --resume-after is supported only for production CV", file=sys.stderr)
+            return 1
+        if not resume_log:
+            print("ERROR: --resume-after requires --resume-log", file=sys.stderr)
+            return 1
+        if args.retry_from or args.retry_job_key:
+            print("ERROR: resume cannot be combined with retry options", file=sys.stderr)
+            return 1
     execute = bool(args.execute)
     try:
         _worktree, _pin, deployment = load_deployment(args.slug, args.deployment_id, execute=execute)
@@ -1790,7 +1852,36 @@ def command_submit(args: argparse.Namespace) -> int:
             )
             return 0
 
-        if args.stage == "production" and phase == "final":
+        if resume_after is not None:
+            plan = _load_plan_for_status(args.slug, args.stage, str(deployment.get("deployment_id")))
+            if plan.get("deployment_id") != deployment.get("deployment_id"):
+                raise OrchestrationError("resume plan deployment does not match requested deployment")
+            if plan.get("output_suffix") != getattr(args, "output_suffix", None):
+                raise OrchestrationError("resume output suffix does not match the saved submission plan")
+            marker_path = Path(resume_log)
+            if not marker_path.is_file():
+                raise OrchestrationError(f"resume marker log does not exist: {marker_path}")
+            existing_job_ids = resume_job_ids(
+                plan,
+                marker_path.read_text(encoding="utf-8"),
+                int(resume_after),
+                phase=phase,
+            )
+            preflight_path = Path(
+                plan.get("preflight_path")
+                or preflight_path_for(
+                    experiment_id,
+                    args.stage,
+                    str(deployment["deployment_id"]),
+                    plan.get("output_suffix"),
+                )
+            )
+            preflight = load_remote_preflight(DEFAULT_TRANSFER_HOST, preflight_path)
+            if preflight.get("status") != "passed":
+                raise OrchestrationError("resume requires a passed remote preflight")
+            add_plan_indexes(plan)
+            submit_plan = plan
+        elif args.stage == "production" and phase == "final":
             plan = _load_plan_for_status(args.slug, args.stage, str(deployment.get("deployment_id")))
             if plan.get("deployment_id") != deployment.get("deployment_id"):
                 raise OrchestrationError("existing production plan deployment does not match requested deployment")
@@ -1896,6 +1987,8 @@ def command_submit(args: argparse.Namespace) -> int:
             deployment,
             Path(submit_plan.get("preflight_path") or preflight_path),
             phase=phase,
+            resume_after=int(resume_after) if resume_after is not None else None,
+            existing_job_ids=existing_job_ids if resume_after is not None else None,
         )
         evidence_root = PROJECT_ROOT / "outputs" / "native_en_text_heads_v2" / args.stage
         write_local_once(
@@ -1923,6 +2016,8 @@ def command_submit(args: argparse.Namespace) -> int:
             or (phase == "cv" and job.get("endpoint") != "merged_final")
             or (phase == "final" and job.get("endpoint") == "merged_final")
         }
+        if resume_after is not None:
+            expected_indexes = {index for index in expected_indexes if index > int(resume_after)}
         parse_submission_markers(submit_plan, submitted.stdout, expected_indexes)
         plan = submit_plan
         plan["submission_phase"] = "complete" if phase == "all" else phase
@@ -2070,6 +2165,17 @@ def parse_args() -> argparse.Namespace:
         action="append",
         default=[],
         help="select one failed hidden-classifier head job key for a parent-reusing retry (repeatable)",
+    )
+    submit_parser.add_argument(
+        "--resume-after",
+        type=int,
+        default=None,
+        help="continue an interrupted production CV after this submitted plan index",
+    )
+    submit_parser.add_argument(
+        "--resume-log",
+        default=None,
+        help="append-only marker log from the interrupted submission prefix",
     )
     submit_parser.add_argument("--scheduler-host", default=DEFAULT_SCHEDULER_HOST)
     submit_parser.add_argument(
