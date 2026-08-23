@@ -481,6 +481,13 @@ def test_remote_workers_source_mn5_dataset_environment() -> None:
     assert "manifest_map_native-en-text-heads-v2-test-deployment.json" in prepare
 
 
+def test_native_worker_environment_sets_cuda_reproducibility_defaults() -> None:
+    env_script = (Path(__file__).resolve().parents[1] / "scripts/native_en_text_heads_env.sh").read_text(encoding="utf-8")
+    assert 'export CUBLAS_WORKSPACE_CONFIG="${CUBLAS_WORKSPACE_CONFIG:-:4096:8}"' in env_script
+    assert 'export PYTHONHASHSEED="${PYTHONHASHSEED:-0}"' in env_script
+    assert 'export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"' in env_script
+
+
 def test_remote_prepare_attaches_set_tokens_to_override_options() -> None:
     plan = build_plan(
         stage="smoke",
