@@ -200,7 +200,9 @@ def _fold_identity(cell: BackboneCell, seed: int, fold: int, source_sha: str) ->
     # recording/transcript condition.  The model-specific run root remains
     # isolated; this avoids four concurrent builders racing to materialize the
     # same subject/fold contract.
-    path_token = f"{cell.recording_token}/{language}"
+    # Preflight uses the canonical recording-condition directory names.  The
+    # shorter token is reserved for run names and campaign labels.
+    path_token = f"{cell.recording_condition}/{language}"
     manifest_dir = REMOTE_RUNTIME_ROOT / "manifests" / path_token
     split_dir = REMOTE_RUNTIME_ROOT / "splits" / path_token
     backbone_key = f"{run_name}:backbone"
