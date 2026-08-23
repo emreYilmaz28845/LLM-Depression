@@ -112,8 +112,14 @@ def load_deployment(slug: str, deployment_id: str | None, *, execute: bool) -> t
     return worktree, pin, deployment
 
 
-def stage_root(experiment_id: str, stage: str) -> Path:
-    return REMOTE_RUNTIME_BASE / experiment_id / stage
+def stage_root(experiment_id: str, stage: str, output_suffix: str | None = None) -> Path:
+    base = REMOTE_RUNTIME_BASE / experiment_id / stage
+    suffix = _normalize_output_suffix(output_suffix)
+    if suffix:
+        # A fresh runtime namespace is required for a corrected retry.  The
+        # canonical stage remains immutable evidence for its original graph.
+        base = base / suffix
+    return base
 
 
 def manifest_paths(root: Path, condition: str, backbone: str, dataset: str) -> tuple[Path, Path]:
@@ -513,7 +519,7 @@ def build_plan(
             raise OrchestrationError("retry source plan is not a completed submission plan")
         if not output_suffix:
             raise OrchestrationError("retries require a fresh --output-suffix")
-    root = stage_root(experiment_id, stage)
+    root = stage_root(experiment_id, stage, output_suffix)
     preflight = preflight or {}
     jobs: list[dict[str, Any]] = []
     collision_paths: set[str] = set()
@@ -972,7 +978,7 @@ PY
 def manifest_map(
     experiment_id: str, stage: str, output_suffix: str | None = None
 ) -> dict[str, Any]:
-    root = stage_root(experiment_id, stage)
+    root = stage_root(experiment_id, stage, output_suffix)
     result: dict[str, Any] = {}
     for condition in CONDITIONS:
         for backbone in BACKBONES:
@@ -1564,8 +1570,10 @@ def plan_path(stage: str, deployment_id: str | None = None) -> Path:
     return candidates[-1] if candidates else standard
 
 
-def preflight_path_for(experiment_id: str, stage: str, deployment_id: str) -> Path:
-    return stage_root(experiment_id, stage) / f"preflight_{deployment_id}.json"
+def preflight_path_for(
+    experiment_id: str, stage: str, deployment_id: str, output_suffix: str | None = None
+) -> Path:
+    return stage_root(experiment_id, stage, output_suffix) / f"preflight_{deployment_id}.json"
 
 
 def write_local_once(path: Path, text: str) -> None:
@@ -1758,7 +1766,12 @@ def command_submit(args: argparse.Namespace) -> int:
             derive_final_epochs(plan)
             preflight_path = Path(
                 plan.get("preflight_path")
-                or preflight_path_for(experiment_id, args.stage, str(deployment["deployment_id"]))
+                or preflight_path_for(
+                    experiment_id,
+                    args.stage,
+                    str(deployment["deployment_id"]),
+                    plan.get("output_suffix"),
+                )
             )
             preflight = load_remote_preflight(DEFAULT_TRANSFER_HOST, preflight_path)
             if preflight.get("status") != "passed":
@@ -1777,7 +1790,12 @@ def command_submit(args: argparse.Namespace) -> int:
             if retry_from:
                 plan["retry_from_plan"] = retry_from["_source_plan_path"]
             add_plan_indexes(plan)
-            preflight_path = preflight_path_for(experiment_id, args.stage, str(deployment["deployment_id"]))
+            preflight_path = preflight_path_for(
+                experiment_id,
+                args.stage,
+                str(deployment["deployment_id"]),
+                getattr(args, "output_suffix", None),
+            )
             prepare_script = remote_prepare_script(
                 plan,
                 deployment,
