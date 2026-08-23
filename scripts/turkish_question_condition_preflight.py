@@ -268,8 +268,12 @@ def run_preflight(args: argparse.Namespace) -> dict[str, Any]:
     representative_ids = {"mixed": {"native": "M02", "english": "M03"}, "negative_only": {"native": "N02", "english": "N03"}}
     dataset_roots = {"mixed": args.mixed_root, "negative_only": args.negative_root}
     output_root = args.output_root.resolve()
-    if output_root.exists() and any(output_root.iterdir()):
-        raise PreflightError(f"preflight output root is not empty: {output_root}")
+    if output_root.exists():
+        existing_files = [path for path in output_root.rglob("*") if path.is_file()]
+        if existing_files:
+            raise PreflightError(
+                f"preflight output root already contains files: {existing_files[:3]}"
+            )
     output_root.mkdir(parents=True, exist_ok=True)
     pairs: list[dict[str, Any]] = []
     for condition, languages in representative_ids.items():

@@ -1194,6 +1194,7 @@ def _initialize_tracking_sidecars(
             "git_branch": context.get("source", {}).get("git_branch"),
             "git_dirty": context.get("source", {}).get("git_dirty"),
             "deployed_source_sha256": context.get("source", {}).get("deployed_source_sha256"),
+            "deployment_id": context.get("source", {}).get("deployment_id"),
         },
         "research": {
             "github_issue": context.get("research", {}).get("github_issue"),

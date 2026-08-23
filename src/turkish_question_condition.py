@@ -196,7 +196,11 @@ def _fold_identity(cell: BackboneCell, seed: int, fold: int, source_sha: str) ->
     campaign = cell.campaign
     run_root = REMOTE_OUTPUT_ROOT / campaign / cell.modality / "turkish"
     fold_dir = run_root / run_name / f"fold_{fold}"
-    path_token = f"{cell.recording_token}/{language}/{cell.modality}"
+    # Manifest and split evidence are shared across modalities within the same
+    # recording/transcript condition.  The model-specific run root remains
+    # isolated; this avoids four concurrent builders racing to materialize the
+    # same subject/fold contract.
+    path_token = f"{cell.recording_token}/{language}"
     manifest_dir = REMOTE_RUNTIME_ROOT / "manifests" / path_token
     split_dir = REMOTE_RUNTIME_ROOT / "splits" / path_token
     backbone_key = f"{run_name}:backbone"
@@ -293,6 +297,8 @@ def _job(
         "campaign": identity.campaign,
         "run_root": identity.run_root,
         "fold_dir": identity.fold_dir,
+        "manifest_dir": identity.manifest_dir,
+        "split_dir": identity.split_dir,
         "attempt_key": attempt_key,
         "hidden_cache_dir": identity.hidden_cache_dir,
         "dependencies": list(dependencies),
