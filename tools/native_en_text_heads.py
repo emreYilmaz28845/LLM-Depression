@@ -1290,14 +1290,35 @@ def remote_submission_script(
             selected_collision_paths.add(str(job["fold_dir"]))
     for path in sorted(selected_collision_paths):
         lines.append(f"test ! -e {q(path)}")
+    custom_jobs = [job for job in selected_jobs if job.get("kind") != "standalone_backbone"]
+    python = "/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/python"
+    batch_size = 64
+    for batch_index in range(0, len(custom_jobs), batch_size):
+        batch_jobs = custom_jobs[batch_index : batch_index + batch_size]
+        batch_payload = [
+            {
+                "attempt_dir": job["attempt_dir"],
+                "context_path": job["context_path"],
+                "config_path": job["config_json_path"],
+                "parent_path": job["parent_json_path"],
+                "context": job["context_payload"],
+                "config": job["config_payload"],
+                "parent": job["parent_payload"],
+            }
+            for job in batch_jobs
+        ]
+        batch_path = (
+            Path(plan["stage_root"])
+            / f"head_init_batch_{deployment['deployment_id']}_{batch_index // batch_size}.json"
+        )
+        lines.append(f"write_once {q(batch_path)} {q(payload_b64(batch_payload))}")
+        lines.append(
+            f"{q(python)} tools/native_en_text_heads_worker.py init-batch"
+            f" --manifest {q(batch_path)}"
+        )
+
     for job in selected_jobs:
         index = int(job["plan_index"])
-        # Initialize each hidden-head attempt immediately before its own
-        # sbatch call.  The old all-initialization prefix made a large
-        # production graph spend the launcher timeout minting sidecars before
-        # submitting its first job.
-        if job.get("kind") != "standalone_backbone":
-            custom_init_lines(lines, job)
         if job.get("kind") == "standalone_backbone":
             out_var = f"standalone_{index}"
             train_var = f"train_{index}"
