@@ -102,6 +102,8 @@ def test_managed_smoke_plan_has_four_job_chains_and_parseable_markers() -> None:
     assert "SBATCH_EXTRA_ARGS=--exclude=as01r2b12" in script
     assert "--exclude=as01r2b12" in script
     standalone = next(job for job in plan["jobs"] if job.get("kind") == "standalone_backbone")
+    assert standalone["local_fold_rel"].startswith("output_model/")
+    assert not standalone["local_fold_rel"].startswith("output_model/output_model/")
     assert "--set=evaluation.evaluation_view=harmonized_all_windows_full_coverage" in standalone["overrides"]
     head_jobs = [job for job in plan["jobs"] if job.get("method")]
     assert all(job.get("backend") for job in head_jobs)

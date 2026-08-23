@@ -733,7 +733,7 @@ def build_plan(
                                 "checkpoint_role": "best_model",
                             },
                             "job_ids": {},
-                            "local_fold_rel": str(fold_dir).replace(str(REMOTE_PROJECT_ROOT), "output_model"),
+                            "local_fold_rel": str(fold_dir.relative_to(REMOTE_PROJECT_ROOT)),
                         }
                         register(contract)
                         by_key[f"{logical}:standalone:{fold}:train:none"] = contract
