@@ -1739,13 +1739,12 @@ def derive_final_epochs(plan: dict[str, Any]) -> Path:
             continue
         panel = (str(job["condition"]), str(job["backbone"]), int(job["seed"]))
         epoch = epochs_by_panel[panel]
+        # Merged final training passes this value through the dedicated
+        # launcher EPOCHS variable, which becomes src.merged.train's
+        # --epochs argument.  The merged YAMLs intentionally do not expose a
+        # training.final_epoch_count override path; appending one here makes
+        # config loading fail before training starts.
         job["epochs"] = epoch
-        job["overrides"] = _replace_or_append_set(
-            list(job.get("overrides") or []), "training.final_epoch_count", epoch
-        )
-        config_payload = job.get("config_payload")
-        if isinstance(config_payload, dict):
-            config_payload.setdefault("training", {})["final_epoch_count"] = epoch
 
     audit = {
         "schema_version": "native_en_text_heads_v2_final_epoch_audit.v1",
