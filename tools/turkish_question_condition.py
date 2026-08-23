@@ -92,7 +92,8 @@ def _lane_and_deployment(slug: str, deployment_id: str | None, *, execute: bool)
     if pin.get("parent_sha") != "e176da5e0595464bc44320d32e04f7fe0a7adf5e":
         raise CampaignError(f"lane parent SHA changed: {pin.get('parent_sha')}")
     group = exp._load_linked_experiment_group(worktree, pin)
-    if group.get("group_id") != GROUP_ID:
+    linked_group_id = group.get("group_id") or group.get("experiment_group_id")
+    if linked_group_id != GROUP_ID:
         raise CampaignError("linked group is not the locked campaign group")
     found = exp._find_deployment_record(EXPERIMENT_ID, deployment_id, allow_plan=not execute)
     if not isinstance(found, tuple) or len(found) != 2:
