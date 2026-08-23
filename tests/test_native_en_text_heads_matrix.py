@@ -18,6 +18,7 @@ from tools.native_en_text_heads import (
     build_plan,
     job_export,
     parse_submission_markers,
+    resume_job_ids,
     stage_root,
     remote_prepare_script,
     remote_submission_script,
@@ -134,6 +135,34 @@ def test_submission_batches_custom_attempt_initialization_before_sbatch() -> Non
     assert init_pos < sbatch_pos
     assert "write_once_stdin" in script
     assert "write_once_stdin" in script[:init_pos]
+
+
+def test_resume_submission_reuses_prefix_ids_without_reinitializing_custom_attempts() -> None:
+    plan = build_plan(
+        stage="smoke",
+        deployment=_fake_deployment(),
+        experiment_id="exp-native-en-text-heads-v2-20260822",
+    )
+    add_plan_indexes(plan)
+    existing = resume_job_ids(
+        plan,
+        "__STANDALONE__ 0 1000 2000\n__JOB__ 1 3001\n__JOB__ 2 3002\n",
+        2,
+        phase="all",
+    )
+    script = remote_submission_script(
+        plan,
+        _fake_deployment(),
+        Path(plan["stage_root"]) / "preflight.json",
+        resume_after=2,
+        existing_job_ids=existing,
+    )
+    assert "train_0=1000" in script
+    assert "eval_0=2000" in script
+    assert "jid_1=3001" in script
+    assert "jid_2=3002" in script
+    assert "init-batch" not in script
+    assert "__STANDALONE__ 3" in script
 
 
 def test_batch_head_initialization_writes_sidecars_and_deploys(tmp_path: Path) -> None:
