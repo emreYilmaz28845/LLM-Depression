@@ -1875,7 +1875,7 @@ def command_submit(args: argparse.Namespace) -> int:
                 or preflight_path_for(
                     experiment_id,
                     args.stage,
-                    str(deployment["deployment_id"]),
+                    str(plan["deployment_id"]),
                     plan.get("output_suffix"),
                 )
             )
