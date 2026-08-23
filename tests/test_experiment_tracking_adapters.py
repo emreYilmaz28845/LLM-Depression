@@ -205,6 +205,69 @@ def test_substep5_selected_export_resolves_explicit_selection(tmp_path: Path) ->
     assert payload["status_counts"]["legacy_unmigrated"] == 1
 
 
+def test_substep5_native_en_selected_export_reads_report_without_copying_values(tmp_path: Path) -> None:
+    report = tmp_path / "native_en_report.json"
+    summary = [
+        {
+            "provenance_key": "native-en-text-heads-v2-20260822|standalone|d3tec|qwen|logreg",
+            "native_macro_mean": 0.5,
+            "aggregation": "pooled subject-level across five outer folds",
+            "provenance_status": "reportable_local_evidence",
+        }
+    ] + [
+        {"provenance_key": f"other-{index}", "native_macro_mean": 0.1}
+        for index in range(23)
+    ]
+    report.write_text(
+        json.dumps(
+            {
+                "schema_version": "native_en_text_heads_v2_report.v1",
+                "status": "passed",
+                "summary": summary,
+                "seed_details": [{} for _ in range(72)],
+            }
+        ),
+        encoding="utf-8",
+    )
+    selection_yaml = tmp_path / "native_en_selection.yaml"
+    selection_yaml.write_text(
+        (
+            "schema_version: audiollm.native_en_selected_results.v1\n"
+            "source_type: native_en_report\n"
+            f"report_path: {report}\n"
+            "selections:\n"
+            "  - cell: Native vs EN v2|D3TEC|Standalone / Qwen|LogReg — Native macro mean\n"
+            "    source_type: native_en_report\n"
+            "    report_provenance_key: native-en-text-heads-v2-20260822|standalone|d3tec|qwen|logreg\n"
+            "    metric: native_macro_mean\n"
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "selected_results.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(PROJECT_ROOT / "tools" / "export_selected_results.py"),
+            "--db",
+            str(tmp_path / "missing.sqlite"),
+            "--selection",
+            str(selection_yaml),
+            "--output",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=PROJECT_ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    selected = payload["selections"][0]
+    assert selected["status"] == "selected"
+    assert selected["value"] == 0.5
+    assert selected["source_type"] == "native_en_report"
+    assert selected["provenance"]["report_provenance_key"].endswith("|qwen|logreg")
+
+
 def test_substep5_workbook_validation_mismatch_is_rejected(tmp_path: Path) -> None:
     connection, db_path = _import_tree(tmp_path)
     connection.close()

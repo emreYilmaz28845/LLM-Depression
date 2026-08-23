@@ -14,6 +14,7 @@ Creates/updates:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -195,7 +196,8 @@ def _refresh_workbook_hashes(payload: dict) -> None:
 
 
 def build_wandb_entries() -> None:
-    payload = yaml.safe_load(WANDB_SELECTION_PATH.read_text(encoding="utf-8"))
+    original_text = WANDB_SELECTION_PATH.read_text(encoding="utf-8")
+    payload = yaml.safe_load(original_text)
     entries = payload.setdefault("entries", [])
     existing_ids = {entry["selection_id"] for entry in entries}
     studies = all_studies()
@@ -239,7 +241,29 @@ def build_wandb_entries() -> None:
         )
         existing_ids.add(selection_id)
         added += 1
+    workbook_block = payload["workbook"]
+    old_hashes = (workbook_block.get("sha256"), workbook_block.get("builder_sha256"))
     _refresh_workbook_hashes(payload)
+    new_hashes = (workbook_block.get("sha256"), workbook_block.get("builder_sha256"))
+    if added == 0:
+        if old_hashes == new_hashes:
+            print(f"updated {WANDB_SELECTION_PATH}: 0 new entries, total {len(entries)}")
+            return
+        rendered = re.sub(
+            r"(?m)^(  sha256: )[0-9a-f]{64}$",
+            rf"\g<1>{new_hashes[0]}",
+            original_text,
+            count=1,
+        )
+        rendered = re.sub(
+            r"(?m)^(  builder_sha256: )[0-9a-f]{64}$",
+            rf"\g<1>{new_hashes[1]}",
+            rendered,
+            count=1,
+        )
+        WANDB_SELECTION_PATH.write_text(rendered, encoding="utf-8")
+        print(f"updated {WANDB_SELECTION_PATH}: 0 new entries, total {len(entries)}")
+        return
     rendered = yaml.safe_dump(payload, sort_keys=False, default_flow_style=False)
     WANDB_SELECTION_PATH.write_text(rendered, encoding="utf-8")
     print(f"updated {WANDB_SELECTION_PATH}: {added} new entries, total {len(entries)}")
