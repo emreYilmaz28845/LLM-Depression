@@ -18,12 +18,20 @@ from tools.native_en_text_heads import (
     build_plan,
     job_export,
     parse_submission_markers,
+    _reconcile_collected_standalone_sidecars,
     resume_job_ids,
     stage_root,
     remote_prepare_script,
     remote_submission_script,
 )
 from src.native_en_text_heads_tracking import initialize_head_attempt_batch
+from src.experiment_tracking.canonical import read_jsonl
+from src.experiment_tracking.lifecycle import (
+    StatusRecord,
+    append_job_event,
+    new_job_event,
+    write_status,
+)
 
 
 def test_locked_smoke_and_production_counts() -> None:
@@ -553,3 +561,52 @@ def test_smoke_merged_optuna_head_exports_smoke_policy_stage() -> None:
     }
     exported = job_export(entry, _fake_deployment())
     assert "OPTUNA_STAGE=smoke" in exported
+def test_status_reconciles_collected_standalone_best_eval_sidecar(tmp_path: Path, monkeypatch) -> None:
+    import tools.native_en_text_heads as orchestration
+
+    monkeypatch.setattr(orchestration, "PROJECT_ROOT", tmp_path)
+    remote_fold = orchestration.REMOTE_PROJECT_ROOT / "output_model" / "campaign" / "text_only" / "d3tec" / "run" / "fold_0"
+    local_fold = tmp_path / "output_model" / "campaign" / "text_only" / "d3tec" / "run" / "fold_0"
+    local_fold.mkdir(parents=True)
+    attempt_id = "20260823T000000Z-test-standalone-sidecar-a1b2c3d4-e5f60718"
+    (local_fold / "metadata.json").write_text(
+        json.dumps({"attempt_id": attempt_id, "fold": 0}) + "\n"
+    )
+    write_status(local_fold / "status.json", StatusRecord(attempt_id, 0, state="RUNNING"))
+    jobs_path = local_fold / "jobs.jsonl"
+    for key, job_type, slurm_id in (
+        ("train", "train", "101"),
+        ("best_eval", "evaluation", "102"),
+    ):
+        append_job_event(
+            jobs_path,
+            new_job_event(
+                job_key=key,
+                job_type=job_type,
+                event_type="SUBMITTED",
+                attempt_id=attempt_id,
+                fold=0,
+                slurm_job_id=slurm_id,
+                status="PENDING",
+            ),
+        )
+    plan = {
+        "jobs": [
+            {
+                "kind": "standalone_backbone",
+                "fold_dir": str(remote_fold),
+                "job_ids": {"train": "101", "best_eval": "102"},
+            }
+        ]
+    }
+    accounting = {
+        "101": {"State": "COMPLETED", "ExitCode": "0:0"},
+        "102": {"State": "COMPLETED", "ExitCode": "0:0"},
+    }
+    assert _reconcile_collected_standalone_sidecars(plan, accounting) == 2
+    events = read_jsonl(jobs_path)
+    assert {event["job_key"] for event in events if event["event_type"] == "COMPLETED"} == {
+        "train",
+        "best_eval",
+    }
+    assert json.loads((local_fold / "status.json").read_text())["state"] == "COMPLETED_ON_MN5"

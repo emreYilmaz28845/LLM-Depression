@@ -1927,6 +1927,86 @@ def _validate_retry_chain_sources(plan: dict[str, Any], scheduler_host: str) -> 
     print(f"verified failed retry chain sources: {len(source_jobs)} train jobs")
 
 
+def _reconcile_collected_standalone_sidecars(
+    plan: dict[str, Any], accounting: dict[str, dict[str, Any]]
+) -> int:
+    """Append missing best-eval completions for already-collected folds.
+
+    The standalone evaluator writes its evaluation evidence but does not own
+    the training attempt's append-only job sidecar. This reconciles scheduler
+    results through the official lifecycle APIs without changing metrics,
+    predictions, or existing events.
+    """
+
+    from src.experiment_tracking.canonical import read_jsonl
+    from src.experiment_tracking.lifecycle import (
+        StatusRecord,
+        append_job_event,
+        new_job_event,
+        read_status,
+        write_status,
+    )
+
+    appended = 0
+    for job in plan.get("jobs", []):
+        if job.get("kind") != "standalone_backbone":
+            continue
+        fold_dir = _local_source_path(str(job["fold_dir"]))
+        jobs_path = fold_dir / "jobs.jsonl"
+        status_path = fold_dir / "status.json"
+        if not jobs_path.is_file() or not status_path.is_file():
+            continue
+        events = read_jsonl(jobs_path)
+        for role, job_type in (("train", "train"), ("best_eval", "evaluation")):
+            slurm_job_id = str((job.get("job_ids") or {}).get(role) or "")
+            record = accounting.get(slurm_job_id) or {}
+            if (
+                not slurm_job_id
+                or record.get("State") != "COMPLETED"
+                or record.get("ExitCode") != "0:0"
+            ):
+                continue
+            if any(
+                event.get("job_key") == role
+                and event.get("event_type") == "COMPLETED"
+                and event.get("status") == "COMPLETED"
+                and str(event.get("exit_code", "0:0")).startswith("0:0")
+                for event in events
+            ):
+                continue
+            metadata = json.loads((fold_dir / "metadata.json").read_text(encoding="utf-8"))
+            event = new_job_event(
+                job_key=role,
+                job_type=job_type,
+                event_type="COMPLETED",
+                attempt_id=str(metadata["attempt_id"]),
+                fold=int(metadata["fold"]),
+                slurm_job_id=slurm_job_id,
+                status="COMPLETED",
+                reason="Slurm accounting reconciled by native_en_text_heads status",
+            )
+            event["exit_code"] = "0:0"
+            append_job_event(jobs_path, event)
+            events.append(event)
+            appended += 1
+        successful = {
+            str(event.get("job_key"))
+            for event in events
+            if event.get("event_type") == "COMPLETED"
+            and event.get("status") == "COMPLETED"
+            and str(event.get("exit_code", "0:0")).startswith("0:0")
+        }
+        status = read_status(status_path)
+        if status.get("state") == "RUNNING" and {"train", "best_eval"} <= successful:
+            record = StatusRecord.from_dict(status)
+            record.transition(
+                "COMPLETED_ON_MN5",
+                reason="train and standalone evaluation completed per Slurm accounting",
+            )
+            write_status(status_path, record)
+    return appended
+
+
 def _validate_resume_dependencies(
     plan: dict[str, Any],
     existing_job_ids: dict[int, dict[str, str]],
@@ -2362,9 +2442,12 @@ def command_status(args: argparse.Namespace) -> int:
         missing = sorted(set(ids) - set(queue) - set(accounting))
         if missing:
             raise OrchestrationError(f"jobs missing from both squeue and sacct: {missing}")
+        reconciled_sidecars = _reconcile_collected_standalone_sidecars(plan, accounting)
         print(f"=== native_en_text_heads_v2 status ({args.stage}) ===")
         print(f"plan: {plan_path(args.stage, plan.get('deployment_id'))}")
         print(f"jobs: {len(ids)}")
+        if reconciled_sidecars:
+            print(f"reconciled standalone sidecar events: {reconciled_sidecars}")
         failures = 0
         for job_id in ids:
             record = by_job_id[job_id]
