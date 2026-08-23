@@ -25,17 +25,19 @@ fields are harmless provenance/QC carried for parity with the repaired-file styl
 
 Safety / reproducibility:
   * Writes to a NEW filename; legacy whisper_transcripts*.jsonl are never touched.
-  * Enforces unique basenames (mirrors the loader invariant) and full coverage of the dir.
+  * Optionally filters audio through a metadata CSV allowlist.
+  * Enforces unique basenames (mirrors the loader invariant) and full selected coverage.
   * Greedy decode (qwen-asr default) + sorted inputs + recorded asr_model => reproducible.
   * Crash-safe + resumable: each batch is written + fsync'd straight to ``<out>`` (the single
     source of truth — no journal/consolidate/delete step that could silently lose data), then
-    a guarded in-place sort tidies it. ``--resume`` skips basenames already in ``<out>``; the
-    run aborts loudly rather than report success on an empty/short file.
+    a guarded in-place sort tidies it. ``--resume`` keeps successful rows and retries empty or
+    failed rows. Existing output is never truncated unless ``--overwrite`` is explicit.
 
 Usage (real run):
     python scripts/transcribe_turkish_qwen3asr.py            # all defaults
     python scripts/transcribe_turkish_qwen3asr.py --resume   # continue after an interruption
     python scripts/transcribe_turkish_qwen3asr.py --limit 4  # smoke test on the first 4 clips
+    python scripts/transcribe_turkish_qwen3asr.py --metadata-csv /path/to/metadata.csv
 
 Plumbing self-test (no GPU / no model download, uses a fake transcriber):
     python scripts/transcribe_turkish_qwen3asr.py --self-test
@@ -44,11 +46,14 @@ Plumbing self-test (no GPU / no model download, uses a fake transcriber):
 from __future__ import annotations
 
 import argparse
+import csv
+import hashlib
 import json
 import os
 import re
 import sys
 import time
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Protocol, Sequence
@@ -178,6 +183,67 @@ def discover_wavs(audio_dir: Path) -> list[Path]:
     return files
 
 
+def _normalized_basename(value: str) -> str:
+    return unicodedata.normalize("NFC", Path(str(value)).name).casefold()
+
+
+def load_metadata_allowlist(path: Path) -> list[str]:
+    """Read unique audio basenames from a metadata CSV ``file_name`` column."""
+    if not path.is_file():
+        raise FileNotFoundError(f"Metadata CSV not found: {path}")
+
+    selected: list[str] = []
+    seen: dict[str, str] = {}
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        if "file_name" not in (reader.fieldnames or []):
+            raise ValueError(f"Metadata CSV is missing required field 'file_name': {path}")
+        for row_number, row in enumerate(reader, start=2):
+            basename = Path(str(row.get("file_name", "")).strip()).name
+            if not basename:
+                raise ValueError(f"Metadata CSV row {row_number} has an empty file_name: {path}")
+            key = _normalized_basename(basename)
+            if key in seen:
+                raise ValueError(
+                    f"Duplicate normalized metadata basename at row {row_number}: "
+                    f"{seen[key]!r} and {basename!r}"
+                )
+            seen[key] = basename
+            selected.append(basename)
+    if not selected:
+        raise ValueError(f"Metadata CSV has no selected audio rows: {path}")
+    return selected
+
+
+def select_allowlisted_wavs(all_files: Sequence[Path], allowlist: Sequence[str]) -> list[Path]:
+    """Resolve an allowlist to disk paths while tolerating Unicode composition differences."""
+    disk_by_key: dict[str, Path] = {}
+    for path in all_files:
+        key = _normalized_basename(path.name)
+        if key in disk_by_key:
+            raise ValueError(
+                f"Audio filenames collide after Unicode normalization: "
+                f"{disk_by_key[key].name!r} and {path.name!r}"
+            )
+        disk_by_key[key] = path
+
+    missing = [name for name in allowlist if _normalized_basename(name) not in disk_by_key]
+    if missing:
+        raise FileNotFoundError(
+            f"Metadata selects {len(missing)} missing WAV file(s); first entries: {missing[:5]}"
+        )
+    selected_keys = {_normalized_basename(name) for name in allowlist}
+    return [path for path in all_files if _normalized_basename(path.name) in selected_keys]
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def read_duration_seconds(audio_path: Path) -> float | None:
     if sf is None:
         return None
@@ -253,26 +319,6 @@ def build_row(
 # --------------------------------------------------------------------------------------
 # Resume / journal helpers
 # --------------------------------------------------------------------------------------
-def _read_basenames(path: Path) -> set[str]:
-    """Basenames already present in a JSONL file (tolerant of a truncated final line)."""
-    done: set[str] = set()
-    if not path.exists():
-        return done
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue  # a partially-flushed trailing line; it will be re-transcribed
-            basename = Path(str(payload.get("audio_path", ""))).name
-            if basename:
-                done.add(basename)
-    return done
-
-
 def _read_rows(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     if not path.exists():
@@ -287,6 +333,45 @@ def _read_rows(path: Path) -> list[dict[str, Any]]:
             except json.JSONDecodeError:
                 continue
     return rows
+
+
+def _row_is_successful(row: dict[str, Any]) -> bool:
+    codes = set(row.get("manual_review_reason_codes") or [])
+    return bool(str(row.get("transcript", "")).strip()) and "transcription_failed" not in codes
+
+
+def _write_rows_atomically(path: Path, rows: Sequence[dict[str, Any]]) -> None:
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        _append_rows(handle, rows)
+    if len(_read_rows(tmp_path)) != len(rows):
+        tmp_path.unlink(missing_ok=True)
+        raise RuntimeError(f"Refusing to replace {path}: temporary rewrite was incomplete.")
+    os.replace(tmp_path, path)
+
+
+def prepare_resume_output(out_path: Path, files: Sequence[Path]) -> set[str]:
+    """Keep one successful row per selected WAV and discard retryable failed rows."""
+    expected = {_normalized_basename(path.name): path.name for path in files}
+    successful: dict[str, dict[str, Any]] = {}
+    for row in _read_rows(out_path):
+        basename = Path(str(row.get("audio_path", ""))).name
+        if not basename:
+            continue
+        key = _normalized_basename(basename)
+        if key not in expected:
+            raise ValueError(
+                f"Resume output contains a row outside the selected audio set: {basename!r}"
+            )
+        if _row_is_successful(row):
+            successful[key] = row
+
+    ordered = sorted(
+        successful.values(),
+        key=lambda row: natural_sort_key(Path(str(row["audio_path"])).name),
+    )
+    _write_rows_atomically(out_path, ordered)
+    return set(successful)
 
 
 def _append_rows(handle, rows: Iterable[dict[str, Any]]) -> None:
@@ -348,11 +433,15 @@ def transcribe_all(
     batch_size: int,
     resume: bool,
 ) -> dict[str, Any]:
-    done: set[str] = _read_basenames(out_path) if resume else set()
+    done: set[str] = prepare_resume_output(out_path, files) if resume and out_path.exists() else set()
     if resume:
-        LOGGER.info("Resume: %d clip(s) already in %s; skipping them.", len(done), out_path.name)
+        LOGGER.info(
+            "Resume: %d successful clip(s) already in %s; retrying failed or missing rows.",
+            len(done),
+            out_path.name,
+        )
 
-    pending = [f for f in files if f.name not in done]
+    pending = [f for f in files if _normalized_basename(f.name) not in done]
     LOGGER.info("To transcribe: %d / %d clip(s) (batch_size=%d).", len(pending), len(files), batch_size)
 
     failures: list[dict[str, str]] = []
@@ -482,10 +571,14 @@ def build_report(
     language_arg: str,
     out_path: Path,
     limited: bool,
+    inventory_files: Sequence[Path] | None = None,
+    selected_file_count: int | None = None,
+    metadata_path: Path | None = None,
 ) -> dict[str, Any]:
     row_basenames = [Path(str(r["audio_path"])).name for r in rows]
     row_basename_set = set(row_basenames)
-    disk_basenames = {f.name for f in all_files}
+    expected_basenames = {f.name for f in all_files}
+    inventory_basenames = {f.name for f in (inventory_files or all_files)}
 
     reason_counts: dict[str, int] = {}
     n_flagged = 0
@@ -499,22 +592,32 @@ def build_report(
         for code in codes:
             reason_counts[code] = reason_counts.get(code, 0) + 1
 
-    missing = sorted(disk_basenames - row_basename_set)  # wavs with no row
-    extra = sorted(row_basename_set - disk_basenames)  # rows with no wav on disk
+    missing = sorted(expected_basenames - row_basename_set)  # selected wavs with no row
+    extra = sorted(row_basename_set - expected_basenames)  # rows outside this run's selection
     duplicate = len(row_basenames) != len(row_basename_set)
     coverage_complete = (not limited) and not missing and not extra and not duplicate
+    n_failures = sum(
+        "transcription_failed" in set(row.get("manual_review_reason_codes") or [])
+        for row in rows
+    )
+    selected_count = selected_file_count if selected_file_count is not None else len(expected_basenames)
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "out_file": str(out_path),
         "asr_model": model_id,
         "asr_language_arg": language_arg,
-        "n_audio_files_on_disk": len(disk_basenames),
+        "metadata_csv": str(metadata_path) if metadata_path is not None else None,
+        "metadata_sha256": sha256_file(metadata_path) if metadata_path is not None else None,
+        "output_sha256": sha256_file(out_path),
+        "n_audio_files_on_disk": len(inventory_basenames),
+        "n_selected_audio_files": selected_count,
+        "n_unselected_audio_files": len(inventory_basenames) - selected_count,
         "n_rows": len(rows),
         "n_unique_basenames": len(row_basename_set),
         "n_empty_transcripts": n_empty,
         "n_manual_review_recommended": n_flagged,
-        "n_failures": len(failures),
+        "n_failures": n_failures,
         "manual_review_reason_counts": reason_counts,
         "coverage_complete": coverage_complete,
         "limited_run": limited,
@@ -543,6 +646,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--audio-dir", default=str(DEFAULT_AUDIO_DIR), help="Directory of *.wav clips.")
     parser.add_argument("--out", default=str(DEFAULT_OUT), help="Output JSONL path (new filename; never clobbers Whisper).")
+    parser.add_argument(
+        "--metadata-csv",
+        default=None,
+        help="Optional CSV allowlist; only WAV basenames from its file_name column are transcribed.",
+    )
     parser.add_argument("--model", default=DEFAULT_MODEL, help="HF model id, e.g. Qwen/Qwen3-ASR-1.7B or -0.6B.")
     parser.add_argument("--language", default=DEFAULT_LANGUAGE, help="Force decode language ('' => auto-detect).")
     parser.add_argument("--batch-size", type=int, default=16, help="Clips per transcribe() call.")
@@ -550,7 +658,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--device", default="cuda:0", help="device_map for from_pretrained.")
     parser.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
     parser.add_argument("--attn", default=None, help="attn_implementation, e.g. flash_attention_2.")
-    parser.add_argument("--resume", action="store_true", help="Skip basenames already in --out / its journal.")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Keep successful rows and retry missing, empty, or failed rows in --out.",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Explicitly replace an existing output; mutually exclusive with --resume.",
+    )
     parser.add_argument("--limit", type=int, default=None, help="Debug: only the first N clips (skips coverage gate).")
     parser.add_argument("--self-test", action="store_true", help="Run plumbing on a fake transcriber + temp dir; no GPU.")
     return parser.parse_args(argv)
@@ -559,15 +676,30 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def _run(transcriber: Transcriber, args: argparse.Namespace) -> dict[str, Any]:
     audio_dir = Path(args.audio_dir)
     out_path = Path(args.out)
+    metadata_path = Path(args.metadata_csv) if getattr(args, "metadata_csv", None) else None
+    resume = bool(getattr(args, "resume", False))
+    overwrite = bool(getattr(args, "overwrite", False))
+    if resume and overwrite:
+        raise ValueError("--resume and --overwrite are mutually exclusive.")
+    if out_path.exists() and not resume and not overwrite:
+        raise FileExistsError(
+            f"Output already exists: {out_path}. Use --resume or explicit --overwrite."
+        )
     if not audio_dir.is_dir():
         raise FileNotFoundError(f"Audio directory not found: {audio_dir}")
     ensure_dir(out_path.parent)
 
-    all_files = discover_wavs(audio_dir)
-    if not all_files:
+    inventory_files = discover_wavs(audio_dir)
+    if not inventory_files:
         raise FileNotFoundError(f"No *.wav found under {audio_dir}")
+    selected_files = inventory_files
+    if metadata_path is not None:
+        selected_files = select_allowlisted_wavs(
+            inventory_files,
+            load_metadata_allowlist(metadata_path),
+        )
     limited = args.limit is not None
-    files = all_files[: args.limit] if limited else all_files
+    files = selected_files[: args.limit] if limited else selected_files
 
     result = transcribe_all(
         transcriber,
@@ -576,19 +708,22 @@ def _run(transcriber: Transcriber, args: argparse.Namespace) -> dict[str, Any]:
         model_id=args.model,
         language_arg=args.language,
         batch_size=max(1, int(args.batch_size)),
-        resume=bool(args.resume),
+        resume=resume,
     )
 
     # Coverage/QC are judged against the FULL final file (resume merges prior rows).
     final_rows = _read_rows(out_path)
     report = build_report(
         rows=final_rows,
-        all_files=all_files,
+        all_files=files,
         failures=result["failures"],
         model_id=args.model,
         language_arg=args.language,
         out_path=out_path,
         limited=limited,
+        inventory_files=inventory_files,
+        selected_file_count=len(selected_files),
+        metadata_path=metadata_path,
     )
     report_path = write_report(report, out_path)
     LOGGER.info("Report -> %s", report_path)
@@ -612,6 +747,14 @@ def _run(transcriber: Transcriber, args: argparse.Namespace) -> dict[str, Any]:
     return report
 
 
+def report_passes_full_run(report: dict[str, Any]) -> bool:
+    return bool(
+        report.get("coverage_complete")
+        and int(report.get("n_empty_transcripts", 0)) == 0
+        and int(report.get("n_failures", 0)) == 0
+    )
+
+
 def _self_test() -> int:
     """End-to-end plumbing check with a fake transcriber: discovery, batching, resume, report."""
     import tempfile
@@ -630,10 +773,18 @@ def _self_test() -> int:
                 wav.setframerate(16000)
                 wav.writeframes(b"\x00\x00" * 16000)
         out_path = tmp_path / "whisper_transcripts_qwen3_asr.jsonl"
+        metadata_path = tmp_path / "metadata.csv"
+        selected_names = names[:4]
+        with metadata_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=["file_name"])
+            writer.writeheader()
+            for name in selected_names:
+                writer.writerow({"file_name": f"nested/{name}"})
 
         common = dict(
             audio_dir=str(audio_dir),
             out=str(out_path),
+            metadata_csv=str(metadata_path),
             model="fake/qwen3asr",
             language="Turkish",
             batch_size=2,
@@ -643,31 +794,43 @@ def _self_test() -> int:
             attn=None,
             limit=None,
             self_test=True,
+            overwrite=False,
         )
 
-        # Pass 1: only the first 3 clips, then a resumed pass to cover the rest.
-        args1 = argparse.Namespace(resume=False, **{**common, "limit": 3})
+        # Pass 1: only the first 2 selected clips, then resume to cover the allowlist.
+        args1 = argparse.Namespace(resume=False, **{**common, "limit": 2})
         _run(_FakeTranscriber(), args1)
         rows_after_1 = _read_rows(out_path)
-        assert len(rows_after_1) == 3, f"expected 3 rows after limited pass, got {len(rows_after_1)}"
+        assert len(rows_after_1) == 2, f"expected 2 rows after limited pass, got {len(rows_after_1)}"
 
         args2 = argparse.Namespace(resume=True, **common)
         report = _run(_FakeTranscriber(), args2)
         assert not out_path.with_suffix(out_path.suffix + ".tmp").exists(), "temp file not cleaned up"
-        assert report["n_rows"] == len(names), f"expected {len(names)} rows, got {report['n_rows']}"
-        assert report["n_unique_basenames"] == len(names), "basenames not unique"
+        assert report["n_rows"] == len(selected_names), report
+        assert report["n_unique_basenames"] == len(selected_names), "basenames not unique"
+        assert report["n_audio_files_on_disk"] == len(names), report
+        assert report["n_selected_audio_files"] == len(selected_names), report
+        assert report["n_unselected_audio_files"] == 1, report
         assert report["coverage_complete"], f"coverage should be complete: {report}"
         assert report["n_failures"] == 0, "fake transcriber should not fail"
+        assert report_passes_full_run(report), report
 
         # Ordering is natural-sorted (aa1-2 before aa1-10) and resume did not duplicate rows.
         ordered = [Path(r["audio_path"]).name for r in _read_rows(out_path)]
-        assert ordered == sorted(names, key=natural_sort_key), f"unexpected order: {ordered}"
+        assert ordered == sorted(selected_names, key=natural_sort_key), f"unexpected order: {ordered}"
 
         # Schema spot-check on one row.
         row = _read_rows(out_path)[0]
         for key in ("audio_path", "transcript", "language", "repair_status"):
             assert key in row, f"missing loader key {key}"
         assert row["language"] == OUTPUT_LANGUAGE_TAG and row["repair_status"] == REPAIR_STATUS
+
+        try:
+            _run(_FakeTranscriber(), argparse.Namespace(resume=False, **common))
+        except FileExistsError:
+            pass
+        else:
+            raise AssertionError("existing output should require --resume or --overwrite")
     print("[self-test] PASS")
     return 0
 
@@ -685,7 +848,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_new_tokens=args.max_new_tokens,
         attn_implementation=args.attn,
     )
-    _run(transcriber, args)
+    report = _run(transcriber, args)
+    if not args.limit and not report_passes_full_run(report):
+        LOGGER.error(
+            "Full-run acceptance failed: coverage=%s empty=%s failures=%s",
+            report["coverage_complete"],
+            report["n_empty_transcripts"],
+            report["n_failures"],
+        )
+        return 2
     return 0
 
 
