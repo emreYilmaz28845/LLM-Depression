@@ -17,6 +17,7 @@ from tools.native_en_text_heads import (
     build_plan,
     job_export,
     parse_submission_markers,
+    stage_root,
     remote_prepare_script,
     remote_submission_script,
 )
@@ -158,6 +159,13 @@ def test_retry_plan_uses_fresh_output_identity_and_links_superseded_attempts() -
     assert "native_en_text_heads_v2_smoke_retry1" in standalone["run_root"]
     head = next(job for job in retry["jobs"] if job.get("method") == "logreg")
     assert "/hidden_features/retry1/" in head["cache_dir"]
+
+
+def test_retry_output_suffix_isolates_runtime_namespace() -> None:
+    canonical = stage_root("exp-native-en-text-heads-v2-20260822", "production")
+    retry = stage_root("exp-native-en-text-heads-v2-20260822", "production", "splitfix1")
+    assert retry == canonical / "splitfix1"
+    assert retry != canonical
 
 
 def test_selective_head_retry_reuses_completed_parent_artifacts() -> None:
