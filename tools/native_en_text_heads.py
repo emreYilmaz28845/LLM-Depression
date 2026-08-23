@@ -1755,7 +1755,13 @@ def derive_final_epochs(plan: dict[str, Any]) -> Path:
         "policy": "rounded_median_selected_epoch",
         "panels": sorted(audit_rows, key=lambda row: (row["condition"], row["backbone"], row["seed"])),
     }
-    audit_path = PROJECT_ROOT / "outputs" / "native_en_text_heads_v2" / "production" / "final_epoch_audit.json"
+    audit_path = (
+        PROJECT_ROOT
+        / "outputs"
+        / "native_en_text_heads_v2"
+        / "production"
+        / f"final_epoch_audit_{plan['deployment_id']}.json"
+    )
     audit_path.parent.mkdir(parents=True, exist_ok=True)
     if audit_path.is_file():
         existing = json.loads(audit_path.read_text(encoding="utf-8"))
