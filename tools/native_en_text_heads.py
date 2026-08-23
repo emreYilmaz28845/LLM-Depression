@@ -1991,14 +1991,19 @@ def command_submit(args: argparse.Namespace) -> int:
             existing_job_ids=existing_job_ids if resume_after is not None else None,
         )
         evidence_root = PROJECT_ROOT / "outputs" / "native_en_text_heads_v2" / args.stage
+        submit_stem = (
+            f"recovery_submit_{deployment['deployment_id']}_{phase}_from{int(resume_after)}"
+            if resume_after is not None
+            else f"submit_{deployment['deployment_id']}_{phase}"
+        )
         write_local_once(
-            evidence_root / f"submit_{deployment['deployment_id']}_{phase}.sh",
+            evidence_root / f"{submit_stem}.sh",
             submit_script,
         )
         print(f"submitting v2 {phase} job graph on {args.scheduler_host}")
         submitted = ssh_script(args.scheduler_host, submit_script, timeout=15 * 60)
         write_local_once(
-            evidence_root / f"submit_{deployment['deployment_id']}_{phase}.log",
+            evidence_root / f"{submit_stem}.log",
             "$ ssh " + args.scheduler_host + " bash -s\n"
             + submitted.stdout
             + ("\n[stderr]\n" + submitted.stderr if submitted.stderr else ""),
@@ -2023,7 +2028,7 @@ def command_submit(args: argparse.Namespace) -> int:
         plan["submission_phase"] = "complete" if phase == "all" else phase
         plan["submission_complete"] = phase == "all"
         plan["submitted_at_utc"] = datetime.now(timezone.utc).isoformat()
-        plan["submission_output_path"] = str(evidence_root / f"submit_{deployment['deployment_id']}_{phase}.log")
+        plan["submission_output_path"] = str(evidence_root / f"{submit_stem}.log")
         path = save_plan(plan, args.stage)
         print_plan_summary(plan, path)
         if args.stage == "production" and phase == "cv":
