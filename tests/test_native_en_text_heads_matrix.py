@@ -170,6 +170,27 @@ def test_resume_submission_reuses_prefix_ids_without_reinitializing_custom_attem
     )
     assert f"test ! -e {future_standalone['fold_dir']}" not in script
 
+    prefix_markers = []
+    for job in plan["jobs"]:
+        index = int(job["plan_index"])
+        if index > 3:
+            break
+        if job.get("kind") == "standalone_backbone":
+            prefix_markers.append(f"__STANDALONE__ {index} {4000 + index} {5000 + index}")
+        else:
+            prefix_markers.append(f"__JOB__ {index} {6000 + index}")
+    prefix_ids = resume_job_ids(plan, "\n".join(prefix_markers), 3, phase="all")
+    completed_parent_script = remote_submission_script(
+        plan,
+        _fake_deployment(),
+        Path(plan["stage_root"]) / "preflight.json",
+        resume_after=3,
+        existing_job_ids=prefix_ids,
+        completed_existing_indexes={3},
+    )
+    assert "--dependency=afterok:$eval_3" not in completed_parent_script
+    assert '--dependency-job-id "$eval_3"' in completed_parent_script
+
 
 def test_batch_head_initialization_writes_sidecars_and_deploys(tmp_path: Path) -> None:
     attempt = tmp_path / "attempt"
