@@ -67,5 +67,6 @@ def test_submission_script_is_dependency_aware_and_non_destructive() -> None:
     assert "/splits/negative_only/native" in script
     assert "/manifests/negonly/" not in script
     assert "/splits/negonly/" not in script
+    assert 'export PYTHONPATH="$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"' in script
     checked = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True)
     assert checked.returncode == 0, checked.stderr
