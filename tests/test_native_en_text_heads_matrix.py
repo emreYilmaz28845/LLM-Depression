@@ -163,6 +163,12 @@ def test_resume_submission_reuses_prefix_ids_without_reinitializing_custom_attem
     assert "jid_2=3002" in script
     assert "init-batch" not in script
     assert "__STANDALONE__ 3" in script
+    future_standalone = next(
+        job
+        for job in plan["jobs"]
+        if job.get("kind") == "standalone_backbone" and int(job["plan_index"]) > 2
+    )
+    assert f"test ! -e {future_standalone['fold_dir']}" not in script
 
 
 def test_batch_head_initialization_writes_sidecars_and_deploys(tmp_path: Path) -> None:

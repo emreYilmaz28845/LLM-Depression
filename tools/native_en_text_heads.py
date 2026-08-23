@@ -1289,20 +1289,29 @@ def remote_submission_script(
     selected_indexes = {int(job["plan_index"]) for job in selected_jobs}
     selected_collision_paths: set[str] = set()
     for job in selected_jobs:
-        if resume_after is not None and job.get("kind") != "standalone_backbone":
-            # Custom attempt sidecars were initialized before the interrupted
-            # prefix submission. Reuse them without a second initialization.
-            continue
-        for key in ("attempt_dir", "context_path"):
+        if resume_after is not None:
+            if job.get("kind") != "standalone_backbone":
+                # Custom attempt sidecars were initialized before the
+                # interrupted prefix submission. Reuse them without a second
+                # initialization or collision check.
+                continue
+            # The custom sidecars are nested below the standalone fold
+            # directory and therefore create that shared ancestry before the
+            # standalone train job is resumed. Check only the standalone
+            # context; the fold directory is expected to exist in this mode.
+            collision_keys = ("context_path",)
+        else:
+            collision_keys = ("attempt_dir", "context_path")
+        for key in collision_keys:
             value = job.get(key)
             if value:
                 selected_collision_paths.add(str(value))
-        if not job.get("reuse_parent_artifacts"):
+        if resume_after is None and not job.get("reuse_parent_artifacts"):
             for key in ("cache_dir", "features_dir"):
                 value = job.get(key)
                 if value:
                     selected_collision_paths.add(str(value))
-        if job.get("kind") == "standalone_backbone":
+        if resume_after is None and job.get("kind") == "standalone_backbone":
             selected_collision_paths.add(str(job["fold_dir"]))
     for path in sorted(selected_collision_paths):
         lines.append(f"test ! -e {q(path)}")
