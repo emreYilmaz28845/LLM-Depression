@@ -29,7 +29,7 @@ GEMMA_NATIVE_CONFIGS = [
     for dataset in ("d3tec", "androids", "cmdc")
     for modality in ("audio_text", "audio_only", "text_only")
 ] + [
-    f"turkish_t17_{modality}_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml"
+    f"turkish_pos_only_t17_{modality}_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml"
     for modality in ("audio_text", "audio_only", "text_only")
 ]
 GEMMA_EN_CONFIGS = [
@@ -37,7 +37,7 @@ GEMMA_EN_CONFIGS = [
     for dataset in ("d3tec", "androids", "cmdc")
     for modality in ("audio_text", "text_only")
 ] + [
-    f"turkish_t17_{modality}_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml"
+    f"turkish_pos_only_t17_{modality}_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml"
     for modality in ("audio_text", "text_only")
 ]
 GEMMA_NEGATIVE_ONLY_NATIVE_CONFIGS = [
@@ -92,15 +92,28 @@ def qwen_base_name(gemma_name: str) -> str:
 
 def test_exact_gemma_config_sets_exist() -> None:
     all_names = sorted(path.name for path in MAIN.glob("*gemma4_12b.yaml"))
-    native = sorted(
-        name for name in all_names if "_en_" not in name and not name.startswith("daic_")
+    legacy = sorted(name for name in all_names if name.startswith("turkish_t17_"))
+    # Legacy pre-rename canonical Turkish files stay as history; see the rename map.
+    assert legacy == sorted(
+        f"turkish_t17_{modality}_harmonized_selmacrof1_tf_qwen3asr{variant}_gemma4_12b.yaml"
+        for modality, variant in (
+            ("audio_text", ""),
+            ("audio_only", ""),
+            ("text_only", ""),
+            ("audio_text", "_en"),
+            ("text_only", "_en"),
+        )
     )
-    english = sorted(name for name in all_names if "_en_" in name)
-    daic = sorted(name for name in all_names if name.startswith("daic_"))
+    current = [name for name in all_names if name not in legacy]
+    native = sorted(
+        name for name in current if "_en_" not in name and not name.startswith("daic_")
+    )
+    english = sorted(name for name in current if "_en_" in name)
+    daic = sorted(name for name in current if name.startswith("daic_"))
     assert native == sorted(GEMMA_NATIVE_CONFIGS + GEMMA_NEGATIVE_ONLY_NATIVE_CONFIGS)
     assert english == sorted(GEMMA_EN_CONFIGS + GEMMA_NEGATIVE_ONLY_EN_CONFIGS)
     assert len(daic) == 3
-    assert len(all_names) == 28
+    assert len(all_names) == 33
 
 
 def test_gemma_configs_validate_and_differ_only_by_backend_allowlist() -> None:

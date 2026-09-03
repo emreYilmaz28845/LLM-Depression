@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fail-closed, model-free preflight for the Turkish question-condition study.
 
-The preflight creates four isolated manifest/split pairs (mixed/negative-only ×
+The preflight creates four isolated manifest/split pairs (pos_only/negative-only ×
 native/English), audits their identity and translation provenance, and checks
 the exact data contract before any model or Slurm job is started.  It never
 loads a model or trains a classifier.  ``--require-models`` is used on MN5 to
@@ -42,7 +42,7 @@ from src.utils import (
 SCHEMA_VERSION = "audiollm.turkish_question_condition_preflight.v1"
 EXPECTED_SUBJECTS = 120
 EXPECTED_LABELS = {0: 37, 1: 83}
-EXPECTED_ROWS = {"mixed": 1051, "negative_only": 1170}
+EXPECTED_ROWS = {"pos_only": 1051, "negative_only": 1170}
 EXPECTED_EXCLUDED_WAVS = 145
 EXPECTED_TRANSLATION_STATUS = {
     "automatic_high",
@@ -225,8 +225,8 @@ def _build_pair(
     if dataset_root is not None:
         overrides.append(f"--set=dataset_root={dataset_root}")
     if translation_root is not None and language == "english":
-        cache_family = "harmonized_en_complete_v1" if condition == "mixed" else "harmonized_en_complete_v3"
-        cache_dataset = "turkish" if condition == "mixed" else "turkish_negative_only_t17"
+        cache_family = "harmonized_en_complete_v1" if condition == "pos_only" else "harmonized_en_complete_v3"
+        cache_dataset = "turkish_pos_only_t17" if condition == "pos_only" else "turkish_negative_only_t17"
         overrides.append(
             f"--set=transcripts.cache_path={translation_root / cache_family / cache_dataset / 'accepted.jsonl'}"
         )
@@ -270,8 +270,8 @@ def run_preflight(args: argparse.Namespace) -> dict[str, Any]:
     failures: list[str] = []
     cells = load_cells(PROJECT_ROOT)
     by_id = {cell.cell_id: cell for cell in cells}
-    representative_ids = {"mixed": {"native": "M02", "english": "M03"}, "negative_only": {"native": "N02", "english": "N03"}}
-    dataset_roots = {"mixed": args.mixed_root, "negative_only": args.negative_root}
+    representative_ids = {"pos_only": {"native": "P02", "english": "P03"}, "negative_only": {"native": "N02", "english": "N03"}}
+    dataset_roots = {"pos_only": args.pos_only_root, "negative_only": args.negative_root}
     output_root = args.output_root.resolve()
     if output_root.exists():
         existing_files = [path for path in output_root.rglob("*") if path.is_file()]
@@ -299,7 +299,7 @@ def run_preflight(args: argparse.Namespace) -> dict[str, Any]:
                 failures.append(f"{condition}/{language}: {exc}")
 
     pair_map = {(item["condition"], item["language"]): item for item in pairs}
-    for condition in ("mixed", "negative_only"):
+    for condition in ("pos_only", "negative_only"):
         native = pair_map.get((condition, "native"))
         english = pair_map.get((condition, "english"))
         if not native or not english:
@@ -354,7 +354,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", choices=("smoke", "production"), default="production")
     parser.add_argument("--output-root", required=True, type=Path)
-    parser.add_argument("--mixed-root", type=Path)
+    parser.add_argument("--pos-only-root", type=Path)
     parser.add_argument("--negative-root", type=Path)
     parser.add_argument("--translation-root", type=Path)
     parser.add_argument("--require-models", action="store_true")

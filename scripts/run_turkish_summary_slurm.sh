@@ -22,6 +22,7 @@ RUN_NAME="${RUN_NAME:-turkish_audio_text}"
 ENV_ACTIVATE="${ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate}"
 DATASET_BASE_ROOT="${DATASET_BASE_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets}"
 export TURKISH_DATASET_ROOT="${TURKISH_DATASET_ROOT:-$DATASET_BASE_ROOT/Turkish}"
+export TURKISH_POS_ONLY_DATASET_ROOT="${TURKISH_POS_ONLY_DATASET_ROOT:-$DATASET_BASE_ROOT/Turkish_Positive_Only}"
 export PROJECT_ROOT
 
 if [ -f "$ENV_ACTIVATE" ]; then

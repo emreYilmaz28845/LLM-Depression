@@ -43,19 +43,19 @@ NATIVE_BASES = {
     "d3tec": ("audio_text", "audio_only", "text_only"),
     "androids": ("audio_text", "audio_only", "text_only"),
     "cmdc": ("audio_text", "audio_only", "text_only"),
-    "turkish_t17": ("audio_text", "audio_only", "text_only"),
+    "turkish_pos_only_t17": ("audio_text", "audio_only", "text_only"),
 }
 ENGLISH_BASES = {
     "d3tec": ("audio_text", "text_only"),
     "androids": ("audio_text", "text_only"),
     "cmdc": ("audio_text", "text_only"),
-    "turkish_t17": ("audio_text", "text_only"),
+    "turkish_pos_only_t17": ("audio_text", "text_only"),
 }
 
 
 def qwen_config_name(dataset: str, modality: str, english: bool) -> str:
     suffix = "_en" if english else ""
-    tail = "qwen3asr" if dataset == "turkish_t17" else None
+    tail = "qwen3asr" if dataset == "turkish_pos_only_t17" else None
     name = f"{dataset}_{modality}_harmonized_selmacrof1_tf"
     if tail:
         name += f"_{tail}"
@@ -64,7 +64,7 @@ def qwen_config_name(dataset: str, modality: str, english: bool) -> str:
 
 def gemma_config_name(dataset: str, modality: str, english: bool) -> str:
     suffix = "_en" if english else ""
-    tail = "qwen3asr" if dataset == "turkish_t17" else None
+    tail = "qwen3asr" if dataset == "turkish_pos_only_t17" else None
     name = f"{dataset}_{modality}_harmonized_selmacrof1_tf"
     if tail:
         name += f"_{tail}"

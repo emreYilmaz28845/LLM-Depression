@@ -19,9 +19,9 @@ components:
     manifest_path: outputs/manifests_harmonized/cmdc/cmdc_manifest.jsonl
     metadata_path: outputs/splits_harmonized/cmdc/cmdc_manifest_metadata.json
   - name: turkish
-    config: configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml
-    manifest_path: outputs/manifests_harmonized/turkish_t17_qwen3asr/turkish_manifest.jsonl
-    metadata_path: outputs/splits_harmonized/turkish_t17_qwen3asr/turkish_manifest_metadata.json
+    config: configs/main/turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml
+    manifest_path: outputs/manifests_harmonized/turkish_pos_only_t17_qwen3asr/turkish_manifest.jsonl
+    metadata_path: outputs/splits_harmonized/turkish_pos_only_t17_qwen3asr/turkish_manifest_metadata.json
   - name: d3tec
     config: configs/main/d3tec_text_only_harmonized_selmacrof1_tf_gemma4_12b.yaml
     manifest_path: outputs/manifests_harmonized/d3tec/d3tec_manifest.jsonl

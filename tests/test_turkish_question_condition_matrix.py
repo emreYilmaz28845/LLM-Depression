@@ -87,7 +87,7 @@ def test_plan_generation_is_byte_identical_and_hash_sidecar_is_checked(tmp_path:
 
 
 def test_matrix_rejects_english_audio_only_if_group_is_changed(tmp_path: Path) -> None:
-    group = ROOT / "experiments/definitions/turkish-mixed-vs-negonly-native-en-multimodal-heads-v1-20260823.yaml"
+    group = ROOT / "experiments/definitions/turkish-pos_only-vs-negonly-native-en-multimodal-heads-v1-20260903.yaml"
     changed = tmp_path / "experiments/definitions" / group.name
     changed.parent.mkdir(parents=True)
     shutil.copytree(ROOT / "configs", tmp_path / "configs")

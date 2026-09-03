@@ -2,7 +2,7 @@
 
 The existing native-versus-English campaign has a different scope and remains
 isolated.  This module is the single source of truth for the paired
-mixed-question versus negative-only study: twenty backbone cells, three
+positive-only versus negative-only study: twenty backbone cells, three
 training seeds, five folds, and one hidden-state LogReg plus one Optuna-100
 route per fresh backbone fold.
 """
@@ -20,8 +20,8 @@ from typing import Any, Iterable
 import yaml
 
 
-GROUP_ID = "turkish-mixed-vs-negonly-native-en-multimodal-heads-v1-20260823"
-EXPERIMENT_ID = "exp-turkish-full-negonly-multimodal-20260823"
+GROUP_ID = "turkish-pos_only-vs-negonly-native-en-multimodal-heads-v1-20260903"
+EXPERIMENT_ID = "exp-turkish-pos-negonly-multimodal-20260903"
 PLAN_SCHEMA_VERSION = "audiollm.turkish_question_condition_plan.v1"
 PLAN_HASH_SCHEMA_VERSION = "audiollm.turkish_question_condition_plan_hash.v1"
 EVALUATION_VIEW = "harmonized_all_windows_full_coverage"
@@ -41,7 +41,7 @@ REMOTE_RUNTIME_ROOT = Path("/gpfs/projects/etur92/ozu647717/AudioLLM/experiment_
 REMOTE_OUTPUT_ROOT = REMOTE_PROJECT_ROOT / "output_model"
 GROUP_RELATIVE_PATH = (
     "experiments/definitions/"
-    "turkish-mixed-vs-negonly-native-en-multimodal-heads-v1-20260823.yaml"
+    "turkish-pos_only-vs-negonly-native-en-multimodal-heads-v1-20260903.yaml"
 )
 
 
@@ -60,7 +60,7 @@ class BackboneCell:
 
     @property
     def recording_token(self) -> str:
-        return "negonly" if self.recording_condition == "negative_only" else "mixed"
+        return "negonly" if self.recording_condition == "negative_only" else "pos_only"
 
     @property
     def transcript_token(self) -> str:
@@ -149,7 +149,7 @@ def load_cells(repo_root: Path | None = None) -> tuple[BackboneCell, ...]:
         )
         if cell.cell_id in seen_ids or cell.config in seen_configs:
             raise MatrixError(f"duplicate cell id or config: {cell}")
-        if cell.recording_condition not in {"mixed", "negative_only"}:
+        if cell.recording_condition not in {"pos_only", "negative_only"}:
             raise MatrixError(f"unsupported recording condition: {cell.recording_condition}")
         if cell.transcript_condition not in {"not_applicable", "native", "english"}:
             raise MatrixError(f"unsupported transcript condition: {cell.transcript_condition}")
@@ -169,10 +169,10 @@ def load_cells(repo_root: Path | None = None) -> tuple[BackboneCell, ...]:
         seen_ids.add(cell.cell_id)
         seen_configs.add(cell.config)
         cells.append(cell)
-    if {cell.cell_id for cell in cells} != {f"M{i:02d}" for i in range(1, 11)} | {f"N{i:02d}" for i in range(1, 11)}:
-        raise MatrixError("campaign cell IDs are not the locked M01-M10/N01-N10 set")
-    if sum(cell.recording_condition == "mixed" for cell in cells) != 10:
-        raise MatrixError("locked matrix must contain ten mixed cells")
+    if {cell.cell_id for cell in cells} != {f"P{i:02d}" for i in range(1, 11)} | {f"N{i:02d}" for i in range(1, 11)}:
+        raise MatrixError("campaign cell IDs are not the locked P01-P10/N01-N10 set")
+    if sum(cell.recording_condition == "pos_only" for cell in cells) != 10:
+        raise MatrixError("locked matrix must contain ten positive-only cells")
     if sum(cell.recording_condition == "negative_only" for cell in cells) != 10:
         raise MatrixError("locked matrix must contain ten negative-only cells")
     return tuple(cells)
@@ -258,7 +258,7 @@ def _config_summary(repo_root: Path, cell: BackboneCell) -> dict[str, Any]:
         raise MatrixError(f"config has an unlocked split contract: {cell.config}")
     return {
         "dataset": config.get("dataset"),
-        "dataset_variant": config.get("dataset_variant", "mixed"),
+        "dataset_variant": config.get("dataset_variant", "pos_only"),
         "model_backend": config.get("model_backend", "qwen"),
         "use_audio": bool((config.get("data") or {}).get("use_audio")),
         "use_text": bool((config.get("data") or {}).get("use_text")),

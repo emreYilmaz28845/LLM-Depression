@@ -78,10 +78,15 @@ Count the current inventory with `find configs/main -maxdepth 1 -type f -name '*
 - 3 unchanged E-DAIC configs outside the harmonized family;
 - additional active, explicitly named comparison families. Inspect their YAML instead of inferring semantics from the total count.
 
-## Turkish negative-only secondary family
+## Turkish positive-only canonical family and negative-only secondary family
+
+Canonical Turkish is positive-only: the `turkish_pos_only_t17_*` configs cover
+the question-set-1 recordings (filenames `*-1-*`). The name `mixed` was wrong
+and is retired; see `experiments/definitions/turkish_pos_only_rename_map.yaml`
+for the old→new map. Old `turkish_t17_*` files remain as legacy history.
 
 The `turkish_negative_only_t17_*` configs reuse the harmonized Turkish recipe
-for the negative-question recordings. They are a secondary comparison, not an
+for the negative-question recordings (filenames `*-2-*`). They are a secondary comparison, not an
 independent population: the 120 subjects and their threshold-17 labels are the
 same as canonical Turkish. Keep each subject in the same fold across both
 variants and never pool the variants without cross-variant patient grouping.

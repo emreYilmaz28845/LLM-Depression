@@ -18,7 +18,7 @@ def test_locked_report_table_cardinality_and_seed_aggregation() -> None:
         ("audio_text", "native"),
         ("audio_text", "english"),
     )
-    for condition in ("mixed", "negative_only"):
+    for condition in ("pos_only", "negative_only"):
         for model in ("qwen", "gemma4"):
             for modality, transcript in inputs:
                 for route in ("teacher_forced", "logreg", "xgb_optuna100"):
@@ -61,7 +61,7 @@ def test_workbook_sheet_uses_validated_report_values(tmp_path: Path) -> None:
         ("audio_text", "native"),
         ("audio_text", "english"),
     )
-    for condition in ("mixed", "negative_only"):
+    for condition in ("pos_only", "negative_only"):
         for model in ("qwen", "gemma4"):
             for modality, transcript in inputs:
                 for route in ("teacher_forced", "logreg", "xgb_optuna100"):
@@ -102,9 +102,9 @@ def test_workbook_sheet_uses_validated_report_values(tmp_path: Path) -> None:
     workbook = Workbook()
     workbook.remove(workbook.active)
     build_turkish_question_condition(workbook, report_path=report_path)
-    sheet = workbook["Turkish Mixed vs NegOnly"]
-    assert sheet["A1"].value == "Turkish mixed questions versus negative-only"
-    assert sheet["D6"].value == tables["table1_dataset_condition"][0]["mixed_macro_f1_mean"]
+    sheet = workbook["Turkish PosOnly vs NegOnly"]
+    assert sheet["A1"].value == "Turkish positive-only questions versus negative-only"
+    assert sheet["D6"].value == tables["table1_dataset_condition"][0]["pos_only_macro_f1_mean"]
     assert any("Table 7" in str(cell.value) for row in sheet.iter_rows() for cell in row)
 
 

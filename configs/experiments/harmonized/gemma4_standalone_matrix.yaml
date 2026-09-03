@@ -15,6 +15,6 @@ experiments:
   - {config: configs/main/cmdc_audio_text_harmonized_selmacrof1_tf_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
   - {config: configs/main/cmdc_audio_only_harmonized_selmacrof1_tf_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
   - {config: configs/main/cmdc_text_only_harmonized_selmacrof1_tf_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
-  - {config: configs/main/turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
-  - {config: configs/main/turkish_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
-  - {config: configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
+  - {config: configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
+  - {config: configs/main/turkish_pos_only_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
+  - {config: configs/main/turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}

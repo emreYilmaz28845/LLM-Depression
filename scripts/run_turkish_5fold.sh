@@ -26,7 +26,7 @@ module load bsc/1.0
 module load miniforge/24.3.0-0
 
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
-CONFIGS="${CONFIGS:-$PROJECT_ROOT/configs/main/turkish_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml $PROJECT_ROOT/configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml $PROJECT_ROOT/configs/main/turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml}"
+CONFIGS="${CONFIGS:-$PROJECT_ROOT/configs/main/turkish_pos_only_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml $PROJECT_ROOT/configs/main/turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml $PROJECT_ROOT/configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml}"
 FOLDS="${FOLDS:-0 1 2 3 4}"
 RUN_NAME_PREFIX="${RUN_NAME_PREFIX:-}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
@@ -37,6 +37,7 @@ SUBMIT_LAST_EVAL="${SUBMIT_LAST_EVAL:-0}"
 ENV_ACTIVATE="${ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate}"
 DATASET_BASE_ROOT="${DATASET_BASE_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets}"
 TURKISH_DATASET_ROOT="${TURKISH_DATASET_ROOT:-$DATASET_BASE_ROOT/Turkish}"
+TURKISH_POS_ONLY_DATASET_ROOT="${TURKISH_POS_ONLY_DATASET_ROOT:-$DATASET_BASE_ROOT/Turkish_Positive_Only}"
 SUBMIT_SCRIPT="${SUBMIT_SCRIPT:-$PROJECT_ROOT/scripts/submit_train_and_eval.sh}"
 SUMMARY_SCRIPT="${SUMMARY_SCRIPT:-$PROJECT_ROOT/scripts/run_turkish_summary_slurm.sh}"
 SBATCH_BIN="${SBATCH_BIN:-sbatch}"
@@ -47,6 +48,7 @@ export MODEL_PATH
 export ENV_ACTIVATE
 export DATASET_BASE_ROOT
 export TURKISH_DATASET_ROOT
+export TURKISH_POS_ONLY_DATASET_ROOT
 
 cd "$PROJECT_ROOT"
 

@@ -182,7 +182,7 @@ def _local_runtime_path(plan: dict[str, Any], remote_path: str | Path) -> Path:
 
 
 def _runtime_pair(plan: dict[str, Any], backbone: dict[str, Any]) -> dict[str, Any]:
-    condition = "negative_only" if backbone["recording_condition"] == "negative_only" else "mixed"
+    condition = "negative_only" if backbone["recording_condition"] == "negative_only" else "pos_only"
     language = "native" if backbone["transcript_condition"] == "not_applicable" else str(backbone["transcript_condition"])
     pair = next(
         (
@@ -364,7 +364,7 @@ def collect_fold_rows(plan: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[
             provenance_key = _provenance_key(provenance_payload)
             provenance[provenance_key] = provenance_payload
             row = {
-                "condition": "negative_only" if backbone["recording_condition"] == "negative_only" else "mixed",
+                "condition": "negative_only" if backbone["recording_condition"] == "negative_only" else "pos_only",
                 "model": "Gemma 4" if backbone["backbone"] == "gemma4" else "Qwen",
                 "model_token": str(backbone["backbone"]),
                 "modality": backbone["modality"],
@@ -432,16 +432,16 @@ def build_tables(fold_rows: list[dict[str, Any]]) -> dict[str, list[dict[str, An
     for model in ("qwen", "gemma4"):
         for modality, transcript in INPUT_ORDER:
             for route in ROUTES:
-                mixed = aggregate("mixed", model, modality, transcript, route)
+                pos_only = aggregate("pos_only", model, modality, transcript, route)
                 negative = aggregate("negative_only", model, modality, transcript, route)
                 table1.append({
                     "model": "Gemma 4" if model == "gemma4" else "Qwen", "model_token": model, "modality": modality, "transcript_condition": transcript, "route": route, "backend": ROUTE_BACKENDS[route] if route == "teacher_forced" else ROUTE_BACKENDS[route][model],
-                    "mixed_macro_f1_mean": mixed["macro_f1_mean"], "mixed_macro_f1_sd": mixed["macro_f1_sd"], "negative_only_macro_f1_mean": negative["macro_f1_mean"], "negative_only_macro_f1_sd": negative["macro_f1_sd"], "paired_macro_f1_delta": negative["macro_f1_mean"] - mixed["macro_f1_mean"],
-                    "mixed_positive_f1_mean": mixed["positive_f1_mean"], "mixed_positive_f1_sd": mixed["positive_f1_sd"], "negative_only_positive_f1_mean": negative["positive_f1_mean"], "negative_only_positive_f1_sd": negative["positive_f1_sd"], "paired_positive_f1_delta": negative["positive_f1_mean"] - mixed["positive_f1_mean"], "complete_seed_fold_count": 15, "provenance_key": _sha({"mixed": mixed["provenance_keys"], "negative_only": negative["provenance_keys"]}),
+                    "pos_only_macro_f1_mean": pos_only["macro_f1_mean"], "pos_only_macro_f1_sd": pos_only["macro_f1_sd"], "negative_only_macro_f1_mean": negative["macro_f1_mean"], "negative_only_macro_f1_sd": negative["macro_f1_sd"], "paired_macro_f1_delta": negative["macro_f1_mean"] - pos_only["macro_f1_mean"],
+                    "pos_only_positive_f1_mean": pos_only["positive_f1_mean"], "pos_only_positive_f1_sd": pos_only["positive_f1_sd"], "negative_only_positive_f1_mean": negative["positive_f1_mean"], "negative_only_positive_f1_sd": negative["positive_f1_sd"], "paired_positive_f1_delta": negative["positive_f1_mean"] - pos_only["positive_f1_mean"], "complete_seed_fold_count": 15, "provenance_key": _sha({"pos_only": pos_only["provenance_keys"], "negative_only": negative["provenance_keys"]}),
                 })
 
     table2: list[dict[str, Any]] = []
-    for condition in ("mixed", "negative_only"):
+    for condition in ("pos_only", "negative_only"):
         for model in ("qwen", "gemma4"):
             for modality in TEXT_MODALITIES:
                 for route in ROUTES:
@@ -455,14 +455,14 @@ def build_tables(fold_rows: list[dict[str, Any]]) -> dict[str, list[dict[str, An
     for model in ("qwen", "gemma4"):
         for modality in TEXT_MODALITIES:
             for route in ROUTES:
-                mixed_native = aggregate("mixed", model, modality, "native", route)
-                mixed_english = aggregate("mixed", model, modality, "english", route)
+                pos_only_native = aggregate("pos_only", model, modality, "native", route)
+                pos_only_english = aggregate("pos_only", model, modality, "english", route)
                 neg_native = aggregate("negative_only", model, modality, "native", route)
                 neg_english = aggregate("negative_only", model, modality, "english", route)
-                table3.append({"model": "Gemma 4" if model == "gemma4" else "Qwen", "model_token": model, "modality": modality, "route": route, "mixed_translation_macro_f1": mixed_english["macro_f1_mean"] - mixed_native["macro_f1_mean"], "negative_only_translation_macro_f1": neg_english["macro_f1_mean"] - neg_native["macro_f1_mean"], "interaction_macro_f1": (neg_english["macro_f1_mean"] - neg_native["macro_f1_mean"]) - (mixed_english["macro_f1_mean"] - mixed_native["macro_f1_mean"]), "mixed_translation_positive_f1": mixed_english["positive_f1_mean"] - mixed_native["positive_f1_mean"], "negative_only_translation_positive_f1": neg_english["positive_f1_mean"] - neg_native["positive_f1_mean"], "interaction_positive_f1": (neg_english["positive_f1_mean"] - neg_native["positive_f1_mean"]) - (mixed_english["positive_f1_mean"] - mixed_native["positive_f1_mean"]), "provenance_key": _sha({"model": model, "modality": modality, "route": route})})
+                table3.append({"model": "Gemma 4" if model == "gemma4" else "Qwen", "model_token": model, "modality": modality, "route": route, "pos_only_translation_macro_f1": pos_only_english["macro_f1_mean"] - pos_only_native["macro_f1_mean"], "negative_only_translation_macro_f1": neg_english["macro_f1_mean"] - neg_native["macro_f1_mean"], "interaction_macro_f1": (neg_english["macro_f1_mean"] - neg_native["macro_f1_mean"]) - (pos_only_english["macro_f1_mean"] - pos_only_native["macro_f1_mean"]), "pos_only_translation_positive_f1": pos_only_english["positive_f1_mean"] - pos_only_native["positive_f1_mean"], "negative_only_translation_positive_f1": neg_english["positive_f1_mean"] - neg_native["positive_f1_mean"], "interaction_positive_f1": (neg_english["positive_f1_mean"] - neg_native["positive_f1_mean"]) - (pos_only_english["positive_f1_mean"] - pos_only_native["positive_f1_mean"]), "provenance_key": _sha({"model": model, "modality": modality, "route": route})})
 
     table4: list[dict[str, Any]] = []
-    for condition in ("mixed", "negative_only"):
+    for condition in ("pos_only", "negative_only"):
         for modality, transcript in INPUT_ORDER:
             for route in ROUTES:
                 qwen = aggregate(condition, "qwen", modality, transcript, route)
@@ -517,7 +517,7 @@ def generate_report(plan_path: Path, output_dir: Path) -> dict[str, Any]:
     _write_once(output_dir / "report_validation.json", json.dumps(validation, indent=2, sort_keys=True) + "\n")
     _write_once(output_dir / "report.json", json.dumps(report, indent=2, sort_keys=True) + "\n")
     markdown = [
-        f"# Turkish mixed-question versus negative-only campaign",
+        f"# Turkish positive-only versus negative-only campaign",
         "",
         f"Group: `{GROUP_ID}`  ",
         f"Deployment: `{plan.get('deployment_id')}`  ",

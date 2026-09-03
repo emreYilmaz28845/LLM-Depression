@@ -34,8 +34,8 @@ EN_CONFIGS = {
         "text_only": "cmdc_text_only_harmonized_selmacrof1_tf_en.yaml",
     },
     "turkish": {
-        "audio_text": "turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml",
-        "text_only": "turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml",
+        "audio_text": "turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml",
+        "text_only": "turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml",
     },
 }
 
@@ -45,7 +45,17 @@ def en_config_paths() -> list[Path]:
         path
         for path in MAIN.glob("*harmonized_selmacrof1_tf*_en.yaml")
         if "turkish_negative_only" not in path.name
+        and not path.name.startswith("turkish_t17_")
     )
+
+
+def test_legacy_turkish_en_configs_remain_as_history() -> None:
+    # Pre-rename canonical Turkish EN files stay untouched; see the rename map.
+    legacy = sorted(path.name for path in MAIN.glob("turkish_t17_*_en.yaml"))
+    assert legacy == [
+        "turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml",
+        "turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml",
+    ]
 
 
 def test_exactly_eight_english_configs_exist() -> None:
