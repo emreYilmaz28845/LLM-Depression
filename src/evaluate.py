@@ -20,6 +20,7 @@ from src.aggregate import (
     aggregate_margin_predictions,
     aggregate_predictions,
     aggregate_response_subject_predictions,
+    aggregate_turkish_pooled_text_condition_predictions,
 )
 from src.data.build_manifest import build_for_config, manifest_build_signature
 from src.data.runtime import (
@@ -336,6 +337,7 @@ def _base_sample_row(example: dict[str, Any], checkpoint_name: str, backend_name
         "internal_label_text": example["internal_label_text"],
         "response_id": example.get("response_id", ""),
         "prompt_id": example.get("prompt_id", example.get("question_id", "")),
+        "question_condition": example.get("question_condition", ""),
         "segment_index": example.get("segment_index", 0),
         "num_segments": example.get("num_segments", 1),
         "start_time": example.get("start_time", ""),
@@ -354,6 +356,7 @@ def _base_sample_row(example: dict[str, Any], checkpoint_name: str, backend_name
     evaluation = config.get("evaluation", {})
     if evaluation.get("subject_score_aggregation"):
         row["subject_score_aggregation"] = evaluation["subject_score_aggregation"]
+        row["aggregation_policy"] = evaluation["subject_score_aggregation"]
     if example.get("protocol_id"):
         row["protocol_id"] = str(example["protocol_id"])
     for key in ("chunk_id", "bundle_id", "bundle_chunk_ids", "bundle_coverage_count"):
@@ -769,6 +772,61 @@ def evaluate_examples(
             mode=mode,
             aggregation_level=aggregation_level,
         )
+    condition_breakdowns: dict[str, Any] = {}
+    if (
+        str(config.get("dataset", "")).lower() == "turkish"
+        and str(config.get("dataset_variant", "")).strip() == "pooled_t17"
+        and mode == PREDICTION_MODE_ORIGINAL_TEACHER_FORCED
+    ):
+        condition_values = {str(row.get("question_condition", "")).strip() for row in sample_rows}
+        expected_conditions = {"pos_only_t17", "negative_only_t17"}
+        if condition_values != expected_conditions:
+            raise ValueError(
+                "Pooled evaluation must emit exactly the two question conditions; "
+                f"found {sorted(condition_values)}."
+            )
+        prediction_field = "teacher_forced_prediction"
+        for condition in ("pos_only_t17", "negative_only_t17"):
+            condition_samples = [
+                row for row in sample_rows
+                if str(row.get("question_condition", "")).strip() == condition
+            ]
+            if bool(config.get("data", {}).get("use_audio", False)):
+                _, _, condition_subject_rows, condition_metrics = aggregate_response_subject_predictions(
+                    condition_samples,
+                    prediction_field=prediction_field,
+                    backend_name=mode,
+                    invalid_as_wrong=True,
+                    score_average=(
+                        str(config.get("evaluation", {}).get("hierarchical_score_aggregation", "")).lower()
+                        == "mean"
+                    ),
+                )
+            else:
+                condition_subject_rows, condition_metrics = aggregate_turkish_pooled_text_condition_predictions(
+                    condition_samples,
+                    condition,
+                )
+            condition_metrics = dict(condition_metrics)
+            condition_metrics["checkpoint_name"] = checkpoint_name
+            write_jsonl(
+                condition_subject_rows,
+                output_dir / f"predictions_subject_level_{condition}.jsonl",
+            )
+            _write_csv(
+                condition_subject_rows,
+                output_dir / f"predictions_subject_level_{condition}.csv",
+            )
+            save_json(
+                condition_metrics,
+                output_dir / f"metrics_subject_level_{condition}.json",
+            )
+            condition_breakdowns[condition] = {
+                "subject_rows": condition_subject_rows,
+                "metrics": condition_metrics,
+                "prediction_path": str(output_dir / f"predictions_subject_level_{condition}.jsonl"),
+                "metrics_path": str(output_dir / f"metrics_subject_level_{condition}.json"),
+            }
     headline_metrics_payload = dict(headline_metrics)
     headline_metrics_payload["checkpoint_name"] = checkpoint_name
     subject_metrics_payload = dict(subject_metrics)
@@ -925,6 +983,7 @@ def evaluate_examples(
         "subject_metrics": subject_metrics_payload,
         "response_rows": response_rows,
         "response_metrics": response_metrics,
+        "condition_breakdowns": condition_breakdowns,
         "secondary_aggregations": secondary_aggregations,
         "backend_results": {
             mode: {
@@ -932,6 +991,7 @@ def evaluate_examples(
                 "headline_metrics": headline_metrics_payload,
                 "subject_rows": subject_rows,
                 "subject_metrics": subject_metrics_payload,
+                "condition_breakdowns": condition_breakdowns,
             }
         },
     }

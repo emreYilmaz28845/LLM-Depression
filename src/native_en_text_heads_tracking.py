@@ -352,11 +352,19 @@ def _prediction_rows(path: Path) -> list[dict[str, Any]]:
         return list(csv.DictReader(handle))
 
 
-def _metric_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _metric_payload(rows: list[dict[str, Any]], *, strict_invalid: bool = False) -> dict[str, Any]:
     if not rows:
         raise HeadTrackingError("head evaluation has no subject prediction rows")
     labels = [int(row["label"]) for row in rows]
-    predictions = [int(row.get("prediction", row.get("predicted_class"))) for row in rows]
+    raw_predictions = [int(row.get("prediction", row.get("predicted_class"))) for row in rows]
+    # The pooled campaign uses the repository's strict headline convention:
+    # INVALID is a wrong prediction.  Keep the historical behavior for other
+    # head campaigns and opt into the strict mapping explicitly for pooled
+    # evidence.
+    predictions = (
+        [prediction if prediction in (0, 1) else 1 - label for label, prediction in zip(labels, raw_predictions)]
+        if strict_invalid else raw_predictions
+    )
     metrics = classification_metrics(labels, predictions)
     tn, fp = metrics["confusion_matrix"][0]
     fn, _ = metrics["confusion_matrix"][1]
@@ -368,6 +376,8 @@ def _metric_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
         else 0.0
     )
     metrics["invalid_qwen_outputs"] = int(sum(int(row.get("invalid_qwen_outputs", 0)) for row in rows))
+    if strict_invalid:
+        metrics["invalid_qwen_outputs"] += int(sum(prediction not in (0, 1) for prediction in raw_predictions))
     return metrics
 
 
@@ -381,6 +391,7 @@ def _build_evaluations(
 ) -> list[dict[str, Any]]:
     scientific = config.get("config") if isinstance(config.get("config"), dict) else config
     tracking = config.get("tracking") if isinstance(config.get("tracking"), dict) else scientific.get("tracking", {})
+    strict_invalid = scientific.get("dataset_variant") == "pooled_t17"
     rows = _prediction_rows(predictions_path)
     datasets = sorted({str(row.get("dataset", scientific.get("dataset", ""))).lower() for row in rows})
     eval_cfg = scientific.get("evaluation") or {}
@@ -397,7 +408,7 @@ def _build_evaluations(
             row for row in rows
             if str(row.get("dataset", scientific.get("dataset", ""))).lower() == dataset
         ]
-        metrics = _metric_payload(dataset_rows)
+        metrics = _metric_payload(dataset_rows, strict_invalid=strict_invalid)
         support = len({str(row["subject_id"]) for row in dataset_rows})
         eid = evaluation_id(
             attempt_id=str(tracking["attempt_id"]),
@@ -587,6 +598,8 @@ def validate_head_attempt(attempt_dir: str | Path) -> dict[str, Any]:
         raise HeadTrackingError(f"head validation requires completed evidence, got {sidecars.state}")
     issues = verify_modern_evidence_locally(sidecars)
     run_config = yaml.safe_load((target / "run_config.yaml").read_text(encoding="utf-8")) or {}
+    scientific = run_config.get("config") if isinstance(run_config.get("config"), dict) else run_config
+    strict_invalid = scientific.get("dataset_variant") == "pooled_t17"
     expected_backend = str((run_config.get("config") or {}).get("classifier", {}).get("prediction_backend") or "")
     evaluations_doc = read_json(target / EVALUATIONS_FILE)
     artifacts_by_path = {str(item["path"]): item for item in read_json(target / ARTIFACTS_FILE).get("artifacts", [])}
@@ -594,7 +607,7 @@ def validate_head_attempt(attempt_dir: str | Path) -> dict[str, Any]:
         prediction_path = target / str(evaluation["predictions_artifact_path"])
         rows = _prediction_rows(prediction_path)
         dataset_rows = [row for row in rows if str(row.get("dataset", "")).lower() == str(evaluation["dataset"]).lower()]
-        computed = _metric_payload(dataset_rows)
+        computed = _metric_payload(dataset_rows, strict_invalid=strict_invalid)
         if str(evaluation.get("backend")) != expected_backend:
             issues.append(f"backend qualifier mismatch: {evaluation.get('backend')} != {expected_backend}")
         for metric in evaluation.get("metrics", []):

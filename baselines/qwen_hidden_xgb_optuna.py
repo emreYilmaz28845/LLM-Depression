@@ -22,6 +22,7 @@ from src.aggregate import (
     aggregate_binary_classifier_response_rows,
 )
 from src.features.hidden_classifier_policy import (
+    TURKISH_POOLED_TEXT_PAIR_POLICY,
     cache_identity,
     canonical_sha256,
     classifier_aggregation_policy,
@@ -336,6 +337,7 @@ def _sample_rows_for_predictions(
             "dataset": metadata["dataset"],
             "modality": metadata["input_modality"],
             "condition": condition,
+            "dataset_variant": metadata.get("dataset_variant", ""),
             "fold": int(metadata["fold"]),
             "sample_id": str(row["sample_id"]),
             "subject_id": str(row["subject_id"]),
@@ -354,6 +356,12 @@ def _sample_rows_for_predictions(
             "oversampling_ratio": oversampling_ratio,
             "oversampling_seed": int(oversampling_seed),
         }
+        if metadata.get("dataset_variant") == "pooled_t17":
+            record["question_condition"] = str(row.get("question_condition", ""))
+        if metadata.get("dataset_variant") == "pooled_t17" and metadata.get("input_modality") == "text_only":
+            record["aggregation_policy"] = TURKISH_POOLED_TEXT_PAIR_POLICY
+        else:
+            record["aggregation_policy"] = classifier_aggregation_policy(metadata)
         if prediction_backend is not None:
             record["prediction_backend"] = prediction_backend
             record["model_backend"] = metadata.get("model_backend")
@@ -385,6 +393,7 @@ def make_objective(
     def objective(trial: Any) -> float:
         params = _suggest_params(trial, resolved_space)
         oof_subject_rows: list[dict[str, Any]] = []
+        oof_sample_rows: list[dict[str, Any]] = []
         fold_metrics: list[dict[str, Any]] = []
         for fold in assignments["folds"]:
             if sampling_mode == LEGACY_SAMPLING_MODE:
@@ -424,7 +433,10 @@ def make_objective(
                 oversampling_seed,
                 prediction_backend,
             )
-            subject_rows, metrics = aggregate_binary_classifier_predictions(sample_rows)
+            subject_rows, metrics = aggregate_binary_classifier_predictions(
+                sample_rows,
+                prediction_backend=prediction_backend or "qwen_hidden_classifier",
+            )
             fold_metrics.append(
                 {
                     "inner_fold": int(fold["fold"]),
@@ -433,12 +445,28 @@ def make_objective(
                 }
             )
             oof_subject_rows.extend(subject_rows)
+            oof_sample_rows.extend(sample_rows)
         subject_ids = [str(row["subject_id"]) for row in oof_subject_rows]
         if Counter(subject_ids) != Counter(outer_subjects):
             raise ValueError("Trial OOF predictions do not cover each outer-training subject exactly once.")
         y_true = [int(row["label"]) for row in oof_subject_rows]
         y_pred = [int(row["prediction"]) for row in oof_subject_rows]
-        pooled_metrics = _metrics_with_negative_f1(classification_metrics(y_true, y_pred))
+        # The pooled text contract reduces the two condition rows to one
+        # subject decision before scoring.  That decision may be INVALID on a
+        # zero margin, so use the central strict-metric result rather than
+        # passing INVALID=-1 into the binary metrics helper.
+        if (
+            str(metadata.get("dataset", "")).lower() == "turkish"
+            and str(metadata.get("dataset_variant", "")).strip() == "pooled_t17"
+            and str(metadata.get("input_modality", "")).strip() == "text_only"
+        ):
+            _, pooled_raw_metrics = aggregate_binary_classifier_predictions(
+                oof_sample_rows,
+                prediction_backend=prediction_backend or "qwen_hidden_classifier",
+            )
+            pooled_metrics = _metrics_with_negative_f1(pooled_raw_metrics)
+        else:
+            pooled_metrics = _metrics_with_negative_f1(classification_metrics(y_true, y_pred))
         trial.set_user_attr("inner_fold_metrics", fold_metrics)
         trial.set_user_attr("inner_oof_metrics", pooled_metrics)
         return float(pooled_metrics[objective_name])
@@ -473,8 +501,13 @@ def validate_experiment_output(
     # Keep the canonical experiment-id directory required by the Optuna
     # artifact contract, while placing it inside the unique attempt directory
     # that carries modern sidecars and the retry identity.
-    if os.environ.get("NATIVE_EN_TEXT_HEADS_V2_ATTEMPT_DIR"):
-        attempt_dir = Path(os.environ["NATIVE_EN_TEXT_HEADS_V2_ATTEMPT_DIR"]).resolve()
+    attempt_env = (
+        "TURKISH_POOLED_QCOND_ATTEMPT_DIR"
+        if metadata.get("dataset_variant") == "pooled_t17"
+        else "NATIVE_EN_TEXT_HEADS_V2_ATTEMPT_DIR"
+    )
+    if os.environ.get(attempt_env):
+        attempt_dir = Path(os.environ[attempt_env]).resolve()
         if output_dir.parent.resolve() != attempt_dir or not (attempt_dir / "metadata.json").is_file():
             raise ValueError(
                 "v2 Optuna output must be directly below its tracked attempt directory"
@@ -517,7 +550,12 @@ def build_study_config(
         from src.features import optuna100_policy as policy
 
         search_space = policy.resolved_search_space()
-        stage = str(os.environ.get("NATIVE_EN_TEXT_HEADS_STAGE", "production")).lower()
+        stage_env = (
+            "TURKISH_POOLED_QCOND_STAGE"
+            if metadata.get("dataset_variant") == "pooled_t17"
+            else "NATIVE_EN_TEXT_HEADS_STAGE"
+        )
+        stage = str(os.environ.get(stage_env, "production")).lower()
         policy.assert_target(target_trials, stage=stage)
     else:
         search_space = resolved_oversampling_search_space(search_profile, sampling_mode)
@@ -776,12 +814,20 @@ def run_optuna_raw_xgb(
 
     from src.features import optuna100_policy as policy
 
+    metadata = read_json(cache_dir / "extraction_metadata.json")
     prediction_backend: str | None = None
     protocol_profile_value: str | None = None
     if protocol_profile == policy.PROTOCOL_PROFILE:
         policy.assert_target(
             target_trials,
-            stage=str(os.environ.get("NATIVE_EN_TEXT_HEADS_STAGE", "production")),
+            stage=str(
+                os.environ.get(
+                    "TURKISH_POOLED_QCOND_STAGE"
+                    if metadata.get("dataset_variant") == "pooled_t17"
+                    else "NATIVE_EN_TEXT_HEADS_STAGE",
+                    "production",
+                )
+            ),
         )
         policy.assert_protocol_settings(
             inner_folds=inner_folds,
@@ -796,7 +842,6 @@ def run_optuna_raw_xgb(
         raise ValueError(f"Unsupported protocol_profile {protocol_profile!r}.")
 
     train_x, train_rows = _load_partition(cache_dir, "outer_train")
-    metadata = read_json(cache_dir / "extraction_metadata.json")
     if protocol_profile_value is not None:
         prediction_backend = policy.prediction_backend(metadata.get("model_backend"))
     search_space = (
@@ -979,7 +1024,10 @@ def run_optuna_raw_xgb(
         oversampling_seed,
         prediction_backend,
     )
-    subject_rows, metrics = aggregate_binary_classifier_predictions(sample_rows)
+    subject_rows, metrics = aggregate_binary_classifier_predictions(
+        sample_rows,
+        prediction_backend=prediction_backend or "qwen_hidden_classifier",
+    )
     metrics = _metrics_with_negative_f1(metrics)
     condition = str(metadata.get("condition") or metadata["input_modality"])
     for row in subject_rows:
