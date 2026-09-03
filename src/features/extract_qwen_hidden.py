@@ -237,10 +237,16 @@ def _is_joint_packed30_recipe(config: dict[str, Any]) -> bool:
     )
 
 
-def _is_turkish_pooled_text(config: dict[str, Any]) -> bool:
+def _is_turkish_pooled(config: dict[str, Any]) -> bool:
     return (
         str(config.get("dataset", "")).lower() == "turkish"
         and str(config.get("dataset_variant", "")).strip() == "pooled_t17"
+    )
+
+
+def _is_turkish_pooled_text(config: dict[str, Any]) -> bool:
+    return (
+        _is_turkish_pooled(config)
         and not bool(config.get("data", {}).get("use_audio", False))
         and bool(config.get("data", {}).get("use_text", False))
     )
@@ -637,6 +643,7 @@ def _extract_partition(
     selected = examples[:max_examples] if max_examples else examples
     seen_samples: set[str] = set()
     subject_labels: dict[str, int] = {}
+    pooled_turkish = _is_turkish_pooled(config)
     pooled_text = _is_turkish_pooled_text(config)
     condition_counts: Counter[str] = Counter()
     subject_conditions: dict[str, set[str]] = defaultdict(set)
@@ -736,19 +743,35 @@ def _extract_partition(
         if subject_id in subject_labels and subject_labels[subject_id] != label:
             raise ValueError(f"Subject {subject_id} has inconsistent labels.")
         subject_labels[subject_id] = label
-        if pooled_text:
+        if pooled_turkish:
             condition = str(metadata.get("question_condition", "")).strip()
-            if condition:
-                condition_counts[condition] += 1
-                subject_conditions[subject_id].add(condition)
-                subject_condition_counts[subject_id][condition] += 1
+            if condition not in {"pos_only_t17", "negative_only_t17"}:
+                raise ValueError(
+                    "Pooled Turkish hidden extraction requires exactly the two "
+                    f"question conditions, got {condition!r}."
+                )
+            condition_counts[condition] += 1
+            subject_conditions[subject_id].add(condition)
+            subject_condition_counts[subject_id][condition] += 1
             transcript = str(example.get("transcript", ""))
-            transcript_block = f"The transcript of the subject's speech is:\n{transcript}\n\n"
-            prompt_context = prompt_text.replace(
-                transcript_block,
-                "The transcript of the subject's speech is:\n<TRANSCRIPT>\n\n",
-                1,
+            transcript_block = (
+                f"The transcript of the subject's speech is:\n{transcript}\n\n"
+                if bool(config.get("data", {}).get("use_text", False))
+                else ""
             )
+            if transcript_block:
+                if transcript_block not in prompt_text:
+                    raise ValueError(
+                        "Pooled Turkish hidden extraction could not locate the "
+                        "transcript block for redaction."
+                    )
+                prompt_context = prompt_text.replace(
+                    transcript_block,
+                    "The transcript of the subject's speech is:\n<TRANSCRIPT>\n\n",
+                    1,
+                )
+            else:
+                prompt_context = prompt_text
             prompt_context_hash = sha256_text(prompt_context)
             transcript_hash = sha256_text(transcript)
             prompt_context_hashes.add(prompt_context_hash)
@@ -766,7 +789,7 @@ def _extract_partition(
             "mask_source": mask_source,
             "checkpoint": str(checkpoint_dir),
         })
-        if pooled_text:
+        if pooled_turkish:
             metadata.update({
                 "prompt_context_sha256": prompt_context_hash,
                 "transcript_sha256": transcript_hash,
@@ -792,35 +815,15 @@ def _extract_partition(
         "determinism_atol": 1e-5,
         "determinism_max_abs_diff": determinism_max_abs_diff,
     }
-    if pooled_text:
+    if pooled_turkish:
         expected = {"pos_only_t17", "negative_only_t17"}
         if set(condition_counts) != expected:
             raise ValueError(
-                f"Pooled Turkish text extraction conditions differ from the locked pair: {sorted(condition_counts)}"
-            )
-        invalid_subjects = sorted(
-            subject_id for subject_id, conditions in subject_conditions.items()
-            if conditions != expected
-        )
-        if invalid_subjects:
-            raise ValueError(
-                "Pooled Turkish text extraction must contain both conditions for every subject: "
-                f"{invalid_subjects[:10]}"
-            )
-        duplicate_subjects = sorted(
-            subject_id
-            for subject_id, counts in subject_condition_counts.items()
-            if counts != Counter({condition: 1 for condition in expected})
-        )
-        if duplicate_subjects:
-            raise ValueError(
-                "Pooled Turkish text extraction must contain exactly one example "
-                "per condition for every subject: "
-                f"{duplicate_subjects[:10]}"
+                "Pooled Turkish hidden extraction conditions differ from the "
+                f"locked pair: {sorted(condition_counts)}"
             )
         summary.update({
             "condition_counts": dict(sorted(condition_counts.items())),
-            "paired_text_examples_per_subject": 2,
             "prompt_context_sha256": sorted(prompt_context_hashes),
             "transcript_sha256": sorted(transcript_hashes),
             "transcript_chars": {
@@ -829,6 +832,28 @@ def _extract_partition(
                 "total": sum(transcript_char_counts),
             },
         })
+        if pooled_text:
+            invalid_subjects = sorted(
+                subject_id for subject_id, conditions in subject_conditions.items()
+                if conditions != expected
+            )
+            if invalid_subjects:
+                raise ValueError(
+                    "Pooled Turkish text extraction must contain both conditions for every subject: "
+                    f"{invalid_subjects[:10]}"
+                )
+            duplicate_subjects = sorted(
+                subject_id
+                for subject_id, counts in subject_condition_counts.items()
+                if counts != Counter({condition: 1 for condition in expected})
+            )
+            if duplicate_subjects:
+                raise ValueError(
+                    "Pooled Turkish text extraction must contain exactly one example "
+                    "per condition for every subject: "
+                    f"{duplicate_subjects[:10]}"
+                )
+            summary["paired_text_examples_per_subject"] = 2
     return summary
 
 
@@ -1063,17 +1088,18 @@ def main() -> None:
             subject_selection["sha256"] if subject_selection is not None else None
         ),
     }
-    if _is_turkish_pooled_text(config):
-        cache_config.update({
-            "dataset_variant": config.get("dataset_variant", ""),
-            "aggregation_policy": config.get("evaluation", {}).get("subject_score_aggregation"),
-            "paired_text_examples_per_subject": 2,
-            "prompt_context_contract": {
-                "user_template_redacted": str(config.get("prompt", {}).get("user_template", "")),
-                "transcript_block_redacted": True,
-                "question_context_sentences": dict(QUESTION_CONTEXT_SENTENCES),
-            },
-        })
+    if _is_turkish_pooled(config):
+        cache_config["dataset_variant"] = config.get("dataset_variant", "")
+        cache_config["prompt_context_contract"] = {
+            "user_template_redacted": str(config.get("prompt", {}).get("user_template", "")),
+            "transcript_block_redacted": True,
+            "question_context_sentences": dict(QUESTION_CONTEXT_SENTENCES),
+        }
+        if _is_turkish_pooled_text(config):
+            cache_config.update({
+                "aggregation_policy": config.get("evaluation", {}).get("subject_score_aggregation"),
+                "paired_text_examples_per_subject": 2,
+            })
     if gemma_backend:
         cache_config["model_backend"] = MODEL_BACKEND_GEMMA4
         cache_config["base_model_revision"] = str(config.get("model_revision", ""))
@@ -1186,12 +1212,13 @@ def main() -> None:
             "project_git": _git_commit(),
         },
     }
-    if _is_turkish_pooled_text(config):
-        metadata.update({
-            "dataset_variant": config.get("dataset_variant", ""),
-            "aggregation_policy": cache_config.get("aggregation_policy"),
-            "paired_text_examples_per_subject": 2,
-        })
+    if _is_turkish_pooled(config):
+        metadata["dataset_variant"] = config.get("dataset_variant", "")
+        if _is_turkish_pooled_text(config):
+            metadata.update({
+                "aggregation_policy": cache_config.get("aggregation_policy"),
+                "paired_text_examples_per_subject": 2,
+            })
     save_json(metadata, output_dir / "extraction_metadata.json")
     print(json.dumps(metadata, indent=2), flush=True)
 
