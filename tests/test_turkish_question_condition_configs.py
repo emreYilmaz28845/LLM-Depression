@@ -7,9 +7,9 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "configs" / "main"
-GROUP = ROOT / "experiments" / "definitions" / "turkish-mixed-vs-negonly-native-en-multimodal-heads-v1-20260823.yaml"
+GROUP = ROOT / "experiments" / "definitions" / "turkish-pos_only-vs-negonly-native-en-multimodal-heads-v1-20260903.yaml"
 
-GROUP_ID = "turkish-mixed-vs-negonly-native-en-multimodal-heads-v1-20260823"
+GROUP_ID = "turkish-pos_only-vs-negonly-native-en-multimodal-heads-v1-20260903"
 VIEW = "harmonized_all_windows_full_coverage"
 NATIVE_RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1"
 EN_RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_en_v1"
@@ -17,16 +17,16 @@ GEMMA_TARGET = r"^model\.language_model\.layers\.\d+\.(?:self_attn\.(?:q_proj|k_
 
 
 CELLS = {
-    "M01": ("mixed", "not_applicable", "audio_only", "qwen", "turkish_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml"),
-    "M02": ("mixed", "native", "text_only", "qwen", "turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml"),
-    "M03": ("mixed", "english", "text_only", "qwen", "turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml"),
-    "M04": ("mixed", "native", "audio_text", "qwen", "turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml"),
-    "M05": ("mixed", "english", "audio_text", "qwen", "turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml"),
-    "M06": ("mixed", "not_applicable", "audio_only", "gemma4", "turkish_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml"),
-    "M07": ("mixed", "native", "text_only", "gemma4", "turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml"),
-    "M08": ("mixed", "english", "text_only", "gemma4", "turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml"),
-    "M09": ("mixed", "native", "audio_text", "gemma4", "turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml"),
-    "M10": ("mixed", "english", "audio_text", "gemma4", "turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml"),
+    "P01": ("pos_only", "not_applicable", "audio_only", "qwen", "turkish_pos_only_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml"),
+    "P02": ("pos_only", "native", "text_only", "qwen", "turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml"),
+    "P03": ("pos_only", "english", "text_only", "qwen", "turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml"),
+    "P04": ("pos_only", "native", "audio_text", "qwen", "turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml"),
+    "P05": ("pos_only", "english", "audio_text", "qwen", "turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml"),
+    "P06": ("pos_only", "not_applicable", "audio_only", "gemma4", "turkish_pos_only_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml"),
+    "P07": ("pos_only", "native", "text_only", "gemma4", "turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml"),
+    "P08": ("pos_only", "english", "text_only", "gemma4", "turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml"),
+    "P09": ("pos_only", "native", "audio_text", "gemma4", "turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml"),
+    "P10": ("pos_only", "english", "audio_text", "gemma4", "turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml"),
     "N01": ("negative_only", "not_applicable", "audio_only", "qwen", "turkish_negative_only_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml"),
     "N02": ("negative_only", "native", "text_only", "qwen", "turkish_negative_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml"),
     "N03": ("negative_only", "english", "text_only", "qwen", "turkish_negative_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml"),
@@ -70,8 +70,8 @@ def test_all_cells_use_locked_harmonized_recipe() -> None:
             assert config["metadata_schema"] == "minimal_t17"
             assert "Turkish_Negative_Only" in config["dataset_root"]
         else:
-            assert "dataset_variant" not in config
-            assert "Turkish_Negative_Only" not in config["dataset_root"]
+            assert config["dataset_variant"] == "pos_only_t17"
+            assert "Turkish_Positive_Only" in config["dataset_root"]
         assert config["threshold"] == 17
         assert config["split"] == {"mode": "cv", "cv_protocol": "train_val", "outer_folds": 5, "inner_val_ratio": 0.2, "seed": 1337}
         assert config["recipe_id"] == (EN_RECIPE if transcript == "english" else NATIVE_RECIPE)

@@ -12,11 +12,11 @@ experiments:
   - {config: configs/main/androids_audio_only_harmonized_selmacrof1_tf.yaml, folds: [0, 1, 2, 3, 4], separate_eval: true}
   - {config: configs/main/daic_audio_only_harmonized_selmacrof1_tf.yaml, folds: [0], separate_eval: true}
   - {config: configs/main/cmdc_audio_text_harmonized_selmacrof1_tf.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
-  - {config: configs/main/turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
+  - {config: configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
   - {config: configs/main/cmdc_audio_only_harmonized_selmacrof1_tf.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
-  - {config: configs/main/turkish_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
+  - {config: configs/main/turkish_pos_only_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
   - {config: configs/main/d3tec_text_only_harmonized_selmacrof1_tf.yaml, folds: [0, 1, 2, 3, 4], separate_eval: true}
   - {config: configs/main/androids_text_only_harmonized_selmacrof1_tf.yaml, folds: [0, 1, 2, 3, 4], separate_eval: true}
   - {config: configs/main/daic_text_only_harmonized_selmacrof1_tf.yaml, folds: [0], separate_eval: true}
   - {config: configs/main/cmdc_text_only_harmonized_selmacrof1_tf.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
-  - {config: configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
+  - {config: configs/main/turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}

@@ -1380,7 +1380,7 @@ def _route_label(route: Any) -> str:
 
 
 def _condition_label(condition: Any) -> str:
-    return "Negative-only" if str(condition) == "negative_only" else "Mixed questions"
+    return "Negative-only" if str(condition) == "negative_only" else "Positive-only questions"
 
 
 def _modality_label(modality: Any, transcript: Any = None) -> str:
@@ -1397,13 +1397,13 @@ def build_turkish_question_condition(wb: Workbook, *, report_path: Path) -> None
     compact enough to review while preserving a direct report/provenance path.
     """
     report = _load_turkish_question_condition_report(report_path)
-    ws = wb.create_sheet("Turkish Mixed vs NegOnly")
+    ws = wb.create_sheet("Turkish PosOnly vs NegOnly")
     widths = {
         "A": 18, "B": 18, "C": 22, "D": 32, "E": 14, "F": 14, "G": 14,
         "H": 14, "I": 14, "J": 14, "K": 12, "L": 74,
     }
     _widths(ws, widths)
-    _title(ws, "Turkish mixed questions versus negative-only", 12)
+    _title(ws, "Turkish positive-only questions versus negative-only", 12)
     _note(
         ws, 2,
         f"Generated from {report_path}. Group {report.get('group_id')}; deployment {report.get('deployment_id')}; "
@@ -1415,8 +1415,8 @@ def build_turkish_question_condition(wb: Workbook, *, report_path: Path) -> None
 
     row = 4
     table1_headers = [
-        "Model", "Input", "Route", "Mixed macro-F1", "Negative-only macro-F1", "Δ macro-F1",
-        "Mixed positive-F1", "Negative-only positive-F1", "Δ positive-F1", "Seeds × folds", "Provenance key",
+        "Model", "Input", "Route", "PosOnly macro-F1", "Negative-only macro-F1", "Δ macro-F1",
+        "PosOnly positive-F1", "Negative-only positive-F1", "Δ positive-F1", "Seeds × folds", "Provenance key",
     ]
     _section(ws, row, "Table 1 — paired dataset-condition comparison (30 rows)", len(table1_headers))
     _header_row(ws, row + 1, table1_headers)
@@ -1424,8 +1424,8 @@ def build_turkish_question_condition(wb: Workbook, *, report_path: Path) -> None
     for item in report["tables"]["table1_dataset_condition"]:
         values = [
             item.get("model"), _modality_label(item.get("modality"), item.get("transcript_condition")),
-            _route_label(item.get("route")), item.get("mixed_macro_f1_mean"), item.get("negative_only_macro_f1_mean"),
-            item.get("paired_macro_f1_delta"), item.get("mixed_positive_f1_mean"), item.get("negative_only_positive_f1_mean"),
+            _route_label(item.get("route")), item.get("pos_only_macro_f1_mean"), item.get("negative_only_macro_f1_mean"),
+            item.get("paired_macro_f1_delta"), item.get("pos_only_positive_f1_mean"), item.get("negative_only_positive_f1_mean"),
             item.get("paired_positive_f1_delta"), item.get("complete_seed_fold_count"), item.get("provenance_key"),
         ]
         for col, value in enumerate(values, start=1):
@@ -1461,8 +1461,8 @@ def build_turkish_question_condition(wb: Workbook, *, report_path: Path) -> None
         row += 1
 
     table3_headers = [
-        "Model", "Input", "Route", "Mixed EN−native macro", "Negative-only EN−native macro", "Interaction macro",
-        "Mixed EN−native positive", "Negative-only EN−native positive", "Interaction positive", "Provenance key",
+        "Model", "Input", "Route", "PosOnly EN−native macro", "Negative-only EN−native macro", "Interaction macro",
+        "PosOnly EN−native positive", "Negative-only EN−native positive", "Interaction positive", "Provenance key",
     ]
     _section(ws, row + 1, "Table 3 — translation interaction (12 rows)", len(table3_headers))
     _header_row(ws, row + 2, table3_headers)
@@ -1470,8 +1470,8 @@ def build_turkish_question_condition(wb: Workbook, *, report_path: Path) -> None
     for item in report["tables"]["table3_translation_interaction"]:
         values = [
             item.get("model"), _modality_label(item.get("modality")), _route_label(item.get("route")),
-            item.get("mixed_translation_macro_f1"), item.get("negative_only_translation_macro_f1"), item.get("interaction_macro_f1"),
-            item.get("mixed_translation_positive_f1"), item.get("negative_only_translation_positive_f1"), item.get("interaction_positive_f1"),
+            item.get("pos_only_translation_macro_f1"), item.get("negative_only_translation_macro_f1"), item.get("interaction_macro_f1"),
+            item.get("pos_only_translation_positive_f1"), item.get("negative_only_translation_positive_f1"), item.get("interaction_positive_f1"),
             item.get("provenance_key"),
         ]
         for col, value in enumerate(values, start=1):
@@ -1529,10 +1529,10 @@ def build_turkish_question_condition_provenance(ws, put, *, report_path: Path) -
     for item in report["tables"]["table1_dataset_condition"]:
         label = f"{item.get('model')} {_modality_label(item.get('modality'), item.get('transcript_condition'))} {_route_label(item.get('route'))}"
         key = item.get("provenance_key")
-        put("Turkish Mixed vs NegOnly", "Turkish", label + " mixed macro-F1", item.get("mixed_macro_f1_mean"), f"{source}; provenance key {key}", aggregation, artifact, "recomputed from local subject predictions; all 15 seed-fold units REPORTABLE")
-        put("Turkish Mixed vs NegOnly", "Turkish", label + " negative-only macro-F1", item.get("negative_only_macro_f1_mean"), f"{source}; provenance key {key}", aggregation, artifact, "recomputed from local subject predictions; all 15 seed-fold units REPORTABLE")
-        put("Turkish Mixed vs NegOnly", "Turkish", label + " mixed positive-F1", item.get("mixed_positive_f1_mean"), f"{source}; provenance key {key}", aggregation, artifact, "recomputed from local subject predictions; all 15 seed-fold units REPORTABLE")
-        put("Turkish Mixed vs NegOnly", "Turkish", label + " negative-only positive-F1", item.get("negative_only_positive_f1_mean"), f"{source}; provenance key {key}", aggregation, artifact, "recomputed from local subject predictions; all 15 seed-fold units REPORTABLE")
+        put("Turkish PosOnly vs NegOnly", "Turkish", label + " positive-only macro-F1", item.get("pos_only_macro_f1_mean"), f"{source}; provenance key {key}", aggregation, artifact, "recomputed from local subject predictions; all 15 seed-fold units REPORTABLE")
+        put("Turkish PosOnly vs NegOnly", "Turkish", label + " negative-only macro-F1", item.get("negative_only_macro_f1_mean"), f"{source}; provenance key {key}", aggregation, artifact, "recomputed from local subject predictions; all 15 seed-fold units REPORTABLE")
+        put("Turkish PosOnly vs NegOnly", "Turkish", label + " positive-only positive-F1", item.get("pos_only_positive_f1_mean"), f"{source}; provenance key {key}", aggregation, artifact, "recomputed from local subject predictions; all 15 seed-fold units REPORTABLE")
+        put("Turkish PosOnly vs NegOnly", "Turkish", label + " negative-only positive-F1", item.get("negative_only_positive_f1_mean"), f"{source}; provenance key {key}", aggregation, artifact, "recomputed from local subject predictions; all 15 seed-fold units REPORTABLE")
 
 
 # --------------------------------------------------------------------------- sheets
@@ -2607,7 +2607,7 @@ def main() -> None:
     parser.add_argument(
         "--turkish-question-condition-report",
         default=None,
-        help="validated Turkish mixed-vs-negative-only report JSON used for its workbook sheet",
+        help="validated Turkish positive-only-vs-negative-only report JSON used for its workbook sheet",
     )
     args = parser.parse_args()
     detailed = args.detailed

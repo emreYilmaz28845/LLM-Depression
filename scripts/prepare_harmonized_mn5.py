@@ -29,7 +29,7 @@ from src.utils import (
 
 COMPONENT_CONFIGS = (
     "configs/main/d3tec_audio_text_harmonized_selmacrof1_tf.yaml",
-    "configs/main/turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml",
+    "configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml",
     "configs/main/androids_audio_text_harmonized_selmacrof1_tf.yaml",
     "configs/main/daic_audio_text_harmonized_selmacrof1_tf.yaml",
     "configs/main/cmdc_audio_text_harmonized_selmacrof1_tf.yaml",

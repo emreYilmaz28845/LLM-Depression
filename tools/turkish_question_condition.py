@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Managed orchestration for the Turkish mixed/negative-only campaign."""
+"""Managed orchestration for the Turkish pos_only/negative-only campaign."""
 
 from __future__ import annotations
 
@@ -138,7 +138,7 @@ def _preflight_pairs(audit: dict[str, Any]) -> dict[tuple[str, str], dict[str, A
         if key in result:
             raise CampaignError(f"duplicate preflight pair: {key}")
         result[key] = pair
-    required = {(c, l) for c in ("mixed", "negative_only") for l in ("native", "english")}
+    required = {(c, l) for c in ("pos_only", "negative_only") for l in ("native", "english")}
     if set(result) != required:
         raise CampaignError(f"preflight pair set mismatch: {sorted(result)}")
     return result
@@ -181,11 +181,11 @@ def _head_context(*, attempt_id: str, logical: str, fold_job: dict[str, Any], de
 
 def _head_config(*, fold_job: dict[str, Any], method: str, backend: str, trials: int) -> dict[str, Any]:
     language = str(fold_job["transcript_condition"])
-    recording = "negative_only" if fold_job["recording_condition"] == "negative_only" else "mixed"
+    recording = "negative_only" if fold_job["recording_condition"] == "negative_only" else "pos_only"
     return {
         "schema_version": "audiollm.turkish_question_condition_head_config.v1",
         "dataset": "turkish",
-        "dataset_variant": "negative_only_t17" if recording == "negative_only" else "mixed_t17",
+        "dataset_variant": "negative_only_t17" if recording == "negative_only" else "pos_only_t17",
         "recording_condition": recording,
         "transcript_condition": language,
         "modality": fold_job["modality"],
@@ -224,7 +224,7 @@ def _make_submission_plan(*, matrix: dict[str, Any], deployment: dict[str, Any],
     for index, train_job in enumerate(train_jobs):
         cell = cells[str(train_job["cell_id"])]
         language = "native" if cell.transcript_condition == "not_applicable" else cell.transcript_condition
-        condition = "negative_only" if cell.recording_condition == "negative_only" else "mixed"
+        condition = "negative_only" if cell.recording_condition == "negative_only" else "pos_only"
         hashes = _hashes(pairs[(condition, language)])
         logical = str(train_job["run_name"])
         backbone_id = new_attempt_id(logical, source_sha)
@@ -430,7 +430,7 @@ def _run_preflight(args: argparse.Namespace) -> int:
             "--output-root", str(args.output_root),
             "--output", str(args.output),
         ]
-        for flag, value in (("--mixed-root", args.mixed_root), ("--negative-root", args.negative_root), ("--translation-root", args.translation_root)):
+        for flag, value in (("--pos-only-root", args.pos_only_root), ("--negative-root", args.negative_root), ("--translation-root", args.translation_root)):
             if value:
                 command.extend((flag, str(value)))
         if args.require_models:
@@ -1005,7 +1005,7 @@ def parse_args() -> argparse.Namespace:
     preflight.add_argument("--scheduler-host", default=DEFAULT_SLURM_HOST)
     preflight.add_argument("--local", action="store_true")
     preflight.add_argument("--execute", action="store_true")
-    preflight.add_argument("--mixed-root", type=Path)
+    preflight.add_argument("--pos-only-root", type=Path)
     preflight.add_argument("--negative-root", type=Path)
     preflight.add_argument("--translation-root", type=Path)
     preflight.add_argument("--output-root", type=Path, default=LOCAL_ROOT / "local_preflight_runtime")

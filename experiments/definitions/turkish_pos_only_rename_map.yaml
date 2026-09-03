@@ -1,0 +1,54 @@
+schema_version: audiollm.turkish_pos_only_rename_map.v1
+# The canonical Turkish recordings use question set 1 (filenames *-1-*).
+# They were previously called "mixed"; they are positive-only responses.
+# Old evidence keeps old IDs/hashes. New work uses the right-hand column.
+reason: canonical Turkish all-files are *-1-* (positive questions); Turkish_Negative_Only are *-2-* (negative questions)
+date_pinned: "2026-09-03"
+naming:
+  recording_condition_old: mixed
+  recording_condition_new: pos_only
+  dataset_variant_old: mixed_t17
+  dataset_variant_new: pos_only_t17
+  dataset_dir_old: Datasets/Turkish
+  dataset_dir_new: Datasets/Turkish_Positive_Only
+  env_var_old: TURKISH_DATASET_ROOT
+  env_var_new: TURKISH_POS_ONLY_DATASET_ROOT
+  manifest_leaf_old: turkish_t17_qwen3asr
+  manifest_leaf_new: turkish_pos_only_t17_qwen3asr
+  translation_cache_old: harmonized_en_complete_v1/turkish
+  translation_cache_new: harmonized_en_complete_v1/turkish_pos_only_t17
+group_old: turkish-mixed-vs-negonly-native-en-multimodal-heads-v1-20260823
+group_new: turkish-pos_only-vs-negonly-native-en-multimodal-heads-v1-20260903
+experiment_old: exp-turkish-full-negonly-multimodal-20260823
+experiment_new: exp-turkish-pos-negonly-multimodal-20260903
+group_file_old: experiments/definitions/turkish-mixed-vs-negonly-native-en-multimodal-heads-v1-20260823.yaml
+group_file_new: experiments/definitions/turkish-pos_only-vs-negonly-native-en-multimodal-heads-v1-20260903.yaml
+cell_map:
+  M01: P01
+  M02: P02
+  M03: P03
+  M04: P04
+  M05: P05
+  M06: P06
+  M07: P07
+  M08: P08
+  M09: P09
+  M10: P10
+config_map:
+  configs/main/turkish_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml: configs/main/turkish_pos_only_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml
+  configs/main/turkish_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml: configs/main/turkish_pos_only_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml
+  configs/main/turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml: configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml
+  configs/main/turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml: configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml
+  configs/main/turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml: configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml
+  configs/main/turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml: configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml
+  configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml: configs/main/turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml
+  configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml: configs/main/turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml
+  configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml: configs/main/turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml
+  configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml: configs/main/turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml
+not_renamed:
+  - configs/archive/** (history)
+  - configs/features/** run_dir pointers (legacy evidence pointers)
+  - src/qwen38 MIXED question-framing label (different meaning)
+  - Turkish subject mixed-labels error (different meaning)
+  - mixed_precision, merged mixed-backend, Androids mixed_question_and_nonquestion
+  - WAV/metadata/JSONL filenames inside dataset dirs

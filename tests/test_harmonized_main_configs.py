@@ -17,7 +17,22 @@ def harmonized_configs():
         and "_gemma4_12b" not in path.name
         and "_officialdev" not in path.name
         and "turkish_negative_only" not in path.name
+        # Pre-rename canonical Turkish files stay as legacy history.
+        and not path.name.startswith("turkish_t17_")
     )
+
+
+def test_legacy_turkish_configs_remain_as_history() -> None:
+    legacy = sorted(
+        path.name
+        for path in MAIN.glob("turkish_t17_*harmonized_selmacrof1_tf*.yaml")
+        if not path.name.endswith("_en.yaml") and "_gemma4_12b" not in path.name
+    )
+    assert legacy == [
+        "turkish_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml",
+        "turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml",
+        "turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml",
+    ]
 
 
 def test_harmonized_main_has_five_datasets_by_three_modalities() -> None:
@@ -38,14 +53,15 @@ def test_gemma4_variants_cover_daic_and_the_harmonized_non_daic_family() -> None
     daic = [path for path in gemma if path.name.startswith("daic_")]
     assert len(daic) == 3
     assert all(path.name.startswith("daic_") for path in daic)
-    # 15 native non-DAIC (the 12 harmonized-family cells plus three fresh
-    # negative-only Turkish cells) + 10 English (the eight harmonized-family
-    # cells plus two fresh negative-only Turkish cells).
+    # 18 native non-DAIC (the 12 harmonized-family cells plus three fresh
+    # positive-only and three fresh negative-only Turkish cells) + 12 English
+    # (the eight harmonized-family cells plus two fresh positive-only and two
+    # fresh negative-only Turkish cells).
     non_daic = [path for path in gemma if not path.name.startswith("daic_")]
-    assert len(non_daic) == 25
-    assert len([path for path in non_daic if "_en_" in path.name]) == 10
-    assert len([path for path in non_daic if "_en_" not in path.name]) == 15
-    assert len(gemma) == 28
+    assert len(non_daic) == 30
+    assert len([path for path in non_daic if "_en_" in path.name]) == 12
+    assert len([path for path in non_daic if "_en_" not in path.name]) == 18
+    assert len(gemma) == 33
 
 
 def test_harmonized_selection_and_teacher_forced_recipe_is_locked() -> None:

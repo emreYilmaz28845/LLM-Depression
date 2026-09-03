@@ -25,7 +25,7 @@ def _preflight() -> dict[str, object]:
                 "metadata_sha256": f"split-{condition}-{language}",
                 "folds": {"fold_hash": f"fold-{condition}"},
             }
-            for condition in ("mixed", "negative_only")
+            for condition in ("pos_only", "negative_only")
             for language in ("native", "english")
         ],
     }
@@ -33,10 +33,10 @@ def _preflight() -> dict[str, object]:
 
 def _deployment() -> dict[str, object]:
     return {
-        "deployment_id": "exp-turkish-full-negonly-multimodal-20260823T000000Z-e176da5e-abcdef12",
-        "experiment_id": "exp-turkish-full-negonly-multimodal-20260823",
+        "deployment_id": "exp-turkish-pos-negonly-multimodal-20260903T000000Z-e176da5e-abcdef12",
+        "experiment_id": "exp-turkish-pos-negonly-multimodal-20260903",
         "git_commit": "e176da5e0595464bc44320d32e04f7fe0a7adf5e",
-        "git_branch_at_deploy": "agent/exp-turkish-full-negonly-multimodal",
+        "git_branch_at_deploy": "agent/exp-turkish-pos-negonly-multimodal",
         "git_dirty": False,
         "source_manifest_sha256": "source-manifest",
         "deployed_code_path": "/gpfs/projects/etur92/ozu647717/AudioLLM/deployments/fake/code",
