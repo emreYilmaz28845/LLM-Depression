@@ -1,0 +1,86 @@
+schema_version: audiollm.experiment_group.v1
+group_id: turkish-pooled-qcond-v1-20260903
+title: Turkish pooled question-condition training (pos_only + negative_only)
+research_question: >-
+  Under the harmonized Turkish threshold-17 recipe with a frozen
+  per-example question-condition tag, how does training one model on all
+  2,221 windows (1,051 pos_only + 1,170 negative_only) compare against
+  condition-specific baselines for Qwen and Gemma 4 across audio-only,
+  native-text, English-text, native audio+text, and English audio+text input?
+dataset: turkish
+baseline: condition-specific Turkish threshold-17 runs (pos_only and negative_only campaigns)
+treatment: one pooled model trained on all pos_only + negative_only windows with a frozen per-example question-condition tag
+population_subject_count: 120
+threshold: 17
+expected_seeds:
+  - 7
+  - 1337
+  - 2024
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: original_teacher_forced
+  aggregation: fold_mean_subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+github_issue: null
+github_pr: 235
+scope:
+  population_subject_count: 120
+  pos_only_selected_clip_count: 1051
+  negative_only_selected_clip_count: 1170
+  threshold: 17
+  split_protocol: train_val
+  split_seed: 1337
+  audio_encoder: frozen
+  checkpoint_role: best_model
+  backbone_selection_metric: inner_val_macro_f1
+  backbone_selection_mode: max
+  evaluation_backend: original_teacher_forced
+  evaluation_view: harmonized_all_windows_full_coverage
+  aggregation: fold_mean_subject_level
+  pooled_recipe_suffix: _qcond_v1
+  pair_rule: pair_margin=mean(pos_margin,neg_margin); Depressed iff pair_margin>=0; any INVALID in pair counts wrong
+  transcript_asymmetry: inherited deliberately (pos_only unreviewed, negative_only reviewed)
+  training_seeds:
+    - 7
+    - 1337
+    - 2024
+  heads:
+    - teacher_forced
+    - logreg
+    - xgb_optuna100
+  posthoc:
+    logreg_seed: 1337
+    xgb_completed_trials: 100
+    xgb_inner_folds: 3
+    xgb_sampler_seed: 1337
+    xgb_model_seed: 1337
+    xgb_inner_split_seed: 1337
+    xgb_threshold: 0.5
+    xgb_sampling_mode: none
+  backbone_cells:
+    - {id: Q01, recording_condition: pooled, transcript_condition: not_applicable, modality: audio_only, backbone: qwen, config: configs/main/turkish_pooled_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml}
+    - {id: Q02, recording_condition: pooled, transcript_condition: native, modality: text_only, backbone: qwen, config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml}
+    - {id: Q03, recording_condition: pooled, transcript_condition: english, modality: text_only, backbone: qwen, config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml}
+    - {id: Q04, recording_condition: pooled, transcript_condition: native, modality: audio_text, backbone: qwen, config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml}
+    - {id: Q05, recording_condition: pooled, transcript_condition: english, modality: audio_text, backbone: qwen, config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml}
+    - {id: G01, recording_condition: pooled, transcript_condition: not_applicable, modality: audio_only, backbone: gemma4, config: configs/main/turkish_pooled_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
+    - {id: G02, recording_condition: pooled, transcript_condition: native, modality: text_only, backbone: gemma4, config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
+    - {id: G03, recording_condition: pooled, transcript_condition: english, modality: text_only, backbone: gemma4, config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml}
+    - {id: G04, recording_condition: pooled, transcript_condition: native, modality: audio_text, backbone: gemma4, config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
+    - {id: G05, recording_condition: pooled, transcript_condition: english, modality: audio_text, backbone: gemma4, config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml}
+exclusions:
+  - english_audio_only
+  - condition_split_training
+  - tag_ablation
+  - historical_checkpoint_or_hidden_cache_reuse
+  - subject_os
+  - fixed_xgboost_headline
+  - additional_backbones
+  - additional_training_seeds

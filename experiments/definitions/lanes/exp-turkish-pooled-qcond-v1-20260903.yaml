@@ -6,6 +6,6 @@ branch: agent/exp-turkish-pooled-qcond-v1
 worktree: /home/emre/worktrees/LLM-Depression-exp-turkish-pooled-qcond-v1
 parent_branch: main
 parent_sha: d74dbe35da92e310b89ae91df0556f37b1c03f76
-created_at_utc: "2026-09-03T14:12:58Z"
-experiment_group_path: null
+created_at_utc: '2026-09-03T14:12:58Z'
+experiment_group_path: experiments/definitions/turkish-pooled-qcond-v1-20260903.yaml
 type: competing
