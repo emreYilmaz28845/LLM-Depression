@@ -48,6 +48,7 @@ REMOTE_SOURCE_ROOT = REMOTE_RUNTIME_ROOT / "source_inputs_remote"
 LOCAL_DATASET_ROOT = "/media/emre/Backup/AudioLLM/Datasets"
 REMOTE_DATASET_ROOT = "/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets"
 TRACKING_KIND = "turkish_pooled_qcond_v1_head"
+TERMINAL_UPDATE_BATCH_SIZE = 32
 
 
 class CampaignError(RuntimeError):
@@ -962,12 +963,16 @@ def _status(args: argparse.Namespace) -> int:
         counts[record["state"]] = counts.get(record["state"], 0) + 1
         if record["state"] not in {"PENDING", "RUNNING", "CONFIGURING", "UNKNOWN"}:
             terminal.append(item)
-    if terminal:
-        result = ssh_bash(args.scheduler_host, _terminal_update_script(terminal, deployment), timeout=1800)
+    for start in range(0, len(terminal), TERMINAL_UPDATE_BATCH_SIZE):
+        batch = terminal[start:start + TERMINAL_UPDATE_BATCH_SIZE]
+        result = ssh_bash(args.scheduler_host, _terminal_update_script(batch, deployment), timeout=1800)
         sys.stdout.write(result.stdout)
         sys.stderr.write(result.stderr)
         if result.returncode != 0:
-            raise CampaignError("remote terminal evidence update failed")
+            raise CampaignError(
+                "remote terminal evidence update failed for batch "
+                f"{start // TERMINAL_UPDATE_BATCH_SIZE + 1}"
+            )
     status_path = target.with_name(target.name + ".status.json")
     status_path.parent.mkdir(parents=True, exist_ok=True)
     status_path.write_text(json.dumps({"schema_version": "audiollm.turkish_pooled_qcond_status.v1", "counts": counts, "jobs": jobs}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
