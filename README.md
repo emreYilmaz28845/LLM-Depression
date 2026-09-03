@@ -1,6 +1,8 @@
 # LLM-Depression
 
-Leakage-safe binary depression classification with Qwen2-Audio-7B / Qwen2-7B LoRA fine-tuning, across audio+text, audio-only, and text-only modalities on D3TEC, Turkish, Androids, DAIC-WoZ, CMDC, and legacy E-DAIC configs.
+Leakage-safe binary depression classification with parameter-efficient audio-language models. The repository compares audio+text, audio-only, and text-only conditions across D3TEC, Turkish, Androids, DAIC-WoZ, CMDC, and legacy E-DAIC. The main model families are Qwen2-Audio-7B / Qwen2-7B and Gemma 4 12B.
+
+The central research question is whether raw speech adds reliable subject-level information beyond transcripts after controlling subject leakage, unequal recording length, language, dataset, model family, and evaluation procedure. The intended contribution is a harmonized multilingual evaluation protocol and empirical comparison, not a claim that this is the first audio-language model used for depression detection.
 
 This is the repository overview, not the source of truth for individual experiment settings. Read, in order:
 
@@ -15,12 +17,18 @@ Do not infer a current protocol from an archived config or historical result doc
 
 The active harmonized configurations live in `configs/main/`, named `<dataset>[_t<threshold>]_<modality>_harmonized_selmacrof1_tf[_variant].yaml`. They use:
 
-- teacher-forced label decoding (`original_teacher_forced`) as the headline evaluation backend;
+- teacher-forced label decoding (`original_teacher_forced`) as the current historical headline backend;
 - `headline/binary_strict_*` metrics, where invalid decoded labels count as wrong (`valid_only_*` is ignored);
 - validation macro-F1 (`inner_val_macro_f1`, mode max) for checkpoint selection and early stopping;
 - a frozen audio encoder by default (`DepAdapter` and projector training are opt-in);
 - English prompts and external labels `Depressed` / `Non-depressed`; transcripts stay in their original language;
 - no AUROC — teacher-forced decoding emits a hard label, so there is no ranking to compute AUROC over.
+
+### Evaluation warning
+
+`original_teacher_forced` is the repository's current historical headline protocol, but it is not a clean deployable classifier decision. It reconstructs label tokens under a gold-conditioned continuation. Some audio paths later aggregate gold-independent candidate-label score margins, while text-only paths generally retain the reconstructed-label decision. Results carrying the same backend name can therefore have different effective decision semantics across modalities.
+
+Do not use the current teacher-forced view as final evidence that one modality outperforms another. Paper-primary comparisons must first use one gold-independent rule for every modality, such as normalized candidate-label likelihood or constrained two-label decoding, with the same subject-level aggregation. Keep teacher-forced results as a clearly labelled legacy or diagnostic view. See `docs/LLM_CLASSIFICATION_INFERENCE_INVESTIGATION.md`.
 
 Current canonical coverage:
 
@@ -34,6 +42,16 @@ Current canonical coverage:
 | EDAIC | audio+text, audio-only, text-only | Unchanged legacy positive-F1 K4 configs; outside the harmonized family |
 
 `configs/experiments/` holds active non-headline research; `configs/archive/` is history and must not be treated as the current recipe. Turkish BDI≥21, Turkish BDI≥25, and EATD are not current headline configs.
+
+Current research families extend the core modality matrix with:
+
+- Qwen versus Gemma 4 backbone comparisons;
+- native-language versus English-translated transcripts for non-English datasets;
+- standalone versus symmetric merged multi-dataset training;
+- direct generative labels versus Logistic Regression and XGBoost heads over hidden representations;
+- fixed-head and Optuna-tuned classifier studies.
+
+These datasets share a binary output format, not one identical clinical target. D3TEC and DAIC derive labels from questionnaire thresholds, while Androids and CMDC use diagnosis-oriented labels. Merged-model results must therefore be reported per dataset and described as cross-corpus learning, not as if every positive label represented the same clinical construct.
 
 ## Local environment
 
@@ -165,23 +183,26 @@ Training/evaluation can be given `--experiment-context <json>` so rank 0 writes 
 Active non-headline workflows, each with its own doc and configs:
 
 - Hidden-state classifiers and Optuna HPO: `configs/features/*.yaml` matrices, `scripts/run_optuna_slurm.sh`, `docs/OPTUNA_RAW_XGBOOST_FOLLOWUP.md`
-- Translation overlays: `configs/features/translation_en_matrix.yaml`
+- Translation overlays: `configs/experiments/harmonized/english_translation_matrix.yaml` and `configs/experiments/harmonized/gemma4_english_translation_matrix.yaml`
 - D3TEC: `docs/D3TEC_IMPLEMENTATION.md`
 - Merged training: `docs/SYMMETRIC_MERGED_PROTOCOL_PLAN.md`
 - Qwen3-Omni: `docs/QWEN3_OMNI_IMPLEMENTATION.md`
 
 Read the workflow doc and its current configs/scripts before executing.
 
-## Dataset and Pipeline Comparison
+## Dataset and pipeline comparison
 
-Quick view derived from the canonical machine-readable table in `docs/dataset_pipeline_comparison.csv`. See `docs/dataset_pipeline_audit.md` for evidence, examples, provenance, and open questions.
+This table describes the current harmonized protocol. It deliberately contains no result values. Read metrics only from locally verified artifacts or the generated workbook with complete run, fold, split, backend, view, aggregation, and checkpoint provenance. See `docs/dataset_pipeline_audit.md` and `docs/DATASET_QUESTION_STRUCTURE_RECOVERY.md` for the detailed evidence and open questions.
 
-| Dataset | Subjects (dep/non) | Protocol and natural unit | Available participant audio / subject | Model audio input | Train / eval sampling | Model speech coverage | Current posF1 (A / T / A+T) | Main risk | Recommended strategy |
-|---|---:|---|---:|---|---|---:|---|---|---|
-| D3TEC | 62 (29/33) | Spanish, 27-prompt non-interactive slideshow; response | Response WAV mean 541 s; exact speech-only time UNKNOWN | One non-overlapping equal partition, at most 30 s | Response-normalized fixed-budget schedule / all windows | ~83.6% of window inventory per virtual epoch; 100% eval | 0.500 / 0.423 / 0.429 | Long answers are cut arbitrarily; prompt semantics and offline resampling provenance are missing | Keep response hierarchy and normalized weighting; recover prompts; test pause-aware long-response windows |
-| Turkish | 120 (83/37) | Original protocol UNKNOWN; available unit is a provider-cut 20 s file | Available labeled chunk audio mean 166 s; speech/interviewer status UNKNOWN | One file, at most 20 s | Class-balanced replacement sampling / all files | ~60.5% unique rows expected per epoch; 100% eval | 0.847 / 0.821 / 0.809 | Fixed cuts may split utterances; subject exposure remains unequal; reported CV has no held-out test | Recover source protocol; subject-normalize sampling; separate selection from held-out reporting; test utterance-aware cuts |
-| Androids | 116 (64/52) | Italian human interview; manually isolated participant turn | 191 s mean | One non-overlapping equal partition, at most 30 s | All windows with subject/turn-normalized loss / all windows | 100% / 100% | 0.908 / 0.882 / 0.857 | Arbitrary cuts affect longer patient turns more often; question context is absent; adding ASR text hurts | Keep turn hierarchy and weighting; use pause-aware cuts only for long turns; diagnose text degradation |
-| DAIC-WOZ | 189 (56/133) | English virtual interview; natural unit is a question-response exchange | 466 s mean from timestamps | Audited store: one five-participant-turn pack; processor keeps at most 30 s | No active config; historical runs used all pack rows / all pack rows | Historical path: 98.773% / 98.773% | UNKNOWN / UNKNOWN / UNKNOWN | Packs remove Ellie questions and inter-turn gaps; 9–78 packs/subject; long packs truncate; no current result uses this exact lineage | Rebuild question-aware units, encode latency, segment long responses, align text, subject-normalize, and evaluate full coverage |
-| CMDC | 78 (26/52) | Mandarin semi-structured 12-topic interview; participant answer to one question | 501 s mean | First 30 s of each packaged participant-answer WAV | All questions / all questions | 55.471% / 55.471% | 0.918 / 0.904 / 0.896 | Silent processor truncation drops 44.529% of answer audio and misaligns long-response text; question text is absent | Segment long answers into aligned windows; aggregate window → question → subject; add verified question context |
+| Dataset | Language and target | Natural unit | Current harmonized audio coverage | Evaluation protocol | Main scientific risk |
+|---|---|---|---|---|---|
+| D3TEC | Spanish; questionnaire-threshold label | Response to one of 27 elicitation prompts | Every non-overlapping response window of at most 30 seconds | Nested five-fold `train_val_test`; subject-level aggregation | Arbitrary cuts in long responses, inferred prompt metadata, and full-transcript repetition beside local audio |
+| Turkish | Turkish; BDI threshold | Provider-cut recording associated with a patient | Every available natural-unit window | Five-fold `train_val`; the selected outer fold is not an independent test | Source recording protocol, speaker content, and held-out-test status require careful interpretation |
+| Androids | Italian; diagnosis-oriented label | Manually isolated participant turn | Every non-overlapping participant-turn window of at most 30 seconds | Nested five-fold `train_val_test`; subject-level aggregation | Question context is omitted and recording/turn patterns may act as shortcuts |
+| DAIC-WoZ | English; PHQ-8 threshold | Participant-only speech packed into consecutive chunks | Every participant-only packed30 chunk, one chunk per prompt | Official train/development/test handling with subject-normalized aggregation | Ellie question context and response latency are omitted; full transcript is repeated beside local audio |
+| CMDC | Mandarin; diagnosis-oriented label | Participant answer to one interview topic | Every answer window, including audio beyond the first 30 seconds | Five-fold `train_val`; the selected outer fold is not an independent test | Symptom-heavy questions, institution effects, omitted question text, and non-held-out reporting |
+| E-DAIC | English; legacy depression label protocol | Legacy K4 bundle | Legacy fixed bundle rather than harmonized all-window coverage | Legacy positive-F1 checkpoint selection | Not methodologically interchangeable with the harmonized family |
 
-Metrics are strict teacher-forced subject-level results. CMDC and Turkish use five-fold means; D3TEC and Androids use pooled five-fold subject predictions. D3TEC and Androids are experimental macro-F1-selected runs; Turkish and CMDC use positive-F1 selection. The DAIC-WOZ cells are `UNKNOWN` because no current checked-in config or workbook result consumes the audited `minimal_zips/preprocessed_audios` lineage; assigning another representation's result to it would be a provenance error.
+Across harmonized audio+text configs, the complete participant transcript is repeated beside each local audio window. This is a deliberate practical baseline, not true local audio-text alignment. Paper-primary work should compare it with locally aligned transcript windows, transcript-only inference, audio-only inference, and late fusion.
+
+The recovered question structures also differ sharply across datasets: D3TEC uses balanced-valence prompts, Androids uses largely neutral everyday questions, DAIC includes screening and clinical branches, and CMDC uses symptom-heavy topics. Question-aware ablations and dataset-shortcut checks are needed before claiming a corpus-independent depression signal.
