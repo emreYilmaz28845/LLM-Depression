@@ -453,23 +453,55 @@ def _validate_source_root(source_root: Path) -> Path:
 
 def _transfer_source_inputs(source_root: Path) -> None:
     source_root = _validate_source_root(source_root)
-    remote_check = "\n".join(
-        ["set -euo pipefail", f"root={q(REMOTE_SOURCE_ROOT)}", "mkdir -p \"$root\""]
-        + [f"test ! -e \"$root/{relative}\"" for relative in SOURCE_INPUT_FILES]
-    )
+    local_hashes = {
+        relative: hashlib.sha256((source_root / relative).read_bytes()).hexdigest()
+        for relative in SOURCE_INPUT_FILES
+    }
+
+    def _verify_line(relative: str) -> str:
+        remote = REMOTE_SOURCE_ROOT / relative
+        expected = local_hashes[relative]
+        return (
+            f"test -f {q(remote)}; "
+            f"actual=$(sha256sum {q(remote)} | awk '{{print $1}}'); "
+            f"test \"$actual\" = {q(expected)}"
+        )
+
+    # Existing runtime inputs are immutable evidence.  A second preflight
+    # stage may reuse byte-identical inputs, but a mismatch must fail closed.
+    remote_check_lines = [
+        "set -euo pipefail",
+        f"root={q(REMOTE_SOURCE_ROOT)}",
+        "mkdir -p \"$root\"",
+    ]
+    for relative in SOURCE_INPUT_FILES:
+        remote = REMOTE_SOURCE_ROOT / relative
+        remote_check_lines.append(
+            f"if test -e {q(remote)}; then {_verify_line(relative)}; fi"
+        )
+    remote_check = "\n".join(remote_check_lines) + "\n"
     result = ssh_bash(TRANSFER_HOST, remote_check, timeout=300)
     if result.returncode != 0:
         raise CampaignError(
-            "pooled source input transfer refused because a remote target already exists: "
+            "pooled source input transfer refused because an existing remote target "
+            "does not match the local source hash: "
             + result.stderr.strip()
         )
     for relative in SOURCE_INPUT_FILES:
         remote_parent = REMOTE_SOURCE_ROOT / Path(relative).parent
-        mkdir = ssh_bash(TRANSFER_HOST, f"set -euo pipefail\nmkdir -p {q(remote_parent)}\ntest ! -e {q(REMOTE_SOURCE_ROOT / relative)}\n", timeout=300)
+        remote_path = REMOTE_SOURCE_ROOT / relative
+        mkdir_script = "\n".join(
+            [
+                "set -euo pipefail",
+                f"mkdir -p {q(remote_parent)}",
+                f"if test -e {q(remote_path)}; then {_verify_line(relative)}; else test ! -e {q(remote_path)}; fi",
+            ]
+        ) + "\n"
+        mkdir = ssh_bash(TRANSFER_HOST, mkdir_script, timeout=300)
         if mkdir.returncode != 0:
-            raise CampaignError(f"could not reserve remote pooled source target: {remote_parent}: {mkdir.stderr.strip()}")
+            raise CampaignError(f"could not reserve or verify remote pooled source target: {remote_path}: {mkdir.stderr.strip()}")
         command = [
-            "rsync", "-avh", "--itemize-changes",
+            "rsync", "-avh", "--itemize-changes", "--ignore-existing",
             str(source_root / relative),
             f"{TRANSFER_HOST}:{remote_parent}/",
         ]
@@ -478,6 +510,15 @@ def _transfer_source_inputs(source_root: Path) -> None:
         sys.stderr.write(transfer.stderr)
         if transfer.returncode != 0:
             raise CampaignError(f"pooled source input transfer failed for {relative}")
+    verify_script = "\n".join(
+        ["set -euo pipefail"] + [_verify_line(relative) for relative in SOURCE_INPUT_FILES]
+    ) + "\n"
+    verified = ssh_bash(TRANSFER_HOST, verify_script, timeout=300)
+    if verified.returncode != 0:
+        raise CampaignError(
+            "pooled source input transfer completed without the expected remote hashes: "
+            + verified.stderr.strip()
+        )
 
 
 def _run_preflight(args: argparse.Namespace) -> int:
