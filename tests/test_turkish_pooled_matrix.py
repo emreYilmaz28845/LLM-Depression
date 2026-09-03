@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from src.turkish_pooled_qcond import build_plan
-from tools.turkish_pooled_qcond import _preflight_script, _translate_audio_path
+from tools.turkish_pooled_qcond import _preflight_script, _remote_preflight_audit_path, _translate_audio_path
 
 
 ROOT = Path(__file__).parents[1]
@@ -51,3 +51,23 @@ def test_remote_audio_path_translation_is_root_scoped() -> None:
         assert "documented local dataset roots" in str(exc)
     else:
         raise AssertionError("an undocumented audio root must fail closed")
+
+
+def test_remote_preflight_audit_resolver_escapes_embedded_python_braces(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
+    class Result:
+        returncode = 0
+        stdout = "/gpfs/projects/etur92/ozu647717/experiment_runtime/exp-turkish-pooled-qcond-clean-v1-20260903/preflight/smoke.json\n"
+        stderr = ""
+
+    def fake_ssh(host: str, script: str, *, timeout: int):
+        captured["host"] = host
+        captured["script"] = script
+        return Result()
+
+    monkeypatch.setattr("tools.turkish_pooled_qcond.ssh_bash", fake_ssh)
+    path = _remote_preflight_audit_path("scheduler", stage="smoke")
+    assert path.endswith("/preflight/smoke.json")
+    assert "{path}" in captured["script"]
+    assert "{exc}" in captured["script"]

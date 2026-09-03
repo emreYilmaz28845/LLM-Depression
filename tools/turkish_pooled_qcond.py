@@ -412,9 +412,9 @@ path = Path({str(REMOTE_RUNTIME_ROOT / 'preflight' / f'{stage}.json')!r})
 try:
     payload = json.loads(path.read_text(encoding='utf-8'))
 except (OSError, json.JSONDecodeError) as exc:
-    raise SystemExit(f'cannot read pooled preflight audit: {path}: {exc}')
+    raise SystemExit(f'cannot read pooled preflight audit: {{path}}: {{exc}}')
 if payload.get('status') != 'passed' or payload.get('group_id') != {GROUP_ID!r}:
-    raise SystemExit(f'pooled preflight audit is not passed or has the wrong group: {path}')
+    raise SystemExit(f'pooled preflight audit is not passed or has the wrong group: {{path}}')
 print(path)
 PY
 """
