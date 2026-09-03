@@ -226,7 +226,9 @@ def _make_submission_plan(*, matrix: dict[str, Any], deployment: dict[str, Any],
     for index, train_job in enumerate(train_jobs):
         cell = cells[str(train_job["cell_id"])]
         language = "native" if cell.transcript_condition == "not_applicable" else cell.transcript_condition
-        condition = "negative_only" if cell.recording_condition == "negative_only" else "pos_only"
+        condition = str(cell.recording_condition)
+        if condition != "pooled":
+            raise CampaignError(f"pooled submission requires recording_condition pooled, got {condition!r}")
         hashes = _hashes(pairs[(condition, language)])
         logical = str(train_job["run_name"])
         backbone_id = new_attempt_id(logical, source_sha)
