@@ -44,7 +44,9 @@ QWEN_HIDDEN_DEPS = REMOTE_PROJECT_ROOT / ".deps" / "qwen_hidden"
 SUBMISSION_SCHEMA = "audiollm.turkish_pooled_qcond_submission.v1"
 LOCAL_ROOT = PROJECT_ROOT / "outputs" / "turkish_pooled_qcond" / EXPERIMENT_ID
 LOCAL_SOURCE_ROOT = LOCAL_ROOT / "source_inputs"
-REMOTE_SOURCE_ROOT = REMOTE_RUNTIME_ROOT / "source_inputs"
+REMOTE_SOURCE_ROOT = REMOTE_RUNTIME_ROOT / "source_inputs_remote"
+LOCAL_DATASET_ROOT = "/media/emre/Backup/AudioLLM/Datasets"
+REMOTE_DATASET_ROOT = "/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets"
 TRACKING_KIND = "turkish_pooled_qcond_v1_head"
 
 
@@ -451,8 +453,63 @@ def _validate_source_root(source_root: Path) -> Path:
     return source_root
 
 
-def _transfer_source_inputs(source_root: Path) -> None:
+def _translate_audio_path(value: str) -> str:
+    """Translate only the documented local dataset roots for MN5 execution."""
+    if value.startswith(REMOTE_DATASET_ROOT + "/"):
+        return value
+    if value.startswith(LOCAL_DATASET_ROOT + "/"):
+        return REMOTE_DATASET_ROOT + value[len(LOCAL_DATASET_ROOT):]
+    raise CampaignError(
+        "pooled source audio path is outside the documented local dataset roots: "
+        + value
+    )
+
+
+def _stage_remote_source_inputs(source_root: Path) -> Path:
+    """Create immutable MN5-path copies without changing the audited source root."""
     source_root = _validate_source_root(source_root)
+    staged_root = LOCAL_ROOT / "source_inputs_remote"
+    for relative in SOURCE_INPUT_FILES:
+        source = source_root / relative
+        if relative.startswith("manifests/"):
+            output_lines: list[str] = []
+            for line_number, line in enumerate(source.read_text(encoding="utf-8").splitlines(), start=1):
+                if not line.strip():
+                    raise CampaignError(f"pooled source manifest has a blank line: {source}:{line_number}")
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise CampaignError(f"pooled source manifest is not valid JSON: {source}:{line_number}") from exc
+                if not isinstance(row, dict):
+                    raise CampaignError(f"pooled source manifest row is not an object: {source}:{line_number}")
+                if "audio_path" in row:
+                    if not isinstance(row["audio_path"], str):
+                        raise CampaignError(f"pooled audio_path is not a string: {source}:{line_number}")
+                    row["audio_path"] = _translate_audio_path(row["audio_path"])
+                if "audio_paths" in row:
+                    if not isinstance(row["audio_paths"], list) or not all(isinstance(path, str) for path in row["audio_paths"]):
+                        raise CampaignError(f"pooled audio_paths is not a string list: {source}:{line_number}")
+                    row["audio_paths"] = [_translate_audio_path(path) for path in row["audio_paths"]]
+                output_lines.append(json.dumps(row, ensure_ascii=False) + "\n")
+            payload = "".join(output_lines).encode("utf-8")
+        else:
+            payload = source.read_bytes()
+        destination = staged_root / relative
+        if destination.exists():
+            if destination.read_bytes() != payload:
+                raise CampaignError(f"refusing to overwrite incompatible staged source input: {destination}")
+        else:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(payload)
+    return staged_root
+
+
+def _transfer_source_inputs(source_root: Path) -> None:
+    source_root = _stage_remote_source_inputs(source_root)
+    print(
+        "staged pooled source manifests for MN5 path resolution: "
+        f"{source_root} -> {REMOTE_SOURCE_ROOT}"
+    )
     local_hashes = {
         relative: hashlib.sha256((source_root / relative).read_bytes()).hexdigest()
         for relative in SOURCE_INPUT_FILES

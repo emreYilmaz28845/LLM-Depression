@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from src.turkish_pooled_qcond import build_plan
-from tools.turkish_pooled_qcond import _preflight_script
+from tools.turkish_pooled_qcond import _preflight_script, _translate_audio_path
 
 
 ROOT = Path(__file__).parents[1]
@@ -38,3 +38,16 @@ def test_matrix_resources_dependencies_and_remote_preflight_are_safe() -> None:
     assert "smoke.json" in script
     assert "--require-models --require-environment" in script
     assert "--delete" not in script
+
+
+def test_remote_audio_path_translation_is_root_scoped() -> None:
+    local = "/media/emre/Backup/AudioLLM/Datasets/Turkish/all-files/example.wav"
+    remote = "/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets/Turkish/all-files/example.wav"
+    assert _translate_audio_path(local) == remote
+    assert _translate_audio_path(remote) == remote
+    try:
+        _translate_audio_path("/tmp/example.wav")
+    except RuntimeError as exc:
+        assert "documented local dataset roots" in str(exc)
+    else:
+        raise AssertionError("an undocumented audio root must fail closed")
