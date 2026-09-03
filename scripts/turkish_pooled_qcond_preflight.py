@@ -27,6 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.turkish_pooled_qcond import GROUP_ID, load_cells
 from src.utils import (
+    load_yaml_with_overrides,
     read_json,
     read_jsonl,
     resolve_project_path,
@@ -144,9 +145,9 @@ def _model_audit(config_paths: list[Path], *, require_models: bool) -> dict[str,
     models: dict[str, dict[str, Any]] = {}
     failures: list[str] = []
     for path in sorted(set(config_paths)):
-        import yaml
-
-        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+        config = load_yaml_with_overrides(path, [])
+        if not isinstance(config, dict):
+            raise PreflightError(f"resolved config is not an object: {path}")
         model_path = resolve_project_path(config.get("model_name_or_path"))
         backend = str(config.get("model_backend") or "qwen_audio").lower()
         exists = model_path.is_dir()
