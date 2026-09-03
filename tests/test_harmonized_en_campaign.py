@@ -45,6 +45,10 @@ def en_config_paths() -> list[Path]:
         path
         for path in MAIN.glob("*harmonized_selmacrof1_tf*_en.yaml")
         if "turkish_negative_only" not in path.name
+        # Pooled question-condition EN pair is a separate _qcond_v1 family
+        # with its own locked test (test_turkish_pooled_configs.py): the tag
+        # placeholder and pooled roots are outside the native-derivation rule.
+        and "turkish_pooled_t17" not in path.name
         and not path.name.startswith("turkish_t17_")
     )
 

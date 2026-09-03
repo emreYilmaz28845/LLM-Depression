@@ -17,6 +17,9 @@ def harmonized_configs():
         and "_gemma4_12b" not in path.name
         and "_officialdev" not in path.name
         and "turkish_negative_only" not in path.name
+        # Pooled Turkish question-condition family has its own locked recipe
+        # (_qcond_v1) and its own test (test_turkish_pooled_configs.py).
+        and "turkish_pooled_t17" not in path.name
         # Pre-rename canonical Turkish files stay as legacy history.
         and not path.name.startswith("turkish_t17_")
     )
@@ -56,12 +59,17 @@ def test_gemma4_variants_cover_daic_and_the_harmonized_non_daic_family() -> None
     # 18 native non-DAIC (the 12 harmonized-family cells plus three fresh
     # positive-only and three fresh negative-only Turkish cells) + 12 English
     # (the eight harmonized-family cells plus two fresh positive-only and two
-    # fresh negative-only Turkish cells).
+    # fresh negative-only Turkish cells). The five pooled question-condition
+    # cells (three native + two English) are a separate _qcond_v1 family
+    # covered by test_turkish_pooled_configs.py.
     non_daic = [path for path in gemma if not path.name.startswith("daic_")]
+    pooled = [path for path in non_daic if "turkish_pooled_t17" in path.name]
+    assert len(pooled) == 5
+    non_daic = [path for path in non_daic if "turkish_pooled_t17" not in path.name]
     assert len(non_daic) == 30
     assert len([path for path in non_daic if "_en_" in path.name]) == 12
     assert len([path for path in non_daic if "_en_" not in path.name]) == 18
-    assert len(gemma) == 33
+    assert len(gemma) == 38  # 33 above + 5 pooled _qcond_v1 cells
 
 
 def test_harmonized_selection_and_teacher_forced_recipe_is_locked() -> None:

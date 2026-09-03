@@ -359,6 +359,9 @@ def _base_sample_row(example: dict[str, Any], checkpoint_name: str, backend_name
     for key in ("chunk_id", "bundle_id", "bundle_chunk_ids", "bundle_coverage_count"):
         if key in example:
             row[key] = example[key]
+    for key in ("dataset_variant", "question_condition"):
+        if example.get(key) not in (None, ""):
+            row[key] = str(example[key])
     return row
 
 

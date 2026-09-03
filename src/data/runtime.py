@@ -71,6 +71,29 @@ def resolve_audio_placeholder(config: dict[str, Any]) -> str:
 DEFAULT_SINGLE_AUDIO_CONTEXT = "The subject's speech audio is provided."
 DEFAULT_SUBJECT_AUDIO_CONTEXT = "The subject's speech audio is provided in three responses: negative, neutral, and positive."
 
+QUESTION_CONTEXT_SENTENCES = {
+    "pos_only_t17": "The following speech is the subject's response to positive interview questions.",
+    "negative_only_t17": "The following speech is the subject's response to negative interview questions.",
+}
+
+
+def _question_context_block(question_condition: str | None, template: str) -> str:
+    uses_placeholder = "{question_context}" in template
+    if not uses_placeholder:
+        return ""
+    if question_condition is None:
+        raise ValueError(
+            "Prompt template contains {question_context} but question_condition is None."
+        )
+    key = str(question_condition).strip()
+    sentence = QUESTION_CONTEXT_SENTENCES.get(key)
+    if sentence is None:
+        raise ValueError(
+            f"Unknown question_condition {question_condition!r} for "
+            f"{{question_context}} template. Known: {sorted(QUESTION_CONTEXT_SENTENCES)}."
+        )
+    return f"{sentence}\n"
+
 
 def load_manifest_rows(path: str | Path) -> list[dict[str, Any]]:
     return read_jsonl(path)
@@ -144,6 +167,7 @@ def render_user_prompt_text(
     is_subject_bundle: bool = False,
     audio_context_override: str | None = None,
     emotion_block: str = "",
+    question_condition: str | None = None,
 ) -> str:
     input_modality = resolve_input_modality(config)
     use_audio, use_text = _modality_flags(input_modality)
@@ -161,6 +185,7 @@ def render_user_prompt_text(
         "label_descriptor": prompt_label_descriptor(config),
         "label_instruction": prompt_label_instruction(config),
         "emotion_block": emotion_block,
+        "question_context": _question_context_block(question_condition, template),
     }
     try:
         return template.format_map(placeholder_values).strip()
@@ -331,7 +356,11 @@ def _base_example_from_row(
         caption = resolve_caption(emotion_cache, str(row["sample_id"]), emotion_policy)
         emotion_block = single_chunk_emotion_block(caption)
     user_text = render_user_prompt_text(
-        config, transcript, is_subject_bundle=False, emotion_block=emotion_block
+        config,
+        transcript,
+        is_subject_bundle=False,
+        emotion_block=emotion_block,
+        question_condition=row.get("dataset_variant"),
     )
     example_internal_label = row.get("internal_label_text") or internal_label_text_from_int(config, int(row["label"]))
     prompt_text = build_prompt_text(
@@ -370,6 +399,8 @@ def _base_example_from_row(
         "start_time": row.get("start_time", ""),
         "end_time": row.get("end_time", ""),
         "segment_duration": row.get("segment_duration", ""),
+        "dataset_variant": row.get("dataset_variant", config.get("dataset_variant", "")),
+        "question_condition": row.get("dataset_variant"),
     }
     return example, transcript_log
 
@@ -387,6 +418,7 @@ def _build_subject_level_text_only_examples(
 
     examples: list[dict[str, Any]] = []
     truncation_logs: list[dict[str, Any]] = []
+    is_pooled_qcond = str(config.get("dataset_variant", "")).strip() == "pooled_t17"
     for subject_id in sorted(grouped):
         rows = _ordered_subject_rows(grouped[subject_id])
         label_values = {int(row["label"]) for row in rows}
@@ -396,99 +428,135 @@ def _build_subject_level_text_only_examples(
                 f"Found {len(label_values)} labels for subject_id={subject_id}."
             )
 
-        canonical_row = rows[0]
-        dataset_name = str(canonical_row.get("dataset", "")).lower()
-        if dataset_name == "androids_interview":
-            turn_rows: dict[int, dict[str, Any]] = {}
+        if is_pooled_qcond:
+            condition_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
             for row in rows:
-                turn_id = int(row["turn_id"])
-                prior = turn_rows.setdefault(turn_id, row)
-                if (
-                    str(prior["full_turn_transcript"]).strip()
-                    != str(row["full_turn_transcript"]).strip()
-                ):
-                    raise ValueError(
-                        "Inconsistent ANDROIDS full transcript within "
-                        f"response_id={row['response_id']}."
-                    )
-                if str(prior["response_id"]) != str(row["response_id"]):
-                    raise ValueError(
-                        f"ANDROIDS turn_id={turn_id} maps to multiple parent turns "
-                        f"for subject_id={subject_id}."
-                    )
-            subject_transcript = "\n\n".join(
-                f"[Turn {turn_id}]\n"
-                f"{str(turn_rows[turn_id]['full_turn_transcript']).strip()}"
-                for turn_id in sorted(turn_rows)
-            )
-        elif dataset_name == "d3tec":
-            response_rows: dict[int, dict[str, Any]] = {}
-            for row in rows:
-                prompt_id = int(row["prompt_id"])
-                prior = response_rows.setdefault(prompt_id, row)
-                if str(prior["full_response_transcript"]).strip() != str(row["full_response_transcript"]).strip():
-                    raise ValueError(
-                        f"Inconsistent D3TEC full transcript within response_id={row['response_id']}."
-                    )
-            expected_prompts = set(range(27))
-            if set(response_rows) != expected_prompts:
+                condition_groups[str(row.get("dataset_variant", "")).strip()].append(row)
+            unknown = sorted(set(condition_groups) - set(QUESTION_CONTEXT_SENTENCES))
+            if unknown or set(condition_groups) <= {""}:
                 raise ValueError(
-                    f"D3TEC text-only mode requires prompts 0-26 for {subject_id}; "
-                    f"found={sorted(response_rows)}"
+                    f"Pooled text-only mode requires per-row dataset_variant in "
+                    f"{sorted(QUESTION_CONTEXT_SENTENCES)} for subject_id={subject_id}; "
+                    f"found={sorted(condition_groups)}."
                 )
-            subject_transcript = "\n\n".join(
-                f"[Response {prompt_id}]\n{str(response_rows[prompt_id]['full_response_transcript']).strip()}"
-                for prompt_id in range(27)
-            )
+            if unknown:
+                raise ValueError(
+                    f"Unknown question_condition {unknown!r} for subject_id={subject_id}."
+                )
+            subject_condition_rows = [
+                (condition, _ordered_subject_rows(condition_groups[condition]))
+                for condition in sorted(condition_groups)
+            ]
         else:
-            subject_transcript = _resolve_subject_transcript(
-                rows,
+            subject_condition_rows = [(str(rows[0].get("dataset_variant", "") or ""), rows)]
+
+        for condition, condition_rows in subject_condition_rows:
+            canonical_row = condition_rows[0]
+            dataset_name = str(canonical_row.get("dataset", "")).lower()
+            if dataset_name == "androids_interview":
+                turn_rows: dict[int, dict[str, Any]] = {}
+                for row in condition_rows:
+                    turn_id = int(row["turn_id"])
+                    prior = turn_rows.setdefault(turn_id, row)
+                    if (
+                        str(prior["full_turn_transcript"]).strip()
+                        != str(row["full_turn_transcript"]).strip()
+                    ):
+                        raise ValueError(
+                            "Inconsistent ANDROIDS full transcript within "
+                            f"response_id={row['response_id']}."
+                        )
+                    if str(prior["response_id"]) != str(row["response_id"]):
+                        raise ValueError(
+                            f"ANDROIDS turn_id={turn_id} maps to multiple parent turns "
+                            f"for subject_id={subject_id}."
+                        )
+                subject_transcript = "\n\n".join(
+                    f"[Turn {turn_id}]\n"
+                    f"{str(turn_rows[turn_id]['full_turn_transcript']).strip()}"
+                    for turn_id in sorted(turn_rows)
+                )
+            elif dataset_name == "d3tec":
+                response_rows: dict[int, dict[str, Any]] = {}
+                for row in condition_rows:
+                    prompt_id = int(row["prompt_id"])
+                    prior = response_rows.setdefault(prompt_id, row)
+                    if str(prior["full_response_transcript"]).strip() != str(row["full_response_transcript"]).strip():
+                        raise ValueError(
+                            f"Inconsistent D3TEC full transcript within response_id={row['response_id']}."
+                        )
+                expected_prompts = set(range(27))
+                if set(response_rows) != expected_prompts:
+                    raise ValueError(
+                        f"D3TEC text-only mode requires prompts 0-26 for {subject_id}; "
+                        f"found={sorted(response_rows)}"
+                    )
+                subject_transcript = "\n\n".join(
+                    f"[Response {prompt_id}]\n{str(response_rows[prompt_id]['full_response_transcript']).strip()}"
+                    for prompt_id in range(27)
+                )
+            else:
+                subject_transcript = _resolve_subject_transcript(
+                    condition_rows,
+                    config,
+                    mode_name="Text-only subject mode",
+                )
+            transcript, transcript_log = _truncate_text(subject_transcript, transcript_max_chars)
+            if is_pooled_qcond:
+                question_condition_value: str | None = condition
+                example_sample_id = f"{subject_id}__{condition}"
+            else:
+                question_condition_value = condition_rows[0].get("dataset_variant")
+                example_sample_id = subject_id
+            user_text = render_user_prompt_text(
                 config,
-                mode_name="Text-only subject mode",
+                transcript,
+                is_subject_bundle=False,
+                question_condition=question_condition_value,
             )
-        transcript, transcript_log = _truncate_text(subject_transcript, transcript_max_chars)
-        user_text = render_user_prompt_text(config, transcript, is_subject_bundle=False)
-        internal_label_text = canonical_row.get("internal_label_text") or internal_label_text_from_int(
-            config,
-            int(canonical_row["label"]),
-        )
-        prompt_text = build_prompt_text(
-            system_prompt=config["prompt"]["system"],
-            user_text=user_text,
-            num_audios=0,
-            use_audio=False,
-        )
-        examples.append(
-            {
-                "dataset": canonical_row["dataset"],
-                "subject_id": subject_id,
-                "sample_id": subject_id,
-                "label": int(canonical_row["label"]),
-                "label_text": canonical_row["label_text"],
-                "internal_label_text": internal_label_text,
-                "transcript": transcript,
-                "audio_paths": [],
-                "audio_clip_seconds": [],
-                "audio_start_times": [],
-                "audio_end_times": [],
-                "input_modality": INPUT_MODALITY_TEXT_ONLY,
-                "prompt_text": prompt_text,
-                "training_text": build_training_text(prompt_text, internal_label_text),
-                "prompt_system_text": config["prompt"]["system"],
-                "prompt_user_text": user_text,
-                "question_id": canonical_row.get("question_id", ""),
-                "protocol_id": canonical_row.get("protocol_id", ""),
-            }
-        )
-        if transcript_log:
-            truncation_logs.append(
+            internal_label_text = canonical_row.get("internal_label_text") or internal_label_text_from_int(
+                config,
+                int(canonical_row["label"]),
+            )
+            prompt_text = build_prompt_text(
+                system_prompt=config["prompt"]["system"],
+                user_text=user_text,
+                num_audios=0,
+                use_audio=False,
+            )
+            examples.append(
                 {
-                    "partition": partition_name,
+                    "dataset": canonical_row["dataset"],
                     "subject_id": subject_id,
-                    "sample_id": subject_id,
-                    **transcript_log,
+                    "sample_id": example_sample_id,
+                    "label": int(canonical_row["label"]),
+                    "label_text": canonical_row["label_text"],
+                    "internal_label_text": internal_label_text,
+                    "transcript": transcript,
+                    "audio_paths": [],
+                    "audio_clip_seconds": [],
+                    "audio_start_times": [],
+                    "audio_end_times": [],
+                    "input_modality": INPUT_MODALITY_TEXT_ONLY,
+                    "prompt_text": prompt_text,
+                    "training_text": build_training_text(prompt_text, internal_label_text),
+                    "prompt_system_text": config["prompt"]["system"],
+                    "prompt_user_text": user_text,
+                    "question_id": canonical_row.get("question_id", ""),
+                    "protocol_id": canonical_row.get("protocol_id", ""),
+                    "dataset_variant": condition if is_pooled_qcond else canonical_row.get("dataset_variant", config.get("dataset_variant", "")),
+                    "question_condition": question_condition_value,
                 }
             )
+            if transcript_log:
+                truncation_logs.append(
+                    {
+                        "partition": partition_name,
+                        "subject_id": subject_id,
+                        "sample_id": example_sample_id,
+                        **transcript_log,
+                    }
+                )
 
     if truncation_log_path:
         write_jsonl(truncation_logs, truncation_log_path)
@@ -567,10 +635,62 @@ def _build_harmonized_response_window_examples(
         raise ValueError(f"Harmonized full transcripts are missing for subjects: {missing}")
 
     if input_modality == INPUT_MODALITY_TEXT_ONLY:
+        is_pooled_qcond_text = str(config.get("dataset_variant", "")).strip() == "pooled_t17"
+        if is_pooled_qcond_text:
+            pooled_conditions = sorted(QUESTION_CONTEXT_SENTENCES)
+            rows_by_condition: dict[str, list[dict[str, Any]]] = {
+                condition: [row for row in manifest_rows if str(row.get("dataset_variant", "")).strip() == condition]
+                for condition in pooled_conditions
+            }
+            found_conditions = sorted(
+                {str(row.get("dataset_variant", "")).strip() for row in manifest_rows}
+            )
+            unknown_conditions = sorted(set(found_conditions) - set(pooled_conditions))
+            if unknown_conditions or not all(rows_by_condition.values()):
+                raise ValueError(
+                    "Pooled text-only mode requires per-row dataset_variant in "
+                    f"{pooled_conditions}; found={found_conditions}."
+                )
+            transcripts_by_condition = {
+                condition: _harmonized_subject_transcripts(condition_rows, dataset_name)
+                for condition, condition_rows in rows_by_condition.items()
+            }
+            subjects = sorted({str(row["subject_id"]) for row in manifest_rows})
+            examples = []
+            for subject_id in subjects:
+                for condition in pooled_conditions:
+                    condition_transcripts = transcripts_by_condition[condition]
+                    if subject_id not in condition_transcripts:
+                        raise ValueError(
+                            f"Pooled text-only mode is missing {condition} transcript "
+                            f"for subject_id={subject_id}."
+                        )
+                    candidates = sorted(
+                        (row for row in rows_by_condition[condition] if str(row["subject_id"]) == subject_id),
+                        key=lambda item: str(item["sample_id"]),
+                    )
+                    if not candidates:
+                        raise ValueError(
+                            f"Pooled text-only mode is missing {condition} rows "
+                            f"for subject_id={subject_id}."
+                        )
+                    source = candidates[0]
+                    row = dict(source)
+                    row.update(
+                        {
+                            "sample_id": f"{subject_id}__{condition}",
+                            "transcript": condition_transcripts[subject_id],
+                            "full_subject_transcript": condition_transcripts[subject_id],
+                        }
+                    )
+                    example, _ = _base_example_from_row(row, config, transcript_max_chars)
+                    example["response_id"] = ""
+                    examples.append(example)
+            return examples
         representatives: dict[str, dict[str, Any]] = {}
         for row in sorted(manifest_rows, key=lambda item: str(item["sample_id"])):
             representatives.setdefault(str(row["subject_id"]), row)
-        examples: list[dict[str, Any]] = []
+        examples = []
         for subject_id, source in sorted(representatives.items()):
             row = dict(source)
             row.update(

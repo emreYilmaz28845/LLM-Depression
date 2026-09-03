@@ -105,6 +105,11 @@ def test_exact_gemma_config_sets_exist() -> None:
         )
     )
     current = [name for name in all_names if name not in legacy]
+    # The pooled question-condition family is separate _qcond_v1 recipe with
+    # its own locked test (test_turkish_pooled_configs.py).
+    pooled = sorted(name for name in current if "turkish_pooled_t17" in name)
+    assert len(pooled) == 5
+    current = [name for name in current if "turkish_pooled_t17" not in name]
     native = sorted(
         name for name in current if "_en_" not in name and not name.startswith("daic_")
     )
@@ -113,7 +118,7 @@ def test_exact_gemma_config_sets_exist() -> None:
     assert native == sorted(GEMMA_NATIVE_CONFIGS + GEMMA_NEGATIVE_ONLY_NATIVE_CONFIGS)
     assert english == sorted(GEMMA_EN_CONFIGS + GEMMA_NEGATIVE_ONLY_EN_CONFIGS)
     assert len(daic) == 3
-    assert len(all_names) == 33
+    assert len(all_names) == 38
 
 
 def test_gemma_configs_validate_and_differ_only_by_backend_allowlist() -> None:
