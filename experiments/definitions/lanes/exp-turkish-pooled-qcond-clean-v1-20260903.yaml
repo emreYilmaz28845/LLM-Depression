@@ -7,5 +7,5 @@ worktree: /home/emre/worktrees/LLM-Depression-exp-turkish-pooled-qcond-clean-v1
 parent_branch: main
 parent_sha: d74dbe35da92e310b89ae91df0556f37b1c03f76
 created_at_utc: "2026-09-03T17:11:23Z"
-experiment_group_path: null
+experiment_group_path: experiments/definitions/turkish-pooled-qcond-clean-v1-20260903.yaml
 type: competing
