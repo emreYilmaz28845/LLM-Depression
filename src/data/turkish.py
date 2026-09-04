@@ -202,6 +202,11 @@ def build_turkish_manifest(
         config.get("metadata_schema", METADATA_SCHEMA_LEGACY_T25)
     ).strip().lower()
     dataset_variant = str(config.get("dataset_variant", "")).strip()
+    if dataset_variant == "pooled_t17":
+        raise ValueError(
+            "The raw Turkish manifest builder refuses dataset_variant=pooled_t17; "
+            "use scripts/build_turkish_pooled_manifest.py with explicit source manifests."
+        )
     split_cfg = config.get("split", {})
     n_splits = int(split_cfg.get("outer_folds", 5))
     split_seed = int(split_cfg.get("seed", config.get("seed", 1337)))

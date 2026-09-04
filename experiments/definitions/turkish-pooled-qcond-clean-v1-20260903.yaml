@@ -1,0 +1,78 @@
+schema_version: audiollm.experiment_group.v1
+group_id: turkish-pooled-qcond-clean-v1-20260903
+title: Turkish pooled question-conditioned training
+research_question: >-
+  Does one tagged Turkish model trained on both positive- and negative-question
+  responses perform differently from matched condition-specific baselines under
+  the locked threshold-17 harmonized recipe?
+dataset: turkish
+baseline: matched positive-only and negative-only Turkish condition campaigns when locally reportable
+treatment: one pooled model trained on both source conditions with an explicit user-turn question tag
+expected_seeds:
+  - 7
+  - 1337
+  - 2024
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: original_teacher_forced
+  aggregation: fold_mean_subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+scope:
+  population_subject_count: 120
+  positive_source_manifest_rows: 1051
+  negative_source_manifest_rows: 1170
+  pooled_source_manifest_rows: 2221
+  threshold: 17
+  split_protocol: train_val
+  split_seed: 1337
+  audio_encoder: frozen
+  checkpoint_role: best_model
+  backbone_selection_metric: inner_val_macro_f1
+  backbone_selection_mode: max
+  evaluation_backend: original_teacher_forced
+  evaluation_view: harmonized_all_windows_full_coverage
+  aggregation: fold_mean_subject_level
+  text_pair_policy: turkish_pooled_text_pair_mean_margin_strict_v1
+  training_seeds:
+    - 7
+    - 1337
+    - 2024
+  heads:
+    - teacher_forced
+    - logreg
+    - xgb_optuna100
+  posthoc:
+    logreg_seed: 1337
+    xgb_completed_trials: 100
+    xgb_inner_folds: 3
+    xgb_sampler_seed: 1337
+    xgb_model_seed: 1337
+    xgb_inner_split_seed: 1337
+    xgb_threshold: 0.5
+    xgb_sampling_mode: none
+  backbone_cells:
+    - {id: Q01, modality: audio_only, transcript_condition: not_applicable, backbone: qwen, config: configs/main/turkish_pooled_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml}
+    - {id: Q02, modality: text_only, transcript_condition: native, backbone: qwen, config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml}
+    - {id: Q03, modality: text_only, transcript_condition: english, backbone: qwen, config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml}
+    - {id: Q04, modality: audio_text, transcript_condition: native, backbone: qwen, config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml}
+    - {id: Q05, modality: audio_text, transcript_condition: english, backbone: qwen, config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml}
+    - {id: G01, modality: audio_only, transcript_condition: not_applicable, backbone: gemma4, config: configs/main/turkish_pooled_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
+    - {id: G02, modality: text_only, transcript_condition: native, backbone: gemma4, config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
+    - {id: G03, modality: text_only, transcript_condition: english, backbone: gemma4, config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml}
+    - {id: G04, modality: audio_text, transcript_condition: native, backbone: gemma4, config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
+    - {id: G05, modality: audio_text, transcript_condition: english, backbone: gemma4, config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml}
+exclusions:
+  - tag_ablation
+  - additional_model_cells
+  - additional_seeds_or_folds
+  - subject_os
+  - fixed_xgboost_headline
+  - historical_checkpoint_or_hidden_cache_reuse
+  - archive_or_rejected_pr_inputs

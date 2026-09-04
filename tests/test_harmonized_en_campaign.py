@@ -46,6 +46,7 @@ def en_config_paths() -> list[Path]:
         for path in MAIN.glob("*harmonized_selmacrof1_tf*_en.yaml")
         if "turkish_negative_only" not in path.name
         and not path.name.startswith("turkish_t17_")
+        and not path.name.startswith("turkish_pooled_t17_")
     )
 
 

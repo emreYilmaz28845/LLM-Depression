@@ -54,6 +54,7 @@ class PromptOnlyExtractionCollator:
         # never rendered into the prompt by this collator.
         for key in (
             "response_id",
+            "question_condition",
             "turn_key",
             "question_id",
             "window_id",

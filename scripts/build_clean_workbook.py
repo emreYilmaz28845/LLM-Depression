@@ -1535,6 +1535,158 @@ def build_turkish_question_condition_provenance(ws, put, *, report_path: Path) -
         put("Turkish PosOnly vs NegOnly", "Turkish", label + " negative-only positive-F1", item.get("negative_only_positive_f1_mean"), f"{source}; provenance key {key}", aggregation, artifact, "recomputed from local subject predictions; all 15 seed-fold units REPORTABLE")
 
 
+def _load_turkish_pooled_qcond_report(report_path: Path) -> dict[str, Any]:
+    if not report_path.is_file():
+        raise ValueError(f"Turkish pooled report does not exist: {report_path}")
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read Turkish pooled report: {report_path}: {exc}") from exc
+    if report.get("schema_version") != "audiollm.turkish_pooled_qcond_report.v1":
+        raise ValueError("unsupported Turkish pooled report schema")
+    if report.get("validation", {}).get("status") != "passed":
+        raise ValueError("Turkish pooled report is not validated")
+    expected = {"summary": 30, "seed_results": 90, "fold_results": 450}
+    tables = report.get("tables") or {}
+    for name, count in expected.items():
+        if len(tables.get(name, [])) != count:
+            raise ValueError(f"Turkish pooled report table {name} has {len(tables.get(name, []))} rows; expected {count}")
+    if not isinstance(report.get("provenance_index"), dict) or len(report["provenance_index"]) != 450:
+        raise ValueError("Turkish pooled report provenance index is incomplete")
+    return report
+
+
+def _pooled_input_label(item: dict[str, Any]) -> str:
+    base = {"audio_only": "Audio only", "text_only": "Text only", "audio_text": "Audio + text"}.get(str(item.get("modality")), str(item.get("modality")))
+    language = str(item.get("transcript_condition"))
+    return base if language == "not_applicable" else f"{base} / {language.title()}"
+
+
+def _pooled_route_label(route: Any) -> str:
+    return {
+        "teacher_forced": "Teacher-forced",
+        "logreg": "LogReg raw hidden head",
+        "xgb_optuna100": "XGBoost Optuna-100 raw hidden head",
+    }.get(str(route), str(route))
+
+
+def build_turkish_pooled_qcond(wb: Workbook, *, report_path: Path) -> None:
+    """Render the validated pooled report without changing historical sheets."""
+    report = _load_turkish_pooled_qcond_report(report_path)
+    ws = wb.create_sheet("Turkish Pooled QCond")
+    headers = [
+        "Cell", "Model", "Input", "Route",
+        "Positive-question macro-F1 mean", "Positive-question macro-F1 SD",
+        "Negative-question macro-F1 mean", "Negative-question macro-F1 SD",
+        "Combined macro-F1 mean", "Combined macro-F1 SD",
+        "Positive-question positive-F1 mean", "Negative-question positive-F1 mean", "Combined positive-F1 mean",
+        "Aggregation", "Pooled OOF", "Positive-only baseline", "Negative-only baseline",
+        "Pooled − positive baseline", "Pooled − negative baseline", "Baseline status", "Provenance keys",
+    ]
+    _widths(ws, {
+        "A": 10, "B": 12, "C": 24, "D": 30, "E": 18, "F": 18, "G": 18, "H": 18,
+        "I": 17, "J": 17, "K": 22, "L": 22, "M": 20, "N": 42, "O": 32,
+        "P": 18, "Q": 18, "R": 20, "S": 20, "T": 72, "U": 74,
+    })
+    _title(ws, "Turkish pooled question-conditioned training", len(headers))
+    _note(
+        ws, 2,
+        f"Generated from {report_path}. Group {report.get('group_id')}; deployment {report.get('deployment_id')}; source {report.get('source_git_sha')}. "
+        "Headline values are fold-mean subject-level results: five folds averaged within each seed, then the three seed means averaged with sample SD. "
+        "Text-only uses the exact two-condition pair policy; audio-bearing inputs filter raw rows by question condition and use source-unit/response weighting. "
+        "Pooled OOF is not reported. Separate-condition baseline values and matched deltas are blank because their provenance is unavailable or not reportable.",
+        len(headers), height=78,
+    )
+    _section(ws, 4, "30-cell summary — fold mean headline", len(headers))
+    _header_row(ws, 5, headers)
+    row = 6
+    for item in report["tables"]["summary"]:
+        values = [
+            item.get("cell_id"), item.get("model"), _pooled_input_label(item), _pooled_route_label(item.get("route")),
+            item.get("positive_question_macro_f1_seed_mean"), item.get("positive_question_macro_f1_seed_sample_sd"),
+            item.get("negative_question_macro_f1_seed_mean"), item.get("negative_question_macro_f1_seed_sample_sd"),
+            item.get("combined_macro_f1_seed_mean"), item.get("combined_macro_f1_seed_sample_sd"),
+            item.get("positive_question_positive_f1_seed_mean"), item.get("negative_question_positive_f1_seed_mean"), item.get("combined_positive_f1_seed_mean"),
+            "three-seed mean of five-fold subject-level means", item.get("pooled_oof_status"),
+            item.get("baseline_positive_macro_f1"), item.get("baseline_negative_macro_f1"),
+            item.get("pooled_minus_positive_baseline_macro_f1"), item.get("pooled_minus_negative_baseline_macro_f1"),
+            item.get("baseline_positive_status"), item.get("provenance_keys"),
+        ]
+        for col, value in enumerate(values, start=1):
+            if col in {5, 6, 7, 8, 9, 10, 11, 12, 13, 16, 17}:
+                _body_cell(ws, row, col, value, fmt="0.0000")
+            elif col in {18, 19}:
+                _delta_cell(ws, row, col, value)
+            else:
+                _body_cell(ws, row, col, value)
+        for col in (14, 15, 20, 21):
+            ws.cell(row, col).alignment = WRAP
+        row += 1
+
+    detail_headers = [
+        "Cell", "Model", "Input", "Route", "Seed", "Fold count",
+        "Positive-question macro-F1 fold mean", "Negative-question macro-F1 fold mean", "Combined macro-F1 fold mean",
+        "Positive-question positive-F1 fold mean", "Negative-question positive-F1 fold mean", "Combined positive-F1 fold mean",
+        "Pooled OOF", "Baseline status", "Provenance keys",
+    ]
+    detail_start = row + 1
+    _section(ws, detail_start, "90-seed detail — each metric is a five-fold mean", len(detail_headers))
+    _header_row(ws, detail_start + 1, detail_headers)
+    row = detail_start + 2
+    for item in report["tables"]["seed_results"]:
+        values = [
+            item.get("cell_id"), item.get("model"), _pooled_input_label(item), _pooled_route_label(item.get("route")), item.get("seed"), item.get("fold_count"),
+            item.get("positive_question_macro_f1_fold_mean"), item.get("negative_question_macro_f1_fold_mean"), item.get("combined_macro_f1_fold_mean"),
+            item.get("positive_question_positive_f1_fold_mean"), item.get("negative_question_positive_f1_fold_mean"), item.get("combined_positive_f1_fold_mean"),
+            item.get("pooled_oof_status"), item.get("baseline_positive_status"), item.get("provenance_keys"),
+        ]
+        for col, value in enumerate(values, start=1):
+            if col in {7, 8, 9, 10, 11, 12}:
+                _body_cell(ws, row, col, value, fmt="0.0000")
+            else:
+                _body_cell(ws, row, col, value)
+        for col in (13, 14, 15):
+            ws.cell(row, col).alignment = WRAP
+        row += 1
+    _note(ws, row + 1, "No best model or causal tag effect is declared. The report's provenance index resolves every pooled metric to the attempt, fold, config, manifest/split hashes, checkpoint role, evaluation ID, jobs, and local artifacts. Missing baseline values remain blank, never zero.", len(detail_headers), height=48)
+    ws.freeze_panes = "A6"
+
+
+def build_turkish_pooled_qcond_provenance(ws, put, *, report_path: Path) -> None:
+    report = _load_turkish_pooled_qcond_report(report_path)
+    source = f"report {report_path}; group {report.get('group_id')}; deployment {report.get('deployment_id')}; source {report.get('source_git_sha')}"
+    artifact = f"{report_path} + {report_path.parent / 'provenance_index.json'}"
+    aggregation = "three-seed mean of five-fold subject-level means; original_teacher_forced; harmonized_all_windows_full_coverage; headline/binary_strict"
+    for item in report["tables"]["summary"]:
+        label = f"{item.get('cell_id')} {item.get('model')} {_pooled_input_label(item)} {_pooled_route_label(item.get('route'))}"
+        key = item.get("provenance_keys")
+        common_source = f"{source}; provenance keys {key}"
+        for value, method in (
+            (item.get("positive_question_macro_f1_seed_mean"), "positive-question macro-F1"),
+            (item.get("negative_question_macro_f1_seed_mean"), "negative-question macro-F1"),
+            (item.get("combined_macro_f1_seed_mean"), "combined macro-F1"),
+            (item.get("positive_question_positive_f1_seed_mean"), "positive-question positive-F1"),
+            (item.get("negative_question_positive_f1_seed_mean"), "negative-question positive-F1"),
+            (item.get("combined_positive_f1_seed_mean"), "combined positive-F1"),
+            (item.get("baseline_positive_macro_f1"), "positive-only baseline macro-F1"),
+            (item.get("baseline_negative_macro_f1"), "negative-only baseline macro-F1"),
+            (item.get("pooled_minus_positive_baseline_macro_f1"), "pooled minus positive-only baseline"),
+            (item.get("pooled_minus_negative_baseline_macro_f1"), "pooled minus negative-only baseline"),
+        ):
+            status = "locally verified REPORTABLE pooled evidence" if value is not None else item.get("baseline_positive_status")
+            put(
+                "Turkish Pooled QCond",
+                "Turkish",
+                _pooled_input_label(item),
+                label + " — " + method,
+                value,
+                common_source,
+                aggregation,
+                artifact,
+                status,
+            )
+
+
 # --------------------------------------------------------------------------- sheets
 def build_summary(wb: Workbook, *, detailed: bool) -> None:
     """Compact headline: the standardized XGBoost macro-F1 for the three main
@@ -1996,6 +2148,7 @@ def build_provenance(
     detailed: bool,
     native_en_report_path: Path | None = None,
     turkish_question_condition_report_path: Path | None = None,
+    turkish_pooled_qcond_report_path: Path | None = None,
 ) -> None:
     ws = wb.create_sheet("Provenance")
     widths = {"A": 13, "B": 11, "C": 14, "D": 12, "E": 13, "F": 52, "G": 40, "H": 30, "I": 40}
@@ -2178,6 +2331,8 @@ def build_provenance(
     build_native_en_provenance(ws, put, report_path=native_en_report_path)
     if turkish_question_condition_report_path is not None:
         build_turkish_question_condition_provenance(ws, put, report_path=turkish_question_condition_report_path)
+    if turkish_pooled_qcond_report_path is not None:
+        build_turkish_pooled_qcond_provenance(ws, put, report_path=turkish_pooled_qcond_report_path)
 
     ws.freeze_panes = "A3"
 
@@ -2609,12 +2764,22 @@ def main() -> None:
         default=None,
         help="validated Turkish positive-only-vs-negative-only report JSON used for its workbook sheet",
     )
+    parser.add_argument(
+        "--turkish-pooled-qcond-report",
+        default=None,
+        help="validated Turkish pooled question-conditioned report JSON used for its new workbook sheet",
+    )
     args = parser.parse_args()
     detailed = args.detailed
     native_en_report_path = Path(args.native_en_report)
     turkish_question_condition_report_path = (
         Path(args.turkish_question_condition_report)
         if args.turkish_question_condition_report is not None
+        else None
+    )
+    turkish_pooled_qcond_report_path = (
+        Path(args.turkish_pooled_qcond_report)
+        if args.turkish_pooled_qcond_report is not None
         else None
     )
 
@@ -2677,12 +2842,15 @@ def main() -> None:
     build_native_vs_english(wb, report_path=native_en_report_path)
     if turkish_question_condition_report_path is not None:
         build_turkish_question_condition(wb, report_path=turkish_question_condition_report_path)
+    if turkish_pooled_qcond_report_path is not None:
+        build_turkish_pooled_qcond(wb, report_path=turkish_pooled_qcond_report_path)
     build_packed30(wb)
     build_provenance(
         wb,
         detailed=detailed,
         native_en_report_path=native_en_report_path,
         turkish_question_condition_report_path=turkish_question_condition_report_path,
+        turkish_pooled_qcond_report_path=turkish_pooled_qcond_report_path,
     )
     out = OUT_DETAILED if detailed else OUT
     out.parent.mkdir(parents=True, exist_ok=True)

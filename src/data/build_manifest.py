@@ -54,6 +54,12 @@ def manifest_build_signature(config: dict[str, Any]) -> dict[str, Any]:
         "labels",
         "lora",
         "model_name_or_path",
+        # Backbone implementation and revision do not change the source
+        # manifest or subject-fold contract.  Pooled manifests are shared by
+        # the Qwen and Gemma cells, so model identity must not make an
+        # otherwise identical manifest appear stale.
+        "model_backend",
+        "model_revision",
         "output_dirs",
         "prompt",
         "quarantine_path",

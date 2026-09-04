@@ -16,6 +16,8 @@ from src.features.extract_qwen_hidden import (
     _decoder_hidden_size,
     _emotion_provenance,
     _existing_cache_decision,
+    _is_turkish_pooled,
+    _is_turkish_pooled_text,
     _resolve_subject_partitions,
     _validate_saved_split,
     resolve_condition,
@@ -71,6 +73,21 @@ class PoolingTests(unittest.TestCase):
             resolve_condition(None, "audio_text", True)
         with self.assertRaisesRegex(ValueError, "Invalid"):
             resolve_condition("../collision", "audio_text", True)
+
+    def test_pooled_extraction_metadata_covers_audio_and_text_modalities(self):
+        pooled_audio_text = {
+            "dataset": "turkish",
+            "dataset_variant": "pooled_t17",
+            "data": {"use_audio": True, "use_text": True},
+        }
+        pooled_text = {
+            "dataset": "turkish",
+            "dataset_variant": "pooled_t17",
+            "data": {"use_audio": False, "use_text": True},
+        }
+        self.assertTrue(_is_turkish_pooled(pooled_audio_text))
+        self.assertTrue(_is_turkish_pooled_text(pooled_text))
+        self.assertFalse(_is_turkish_pooled_text(pooled_audio_text))
 
     def test_emotion_provenance_records_hash_coverage_and_fallbacks(self):
         from src.utils import write_jsonl

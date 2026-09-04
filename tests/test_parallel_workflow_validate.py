@@ -147,6 +147,19 @@ def test_recompute_strict_counts_invalid_as_wrong(tmp_path):
     assert r["binary_strict_positive_f1"] == 0.5
 
 
+def test_recompute_strict_counts_invalid_negative_as_false_positive(tmp_path):
+    preds = tmp_path / "p.csv"
+    preds.write_text(
+        "subject_id,label,label_text,prediction_backend,prediction,prediction_text\n"
+        "301,0,Non-depressed,original_teacher_forced,-1,INVALID\n"
+        "384,1,Depressed,original_teacher_forced,1,Depressed\n",
+        encoding="utf-8",
+    )
+    r = recompute_strict_headline(preds)
+    assert r["binary_strict_accuracy"] == 0.5
+    assert r["binary_strict_positive_f1"] == pytest.approx(2 / 3)
+
+
 def test_happy_path_reaches_reportable_stepwise(tmp_path):
     fold = _build_attempt(tmp_path)
     result = validate_attempt(fold, **KW)

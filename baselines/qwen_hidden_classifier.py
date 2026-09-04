@@ -19,6 +19,7 @@ from src.aggregate import (
 )
 from src.features.hidden_classifier_policy import (
     PACKED30_AGGREGATION_POLICY,
+    TURKISH_POOLED_TEXT_PAIR_POLICY,
     cache_identity,
     canonical_sha256,
     classifier_aggregation_policy,
@@ -525,6 +526,7 @@ def run_variant(
             "dataset": metadata["dataset"],
             "modality": metadata["input_modality"],
             "condition": condition,
+            "dataset_variant": metadata.get("dataset_variant", ""),
             "fold": int(metadata["fold"]),
             "sample_id": str(row["sample_id"]),
             "subject_id": str(row["subject_id"]),
@@ -542,7 +544,12 @@ def run_variant(
             "sampling_mode": sampling_mode,
             "oversampling_ratio": oversampling_ratio,
             "oversampling_seed": int(oversampling_seed),
+            "aggregation_policy": classifier_aggregation_policy(metadata),
         }
+        if metadata.get("dataset_variant") == "pooled_t17":
+            classifier_row["question_condition"] = str(row.get("question_condition", ""))
+            if metadata.get("input_modality") == "text_only":
+                classifier_row["aggregation_policy"] = TURKISH_POOLED_TEXT_PAIR_POLICY
         if packed30:
             classifier_row["protocol_id"] = str(metadata.get("protocol_id", ""))
             classifier_row["classifier_aggregation"] = PACKED30_AGGREGATION_POLICY

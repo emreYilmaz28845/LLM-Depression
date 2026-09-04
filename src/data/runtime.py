@@ -63,6 +63,11 @@ JOINT_PACKED30_REQUIRED_K = 4
 JOINT_PACKED30_CONTEXT_SENTINEL = "__JOINT_BUNDLE_AUDIO_CONTEXT__"
 HARMONIZED_RESPONSE_WINDOWS_MODE = "harmonized_response_windows"
 
+QUESTION_CONTEXT_SENTENCES = {
+    "pos_only_t17": "The following speech is the subject's response to positive interview questions.",
+    "negative_only_t17": "The following speech is the subject's response to negative interview questions.",
+}
+
 
 def resolve_audio_placeholder(config: dict[str, Any]) -> str:
     if resolve_model_backend(config) == MODEL_BACKEND_QWEN3OMNI:
@@ -144,6 +149,7 @@ def render_user_prompt_text(
     is_subject_bundle: bool = False,
     audio_context_override: str | None = None,
     emotion_block: str = "",
+    question_condition: str | None = None,
 ) -> str:
     input_modality = resolve_input_modality(config)
     use_audio, use_text = _modality_flags(input_modality)
@@ -153,6 +159,18 @@ def render_user_prompt_text(
         if audio_context_override is not None
         else _audio_context_block(use_audio, is_subject_bundle)
     )
+    if "{question_context}" in template:
+        if question_condition not in QUESTION_CONTEXT_SENTENCES:
+            raise ValueError(
+                "Tagged Turkish pooled prompt requires question_condition to be "
+                f"one of {sorted(QUESTION_CONTEXT_SENTENCES)}, got {question_condition!r}."
+            )
+        question_context = QUESTION_CONTEXT_SENTENCES[question_condition]
+    else:
+        # Keep untagged prompt rendering byte-identical for every existing
+        # recipe. The value is available only so format_map has one stable
+        # placeholder namespace; it is not inserted unless the template asks.
+        question_context = ""
     placeholder_values = {
         "transcript": transcript,
         "audio_context_block": audio_context_block,
@@ -161,6 +179,7 @@ def render_user_prompt_text(
         "label_descriptor": prompt_label_descriptor(config),
         "label_instruction": prompt_label_instruction(config),
         "emotion_block": emotion_block,
+        "question_context": question_context,
     }
     try:
         return template.format_map(placeholder_values).strip()
@@ -330,8 +349,13 @@ def _base_example_from_row(
     if emotion_cache is not None and use_audio:
         caption = resolve_caption(emotion_cache, str(row["sample_id"]), emotion_policy)
         emotion_block = single_chunk_emotion_block(caption)
+    question_condition = str(row.get("dataset_variant", "")).strip() or None
     user_text = render_user_prompt_text(
-        config, transcript, is_subject_bundle=False, emotion_block=emotion_block
+        config,
+        transcript,
+        is_subject_bundle=False,
+        emotion_block=emotion_block,
+        question_condition=question_condition,
     )
     example_internal_label = row.get("internal_label_text") or internal_label_text_from_int(config, int(row["label"]))
     prompt_text = build_prompt_text(
@@ -370,6 +394,7 @@ def _base_example_from_row(
         "start_time": row.get("start_time", ""),
         "end_time": row.get("end_time", ""),
         "segment_duration": row.get("segment_duration", ""),
+        "question_condition": question_condition,
     }
     return example, transcript_log
 
@@ -542,6 +567,105 @@ def _harmonized_subject_transcripts(
     }
 
 
+def _is_turkish_pooled_text_only(config: dict[str, Any]) -> bool:
+    return (
+        str(config.get("dataset", "")).lower() == "turkish"
+        and str(config.get("dataset_variant", "")).strip() == "pooled_t17"
+        and resolve_input_modality(config) == INPUT_MODALITY_TEXT_ONLY
+    )
+
+
+def _build_turkish_pooled_text_only_examples(
+    manifest_rows: list[dict[str, Any]],
+    config: dict[str, Any],
+    partition_name: str,
+    transcript_max_chars: int,
+    truncation_log_path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """Build exactly one full-transcript example per pooled condition/subject.
+
+    This branch is intentionally guarded to the pooled Turkish text-only
+    recipe. Existing harmonized text-only recipes continue through their
+    original one-example-per-subject implementation.
+    """
+    allowed = set(QUESTION_CONTEXT_SENTENCES)
+    grouped: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for row in manifest_rows:
+        subject_id = str(row["subject_id"])
+        condition = str(row.get("dataset_variant", "")).strip()
+        if condition not in allowed:
+            raise ValueError(
+                "Turkish pooled text-only rows require exactly the two source "
+                f"conditions {sorted(allowed)}, got {condition!r}."
+            )
+        grouped[subject_id][condition].append(row)
+
+    examples: list[dict[str, Any]] = []
+    truncation_logs: list[dict[str, Any]] = []
+    for subject_id in sorted(grouped):
+        by_condition = grouped[subject_id]
+        if set(by_condition) != allowed:
+            raise ValueError(
+                f"Turkish pooled text-only subject {subject_id!r} must have "
+                f"both conditions; found {sorted(by_condition)}."
+            )
+        labels = {
+            int(row["label"])
+            for rows in by_condition.values()
+            for row in rows
+        }
+        if len(labels) != 1:
+            raise ValueError(
+                f"Turkish pooled text-only subject {subject_id!r} has inconsistent labels."
+            )
+        for condition in ("pos_only_t17", "negative_only_t17"):
+            condition_rows = _ordered_subject_rows(by_condition[condition])
+            transcripts = _harmonized_subject_transcripts(condition_rows, "turkish")
+            transcript = transcripts.get(subject_id, "")
+            if not transcript:
+                raise ValueError(
+                    f"Turkish pooled text-only condition {condition!r} has no "
+                    f"transcript for subject {subject_id!r}."
+                )
+            transcript, transcript_log = _truncate_text(transcript, transcript_max_chars)
+            source = dict(condition_rows[0])
+            source.update(
+                {
+                    "sample_id": f"{subject_id}::{condition}",
+                    "subject_id": subject_id,
+                    "transcript": transcript,
+                    "dataset_variant": condition,
+                    "question_condition": condition,
+                    "response_id": "",
+                    "prompt_id": "",
+                    "question_id": "",
+                }
+            )
+            example, _ = _base_example_from_row(source, config, transcript_max_chars)
+            example["sample_id"] = f"{subject_id}::{condition}"
+            example["question_condition"] = condition
+            example["response_id"] = ""
+            examples.append(example)
+            if transcript_log:
+                truncation_logs.append(
+                    {
+                        "partition": partition_name,
+                        "subject_id": subject_id,
+                        "sample_id": example["sample_id"],
+                        "question_condition": condition,
+                        **transcript_log,
+                    }
+                )
+    sample_ids = [str(example["sample_id"]) for example in examples]
+    if len(sample_ids) != len(set(sample_ids)):
+        raise ValueError("Turkish pooled text-only examples have duplicate sample IDs.")
+    if truncation_log_path:
+        write_jsonl(truncation_logs, truncation_log_path)
+    return examples
+
+
 def _build_harmonized_response_window_examples(
     manifest_rows: list[dict[str, Any]],
     config: dict[str, Any],
@@ -560,6 +684,14 @@ def _build_harmonized_response_window_examples(
     window_seconds = float(config["data"].get("segment_seconds", 30.0))
     if window_seconds <= 0.0 or window_seconds > 30.0:
         raise ValueError("Harmonized segment_seconds must be in (0, 30].")
+    if _is_turkish_pooled_text_only(config):
+        return _build_turkish_pooled_text_only_examples(
+            manifest_rows,
+            config,
+            partition_name,
+            transcript_max_chars,
+            truncation_log_path=truncation_log_path,
+        )
     subject_transcripts = _harmonized_subject_transcripts(manifest_rows, dataset_name)
     expected_subjects = {str(row["subject_id"]) for row in manifest_rows}
     missing = sorted(expected_subjects - set(subject_transcripts))

@@ -17,6 +17,8 @@ def harmonized_configs():
         and "_gemma4_12b" not in path.name
         and "_officialdev" not in path.name
         and "turkish_negative_only" not in path.name
+        # The pooled question-conditioned family is a separate locked recipe.
+        and "turkish_pooled" not in path.name
         # Pre-rename canonical Turkish files stay as legacy history.
         and not path.name.startswith("turkish_t17_")
     )
@@ -49,7 +51,10 @@ def test_harmonized_main_has_five_datasets_by_three_modalities() -> None:
 
 
 def test_gemma4_variants_cover_daic_and_the_harmonized_non_daic_family() -> None:
-    gemma = sorted(MAIN.glob("*harmonized_selmacrof1_tf*gemma4_12b.yaml"))
+    gemma = sorted(
+        path for path in MAIN.glob("*harmonized_selmacrof1_tf*gemma4_12b.yaml")
+        if "turkish_pooled" not in path.name
+    )
     daic = [path for path in gemma if path.name.startswith("daic_")]
     assert len(daic) == 3
     assert all(path.name.startswith("daic_") for path in daic)
@@ -57,7 +62,7 @@ def test_gemma4_variants_cover_daic_and_the_harmonized_non_daic_family() -> None
     # positive-only and three fresh negative-only Turkish cells) + 12 English
     # (the eight harmonized-family cells plus two fresh positive-only and two
     # fresh negative-only Turkish cells).
-    non_daic = [path for path in gemma if not path.name.startswith("daic_")]
+    non_daic = [path for path in gemma if not path.name.startswith("daic_") and "turkish_pooled" not in path.name]
     assert len(non_daic) == 30
     assert len([path for path in non_daic if "_en_" in path.name]) == 12
     assert len([path for path in non_daic if "_en_" not in path.name]) == 18

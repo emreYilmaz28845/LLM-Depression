@@ -21,6 +21,7 @@ LEGACY_WEIGHT_POLICY = "uniform_rows"
 DAIC_SUBJECT_WEIGHT_POLICY = "inverse_chunks_per_subject_rescaled_to_mean_one"
 PACKED30_PROTOCOL_ID = "daic_participant_speech_packed30_v1"
 PACKED30_AGGREGATION_POLICY = "mean_depressed_probability_threshold_0_5"
+TURKISH_POOLED_TEXT_PAIR_POLICY = "turkish_pooled_text_pair_mean_margin_strict_v1"
 
 
 def is_d3tec_audio_rows(rows: list[dict[str, Any]], metadata: dict[str, Any]) -> bool:
@@ -36,6 +37,12 @@ def is_packed30_rows(metadata: dict[str, Any]) -> bool:
 
 
 def classifier_aggregation_policy(metadata: dict[str, Any]) -> str:
+    if (
+        str(metadata.get("dataset", "")).lower() == "turkish"
+        and str(metadata.get("dataset_variant", "")).strip() == "pooled_t17"
+        and str(metadata.get("input_modality", "")).strip() == "text_only"
+    ):
+        return TURKISH_POOLED_TEXT_PAIR_POLICY
     if is_packed30_rows(metadata):
         return PACKED30_AGGREGATION_POLICY
     if str(metadata.get("dataset", "")).lower() == D3TEC_DATASET:
@@ -98,9 +105,15 @@ def response_normalized_sample_weights(
                 "chunks_per_subject": dict(sorted(counts.items())),
             }
         weights = np.ones(len(rows), dtype=np.float64)
+        is_pooled_turkish_text = (
+            str(metadata.get("dataset", "")).lower() == "turkish"
+            and str(metadata.get("dataset_variant", "")).strip() == "pooled_t17"
+            and str(metadata.get("input_modality", "")).strip() == "text_only"
+        )
         policy = (
             TEXT_WEIGHT_POLICY
-            if (
+            if is_pooled_turkish_text
+            or (
                 str(metadata.get("dataset", "")).lower() == D3TEC_DATASET
                 and str(metadata.get("input_modality", "")) == "text_only"
             )
