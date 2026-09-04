@@ -1350,6 +1350,16 @@ def _record_evaluation_sidecars(
     artifact_additions: list[tuple[str | None, str, str]] = [
         (_relative(metrics_path), "metrics", "standalone_eval_metrics"),
         (_relative(predictions_path), "predictions", "standalone_eval_predictions"),
+        (
+            _relative(output_dir / "predictions_sample_level.jsonl"),
+            "predictions",
+            "standalone_eval_sample_predictions",
+        ),
+        (
+            _relative(output_dir / "predictions_sample_level.csv"),
+            "predictions",
+            "standalone_eval_sample_predictions_csv",
+        ),
         (_relative(output_dir / "confusion_matrix.json"), "metrics", "confusion_matrix"),
         (_relative(output_dir / "eval_config.yaml"), "run_config", "eval_config"),
         (

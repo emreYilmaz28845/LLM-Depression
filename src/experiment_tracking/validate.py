@@ -43,7 +43,10 @@ def recompute_strict_headline(subject_predictions_csv: Path) -> dict[str, float]
             elif pred_raw == "non-depressed":
                 pred = 0
             else:
-                pred = -1  # INVALID counts as wrong under binary_strict
+                # Keep the invalid output in the wrong binary class so it is
+                # counted as a false positive or false negative by strict
+                # metrics, matching the training/evaluation aggregation rule.
+                pred = 1 - int(row["label"])
             y_true.append(label)
             y_pred.append(pred)
     if not y_true:

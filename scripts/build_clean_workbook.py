@@ -1674,7 +1674,17 @@ def build_turkish_pooled_qcond_provenance(ws, put, *, report_path: Path) -> None
             (item.get("pooled_minus_negative_baseline_macro_f1"), "pooled minus negative-only baseline"),
         ):
             status = "locally verified REPORTABLE pooled evidence" if value is not None else item.get("baseline_positive_status")
-            put("Turkish Pooled QCond", "Turkish", label + " — " + method, value, common_source, aggregation, artifact, status)
+            put(
+                "Turkish Pooled QCond",
+                "Turkish",
+                _pooled_input_label(item),
+                label + " — " + method,
+                value,
+                common_source,
+                aggregation,
+                artifact,
+                status,
+            )
 
 
 # --------------------------------------------------------------------------- sheets

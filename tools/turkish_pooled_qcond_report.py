@@ -12,6 +12,7 @@ import argparse
 import csv
 import hashlib
 import json
+import re
 import statistics
 import sys
 from collections import defaultdict
@@ -140,6 +141,45 @@ def _events(path: Path) -> list[dict[str, Any]]:
     if not result:
         raise ReportError(f"empty job history: {target}")
     return result
+
+
+_SLURM_JOB_ID_PATTERN = re.compile(r"^[0-9]+(?:_[0-9]+)?$")
+
+
+def _slurm_job_ids(events: Iterable[dict[str, Any]]) -> tuple[list[str], list[dict[str, Any]]]:
+    """Extract canonical scheduler IDs while preserving malformed evidence by hash.
+
+    A submit-side correction can leave an append-only raw field containing both
+    wait diagnostics and the real numeric ID. Keep the original sidecar intact,
+    report the numeric ID once, and expose a non-sensitive correction record so
+    the anomaly is not silently discarded.
+    """
+    canonical: set[str] = set()
+    noncanonical: list[dict[str, Any]] = []
+    for event in events:
+        raw = event.get("slurm_job_id")
+        if raw is None:
+            continue
+        raw_text = str(raw)
+        candidates = [
+            value.strip()
+            for value in raw_text.splitlines()
+            if _SLURM_JOB_ID_PATTERN.fullmatch(value.strip())
+        ]
+        canonical.update(candidates)
+        if not _SLURM_JOB_ID_PATTERN.fullmatch(raw_text.strip()):
+            noncanonical.append(
+                {
+                    "attempt_id": event.get("attempt_id"),
+                    "fold": event.get("fold"),
+                    "job_key": event.get("job_key"),
+                    "job_type": event.get("job_type"),
+                    "event_id": event.get("event_id"),
+                    "raw_value_sha256": hashlib.sha256(raw_text.encode("utf-8")).hexdigest(),
+                    "resolved_job_ids": sorted(set(candidates)),
+                }
+            )
+    return sorted(canonical), noncanonical
 
 
 def _terminal_job(events: Iterable[dict[str, Any]], *, job_type: str, job_key: str | None = None) -> dict[str, Any]:
@@ -427,7 +467,7 @@ def _attempt_route(
     if hashes.get("split_sha256") not in {runtime[language]["split_sha256"]}:
         raise ReportError(f"split hash qualifier mismatch: {attempt}")
     source = metadata.get("source") or {}
-    jobs = sorted({str(event.get("slurm_job_id")) for event in events if event.get("slurm_job_id")})
+    jobs, noncanonical_job_events = _slurm_job_ids(events)
     provenance_payload = {
         "group_id": GROUP_ID,
         "logical_run_name": metadata.get("logical_run_name"),
@@ -463,6 +503,7 @@ def _attempt_route(
         "evaluation_predictions_artifact": artifacts["predictions"],
         "sample_predictions_artifact": sample_artifact,
         "slurm_job_ids": jobs,
+        "noncanonical_slurm_job_events": noncanonical_job_events,
         "failure_events": failures,
         "locally_verified": True,
         "reportable": True,
@@ -644,8 +685,10 @@ def generate_report(plan_path: Path, output_dir: Path) -> dict[str, Any]:
 
     terminal_counts = {"COMPLETED": 0, "FAILED": 0, "CANCELLED": 0}
     slurm_ids: list[str] = []
+    noncanonical_job_events: list[dict[str, Any]] = []
     for item in provenance.values():
         slurm_ids.extend(str(value) for value in item.get("slurm_job_ids", []))
+        noncanonical_job_events.extend(item.get("noncanonical_slurm_job_events", []))
         for failure in item.get("failure_events", []):
             terminal_counts[str(failure.get("event_type"))] = terminal_counts.get(str(failure.get("event_type")), 0) + 1
     terminal_counts["COMPLETED"] = sum(item["successful"] for item in execution.values())
@@ -663,6 +706,14 @@ def generate_report(plan_path: Path, output_dir: Path) -> dict[str, Any]:
         "terminal_counts": terminal_counts,
         "unique_slurm_job_count": len(unique_slurm_ids),
         "slurm_job_ids": unique_slurm_ids,
+        "noncanonical_slurm_job_events": sorted(
+            noncanonical_job_events,
+            key=lambda item: (
+                str(item.get("attempt_id")),
+                int(item.get("fold", -1)),
+                str(item.get("event_id")),
+            ),
+        ),
         "resubmission_events": [failure for item in provenance.values() for failure in item.get("failure_events", []) if failure.get("resubmission_of_job_id")],
     }
     report = {

@@ -11,6 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.experiment_tracking.evidence import (
     EvidenceVerificationError,
+    register_local_artifacts,
     set_metadata_supersedes,
     verify_artifacts_locally,
     verify_evaluations_locally,
@@ -43,6 +44,17 @@ def _cmd_verify_artifacts(fold_dir: Path) -> int:
 
 def _cmd_verify_evaluations(fold_dir: Path) -> int:
     result = verify_evaluations_locally(fold_dir)
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def _cmd_register_artifacts(fold_dir: Path, entries_file: Path) -> int:
+    try:
+        entries = json.loads(entries_file.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as error:
+        print(f"error: unreadable artifact entries file: {error}", file=sys.stderr)
+        return 2
+    result = register_local_artifacts(fold_dir, entries)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
@@ -130,6 +142,14 @@ def main() -> int:
     verify_evaluations.add_argument("fold_dir", type=_fold_dir)
     verify_evaluations.set_defaults(func=_cmd_verify_evaluations)
 
+    register_artifacts = subparsers.add_parser(
+        "register-artifacts",
+        help="Register existing hash-verified local files in artifacts.json without overwriting evidence",
+    )
+    register_artifacts.add_argument("fold_dir", type=_fold_dir)
+    register_artifacts.add_argument("entries_file", type=Path, help="JSON array of artifact descriptors")
+    register_artifacts.set_defaults(func=_cmd_register_artifacts)
+
     append_events = subparsers.add_parser(
         "append-events",
         help="Append validated terminal job events to jobs.jsonl (append-only; existing events never change)",
@@ -161,6 +181,8 @@ def main() -> int:
             return _cmd_verify_artifacts(args.fold_dir)
         if args.action == "verify-evaluations":
             return _cmd_verify_evaluations(args.fold_dir)
+        if args.action == "register-artifacts":
+            return _cmd_register_artifacts(args.fold_dir, args.entries_file)
         if args.action == "append-events":
             return _cmd_append_events(args.fold_dir, args.events_file)
         if args.action == "transition":

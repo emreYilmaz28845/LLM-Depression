@@ -5,6 +5,7 @@ from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
 
+import scripts.build_clean_workbook as builder
 from scripts.build_clean_workbook import build_turkish_pooled_qcond, build_turkish_pooled_qcond_provenance
 
 
@@ -106,3 +107,41 @@ def test_pooled_workbook_sheet_and_provenance_are_rendered_from_report(tmp_path:
     build_turkish_pooled_qcond_provenance(provenance_ws, put, report_path=report_path)
     assert len(rows) == 300
     assert all(value[3] is None for value in rows if "baseline" in str(value[2]).lower() or "pooled minus" in str(value[2]).lower())
+
+
+def test_workbook_without_pooled_report_keeps_historical_sheet_values(tmp_path: Path) -> None:
+    report_path = tmp_path / "report.json"
+    _report(report_path)
+
+    def build(include_pooled: bool) -> Workbook:
+        workbook = Workbook()
+        workbook.remove(workbook.active)
+        builder.build_summary(workbook, detailed=False)
+        builder.build_gemma_vs_qwen(workbook)
+        builder.build_native_vs_english(workbook)
+        if include_pooled:
+            builder.build_turkish_pooled_qcond(workbook, report_path=report_path)
+        builder.build_packed30(workbook)
+        builder.build_provenance(
+            workbook,
+            detailed=False,
+            turkish_pooled_qcond_report_path=report_path if include_pooled else None,
+        )
+        return workbook
+
+    without = build(False)
+    with_pooled = build(True)
+    assert "Turkish Pooled QCond" not in without.sheetnames
+    assert "Turkish Pooled QCond" in with_pooled.sheetnames
+    for sheet in without.sheetnames:
+        left = without[sheet]
+        right = with_pooled[sheet]
+        assert left.max_row <= right.max_row, sheet
+        assert left.max_column == right.max_column, sheet
+        for row in range(1, left.max_row + 1):
+            for column in range(1, left.max_column + 1):
+                assert left.cell(row, column).value == right.cell(row, column).value, (
+                    sheet,
+                    row,
+                    column,
+                )

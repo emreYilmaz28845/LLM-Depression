@@ -12,6 +12,8 @@ from src.experiment_tracking import registry
 from src.experiment_tracking.canonical import write_json_atomic
 from src.experiment_tracking.discovery import discover_runs
 from src.experiment_tracking.evidence import (
+    EvidenceVerificationError,
+    register_local_artifacts,
     set_metadata_supersedes,
     verify_artifacts_locally,
     verify_evaluations_locally,
@@ -514,6 +516,81 @@ def test_evidence_verification_flips_flags_from_local_hashes(tmp_path: Path) -> 
     assert all(artifact["locally_verified"] is True for artifact in sidecars.artifacts)
     assert sidecars.evaluations[0]["locally_verified"] is True
     assert sidecars.evaluations[0]["reportable"] is True
+
+
+def test_register_local_artifacts_appends_hash_verified_files_idempotently(
+    tmp_path: Path,
+) -> None:
+    fold_dir = build_modern_run(tmp_path)
+    sample_path = fold_dir / "best_model" / "standalone_eval" / "predictions_sample_level.jsonl"
+    sample_path.write_text('{"subject_id":"redacted"}\n', encoding="utf-8")
+    before = json.loads((fold_dir / "artifacts.json").read_text(encoding="utf-8"))
+    entries = [
+        {
+            "path": "best_model/standalone_eval/predictions_sample_level.jsonl",
+            "artifact_type": "predictions",
+            "role": "standalone_eval_sample_predictions",
+            "exists_on_mn5": True,
+        }
+    ]
+
+    result = register_local_artifacts(fold_dir, entries)
+    assert result["registered"] == [entries[0]["path"]]
+    updated = json.loads((fold_dir / "artifacts.json").read_text(encoding="utf-8"))
+    assert updated["artifacts"][:3] == before["artifacts"]
+    registered = updated["artifacts"][-1]
+    from src.experiment_tracking.canonical import sha256_file
+    from src.experiment_tracking.identity import artifact_id
+
+    sha = sha256_file(sample_path)
+    assert registered == {
+        "artifact_id": artifact_id(
+            attempt_id=ATTEMPT_ID,
+            fold=0,
+            role=entries[0]["role"],
+            relative_path=entries[0]["path"],
+            artifact_sha256=sha,
+        ),
+        "artifact_type": "predictions",
+        "role": entries[0]["role"],
+        "path": entries[0]["path"],
+        "sha256": sha,
+        "size_bytes": sample_path.stat().st_size,
+        "exists_on_mn5": True,
+        "exists_locally": True,
+        "locally_verified": True,
+    }
+
+    second = register_local_artifacts(fold_dir, entries)
+    assert second["registered"] == []
+    assert second["already_registered"] == [entries[0]["path"]]
+    assert json.loads((fold_dir / "artifacts.json").read_text(encoding="utf-8")) == updated
+
+
+def test_register_local_artifacts_refuses_unsafe_missing_and_contradictory_entries(
+    tmp_path: Path,
+) -> None:
+    fold_dir = build_modern_run(tmp_path)
+    entry = {
+        "path": "best_model/standalone_eval/predictions_sample_level.jsonl",
+        "artifact_type": "predictions",
+        "role": "standalone_eval_sample_predictions",
+    }
+    for bad in (
+        {**entry, "path": "../outside.jsonl"},
+        {**entry, "path": "best_model/standalone_eval/missing.jsonl"},
+    ):
+        with pytest.raises(EvidenceVerificationError):
+            register_local_artifacts(fold_dir, [bad])
+
+    sample_path = fold_dir / entry["path"]
+    sample_path.write_text("sample\n", encoding="utf-8")
+    register_local_artifacts(fold_dir, [entry])
+    with pytest.raises(EvidenceVerificationError, match="contradictory artifact"):
+        register_local_artifacts(
+            fold_dir,
+            [{**entry, "role": "different_role"}],
+        )
 
 
 def test_evidence_verification_refuses_missing_artifacts(tmp_path: Path) -> None:
