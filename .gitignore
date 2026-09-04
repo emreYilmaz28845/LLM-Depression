@@ -17,6 +17,7 @@ scripts/watch_opencode_tmux.sh
 .pytest_cache/
 .claude/
 figures/
+.commandcode/
 
 wandb/
 .agent-pin.json
