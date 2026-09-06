@@ -94,21 +94,32 @@ def test_workbook_regeneration_keeps_compact_sheet_set_with_qwen_vs_gemma() -> N
         for cell in row:
             if cell.column == 5 and cell.row > 4:
                 value_cells.append(cell.value)
-    assert value_cells and any(isinstance(value, (int, float)) for value in value_cells)
-    assert not any(isinstance(value, (int, float)) and (value < 0 or value > 1) for value in value_cells)
+    assert value_cells and any(isinstance(value, str) and " / " in value for value in value_cells)
+    assert not any(
+        isinstance(value, str) and " / " in value
+        and not (0 <= float(value.split(" / ")[0]) <= 1)
+        for value in value_cells
+    )
     methods = {sheet.cell(r, 4).value for r in range(5, sheet.max_row + 1)}
     assert {"Teacher-forced", "LogReg head", "XGBoost"} <= methods
 
+    def _macro_of(cell_value):
+        if isinstance(cell_value, (int, float)):
+            return float(cell_value)
+        if isinstance(cell_value, str) and " / " in cell_value:
+            return float(cell_value.split(" / ")[0])
+        return None
+
     merged_final_tf = {
-        sheet.cell(row, 3).value: sheet.cell(row, 6).value
+        sheet.cell(row, 3).value: _macro_of(sheet.cell(row, 6).value)
         for row in range(5, sheet.max_row + 1)
         if sheet.cell(row, 1).value == "Merged — Final (DAIC test)"
         and sheet.cell(row, 4).value == "Teacher-forced"
     }
     assert merged_final_tf == {
-        "Audio + Text": pytest.approx(0.7257294429708223),
-        "Audio only": pytest.approx(0.5190058479532164),
-        "Text only": pytest.approx(0.7755968169761273),
+        "Audio + Text": pytest.approx(0.7257294429708223, abs=5e-5),
+        "Audio only": pytest.approx(0.5190058479532164, abs=5e-5),
+        "Text only": pytest.approx(0.7755968169761273, abs=5e-5),
     }
 
 

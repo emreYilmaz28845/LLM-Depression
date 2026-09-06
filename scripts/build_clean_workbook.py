@@ -151,6 +151,19 @@ STANDALONE_QWEN: dict[tuple[str, str], float] = {
     ("Androids Interview", "Text only"): 0.7317,
 }
 
+# Positive-F1 paired with each STANDALONE_QWEN macro cell, same artifact and
+# aggregation (recomputed 2026-09-06 from the local evidence below).
+# DAIC: fold_0/best_model/standalone_eval/metrics_original_teacher_forced.json
+# CMDC/Turkish: fold_0-4/eval/best_validation metrics fold-mean
+# D3TEC/Androids: fold_0-4 predictions_subject_level.csv pooled subject-level.
+STANDALONE_QWEN_POSF1: dict[tuple[str, str], float] = {
+    ("DAIC", "Audio + Text"): 0.645161, ("DAIC", "Audio only"): 0.411765, ("DAIC", "Text only"): 0.645161,
+    ("CMDC", "Audio + Text"): 0.960000, ("CMDC", "Audio only"): 0.931818, ("CMDC", "Text only"): 0.963636,
+    ("Turkish", "Audio + Text"): 0.782190, ("Turkish", "Audio only"): 0.771921, ("Turkish", "Text only"): 0.781656,
+    ("D3TEC", "Audio + Text"): 0.509091, ("D3TEC", "Audio only"): 0.600000, ("D3TEC", "Text only"): 0.586207,
+    ("Androids Interview", "Audio + Text"): 0.875000, ("Androids Interview", "Audio only"): 0.883721, ("Androids Interview", "Text only"): 0.782609,
+}
+
 # Standalone hidden-state heads: (dataset, modality) -> (logreg, xgb_fixed, xgb_optuna, subject_os)
 STANDALONE_HEADS: dict[tuple[str, str], tuple[float | None, float | None, float | None, float | None]] = {
     # Harmonized hidden-state heads (logreg_raw / xgb_raw), 5-fold mean
@@ -171,6 +184,27 @@ STANDALONE_HEADS: dict[tuple[str, str], tuple[float | None, float | None, float 
     ("Androids Interview", "Audio + Text"): (0.8745, 0.8656, None, None),
     ("Androids Interview", "Audio only"): (0.8512, 0.8235, None, None),
     ("Androids Interview", "Text only"): (0.8326, 0.8241, None, None),
+}
+
+# Positive-F1 paired with STANDALONE_HEADS logreg/xgb_fixed cells, 5-fold mean of
+# per-fold variant_summary.json (outputs/hidden_classifiers/harmonized_v1/...),
+# recomputed 2026-09-06. Optuna/Subject-OS remain None.
+STANDALONE_HEADS_POSF1: dict[tuple[str, str], tuple[float | None, float | None, float | None, float | None]] = {
+    ("DAIC", "Audio + Text"): (0.666667, 0.645161, None, None),
+    ("DAIC", "Audio only"): (0.370370, 0.222222, None, None),
+    ("DAIC", "Text only"): (0.647059, 0.642857, None, None),
+    ("CMDC", "Audio + Text"): (0.953247, 0.960000, None, None),
+    ("CMDC", "Audio only"): (0.977778, 0.891818, None, None),
+    ("CMDC", "Text only"): (0.926263, 0.955556, None, None),
+    ("Turkish", "Audio + Text"): (0.742639, 0.788211, None, None),
+    ("Turkish", "Audio only"): (0.724165, 0.809810, None, None),
+    ("Turkish", "Text only"): (0.710052, 0.759490, None, None),
+    ("D3TEC", "Audio + Text"): (0.424242, 0.506089, None, None),
+    ("D3TEC", "Audio only"): (0.523651, 0.488412, None, None),
+    ("D3TEC", "Text only"): (0.480719, 0.506667, None, None),
+    ("Androids Interview", "Audio + Text"): (0.892611, 0.882135, None, None),
+    ("Androids Interview", "Audio only"): (0.870020, 0.833517, None, None),
+    ("Androids Interview", "Text only"): (0.863468, 0.858706, None, None),
 }
 
 # Merged symmetric runs. modality -> (run_id, official DAIC macro per method,
@@ -514,6 +548,24 @@ GEMMA_OPTUNA = {
     ("D3TEC", "Audio + Text"): 0.583227, ("D3TEC", "Audio only"): 0.546075, ("D3TEC", "Text only"): 0.571942,
     ("Androids Interview", "Audio + Text"): 0.856547, ("Androids Interview", "Audio only"): 0.802024, ("Androids Interview", "Text only"): 0.748177,
 }
+
+# Positive-F1 paired with the Optuna-100 fold-mean macro cells, recomputed
+# 2026-09-06 as fold-mean of per-fold evaluations.json positive_f1
+# (headline/binary_strict, subject_level, harmonized_all_windows_full_coverage).
+QWEN_OPTUNA_POSF1 = {
+    ("DAIC", "Audio + Text"): 0.625000, ("DAIC", "Audio only"): 0.413793, ("DAIC", "Text only"): 0.620690,
+    ("CMDC", "Audio + Text"): 0.896970, ("CMDC", "Audio only"): 0.931818, ("CMDC", "Text only"): 0.937374,
+    ("Turkish", "Audio + Text"): 0.774222, ("Turkish", "Audio only"): 0.745727, ("Turkish", "Text only"): 0.704284,
+    ("D3TEC", "Audio + Text"): 0.451389, ("D3TEC", "Audio only"): 0.474359, ("D3TEC", "Text only"): 0.611952,
+    ("Androids Interview", "Audio + Text"): 0.864372, ("Androids Interview", "Audio only"): 0.845916, ("Androids Interview", "Text only"): 0.879105,
+}
+GEMMA_OPTUNA_POSF1 = {
+    ("DAIC", "Audio + Text"): 0.764706, ("DAIC", "Audio only"): 0.620690, ("DAIC", "Text only"): 0.705882,
+    ("CMDC", "Audio + Text"): 0.977778, ("CMDC", "Audio only"): 0.944444, ("CMDC", "Text only"): 0.896970,
+    ("Turkish", "Audio + Text"): 0.778594, ("Turkish", "Audio only"): 0.701579, ("Turkish", "Text only"): 0.694321,
+    ("D3TEC", "Audio + Text"): 0.577359, ("D3TEC", "Audio only"): 0.495964, ("D3TEC", "Text only"): 0.554089,
+    ("Androids Interview", "Audio + Text"): 0.873594, ("Androids Interview", "Audio only"): 0.835794, ("Androids Interview", "Text only"): 0.773857,
+}
 # --------------------------------------------------------------------------- Merged (symmetric) comparison values
 # Qwen merged TF/LogReg from the historical merged campaign (Merged Symmetric
 # Summary); Gemma merged CV TF from training selection, merged final TF from
@@ -543,6 +595,74 @@ MERGED_XGB = {
     ("final", "Audio + Text"): (0.743235, 0.745671),
     ("final", "Audio only"): (0.472823, 0.555405),
     ("final", "Text only"): (0.755208, 0.763105),
+}
+
+# Positive-F1 paired with the merged comparison cells, recomputed 2026-09-06.
+# Qwen: outputs/symmetric_merged/harmonized_v1/<mod>/harmonized_v1_prod_.../
+#   cv/fold_<n>/{qwen/summary.json, heads/{logreg,xgb_fixed}/metrics_by_dataset.json}
+#   (CV = mean over five per-dataset fold-means) and final/fold_0/qwen/summary.json
+#   (DAIC official test).
+# Gemma CV TF: cv/fold_<n>/logs/selection/combined_selection_metrics.json fold-mean;
+# Gemma final TF: final/fold_0/logs/postprocess/final_daic_metrics_original_teacher_forced.json;
+# Gemma LR: cv/fold_<n>/heads/logreg/metrics_by_dataset.json or final/.../heads/logreg/...
+MERGED_TF_POSF1 = {
+    ("cv", "Audio + Text"): (0.698703, 0.748489),
+    ("cv", "Audio only"): (0.709992, 0.105832),
+    ("cv", "Text only"): (0.753764, 0.792869),
+    ("final", "Audio + Text"): (0.687500, 0.620690),
+    ("final", "Audio only"): (0.235294, 0.222222),
+    ("final", "Text only"): (0.689655, 0.689655),
+}
+MERGED_LR_POSF1 = {
+    ("cv", "Audio + Text"): (0.708986, 0.737482),
+    ("cv", "Audio only"): (0.682512, 0.634718),
+    ("cv", "Text only"): (0.755043, 0.737115),
+    ("final", "Audio + Text"): (0.666667, 0.709677),
+    ("final", "Audio only"): (0.400000, 0.100000),
+    ("final", "Text only"): (0.625000, 0.600000),
+}
+# Optuna-100 merged XGB positive fold-means (evaluations.json per fold).
+MERGED_OPTUNA_POSF1 = {
+    ("cv", "Audio + Text"): (0.734006, 0.747262),
+    ("cv", "Audio only"): (0.727402, 0.674617),
+    ("cv", "Text only"): (0.749302, 0.749152),
+    ("final", "Audio + Text"): (0.666667, 0.642857),
+    ("final", "Audio only"): (0.125000, 0.300000),
+    ("final", "Text only"): (0.666667, 0.687500),
+}
+
+# Qwen merged per-dataset CV positive-F1 (5-fold mean of per-fold per-dataset
+# metrics), from outputs/symmetric_merged/harmonized_v1/<mod>/<run>/cv/fold_<n>/
+# {qwen/summary.json (tf), heads/{logreg,xgb_fixed}/metrics_by_dataset.json}.
+# key: (modality_dir, dataset_key, method) -> positive-F1.
+MERGED_CV_POSF1: dict[tuple[str, str, str], float] = {
+    ("audio_text", "daic", "qwen"): 0.481667, ("audio_text", "cmdc", "qwen"): 0.900167,
+    ("audio_text", "turkish", "qwen"): 0.741087, ("audio_text", "d3tec", "qwen"): 0.572383,
+    ("audio_text", "androids_interview", "qwen"): 0.798209,
+    ("audio_text", "daic", "logreg"): 0.510020, ("audio_text", "cmdc", "logreg"): 0.922392,
+    ("audio_text", "turkish", "logreg"): 0.699085, ("audio_text", "d3tec", "logreg"): 0.586597,
+    ("audio_text", "androids_interview", "logreg"): 0.826884,
+    ("audio_text", "daic", "xgb_fixed"): 0.537889, ("audio_text", "cmdc", "xgb_fixed"): 0.944211,
+    ("audio_text", "turkish", "xgb_fixed"): 0.718540, ("audio_text", "d3tec", "xgb_fixed"): 0.555972,
+    ("audio_text", "androids_interview", "xgb_fixed"): 0.813112,
+    ("audio_only", "daic", "qwen"): 0.393491, ("audio_only", "cmdc", "qwen"): 0.927778,
+    ("audio_only", "turkish", "qwen"): 0.796598, ("audio_only", "d3tec", "qwen"): 0.562467,
+    ("audio_only", "androids_interview", "qwen"): 0.869609,
+    ("audio_only", "daic", "logreg"): 0.324324, ("audio_only", "cmdc", "logreg"): 0.955556,
+    ("audio_only", "turkish", "logreg"): 0.799500, ("audio_only", "d3tec", "logreg"): 0.469744,
+    ("audio_only", "androids_interview", "logreg"): 0.863412,
+    ("audio_only", "daic", "xgb_fixed"): 0.328846, ("audio_only", "cmdc", "xgb_fixed"): 0.909600,
+    ("audio_only", "turkish", "xgb_fixed"): 0.802433, ("audio_only", "d3tec", "xgb_fixed"): 0.472222,
+    ("audio_only", "androids_interview", "xgb_fixed"): 0.874748,
+    ("text_only", "daic", "qwen"): 0.583082, ("text_only", "cmdc", "qwen"): 0.937374,
+    ("text_only", "turkish", "qwen"): 0.799153, ("text_only", "d3tec", "qwen"): 0.624087,
+    ("text_only", "androids_interview", "qwen"): 0.825112,
+    ("text_only", "daic", "logreg"): 0.607253, ("text_only", "cmdc", "logreg"): 0.959596,
+    ("text_only", "turkish", "logreg"): 0.800191, ("text_only", "d3tec", "logreg"): 0.594805,
+    ("text_only", "androids_interview", "logreg"): 0.813360,
+    ("text_only", "daic", "xgb_fixed"): 0.588537, ("text_only", "cmdc", "xgb_fixed"): 0.922222,
+    ("text_only", "turkish", "xgb_fixed"): 0.779200, ("text_only", "d3tec", "xgb_fixed"): 0.542424,
+    ("text_only", "androids_interview", "xgb_fixed"): 0.839867,
 }
 
 # --------------------------------------------------------------------------- English-translated comparison values
@@ -581,10 +701,85 @@ EN_XGB = {
     ("Turkish", "Text only"): (0.6584, 0.629565),
 }
 
+# Positive-F1 paired with the English-translated comparison cells, recomputed
+# 2026-09-06. Qwen TF en values from HARMONIZED_EN_QWEN en_posf1; Qwen heads from
+# outputs/hidden_classifiers/harmonized_v1_en/<ds>/<run>/fold_<n>/variant_summary.json
+# 5-fold mean; Gemma TF from output_model/harmonized_v1_en_gemma4/... per-fold
+# metrics fold-mean; Gemma LR/XGB from gemma4_harmonized english_lr json and
+# EN optuna evaluations.json fold-means.
+EN_TF_POSF1 = {
+    ("D3TEC", "Audio + Text"): (0.6000, 0.496353),
+    ("D3TEC", "Text only"): (0.5758, 0.520923),
+    ("Androids Interview", "Audio + Text"): (0.8960, 0.898417),
+    ("Androids Interview", "Text only"): (0.8065, 0.797250),
+    ("CMDC", "Audio + Text"): (0.9818, 0.941414),
+    ("CMDC", "Text only"): (0.9636, 0.945455),
+    ("Turkish", "Audio + Text"): (0.7925, 0.757417),
+    ("Turkish", "Text only"): (0.7957, 0.778889),
+}
+EN_LR_POSF1 = {
+    ("D3TEC", "Audio + Text"): (0.475960, 0.523128),
+    ("D3TEC", "Text only"): (0.524156, 0.579730),
+    ("Androids Interview", "Audio + Text"): (0.899369, 0.925020),
+    ("Androids Interview", "Text only"): (0.852191, 0.844181),
+    ("CMDC", "Audio + Text"): (0.981818, 0.904444),
+    ("CMDC", "Text only"): (0.959596, 0.959596),
+    ("Turkish", "Audio + Text"): (0.716299, 0.728009),
+    ("Turkish", "Text only"): (0.699655, 0.723121),
+}
+
+# Qwen EN heads positive-F1 (logreg_raw / xgb_raw), 5-fold mean of
+# outputs/hidden_classifiers/harmonized_v1_en/<ds>/<run>/fold_<n>/variant_summary.json.
+# Audio-only EN heads reuse the shared native control (same values as native).
+EN_HEADS_POSF1 = {
+    ("D3TEC", "Audio + Text"): (0.475960, 0.562626),
+    ("D3TEC", "Text only"): (0.524156, 0.523077),
+    ("Androids Interview", "Audio + Text"): (0.899369, 0.870674),
+    ("Androids Interview", "Text only"): (0.852191, 0.844944),
+    ("CMDC", "Audio + Text"): (0.981818, 0.869841),
+    ("CMDC", "Text only"): (0.959596, 0.933333),
+    ("Turkish", "Audio + Text"): (0.716299, 0.777375),
+    ("Turkish", "Text only"): (0.699655, 0.783373),
+    ("D3TEC", "Audio only"): (0.523651, 0.488412),
+    ("Androids Interview", "Audio only"): (0.870020, 0.833517),
+    ("CMDC", "Audio only"): (0.977778, 0.891818),
+    ("Turkish", "Audio only"): (0.724165, 0.809810),
+}
+EN_XGB_POSF1 = {
+    ("D3TEC", "Audio + Text"): (0.549813, 0.554599),
+    ("D3TEC", "Text only"): (0.462170, 0.482440),
+    ("Androids Interview", "Audio + Text"): (0.886953, 0.925020),
+    ("Androids Interview", "Text only"): (0.839810, 0.835473),
+    ("CMDC", "Audio + Text"): (0.869841, 0.955556),
+    ("CMDC", "Text only"): (0.959596, 0.919596),
+    ("Turkish", "Audio + Text"): (0.778297, 0.764220),
+    ("Turkish", "Text only"): (0.778230, 0.770790),
+}
+
 GEMMA_NATIVE_EVIDENCE = {
     "tf": "outputs/experiment_reports/gemma4_harmonized/native_tf_{ds}_{mod}/group_report.json",
     "lr": "outputs/experiment_reports/gemma4_harmonized/native_lr/{ds}_{mod}.json",
     "optuna": "outputs/experiment_reports/optuna100_native/{ds}_{mod}_{backend}/group_report.json",
+}
+
+# Positive-F1 paired with the native Gemma 4 cells (non-DAIC), recomputed
+# 2026-09-06: TF from output_model/harmonized_v1_gemma4/<mod>/<ds>/<run>/fold_<n>/
+# {best_model/standalone_eval, eval/best_validation}/metrics_original_teacher_forced.json
+# fold-mean (CMDC/Turkish) or per-fold fold-mean (D3TEC/Androids, matching the
+# macro table convention); LR from native_lr json fold_mean.
+GEMMA_NATIVE_TF_POSF1 = {
+    ("DAIC", "Audio + Text"): 0.687500, ("DAIC", "Audio only"): 0.000000, ("DAIC", "Text only"): 0.666667,
+    ("CMDC", "Audio + Text"): 1.000000, ("CMDC", "Audio only"): 0.692929, ("CMDC", "Text only"): 0.945455,
+    ("Turkish", "Audio + Text"): 0.774880, ("Turkish", "Audio only"): 0.810800, ("Turkish", "Text only"): 0.797100,
+    ("D3TEC", "Audio + Text"): 0.541400, ("D3TEC", "Audio only"): 0.276316, ("D3TEC", "Text only"): 0.552120,
+    ("Androids Interview", "Audio + Text"): 0.882849, ("Androids Interview", "Audio only"): 0.821213, ("Androids Interview", "Text only"): 0.795383,
+}
+GEMMA_NATIVE_LR_POSF1 = {
+    ("DAIC", "Audio + Text"): 0.727273, ("DAIC", "Audio only"): 0.434783, ("DAIC", "Text only"): 0.600000,
+    ("CMDC", "Audio + Text"): 1.000000, ("CMDC", "Audio only"): 0.977778, ("CMDC", "Text only"): 0.941414,
+    ("Turkish", "Audio + Text"): 0.748056, ("Turkish", "Audio only"): 0.767306, ("Turkish", "Text only"): 0.678010,
+    ("D3TEC", "Audio + Text"): 0.471702, ("D3TEC", "Audio only"): 0.498373, ("D3TEC", "Text only"): 0.552632,
+    ("Androids Interview", "Audio + Text"): 0.872796, ("Androids Interview", "Audio only"): 0.801511, ("Androids Interview", "Text only"): 0.810161,
 }
 
 GEMMA4_HEADS_EVIDENCE = "output_model/harmonized_v1_gemma4_heads/<modality>/daic/<run>/fold_0/hidden_classifiers/<variant>/"
@@ -1059,19 +1254,21 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
     shown side by side with the Gemma-minus-Qwen delta.
     """
     ws = wb.create_sheet("Qwen vs Gemma")
-    _widths(ws, {"A": 18, "B": 26, "C": 22, "D": 17, "E": 17, "F": 17, "G": 15})
-    _title(ws, "Qwen vs Gemma 4 — macro-F1 (seed 1337)", 7)
+    _widths(ws, {"A": 18, "B": 26, "C": 22, "D": 17, "E": 20, "F": 20, "G": 15})
+    _title(ws, "Qwen vs Gemma 4 — Macro-F1 / Positive-F1 (seed 1337)", 7)
     _note(
         ws, 2,
-        "Three main experiments, both models, macro-F1 (binary-strict, best_model, harmonized view). "
+        "Three main experiments, both models, binary-strict best_model harmonized view. Every score "
+        "cell shows 'Macro-F1 / Positive-F1'; 'n/a' marks a positive-F1 with no local evidence. "
         "XGBoost uses the standardized search of 100 trials (the default), seed 1337, for both models; "
-        "the runbook fits no fixed XGB head for Gemma. Delta = Gemma minus Qwen. DAIC = official "
-        "47-subject test; CMDC/Turkish = 5-fold mean (train_val); D3TEC/Androids = pooled 5-fold "
-        "subject-level; merged CV = mean over the five datasets; merged Final = DAIC official test. "
-        "Per-cell provenance: Provenance sheet.",
-        7, height=110,
+        "the runbook fits no fixed XGB head for Gemma. Delta = Gemma minus Qwen on macro-F1 only. "
+        "DAIC = official 47-subject test; CMDC/Turkish = 5-fold mean (train_val); D3TEC/Androids = "
+        "pooled 5-fold subject-level; merged CV = mean over the five datasets; merged Final = DAIC "
+        "official test. Per-cell provenance: Provenance sheet.",
+        7, height=120,
     )
     _header_row(ws, 4, ["Experiment", "Dataset", "Modality", "Method", "Qwen", "Gemma 4", "Δ (Gemma − Qwen)"])
+
     mod_keys = ["Audio + Text", "Audio only", "Text only"]
     row = 5
 
@@ -1081,46 +1278,64 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
         for mod_label in mod_keys:
             qwen_tf = STANDALONE_QWEN[(dataset, mod_label)]
             gemma_tf = GEMMA_NATIVE_TF[(dataset, mod_label)]
-            cells = [("Teacher-forced", qwen_tf, gemma_tf)]
+            cells = [("Teacher-forced", qwen_tf, gemma_tf,
+                      STANDALONE_QWEN_POSF1[(dataset, mod_label)],
+                      GEMMA_NATIVE_TF_POSF1[(dataset, mod_label)])]
             logreg = STANDALONE_HEADS[(dataset, mod_label)][0]
             if logreg is not None:
-                cells.append(("LogReg head", logreg, GEMMA_NATIVE_LR[(dataset, mod_label)]))
-            cells.append(("XGBoost", QWEN_OPTUNA[(dataset, mod_label)], GEMMA_OPTUNA[(dataset, mod_label)]))
+                cells.append(("LogReg head", logreg, GEMMA_NATIVE_LR[(dataset, mod_label)],
+                              STANDALONE_HEADS_POSF1[(dataset, mod_label)][0],
+                              GEMMA_NATIVE_LR_POSF1[(dataset, mod_label)]))
+            cells.append(("XGBoost", QWEN_OPTUNA[(dataset, mod_label)], GEMMA_OPTUNA[(dataset, mod_label)],
+                          QWEN_OPTUNA_POSF1[(dataset, mod_label)],
+                          GEMMA_OPTUNA_POSF1[(dataset, mod_label)]))
             if dataset == "Turkish":
                 transcript = _turkish_transcript_for_modality(mod_label)
-                for method, q, g in cells:
+                for method, q, g, qp, gp in cells:
                     route = {"Teacher-forced": "teacher_forced", "LogReg head": "logreg", "XGBoost": "xgb_optuna100"}[method]
                     q = _turkish_mixed_value("Qwen", mod_label, transcript, route) or q
                     g = _turkish_mixed_value("Gemma 4", mod_label, transcript, route) or g
-                    _fill_cell(ws, row, "Standalone", dataset, mod_label, method, q, g)
+                    qp = _turkish_mixed_pos_value("Qwen", mod_label, transcript, route) or qp
+                    gp = _turkish_mixed_pos_value("Gemma 4", mod_label, transcript, route) or gp
+                    _fill_cell(ws, row, "Standalone", dataset, mod_label, method, q, g, qp, gp)
                     row += 1
             else:
-                for method, q, g in cells:
-                    _fill_cell(ws, row, "Standalone", dataset, mod_label, method, q, g)
+                for method, q, g, qp, gp in cells:
+                    _fill_cell(ws, row, "Standalone", dataset, mod_label, method, q, g, qp, gp)
                     row += 1
 
     _section(ws, row, "Merged (symmetric)", 7)
     row += 1
     for stage, stage_label in (("cv", "CV (5-fold)"), ("final", "Final (DAIC test)")):
         for mod_label in mod_keys:
-            for method, table in (("Teacher-forced", MERGED_TF), ("LogReg head", MERGED_LR), ("XGBoost", MERGED_XGB)):
+            for method, table, pos_table in (
+                    ("Teacher-forced", MERGED_TF, MERGED_TF_POSF1),
+                    ("LogReg head", MERGED_LR, MERGED_LR_POSF1),
+                    ("XGBoost", MERGED_XGB, MERGED_OPTUNA_POSF1)):
                 q, g = table[(stage, mod_label)]
                 if g is None:
                     continue
-                _fill_cell(ws, row, f"Merged — {stage_label}", "Merged", mod_label, method, q, g)
+                qp, gp = pos_table[(stage, mod_label)]
+                _fill_cell(ws, row, f"Merged — {stage_label}", "Merged", mod_label, method, q, g, qp, gp)
                 row += 1
 
     _section(ws, row, "English (translated)", 7)
     row += 1
     for dataset in ("D3TEC", "Androids Interview", "CMDC", "Turkish"):
         for mod_label in ("Audio + Text", "Text only"):
-            for method, table in (("Teacher-forced", EN_TF), ("LogReg head", EN_LR), ("XGBoost", EN_XGB)):
+            for method, table, pos_table in (
+                    ("Teacher-forced", EN_TF, EN_TF_POSF1),
+                    ("LogReg head", EN_LR, EN_LR_POSF1),
+                    ("XGBoost", EN_XGB, EN_XGB_POSF1)):
                 q, g = table[(dataset, mod_label)]
+                qp, gp = pos_table[(dataset, mod_label)]
                 if dataset == "Turkish":
                     route = {"Teacher-forced": "teacher_forced", "LogReg head": "logreg", "XGBoost": "xgb_optuna100"}[method]
                     q = _turkish_mixed_value("Qwen", mod_label, "english", route) or q
                     g = _turkish_mixed_value("Gemma 4", mod_label, "english", route) or g
-                _fill_cell(ws, row, "English", dataset, mod_label, method, q, g)
+                    qp = _turkish_mixed_pos_value("Qwen", mod_label, "english", route) or qp
+                    gp = _turkish_mixed_pos_value("Gemma 4", mod_label, "english", route) or gp
+                _fill_cell(ws, row, "English", dataset, mod_label, method, q, g, qp, gp)
                 row += 1
 
     _note(ws, row, "Teacher-forced = backbone classification without hidden-state heads. Hidden heads "
@@ -1142,7 +1357,8 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
 
 
 def _fill_cell(ws, row: int, experiment: str, dataset: str, modality: str, method: str,
-               qwen_value: float | None, gemma_value: float | None) -> None:
+               qwen_value: float | None, gemma_value: float | None,
+               qwen_pos: float | None = None, gemma_pos: float | None = None) -> None:
     ws.cell(row, 1, experiment).font = BODY_FONT
     ws.cell(row, 1).fill = BODY
     ws.cell(row, 1).alignment = LEFT
@@ -1150,12 +1366,20 @@ def _fill_cell(ws, row: int, experiment: str, dataset: str, modality: str, metho
     _body_cell(ws, row, 2, dataset)
     _body_cell(ws, row, 3, modality)
     _body_cell(ws, row, 4, method)
-    _body_cell(ws, row, 5, qwen_value, fmt="0.0000")
-    _body_cell(ws, row, 6, gemma_value, fmt="0.0000")
+    _body_cell(ws, row, 5, _paired_f1(qwen_value, qwen_pos))
+    _body_cell(ws, row, 6, _paired_f1(gemma_value, gemma_pos))
     if qwen_value is not None and gemma_value is not None:
         _delta_cell(ws, row, 7, gemma_value - qwen_value)
     else:
         _body_cell(ws, row, 7, None)
+
+
+def _paired_f1(macro: float | None, pos: float | None) -> str | None:
+    """'Macro-F1 / Positive-F1' cell text; pos None renders as n/a."""
+    if macro is None:
+        return None
+    pos_text = "n/a" if pos is None else f"{pos:.4f}"
+    return f"{macro:.4f} / {pos_text}"
 
 
 NATIVE_EN_REPORT_PATH = PROJECT_ROOT / "outputs/native_en_text_heads_v2/reports/native_en_text_heads_v2_report.json"
@@ -1623,6 +1847,15 @@ def _turkish_mixed_value(model: str, modality: str, transcript: str, route: str)
     return None
 
 
+def _turkish_mixed_pos_value(model: str, modality: str, transcript: str, route: str) -> float | None:
+    """Return the pooled mixed combined positive-F1 for a Turkish standalone/English
+    cell, or None when the report is not loaded."""
+    key = (model, modality, transcript, route)
+    if key in TURKISH_POOLED_MIXED_LOOKUP:
+        return TURKISH_POOLED_MIXED_LOOKUP[key][1]
+    return None
+
+
 def _turkish_transcript_for_modality(modality: str) -> str:
     """Audio-only pooled cells carry transcript not_applicable; text/audio-text
     cells have native or english transcripts."""
@@ -1774,14 +2007,15 @@ def build_summary(wb: Workbook, *, detailed: bool) -> None:
     show the pooled mixed (positive+negative question) results.
     """
     ws = wb.create_sheet("Summary")
-    _widths(ws, {"A": 22, "B": 26, "C": 14, "D": 14, "E": 14})
-    _title(ws, "Depression Detection — XGBoost macro-F1 summary (Qwen vs Gemma)", 5)
+    _widths(ws, {"A": 22, "B": 26, "C": 20, "D": 20, "E": 14})
+    _title(ws, "Depression Detection — XGBoost Macro-F1 / Positive-F1 summary (Qwen vs Gemma)", 5)
     _note(
         ws, 2,
-        "Standardized XGBoost (100-trial search, seed 1337, macro-F1) for the three main experiments, "
-        "both models. Delta = Gemma minus Qwen. Full teacher-forced, LogReg, and XGBoost detail: "
+        "Standardized XGBoost (100-trial search, seed 1337) for the three main experiments, both models. "
+        "Every score cell shows 'Macro-F1 / Positive-F1'; 'n/a' marks a positive-F1 with no local evidence. "
+        "Delta = Gemma minus Qwen on macro-F1 only. Full teacher-forced, LogReg, and XGBoost detail: "
         "'Qwen vs Gemma' sheet. Per-cell provenance: Provenance sheet.",
-        5, height=70,
+        5, height=78,
     )
     _header_row(ws, 4, ["Experiment", "Dataset / Stage", "Qwen", "Gemma 4", "Δ (Gemma − Qwen)"])
     row = 5
@@ -1789,23 +2023,31 @@ def build_summary(wb: Workbook, *, detailed: bool) -> None:
         for mod_label in ("Audio + Text", "Audio only", "Text only"):
             q = QWEN_OPTUNA[(dataset, mod_label)]
             g = GEMMA_OPTUNA[(dataset, mod_label)]
+            qp = QWEN_OPTUNA_POSF1[(dataset, mod_label)]
+            gp = GEMMA_OPTUNA_POSF1[(dataset, mod_label)]
             if dataset == "Turkish":
                 q = _turkish_mixed_value("Qwen", mod_label, _turkish_transcript_for_modality(mod_label), "xgb_optuna100") or q
                 g = _turkish_mixed_value("Gemma 4", mod_label, _turkish_transcript_for_modality(mod_label), "xgb_optuna100") or g
-            _summary_row(ws, row, "Standalone", f"{dataset} — {mod_label}", q, g)
+                qp = _turkish_mixed_pos_value("Qwen", mod_label, _turkish_transcript_for_modality(mod_label), "xgb_optuna100") or qp
+                gp = _turkish_mixed_pos_value("Gemma 4", mod_label, _turkish_transcript_for_modality(mod_label), "xgb_optuna100") or gp
+            _summary_row(ws, row, "Standalone", f"{dataset} — {mod_label}", q, g, qp, gp)
             row += 1
     for stage, stage_label in (("cv", "CV (5-fold)"), ("final", "Final (DAIC test)")):
         for mod_label in ("Audio + Text", "Audio only", "Text only"):
             q, g = MERGED_XGB[(stage, mod_label)]
-            _summary_row(ws, row, "Merged", f"{stage_label} — {mod_label}", q, g)
+            qp, gp = MERGED_OPTUNA_POSF1[(stage, mod_label)]
+            _summary_row(ws, row, "Merged", f"{stage_label} — {mod_label}", q, g, qp, gp)
             row += 1
     for dataset in ("D3TEC", "Androids Interview", "CMDC", "Turkish"):
         for mod_label in ("Audio + Text", "Text only"):
             q, g = EN_XGB[(dataset, mod_label)]
+            qp, gp = EN_XGB_POSF1[(dataset, mod_label)]
             if dataset == "Turkish":
                 q = _turkish_mixed_value("Qwen", mod_label, "english", "xgb_optuna100") or q
                 g = _turkish_mixed_value("Gemma 4", mod_label, "english", "xgb_optuna100") or g
-            _summary_row(ws, row, "English", f"{dataset} — {mod_label}", q, g)
+                qp = _turkish_mixed_pos_value("Qwen", mod_label, "english", "xgb_optuna100") or qp
+                gp = _turkish_mixed_pos_value("Gemma 4", mod_label, "english", "xgb_optuna100") or gp
+            _summary_row(ws, row, "English", f"{dataset} — {mod_label}", q, g, qp, gp)
             row += 1
     if _turkish_pooled_active():
         _note(
@@ -1821,14 +2063,15 @@ def build_summary(wb: Workbook, *, detailed: bool) -> None:
     ws.freeze_panes = "A5"
 
 
-def _summary_row(ws, row: int, experiment: str, label: str, qwen_value: float, gemma_value: float) -> None:
+def _summary_row(ws, row: int, experiment: str, label: str, qwen_value: float, gemma_value: float,
+                 qwen_pos: float | None = None, gemma_pos: float | None = None) -> None:
     ws.cell(row, 1, experiment).font = BODY_FONT
     ws.cell(row, 1).fill = BODY
     ws.cell(row, 1).alignment = LEFT
     ws.cell(row, 1).border = BORDER
     _body_cell(ws, row, 2, label)
-    _body_cell(ws, row, 3, qwen_value, fmt="0.0000")
-    _body_cell(ws, row, 4, gemma_value, fmt="0.0000")
+    _body_cell(ws, row, 3, _paired_f1(qwen_value, qwen_pos))
+    _body_cell(ws, row, 4, _paired_f1(gemma_value, gemma_pos))
     _delta_cell(ws, row, 5, gemma_value - qwen_value)
 
 
@@ -2895,6 +3138,8 @@ def validate_selected_results(selected_results: Path, cell_values: dict[tuple[st
 
     The workbook stays script-only: values are compared, never overwritten. Missing
     records are listed as legacy-unmigrated; nothing is invented and nothing is zeroed.
+    Cell values may now be paired 'macro / positive' strings; only the macro part is
+    compared against the registry macro_f1 records.
     """
     payload = json.loads(Path(selected_results).read_text(encoding="utf-8"))
     selections = payload.get("selections", [])
@@ -2920,7 +3165,9 @@ def validate_selected_results(selected_results: Path, cell_values: dict[tuple[st
         if value is None:
             mismatches.append(f"{cell}: selected record has null value")
             continue
-        if expected is not None and abs(float(value) - float(expected)) > 1e-6 * max(1.0, abs(float(expected))):
+        if isinstance(expected, str) and " / " in expected:
+            expected = float(expected.split(" / ")[0])
+        if abs(float(value) - float(expected)) > 1e-6 * max(1.0, abs(float(expected))):
             mismatches.append(
                 f"{cell}: registry {float(value):.6f} differs from workbook {float(expected):.6f}"
             )
