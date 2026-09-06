@@ -1086,9 +1086,18 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
             if logreg is not None:
                 cells.append(("LogReg head", logreg, GEMMA_NATIVE_LR[(dataset, mod_label)]))
             cells.append(("XGBoost", QWEN_OPTUNA[(dataset, mod_label)], GEMMA_OPTUNA[(dataset, mod_label)]))
-            for method, q, g in cells:
-                _fill_cell(ws, row, "Standalone", dataset, mod_label, method, q, g)
-                row += 1
+            if dataset == "Turkish":
+                transcript = _turkish_transcript_for_modality(mod_label)
+                for method, q, g in cells:
+                    route = {"Teacher-forced": "teacher_forced", "LogReg head": "logreg", "XGBoost": "xgb_optuna100"}[method]
+                    q = _turkish_mixed_value("Qwen", mod_label, transcript, route) or q
+                    g = _turkish_mixed_value("Gemma 4", mod_label, transcript, route) or g
+                    _fill_cell(ws, row, "Standalone", dataset, mod_label, method, q, g)
+                    row += 1
+            else:
+                for method, q, g in cells:
+                    _fill_cell(ws, row, "Standalone", dataset, mod_label, method, q, g)
+                    row += 1
 
     _section(ws, row, "Merged (symmetric)", 7)
     row += 1
@@ -1107,6 +1116,10 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
         for mod_label in ("Audio + Text", "Text only"):
             for method, table in (("Teacher-forced", EN_TF), ("LogReg head", EN_LR), ("XGBoost", EN_XGB)):
                 q, g = table[(dataset, mod_label)]
+                if dataset == "Turkish":
+                    route = {"Teacher-forced": "teacher_forced", "LogReg head": "logreg", "XGBoost": "xgb_optuna100"}[method]
+                    q = _turkish_mixed_value("Qwen", mod_label, "english", route) or q
+                    g = _turkish_mixed_value("Gemma 4", mod_label, "english", route) or g
                 _fill_cell(ws, row, "English", dataset, mod_label, method, q, g)
                 row += 1
 
@@ -1114,6 +1127,17 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
                    "classify the final prompt-token hidden state with the locked LogReg or the standardized "
                    "XGBoost implementation. See the Provenance sheet for every value's run, aggregation, and "
                    "local artifact.", 7, height=60)
+    row += 1
+    if _turkish_pooled_active():
+        _note(
+            ws, row,
+            "Turkish standalone (native) and English rows show the pooled mixed question-condition results "
+            "(positive + negative questions combined) from the turkish-pooled-qcond-clean-v1-20260903 "
+            "campaign, replacing the earlier positive-only standalone/English values. Turkish merged rows "
+            "are intentionally unchanged: the merged model was trained together with the other datasets, so "
+            "its Turkish component is not a standalone mixed-Turkish result.",
+            7, height=70,
+        )
     ws.freeze_panes = "A5"
 
 
@@ -1135,6 +1159,12 @@ def _fill_cell(ws, row: int, experiment: str, dataset: str, modality: str, metho
 
 
 NATIVE_EN_REPORT_PATH = PROJECT_ROOT / "outputs/native_en_text_heads_v2/reports/native_en_text_heads_v2_report.json"
+# Validated Turkish pooled question-conditioned report (Mixed = positive +
+# negative questions combined). The headline "mixed" values shown in the
+# Turkish standalone/English rows are sourced from this report when present.
+TURKISH_POOLED_MIXED_REPORT_PATH = (
+    PROJECT_ROOT / "outputs/turkish_pooled_qcond/exp-turkish-pooled-qcond-clean-v1-20260903/production/report_v2/report.json"
+)
 NATIVE_EN_DATASET_LABELS = {
     "d3tec": "D3TEC",
     "androids_interview": "Androids Interview",
@@ -1556,6 +1586,54 @@ def _load_turkish_pooled_qcond_report(report_path: Path) -> dict[str, Any]:
     return report
 
 
+# (model, modality label, transcript condition, route) -> (combined macro-F1 mean, combined positive-F1 mean)
+# Built from the validated pooled report's 30-cell summary; transcript condition is
+# "not_applicable" for audio-only cells, otherwise "native"/"english".
+TURKISH_POOLED_MIXED_LOOKUP: dict[tuple[str, str, str, str], tuple[float, float]] = {}
+
+
+def _build_turkish_pooled_lookup(report_path: Path | None = None) -> None:
+    """Populate TURKISH_POOLED_MIXED_LOOKUP from the pooled report summary."""
+    if report_path is None:
+        report_path = TURKISH_POOLED_MIXED_REPORT_PATH
+    report = _load_turkish_pooled_qcond_report(report_path)
+    modality_label = {"audio_only": "Audio only", "text_only": "Text only", "audio_text": "Audio + Text"}
+    rows = {}
+    for item in report["tables"]["summary"]:
+        model = item.get("model")
+        modality = modality_label.get(str(item.get("modality")), str(item.get("modality")))
+        transcript = str(item.get("transcript_condition") or "not_applicable")
+        route = str(item.get("route"))
+        rows[(model, modality, transcript, route)] = (
+            item.get("combined_macro_f1_seed_mean"),
+            item.get("combined_positive_f1_seed_mean"),
+        )
+    TURKISH_POOLED_MIXED_LOOKUP.clear()
+    TURKISH_POOLED_MIXED_LOOKUP.update(rows)
+    if len(rows) != 30:
+        raise ValueError(f"Turkish pooled report summary has {len(rows)} route rows; expected 30")
+
+
+def _turkish_mixed_value(model: str, modality: str, transcript: str, route: str) -> float | None:
+    """Return the pooled mixed combined macro-F1 for a Turkish standalone/English
+    cell, or None when the report is not loaded."""
+    key = (model, modality, transcript, route)
+    if key in TURKISH_POOLED_MIXED_LOOKUP:
+        return TURKISH_POOLED_MIXED_LOOKUP[key][0]
+    return None
+
+
+def _turkish_transcript_for_modality(modality: str) -> str:
+    """Audio-only pooled cells carry transcript not_applicable; text/audio-text
+    cells have native or english transcripts."""
+    return "not_applicable" if modality == "Audio only" else "native"
+
+
+def _turkish_pooled_active() -> bool:
+    """True when the pooled mixed report has been loaded for this build."""
+    return bool(TURKISH_POOLED_MIXED_LOOKUP)
+
+
 def _pooled_input_label(item: dict[str, Any]) -> str:
     base = {"audio_only": "Audio only", "text_only": "Text only", "audio_text": "Audio + text"}.get(str(item.get("modality")), str(item.get("modality")))
     language = str(item.get("transcript_condition"))
@@ -1692,6 +1770,8 @@ def build_summary(wb: Workbook, *, detailed: bool) -> None:
     """Compact headline: the standardized XGBoost macro-F1 for the three main
     experiments, both models, with the Gemma-minus-Qwen delta. The full
     teacher-forced / LogReg / XGBoost detail lives in the Qwen vs Gemma sheet.
+    When the Turkish pooled mixed report is available, Turkish standalone rows
+    show the pooled mixed (positive+negative question) results.
     """
     ws = wb.create_sheet("Summary")
     _widths(ws, {"A": 22, "B": 26, "C": 14, "D": 14, "E": 14})
@@ -1709,6 +1789,9 @@ def build_summary(wb: Workbook, *, detailed: bool) -> None:
         for mod_label in ("Audio + Text", "Audio only", "Text only"):
             q = QWEN_OPTUNA[(dataset, mod_label)]
             g = GEMMA_OPTUNA[(dataset, mod_label)]
+            if dataset == "Turkish":
+                q = _turkish_mixed_value("Qwen", mod_label, _turkish_transcript_for_modality(mod_label), "xgb_optuna100") or q
+                g = _turkish_mixed_value("Gemma 4", mod_label, _turkish_transcript_for_modality(mod_label), "xgb_optuna100") or g
             _summary_row(ws, row, "Standalone", f"{dataset} — {mod_label}", q, g)
             row += 1
     for stage, stage_label in (("cv", "CV (5-fold)"), ("final", "Final (DAIC test)")):
@@ -1719,8 +1802,22 @@ def build_summary(wb: Workbook, *, detailed: bool) -> None:
     for dataset in ("D3TEC", "Androids Interview", "CMDC", "Turkish"):
         for mod_label in ("Audio + Text", "Text only"):
             q, g = EN_XGB[(dataset, mod_label)]
+            if dataset == "Turkish":
+                q = _turkish_mixed_value("Qwen", mod_label, "english", "xgb_optuna100") or q
+                g = _turkish_mixed_value("Gemma 4", mod_label, "english", "xgb_optuna100") or g
             _summary_row(ws, row, "English", f"{dataset} — {mod_label}", q, g)
             row += 1
+    if _turkish_pooled_active():
+        _note(
+            ws, row,
+            "Turkish standalone and English rows show the pooled mixed question-condition results "
+            "(positive + negative questions combined) from the turkish-pooled-qcond-clean-v1-20260903 "
+            "campaign, replacing the earlier positive-only standalone/English values. Turkish merged rows "
+            "are intentionally unchanged: the merged model was trained together with the other datasets, "
+            "so its Turkish component is not a standalone mixed-Turkish result. Per-cell provenance for the "
+            "changed Turkish cells: Provenance sheet.",
+            5, height=78,
+        )
     ws.freeze_panes = "A5"
 
 
@@ -2142,6 +2239,69 @@ def build_native_en_provenance(ws, put, *, report_path: Path | None = None) -> N
             )
 
 
+def _put_turkish_pooled_provenance(ws, put, *, report_path: Path) -> None:
+    """Provenance rows for the Turkish standalone/English cells whose workbook
+    values now come from the pooled question-conditioned (mixed) report."""
+    report = _load_turkish_pooled_qcond_report(report_path)
+    source = (
+        f"report {report_path}; group {report.get('group_id')}; deployment {report.get('deployment_id')}; "
+        f"source {report.get('source_git_sha')}"
+    )
+    aggregation = (
+        "three-seed mean of five-fold subject-level means; teacher-forced original_teacher_forced; "
+        "harmonized_all_windows_full_coverage; headline/binary_strict"
+    )
+    artifact = f"{report_path} + {report_path.parent / 'provenance_index.json'}"
+    modality_label = {"audio_only": "Audio only", "text_only": "Text only", "audio_text": "Audio + Text"}
+    route_method = {
+        "teacher_forced": "Teacher-forced",
+        "logreg": "LogReg head",
+        "xgb_optuna100": "XGBoost",
+    }
+    # Standalone (native) Turkish cells cover audio_text/audio_only/text_only;
+    # English Turkish cells cover audio_text/text_only. Audio-only pooled cells
+    # carry transcript not_applicable (shared native control).
+    cells = [
+        ("Standalone", "Qwen", "Audio + Text", "native"),
+        ("Standalone", "Gemma 4", "Audio + Text", "native"),
+        ("Standalone", "Qwen", "Audio only", "not_applicable"),
+        ("Standalone", "Gemma 4", "Audio only", "not_applicable"),
+        ("Standalone", "Qwen", "Text only", "native"),
+        ("Standalone", "Gemma 4", "Text only", "native"),
+        ("English", "Qwen", "Audio + Text", "english"),
+        ("English", "Gemma 4", "Audio + Text", "english"),
+        ("English", "Qwen", "Text only", "english"),
+        ("English", "Gemma 4", "Text only", "english"),
+    ]
+    for experiment, model, modality, transcript in cells:
+        # modality here is the workbook label; convert back for lookup keying.
+        mod_key = {v: k for k, v in modality_label.items()}[modality]
+        for route, method in route_method.items():
+            value = _turkish_mixed_value(model, modality, transcript, route)
+            if value is None:
+                continue
+            prov_keys = ""
+            provenance_rows = [
+                r for r in report["tables"]["summary"]
+                if str(r.get("model")) == model and str(r.get("modality")) == mod_key
+                and str(r.get("transcript_condition") or "not_applicable") == transcript
+                and str(r.get("route")) == route
+            ]
+            if provenance_rows:
+                prov_keys = provenance_rows[0].get("provenance_keys") or ""
+            put(
+                f"Turkish pooled {experiment}",
+                "Turkish",
+                modality,
+                method,
+                value,
+                f"{source}; provenance keys {prov_keys}",
+                aggregation,
+                artifact,
+                "locally verified REPORTABLE pooled evidence",
+            )
+
+
 def build_provenance(
     wb: Workbook,
     *,
@@ -2150,6 +2310,10 @@ def build_provenance(
     turkish_question_condition_report_path: Path | None = None,
     turkish_pooled_qcond_report_path: Path | None = None,
 ) -> None:
+    """Write the per-cell provenance sheet. When the Turkish pooled mixed report
+    has been loaded (TURKISH_POOLED_MIXED_LOOKUP non-empty), the stale Turkish
+    standalone/English provenance rows are replaced by pooled-report rows."""
+    pooled_active = bool(TURKISH_POOLED_MIXED_LOOKUP)
     ws = wb.create_sheet("Provenance")
     widths = {"A": 13, "B": 11, "C": 14, "D": 12, "E": 13, "F": 52, "G": 40, "H": 30, "I": 40}
     _widths(ws, widths)
@@ -2173,6 +2337,8 @@ def build_provenance(
         row += 1
 
     for dataset in DATASETS:
+        if pooled_active and dataset == "Turkish":
+            continue
         run, agg, artifact = STANDALONE_QWEN_SOURCE[dataset]
         for modality in MODALITIES:
             put("Standalone", dataset, modality, "Fine-tuned Qwen",
@@ -2184,6 +2350,8 @@ def build_provenance(
     en_mod_key = {"Audio + Text": "audio_text", "Audio only": "audio_only", "Text only": "text_only"}
     en_run_prefix = f"harmonized_v1_en_{campaign['campaign_id']}"
     for dataset, modality in HARMONIZED_EN_QWEN:
+        if pooled_active and dataset == "Turkish":
+            continue
         nm, np1, em, ep1, agg, shared = HARMONIZED_EN_QWEN[(dataset, modality)]
         run = f"{en_run_prefix}_{en_ds_key[dataset]}_{en_mod_key[modality]}"
         hashes = (
@@ -2206,6 +2374,8 @@ def build_provenance(
             evidence + "metrics_original_teacher_forced.json + predictions_subject_level.csv",
             "recomputed from locally synced predictions")
     for dataset, modality in HARMONIZED_EN_HEADS:
+        if pooled_active and dataset == "Turkish":
+            continue
         nl, nx, el, ex = HARMONIZED_EN_HEADS[(dataset, modality)]
         run = f"{en_run_prefix}_{en_ds_key[dataset]}_{en_mod_key[modality]}"
         source = f"campaign {campaign['campaign_id']}, run {run}, folds 0-4, source {campaign['source_sha'][:8]}"
@@ -2216,6 +2386,8 @@ def build_provenance(
                 evidence,
                 "recomputed from locally synced variant_summary.json")
     for dataset, modality in HARMONIZED_EN_HEADS:
+        if pooled_active and dataset == "Turkish":
+            continue
         nl, nx, el, ex = HARMONIZED_EN_HEADS[(dataset, modality)]
         run = f"{en_run_prefix}_{en_ds_key[dataset]}_{en_mod_key[modality]}"
         if modality == "Audio only":
@@ -2232,6 +2404,8 @@ def build_provenance(
             logreg, xgb, optuna, os_ = STANDALONE_HEADS[(dataset, modality)]
             for value, method in ((logreg, "LogReg head"), (xgb, "XGBoost fixed")):
                 if value is None:
+                    continue
+                if pooled_active and dataset == "Turkish":
                     continue
                 put("Standalone heads", dataset, modality, method, value,
                     "hidden-state heads on frozen Qwen checkpoints (see docs)",
@@ -2333,6 +2507,8 @@ def build_provenance(
         build_turkish_question_condition_provenance(ws, put, report_path=turkish_question_condition_report_path)
     if turkish_pooled_qcond_report_path is not None:
         build_turkish_pooled_qcond_provenance(ws, put, report_path=turkish_pooled_qcond_report_path)
+    if pooled_active and turkish_pooled_qcond_report_path is not None:
+        _put_turkish_pooled_provenance(ws, put, report_path=turkish_pooled_qcond_report_path)
 
     ws.freeze_panes = "A3"
 
@@ -2374,6 +2550,10 @@ def build_optuna100_provenance(ws, put) -> None:
     agg = ("Optuna-100 fold-mean, 100 TPE trials seed 1337, 3 subject-grouped inner folds, "
            "macro-F1 objective, harmonized_all_windows_full_coverage, headline/binary-strict")
     for family, dataset, modality, backend, report in cells:
+        if _turkish_pooled_active() and dataset == "Turkish":
+            # Turkish standalone/English XGB provenance now points at the pooled
+            # mixed report (see _put_turkish_pooled_provenance).
+            continue
         report_path = PROJECT_ROOT / report
         if not report_path.is_file():
             continue
@@ -2396,6 +2576,8 @@ def build_en_merged_gemma_provenance(ws, put) -> None:
     en_campaign = "gemma4_harmonized_v1_en_gemma4_en_prod_20260815T1300Z_a955cdd"
     for dataset in ("D3TEC", "Androids Interview", "CMDC", "Turkish"):
         for modality, mk in mod_key.items():
+            if _turkish_pooled_active() and dataset == "Turkish":
+                continue
             run = f"{en_campaign}_{ds_key[dataset]}_{mk}"
             source = f"campaign {en_campaign}, group gemma4-harmonized-v1-en-{en_campaign}, 5 folds REPORTABLE"
             agg = ("English-translated, pooled 5-fold subject-level (D3TEC/Androids) or 5-fold mean "
@@ -2520,6 +2702,8 @@ def build_gemma_native_provenance(ws, put) -> None:
     mod_key = {"Audio + Text": "audio_text", "Audio only": "audio_only", "Text only": "text_only"}
     for dataset in ("D3TEC", "Androids Interview", "CMDC", "Turkish"):
         for modality in MODALITIES:
+            if _turkish_pooled_active() and dataset == "Turkish":
+                continue
             m = mod_key[modality]
             if dataset == "CMDC" or dataset == "Turkish":
                 agg = "5-fold mean (train_val protocol), teacher-forced, binary-strict, harmonized_all_windows_full_coverage"
@@ -2837,6 +3021,11 @@ def main() -> None:
 
     wb = Workbook()
     wb.remove(wb.active)
+    if turkish_pooled_qcond_report_path is not None:
+        # Load the validated pooled report up front so the Turkish standalone/
+        # English cells across Summary, Qwen-vs-Gemma, and Provenance show the
+        # pooled "mixed" question-condition values.
+        _build_turkish_pooled_lookup(turkish_pooled_qcond_report_path)
     build_summary(wb, detailed=detailed)
     build_gemma_vs_qwen(wb)
     build_native_vs_english(wb, report_path=native_en_report_path)
