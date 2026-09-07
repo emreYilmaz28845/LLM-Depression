@@ -133,7 +133,7 @@ STANDALONE_QWEN: dict[tuple[str, str], float] = {
     # PR #10; teacher-forced, binary-strict, best_model, macro-F1 selection,
     # audio encoder frozen; first-wave failures replaced by _r1 retries).
     # Aggregations: DAIC fixed official test; CMDC/Turkish 5-fold mean;
-    # D3TEC/Androids pooled subject-level 5-fold. Recomputed 2026-08-10.
+    # D3TEC/Androids unweighted 5-fold mean. Recomputed 2026-09-07.
     ("DAIC", "Audio + Text"): 0.7353,
     ("DAIC", "Audio only"): 0.5392,
     ("DAIC", "Text only"): 0.7353,
@@ -143,25 +143,25 @@ STANDALONE_QWEN: dict[tuple[str, str], float] = {
     ("Turkish", "Audio + Text"): 0.6666,
     ("Turkish", "Audio only"): 0.5137,
     ("Turkish", "Text only"): 0.6502,
-    ("D3TEC", "Audio + Text"): 0.5589,
-    ("D3TEC", "Audio only"): 0.6649,
-    ("D3TEC", "Text only"): 0.6113,
-    ("Androids Interview", "Audio + Text"): 0.8606,
-    ("Androids Interview", "Audio only"): 0.8690,
-    ("Androids Interview", "Text only"): 0.7317,
+    ("D3TEC", "Audio + Text"): 0.5401981351981351,
+    ("D3TEC", "Audio only"): 0.6180564043799338,
+    ("D3TEC", "Text only"): 0.5576023391812865,
+    ("Androids Interview", "Audio + Text"): 0.8569653018080151,
+    ("Androids Interview", "Audio only"): 0.8627999740731138,
+    ("Androids Interview", "Text only"): 0.7239571023627448,
 }
 
 # Positive-F1 paired with each STANDALONE_QWEN macro cell, same artifact and
 # aggregation (recomputed 2026-09-06 from the local evidence below).
 # DAIC: fold_0/best_model/standalone_eval/metrics_original_teacher_forced.json
 # CMDC/Turkish: fold_0-4/eval/best_validation metrics fold-mean
-# D3TEC/Androids: fold_0-4 predictions_subject_level.csv pooled subject-level.
+# D3TEC/Androids: unweighted mean of fold_0-4 strict subject-level metrics.
 STANDALONE_QWEN_POSF1: dict[tuple[str, str], float] = {
     ("DAIC", "Audio + Text"): 0.645161, ("DAIC", "Audio only"): 0.411765, ("DAIC", "Text only"): 0.645161,
     ("CMDC", "Audio + Text"): 0.960000, ("CMDC", "Audio only"): 0.931818, ("CMDC", "Text only"): 0.963636,
     ("Turkish", "Audio + Text"): 0.782190, ("Turkish", "Audio only"): 0.771921, ("Turkish", "Text only"): 0.781656,
-    ("D3TEC", "Audio + Text"): 0.509091, ("D3TEC", "Audio only"): 0.600000, ("D3TEC", "Text only"): 0.586207,
-    ("Androids Interview", "Audio + Text"): 0.875000, ("Androids Interview", "Audio only"): 0.883721, ("Androids Interview", "Text only"): 0.782609,
+    ("D3TEC", "Audio + Text"): 0.4912587412587412, ("D3TEC", "Audio only"): 0.553073593073593, ("D3TEC", "Text only"): 0.550125313283208,
+    ("Androids Interview", "Audio + Text"): 0.8781349123418088, ("Androids Interview", "Audio only"): 0.8833743842364532, ("Androids Interview", "Text only"): 0.7853243541399464,
 }
 
 # Standalone hidden-state heads: (dataset, modality) -> (logreg, xgb_fixed, xgb_optuna, subject_os)
@@ -302,12 +302,12 @@ HARMONIZED_EN_CAMPAIGN = {
 
 # (dataset, modality) -> (native_macro, native_posf1, en_macro, en_posf1, aggregation, shared)
 HARMONIZED_EN_QWEN: dict[tuple[str, str], tuple[float, float, float, float, str, bool]] = {
-    ("D3TEC", "Audio + Text"): (0.5589, 0.5091, 0.6125, 0.6000, "pooled 5-fold subject-level", False),
-    ("D3TEC", "Audio only"): (0.6649, 0.6000, 0.6649, 0.6000, "pooled 5-fold subject-level", True),
-    ("D3TEC", "Text only"): (0.6113, 0.5862, 0.5465, 0.5758, "pooled 5-fold subject-level", False),
-    ("Androids Interview", "Audio + Text"): (0.8606, 0.8750, 0.8873, 0.8960, "pooled 5-fold subject-level", False),
-    ("Androids Interview", "Audio only"): (0.8690, 0.8837, 0.8690, 0.8837, "pooled 5-fold subject-level", True),
-    ("Androids Interview", "Text only"): (0.7317, 0.7826, 0.7921, 0.8065, "pooled 5-fold subject-level", False),
+    ("D3TEC", "Audio + Text"): (0.5401981351981351, 0.4912587412587412, 0.6064935064935064, 0.5943722943722943, "5-fold mean", False),
+    ("D3TEC", "Audio only"): (0.6180564043799338, 0.553073593073593, 0.6180564043799338, 0.553073593073593, "5-fold mean", True),
+    ("D3TEC", "Text only"): (0.5576023391812865, 0.550125313283208, 0.4356905744754042, 0.4924922600619195, "5-fold mean", False),
+    ("Androids Interview", "Audio + Text"): (0.8569653018080151, 0.8781349123418088, 0.8812623541333219, 0.8993378950798305, "5-fold mean", False),
+    ("Androids Interview", "Audio only"): (0.8627999740731138, 0.8833743842364532, 0.8627999740731138, 0.8833743842364532, "5-fold mean", True),
+    ("Androids Interview", "Text only"): (0.7239571023627448, 0.7853243541399464, 0.7884739704739705, 0.8091601731601732, "5-fold mean", False),
     ("CMDC", "Audio + Text"): (0.9700, 0.9600, 0.9856, 0.9818, "5-fold mean", False),
     ("CMDC", "Audio only"): (0.9516, 0.9318, 0.9516, 0.9318, "5-fold mean", True),
     ("CMDC", "Text only"): (0.9713, 0.9636, 0.9713, 0.9636, "5-fold mean", False),
@@ -360,12 +360,12 @@ STANDALONE_QWEN_SOURCE = {
     ),
     "D3TEC": (
         "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_d3tec_{audio_text,audio_only,text_only}[_r1]",
-        "Pooled 5-fold subject-level (62 subjects), teacher-forced, binary-strict",
+        "Unweighted 5-fold mean (62 subjects across folds), teacher-forced, binary-strict",
         "output_model/harmonized_v1/*/d3tec/*/fold_<n>/best_model/standalone_eval(_r1)/metrics_original_teacher_forced.json",
     ),
     "Androids Interview": (
         "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_androids_interview_{audio_text,audio_only,text_only}[_r1]",
-        "Pooled 5-fold subject-level (116 subjects), teacher-forced, binary-strict",
+        "Unweighted 5-fold mean (116 subjects across folds), teacher-forced, binary-strict",
         "output_model/harmonized_v1/*/androids/*/fold_<n>/best_model/standalone_eval(_r1)/metrics_original_teacher_forced.json",
     ),
 }
@@ -671,10 +671,10 @@ MERGED_CV_POSF1: dict[tuple[str, str, str], float] = {
 # Gemma LogReg from the EN LR summary, and XGBoost from the EN Optuna-100
 # group reports (all verified local evidence).
 EN_TF = {
-    ("D3TEC", "Audio + Text"): (0.6125, 0.564983),
-    ("D3TEC", "Text only"): (0.5465, 0.493600),
-    ("Androids Interview", "Audio + Text"): (0.8873, 0.876968),
-    ("Androids Interview", "Text only"): (0.7921, 0.744654),
+    ("D3TEC", "Audio + Text"): (0.6064935064935064, 0.564983),
+    ("D3TEC", "Text only"): (0.4356905744754042, 0.493600),
+    ("Androids Interview", "Audio + Text"): (0.8812623541333219, 0.876968),
+    ("Androids Interview", "Text only"): (0.7884739704739705, 0.744654),
     ("CMDC", "Audio + Text"): (0.9856, 0.955419),
     ("CMDC", "Text only"): (0.9713, 0.957439),
     ("Turkish", "Audio + Text"): (0.6295, 0.669119),
@@ -708,10 +708,10 @@ EN_XGB = {
 # metrics fold-mean; Gemma LR/XGB from gemma4_harmonized english_lr json and
 # EN optuna evaluations.json fold-means.
 EN_TF_POSF1 = {
-    ("D3TEC", "Audio + Text"): (0.6000, 0.496353),
-    ("D3TEC", "Text only"): (0.5758, 0.520923),
-    ("Androids Interview", "Audio + Text"): (0.8960, 0.898417),
-    ("Androids Interview", "Text only"): (0.8065, 0.797250),
+    ("D3TEC", "Audio + Text"): (0.5943722943722943, 0.496353),
+    ("D3TEC", "Text only"): (0.4924922600619195, 0.520923),
+    ("Androids Interview", "Audio + Text"): (0.8993378950798305, 0.898417),
+    ("Androids Interview", "Text only"): (0.8091601731601732, 0.797250),
     ("CMDC", "Audio + Text"): (0.9818, 0.941414),
     ("CMDC", "Text only"): (0.9636, 0.945455),
     ("Turkish", "Audio + Text"): (0.7925, 0.757417),
@@ -1262,8 +1262,8 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
         "cell shows 'Macro-F1 / Positive-F1'; 'n/a' marks a positive-F1 with no local evidence. "
         "XGBoost uses the standardized search of 100 trials (the default), seed 1337, for both models; "
         "the runbook fits no fixed XGB head for Gemma. Delta = Gemma minus Qwen on macro-F1 only. "
-        "DAIC = official 47-subject test; CMDC/Turkish = 5-fold mean (train_val); D3TEC/Androids = "
-        "pooled 5-fold subject-level; merged CV = mean over the five datasets; merged Final = DAIC "
+        "DAIC = official 47-subject test; all CV datasets/models/heads = "
+        "unweighted 5-fold mean; CMDC/Turkish remain train_val; merged CV = dataset mean within fold, then fold mean; merged Final = DAIC "
         "official test. Per-cell provenance: Provenance sheet.",
         7, height=120,
     )
@@ -1382,7 +1382,7 @@ def _paired_f1(macro: float | None, pos: float | None) -> str | None:
     return f"{macro:.4f} / {pos_text}"
 
 
-NATIVE_EN_REPORT_PATH = PROJECT_ROOT / "outputs/native_en_text_heads_v2/reports/native_en_text_heads_v2_report.json"
+NATIVE_EN_REPORT_PATH = PROJECT_ROOT / "outputs/fold_mean_reporting/native_en_report.json"
 # Validated Turkish pooled question-conditioned report (Mixed = positive +
 # negative questions combined). The headline "mixed" values shown in the
 # Turkish standalone/English rows are sourced from this report when present.
@@ -1433,6 +1433,11 @@ def _load_native_en_report(report_path: Path | None = None) -> dict[str, Any] | 
         raise ValueError(f"native-vs-English report is not a passed v2 report: {path}")
     if len(payload.get("summary", [])) != 24 or len(payload.get("seed_details", [])) != 72:
         raise ValueError(f"native-vs-English report has the wrong row counts: {path}")
+    for row in payload["summary"]:
+        if row.get("endpoint") in {"standalone", "merged_cv"}:
+            agg = str(row.get("aggregation", "")).lower()
+            if "pooled" in agg or not ("fold" in agg and "mean" in agg):
+                raise ValueError("CV headline requires fold-mean; regenerate the native/English report")
     return payload
 
 
@@ -1590,8 +1595,8 @@ def build_native_vs_english(wb: Workbook, *, report_path: Path | None = None) ->
         row += 1
     _note(
         ws, row + 1,
-        "The aggregation conventions are locked by the execution plan: D3TEC/Androids use pooled "
-        "subject-level predictions, CMDC/Turkish use unweighted five-fold means, merged CV uses an "
+        "The reporting policy is unweighted fold-mean for every standalone CV dataset. "
+        "This supersedes older pooled-CV summaries; merged CV uses an "
         "unweighted dataset mean within fold followed by a five-fold mean, and final merged results "
         "use the DAIC subject-level evaluation. Missing evidence is shown as blank, never as zero.",
         len(detail_headers), height=48,
@@ -2353,7 +2358,7 @@ def build_en_vs_native(wb: Workbook) -> None:
         f"Values are `native / EN`. Macro-F1 only; higher is better. Teacher-forced, binary-strict, "
         f"best_model, macro-F1 checkpoint selection, audio encoder frozen. EN: campaign "
         f"{campaign['campaign_id']} (source {campaign['source_sha'][:8]}, Issue #{campaign['github_issue']} / "
-        f"PR #{campaign['github_pr']}); D3TEC/Androids pooled 5-fold subject-level, CMDC/Turkish 5-fold mean. "
+        f"PR #{campaign['github_pr']}); All CV datasets use unweighted 5-fold mean. "
         f"Native: verified native campaign values (reproduced exactly). Direction = Δ (EN − native); ~tie for "
         f"|Δ| < 0.03. Audio-only cells reuse the shared native control (no EN run). XGBoost Optuna omitted: not run.",
         5, height=88,
@@ -2579,6 +2584,8 @@ def build_provenance(
 
     def put(exp, dataset, modality, method, value, source, agg, artifact, verified):
         nonlocal row
+        if dataset in {"D3TEC", "Androids Interview"} and exp in {"Standalone", "EN Translation"}:
+            artifact += "; outputs/fold_mean_reporting/tf_recalculation.json (exact fold/config hashes)"
         values = [exp, dataset, modality, method, value, source, agg, artifact, verified]
         for col, v in enumerate(values, start=1):
             cell = ws.cell(row, col, v)
@@ -2661,7 +2668,7 @@ def build_provenance(
                     continue
                 put("Standalone heads", dataset, modality, method, value,
                     "hidden-state heads on frozen Qwen checkpoints (see docs)",
-                    "pooled subject-level, 5-fold",
+                    "single official test" if dataset == "DAIC" else "unweighted 5-fold mean, subject-level",
                     f"outputs/hidden_classifiers/{dataset.lower()}/ + docs/D3TEC_HIDDEN_CLASSIFIER_REPORT_2026-07-29.md / "
                     "reports/androids_hidden_classifier_*.md / outputs/daic_coverage_heads/ (MN5)",
                     "matched to audited hidden-classifier outputs")
@@ -2700,8 +2707,8 @@ def build_provenance(
                     f"outputs/symmetric_merged/{modality}/{run}/final/fold_0/",
                     "recomputed from prediction files")
         for (ds_key, method), value in sorted(MERGED_RUNS[modality]["cv"].items()):
-            put("Merged CV", DATASET_LABELS[ds_key], MODALITY_LABELS[modality], METHOD_LABELS[method], value,
-                run, "pooled subject-level 5-fold CV",
+            put("Historical merged CV", DATASET_LABELS[ds_key], MODALITY_LABELS[modality], METHOD_LABELS[method], value,
+                run, "historical pooled subject-level 5-fold CV; not a current headline",
                 f"outputs/symmetric_merged/{modality}/{run}/cv/fold_*/",
                 "recomputed from prediction files")
 
@@ -2832,8 +2839,8 @@ def build_en_merged_gemma_provenance(ws, put) -> None:
                 continue
             run = f"{en_campaign}_{ds_key[dataset]}_{mk}"
             source = f"campaign {en_campaign}, group gemma4-harmonized-v1-en-{en_campaign}, 5 folds REPORTABLE"
-            agg = ("English-translated, pooled 5-fold subject-level (D3TEC/Androids) or 5-fold mean "
-                   "(CMDC/Turkish), teacher-forced, binary-strict, harmonized_all_windows_full_coverage")
+            agg = ("English-translated, unweighted 5-fold mean "
+                   "(all CV datasets), teacher-forced, binary-strict, harmonized_all_windows_full_coverage")
             put("Gemma EN", dataset, modality, "Fine-tuned Gemma (teacher-forced)",
                 EN_TF[(dataset, modality)][1], source, agg,
                 f"output_model/harmonized_v1_en_gemma4/{mk}/{ds_key[dataset]}/{run}/fold_*/best_model/standalone_eval",
@@ -2960,7 +2967,7 @@ def build_gemma_native_provenance(ws, put) -> None:
             if dataset == "CMDC" or dataset == "Turkish":
                 agg = "5-fold mean (train_val protocol), teacher-forced, binary-strict, harmonized_all_windows_full_coverage"
             else:
-                agg = "pooled 5-fold subject-level, teacher-forced, binary-strict, harmonized_all_windows_full_coverage"
+                agg = "5-fold mean, teacher-forced, binary-strict, harmonized_all_windows_full_coverage"
             source = f"campaign {campaign_id}, group {group_id}, seed 1337, 5 folds REPORTABLE (registry); model google/gemma-4-12B-it rev 707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7"
             tf_report = GEMMA_NATIVE_EVIDENCE["tf"].replace("{ds}", ds_key[dataset]).replace("{mod}", m)
             put("Gemma native", dataset, modality, "Fine-tuned Gemma (teacher-forced)",
@@ -3190,6 +3197,8 @@ def validate_selected_results(selected_results: Path, cell_values: dict[tuple[st
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path, default=None,
+                        help="output workbook path; defaults to the canonical or detailed workbook")
     parser.add_argument("--detailed", action="store_true",
                         help="include XGBoost Optuna and Subject-OS columns/rows; write the detailed workbook")
     parser.add_argument("--validate-selected", default=None,
@@ -3297,7 +3306,7 @@ def main() -> None:
         turkish_question_condition_report_path=turkish_question_condition_report_path,
         turkish_pooled_qcond_report_path=turkish_pooled_qcond_report_path,
     )
-    out = OUT_DETAILED if detailed else OUT
+    out = args.output or (OUT_DETAILED if detailed else OUT)
     out.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out)
     print(f"wrote {out}")

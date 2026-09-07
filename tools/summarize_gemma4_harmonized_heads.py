@@ -3,9 +3,8 @@
 
 Aggregates the fixed-LogReg raw hidden-head outputs from
 ``outputs/hidden_classifiers/harmonized_v1_gemma4/<dataset>/<run>/fold_<n>/logreg_raw``
-into per-dataset/modality qualified reports with pooled subject-level and
-fold-mean macro-F1/positive-F1 views, matching the workbook conventions
-(D3TEC/Androids pooled; CMDC/Turkish fold-mean). Every displayed value links
+into per-dataset/modality qualified reports with unweighted five-fold
+mean macro-F1/positive-F1 for every CV dataset. Every displayed value links
 to the parent cache identity and its local artifacts.
 """
 
@@ -114,8 +113,8 @@ def group_report(cells: dict, dataset: str, modality: str) -> dict:
         if ds == dataset and mod == modality
     }
     folds = sorted(members)
-    pooled_true: list[int] = []
-    pooled_pred: list[int] = []
+    if folds != list(range(5)):
+        raise ValueError(f"expected exactly folds 0..4 for {dataset}/{modality}")
     fold_metrics: list[dict] = []
     rows: list[dict] = []
     for fold in folds:
@@ -125,8 +124,6 @@ def group_report(cells: dict, dataset: str, modality: str) -> dict:
         metrics = classification_metrics(y_true, y_pred)
         metrics["negative_f1"] = _negative_f1(metrics)
         fold_metrics.append(metrics)
-        pooled_true.extend(y_true)
-        pooled_pred.extend(y_pred)
         rows.append(
             {
                 "fold": fold,
@@ -142,8 +139,6 @@ def group_report(cells: dict, dataset: str, modality: str) -> dict:
                 "split_metadata_sha256": info["metadata"].get("split_metadata_sha256"),
             }
         )
-    pooled = classification_metrics(pooled_true, pooled_pred)
-    pooled["negative_f1"] = _negative_f1(pooled)
     fold_mean = {
         "macro_f1": sum(item["macro_f1"] for item in fold_metrics) / len(fold_metrics) if fold_metrics else None,
         "positive_f1": sum(item["positive_f1"] for item in fold_metrics) / len(fold_metrics) if fold_metrics else None,
@@ -156,7 +151,6 @@ def group_report(cells: dict, dataset: str, modality: str) -> dict:
         "backend": BACKEND,
         "variant": VARIANT,
         "aggregation_views": {
-            "pooled_subject_level": {"macro_f1": pooled["macro_f1"], "positive_f1": pooled["positive_f1"]},
             "fold_mean": fold_mean,
         },
         "folds": rows,
@@ -166,7 +160,7 @@ def group_report(cells: dict, dataset: str, modality: str) -> dict:
                 "dataset": dataset,
                 "modality": modality,
                 "rows": rows,
-                "pooled": {k: pooled[k] for k in ("macro_f1", "positive_f1")},
+                "fold_mean": fold_mean,
             }
         ),
     }
@@ -211,7 +205,6 @@ def main() -> int:
         out.write_text(json.dumps(report, indent=2, sort_keys=True))
     summary = {
         key: {
-            "pooled": value["aggregation_views"]["pooled_subject_level"],
             "fold_mean": value["aggregation_views"]["fold_mean"],
         }
         for key, value in reports.items()
@@ -219,9 +212,8 @@ def main() -> int:
     family_dir = "native_lr" if RUN_FAMILY == "native" else "english_lr"
     (args.output_root / family_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True))
     for key, value in sorted(summary.items()):
-        pooled = value["pooled"]
         fold = value["fold_mean"]
-        print(f"{key:40s} pooled macro={pooled['macro_f1']:.4f} posF1={pooled['positive_f1']:.4f} | fold-mean macro={fold['macro_f1']:.4f}")
+        print(f"{key:40s} fold-mean macro={fold['macro_f1']:.4f} posF1={fold['positive_f1']:.4f}")
     return 0
 
 

@@ -1,5 +1,26 @@
 # Configs
 
+## Cross-validation reporting rule
+
+For every model, head, language, and standalone CV dataset, report the
+unweighted mean of the per-fold strict subject-level metrics. This includes
+D3TEC (Spanish) and Androids (Italian). Report Macro-F1 and Positive-F1 with
+the same fold set. Require all five distinct folds; do not average a partial
+run. With multiple seeds, first average folds within each seed, then average
+the seed means. Do not concatenate outer-fold predictions to compute a
+pooled-CV headline. This rule replaces the older dataset-specific convention.
+
+DAIC official-test results stay single-test results. Merged CV retains its
+dataset mean within fold followed by the fold mean. A mean does not turn
+selected-validation results into held-out test results.
+
+This is a reporting rule, not a model configuration option. Do not change
+`evaluation.aggregation_level`, `subject_score_aggregation`, training,
+checkpoint selection, or single-fold evaluation to implement it. Turkish
+`pooled_t17` combines question conditions, not outer-fold F1, and is unchanged.
+Keep historical artifacts intact and regenerate reports from their exact
+fold evidence. Old pooled-CV reports are historical, not current headlines.
+
 ```text
 configs/
   quarantines.yaml   # subject quarantine list; every config references it

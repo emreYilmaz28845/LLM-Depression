@@ -538,16 +538,14 @@ def _aggregate_cell(
     for seed in TRAINING_SEEDS:
         seed_records = [record for record in records if int(record["seed"]) == seed]
         if endpoint == "standalone":
-            if dataset in {"d3tec", "androids_interview"}:
-                metrics = _pooled_metrics(seed_records, dataset)
-                aggregation = "pooled subject-level across five outer folds"
-            else:
-                fold_metrics = [_fold_metrics(record, dataset) for record in seed_records]
-                metrics = {
-                    metric: float(statistics.mean(item[metric] for item in fold_metrics))
-                    for metric in ("macro_f1", "positive_f1")
-                }
-                aggregation = "unweighted mean of five outer-fold subject-level scores"
+            if sorted(int(record["fold"]) for record in seed_records) != list(range(5)):
+                raise ReportError(f"expected exactly folds 0..4 for {dataset}, seed {seed}")
+            fold_metrics = [_fold_metrics(record, dataset) for record in seed_records]
+            metrics = {
+                metric: float(statistics.mean(item[metric] for item in fold_metrics))
+                for metric in ("macro_f1", "positive_f1")
+            }
+            aggregation = "unweighted mean of five outer-fold subject-level scores"
         elif endpoint == "merged_cv":
             fold_metrics = [_fold_metrics(record) for record in seed_records]
             metrics = {
@@ -708,7 +706,7 @@ def build_report(plan_path: str | Path, attempts: set[str] | None = None) -> dic
         "evidence_default_source": plan.get("evidence_default_source"),
         "evidence_source_overrides": plan.get("evidence_source_overrides") or {},
         "aggregation": {
-            "d3tec_androids_interview": "pooled subject-level across five outer folds",
+            "d3tec_androids_interview": "unweighted mean of five outer-fold subject-level scores",
             "cmdc_turkish": "unweighted mean of five outer-fold subject-level scores",
             "merged_cv": "unweighted dataset mean within fold, then unweighted five-fold mean",
             "merged_final": "DAIC subject-level final evaluation",
@@ -783,13 +781,17 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 
 def main() -> int:
+    global PROJECT_ROOT
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--evidence-root", type=Path, default=PROJECT_ROOT,
+                        help="checkout containing the recorded submission contracts and run evidence")
     parser.add_argument("--plan", required=True, help="validated v2 submission plan JSON")
     parser.add_argument("--attempts", default=None, help="optional comma-separated explicit head attempt IDs")
     parser.add_argument("--output-json", required=True)
     parser.add_argument("--output-md", required=True)
     parser.add_argument("--with-timestamp", action="store_true")
     args = parser.parse_args()
+    PROJECT_ROOT = args.evidence_root.resolve()
     attempts = None
     if args.attempts:
         attempts = {item.strip() for item in str(args.attempts).split(",") if item.strip()}

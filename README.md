@@ -1,5 +1,13 @@
 # LLM-Depression
 
+CV headline reporting uses the **unweighted mean of fold-level subject
+metrics**, for every dataset, model and prediction route, including Spanish
+D3TEC and Italian Androids. With several seeds, average folds within seed
+first, then average seed means. DAIC remains a single official test.
+This supersedes older pooled-CV workbook summaries; see
+[the reporting rule](configs/README.md#cross-validation-reporting-rule).
+Training and within-person prediction aggregation are unchanged.
+
 Leakage-safe binary depression classification with parameter-efficient audio-language models. The repository compares audio+text, audio-only, and text-only conditions across D3TEC, Turkish, Androids, DAIC-WoZ, CMDC, and legacy E-DAIC. The main model families are Qwen2-Audio-7B / Qwen2-7B and Gemma 4 12B.
 
 The central research question is whether raw speech adds reliable subject-level information beyond transcripts after controlling subject leakage, unequal recording length, language, dataset, model family, and evaluation procedure. The intended contribution is a harmonized multilingual evaluation protocol and empirical comparison, not a claim that this is the first audio-language model used for depression detection.

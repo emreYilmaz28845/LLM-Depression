@@ -8,7 +8,7 @@ match the same evidence as the macro-F1 they sit next to.
 Aggregation conventions (locked by the builder's macro tables):
   DAIC official test       -> single fold_0 value
   CMDC / Turkish           -> 5-fold mean of per-fold subject-level metrics
-  D3TEC / Androids TF      -> pooled 5-fold subject-level (concatenated CSVs)
+  D3TEC / Androids TF      -> unweighted 5-fold mean of subject-level F1
   Heads (all datasets)     -> 5-fold mean of per-fold variant_summary.json
   Optuna-100               -> fold-mean of per-fold evaluations.json
   Merged CV                -> mean over five per-dataset fold-means
@@ -20,15 +20,17 @@ from __future__ import annotations
 import csv
 import glob
 import json
+import os
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+CODE_ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(os.environ.get("LLMDEP_EVIDENCE_ROOT", CODE_ROOT))
 
 import importlib.util as _ilu
 
-_BUILDER_PATH = ROOT / "scripts/build_clean_workbook.py"
+_BUILDER_PATH = CODE_ROOT / "scripts/build_clean_workbook.py"
 _spec = _ilu.spec_from_file_location("build_clean_workbook", _BUILDER_PATH)
 build_clean_workbook = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(build_clean_workbook)
@@ -140,7 +142,7 @@ def test_standalone_qwen_posf1_daic_cmdc_turkish(dataset, modality):
 
 @pytest.mark.parametrize("dataset,ds_dir,run_ds", [("D3TEC", "d3tec", "d3tec"), ("Androids Interview", "androids", "androids_interview")])
 @pytest.mark.parametrize("modality", list(MOD_DIR))
-def test_standalone_qwen_posf1_d3tec_androids_pooled(dataset, ds_dir, run_ds, modality):
+def test_standalone_qwen_posf1_d3tec_androids_fold_mean(dataset, ds_dir, run_ds, modality):
     m = MOD_DIR[modality]
     expected = build_clean_workbook.STANDALONE_QWEN_POSF1[(dataset, modality)]
     found: dict[int, Path] = {}
@@ -152,10 +154,10 @@ def test_standalone_qwen_posf1_d3tec_androids_pooled(dataset, ds_dir, run_ds, mo
         fold = int(parts[fold_idx].split("_")[1])
         found.setdefault(fold, Path(p))
     assert len(found) == 5, f"expected 5 folds, found {sorted(found)}"
-    rows = []
-    for fold in range(5):
-        rows.extend(_read_csv(found[fold]))
-    macro, pos, _cm = _f1s_from_preds(rows)
+    fold_values = [_f1s_from_preds(_read_csv(found[fold])) for fold in range(5)]
+    macro = _mean(v[0] for v in fold_values)
+    pos = _mean(v[1] for v in fold_values)
+    assert macro == pytest.approx(build_clean_workbook.STANDALONE_QWEN[(dataset, modality)], abs=1e-8)
     assert pos == pytest.approx(expected, abs=1e-6)
 
 
