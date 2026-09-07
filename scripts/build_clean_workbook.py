@@ -30,6 +30,18 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 OUT = PROJECT_ROOT / "depression_results_clean.xlsx"
 OUT_DETAILED = PROJECT_ROOT / "docs/archive/results_20260806/depression_results_clean_detailed.xlsx"
 
+# Aggregation convention for the headline comparison cells.
+#   "pooled"    -> seed-1337 pooled subject-level F1 (5-fold subjects in one pool),
+#                  values come from tools/compute_pooled_f1.py audit JSON.
+#   "fold_mean" -> legacy five-fold mean of per-fold subject-level F1 (hard-coded
+#                  lookups below are used unchanged).
+AGGREGATION = "pooled"
+POOLED_AUDIT = PROJECT_ROOT / "outputs" / "workbook_pooled_audit.json"
+DS_LABEL = {"d3tec": "D3TEC", "androids_interview": "Androids Interview",
+            "cmdc": "CMDC", "turkish": "Turkish", "daic": "DAIC", "merged": "Merged"}
+MOD_LABEL = {"audio_text": "Audio + Text", "audio_only": "Audio only", "text_only": "Text only"}
+STAGE_LABEL = {"cv": "CV (5-fold)", "final": "Final (DAIC test)"}
+
 # --------------------------------------------------------------------------- styles
 DARK = PatternFill("solid", fgColor="203864")
 BLUE = PatternFill("solid", fgColor="D9EAF7")
@@ -785,6 +797,165 @@ GEMMA_NATIVE_LR_POSF1 = {
 GEMMA4_HEADS_EVIDENCE = "output_model/harmonized_v1_gemma4_heads/<modality>/daic/<run>/fold_0/hidden_classifiers/<variant>/"
 
 
+# --------------------------------------------------------------------------- pooled-value injection
+# When AGGREGATION == "pooled", the headline comparison lookups below are
+# overridden with seed-1337 pooled subject-level F1 values read from the audit
+# JSON produced by tools/compute_pooled_f1.py. Setting AGGREGATION = "fold_mean"
+# restores the hard-coded legacy five-fold-mean values (nothing is deleted).
+def apply_pooled_overrides() -> None:
+    """Overwrite the Qwen-vs-Gemma headline lookups with pooled values."""
+    if AGGREGATION != "pooled" or not POOLED_AUDIT.exists():
+        return
+    audit = json.loads(POOLED_AUDIT.read_text())
+    # Turkish pooled cells draw on the campaign report lookup; make sure it is
+    # populated before the per-cell overrides below touch it.
+    if TURKISH_POOLED_MIXED_REPORT_PATH.exists() and not TURKISH_POOLED_MIXED_LOOKUP:
+        _build_turkish_pooled_lookup(TURKISH_POOLED_MIXED_REPORT_PATH)
+    for rec in audit["rows"]:
+        if "error" in rec or "macro_pooled" not in rec:
+            continue
+        ds = DS_LABEL.get(rec.get("dataset", ""))
+        mod = MOD_LABEL.get(rec.get("modality", ""))
+        model = rec.get("model")
+        route = rec.get("route")
+        if not ds or not mod or model not in ("qwen", "gemma4"):
+            continue
+        macro = rec["macro_pooled"]
+        pos = rec.get("positive_pooled")
+        # English rows have no "native" key in some lookups; handled per table.
+        cond = rec.get("condition", "native")
+        if ds == "Merged":
+            # merged rows carry modality only (cv stage); stage is cv by construction
+            stage = rec.get("stage", "cv")
+            st_label = STAGE_LABEL.get(stage, stage)
+            continue  # merged handled by _override_merged_lookups below
+        label_key = (ds, mod)
+        if cond == "english":
+            if route == "teacher_forced":
+                if model == "qwen":
+                    EN_TF[label_key] = (macro, EN_TF[label_key][1]) if label_key in EN_TF else (macro, pos)
+                else:
+                    EN_TF[label_key] = (EN_TF[label_key][0], macro) if label_key in EN_TF else (macro, pos)
+                if label_key in EN_TF_POSF1:
+                    if model == "qwen":
+                        EN_TF_POSF1[label_key] = (pos, EN_TF_POSF1[label_key][1])
+                    else:
+                        EN_TF_POSF1[label_key] = (EN_TF_POSF1[label_key][0], pos)
+            elif route == "logreg":
+                if model == "qwen":
+                    EN_LR[label_key] = (macro, EN_LR[label_key][1]) if label_key in EN_LR else (macro, pos)
+                else:
+                    EN_LR[label_key] = (EN_LR[label_key][0], macro) if label_key in EN_LR else (macro, pos)
+                if label_key in EN_LR_POSF1:
+                    if model == "qwen":
+                        EN_LR_POSF1[label_key] = (pos, EN_LR_POSF1[label_key][1])
+                    else:
+                        EN_LR_POSF1[label_key] = (EN_LR_POSF1[label_key][0], pos)
+            elif route == "xgb_optuna100":
+                if model == "qwen":
+                    EN_XGB[label_key] = (macro, EN_XGB[label_key][1]) if label_key in EN_XGB else (macro, pos)
+                else:
+                    EN_XGB[label_key] = (EN_XGB[label_key][0], macro) if label_key in EN_XGB else (macro, pos)
+                if label_key in EN_XGB_POSF1:
+                    if model == "qwen":
+                        EN_XGB_POSF1[label_key] = (pos, EN_XGB_POSF1[label_key][1])
+                    else:
+                        EN_XGB_POSF1[label_key] = (EN_XGB_POSF1[label_key][0], pos)
+        else:
+            # native standalone
+            if route == "teacher_forced":
+                if model == "qwen":
+                    STANDALONE_QWEN[label_key] = macro
+                    if label_key in STANDALONE_QWEN_POSF1 and pos is not None:
+                        STANDALONE_QWEN_POSF1[label_key] = pos
+                else:
+                    GEMMA_NATIVE_TF[label_key] = macro
+                    if label_key in GEMMA_NATIVE_TF_POSF1 and pos is not None:
+                        GEMMA_NATIVE_TF_POSF1[label_key] = pos
+            elif route == "logreg":
+                if model == "qwen":
+                    if label_key in STANDALONE_HEADS:
+                        heads = list(STANDALONE_HEADS[label_key])
+                        heads[0] = macro
+                        STANDALONE_HEADS[label_key] = tuple(heads)
+                    if label_key in STANDALONE_HEADS_POSF1 and pos is not None:
+                        hp = list(STANDALONE_HEADS_POSF1[label_key])
+                        hp[0] = pos
+                        STANDALONE_HEADS_POSF1[label_key] = tuple(hp)
+                else:
+                    GEMMA_NATIVE_LR[label_key] = macro
+                    if label_key in GEMMA_NATIVE_LR_POSF1 and pos is not None:
+                        GEMMA_NATIVE_LR_POSF1[label_key] = pos
+            elif route == "xgb_optuna100":
+                if model == "qwen":
+                    QWEN_OPTUNA[label_key] = macro
+                    if label_key in QWEN_OPTUNA_POSF1 and pos is not None:
+                        QWEN_OPTUNA_POSF1[label_key] = pos
+                else:
+                    GEMMA_OPTUNA[label_key] = macro
+                    if label_key in GEMMA_OPTUNA_POSF1 and pos is not None:
+                        GEMMA_OPTUNA_POSF1[label_key] = pos
+
+    # Merged CV rows (cell_group == "merged_cv"): per-dataset pooled -> unweighted
+    # dataset mean; the workbook merged CV lookup key is ("cv", modality label).
+    merged_tables = {"teacher_forced": MERGED_TF, "logreg": MERGED_LR,
+                     "xgb_optuna100": MERGED_XGB}
+    merged_pos_tables = {"teacher_forced": MERGED_TF_POSF1, "logreg": MERGED_LR_POSF1,
+                         "xgb_optuna100": MERGED_OPTUNA_POSF1}
+    for rec in audit["rows"]:
+        if "error" in rec or rec.get("cell_group") != "merged_cv":
+            continue
+        if rec.get("dataset") != "merged":
+            continue
+        mod = MOD_LABEL.get(rec.get("modality", ""))
+        model = rec.get("model")
+        route = rec.get("route")
+        if not mod or model not in ("qwen", "gemma4") or route not in merged_tables:
+            continue
+        table = merged_tables[route]
+        key = ("cv", mod)
+        if key not in table:
+            continue
+        macro = rec.get("macro_pooled")
+        if macro is None:
+            continue
+        q, g = table[key]
+        if model == "qwen":
+            table[key] = (macro, g)
+        else:
+            table[key] = (q, macro)
+        pos = rec.get("positive_pooled")
+        if pos is not None and key in merged_pos_tables[route]:
+            qp, gp = merged_pos_tables[route][key]
+            if model == "qwen":
+                merged_pos_tables[route][key] = (pos, gp)
+            else:
+                merged_pos_tables[route][key] = (qp, pos)
+
+    # Turkish pooled rows (cell_group == "turkish_pooled"): seed-1337 pooled
+    # values override the pooled-campaign 3-seed means in
+    # TURKISH_POOLED_MIXED_LOOKUP. Audio-only cells key on "not_applicable".
+    model_label = {"qwen": "Qwen", "gemma4": "Gemma 4"}
+    route_label = {"teacher_forced": "teacher_forced", "logreg": "logreg", "xgb_optuna100": "xgb_optuna100"}
+    for rec in audit["rows"]:
+        if "error" in rec or rec.get("cell_group") != "turkish_pooled":
+            continue
+        mod = MOD_LABEL.get(rec.get("modality", ""))
+        model = model_label.get(rec.get("model", ""))
+        route = route_label.get(rec.get("route", ""))
+        if not mod or not model or not route:
+            continue
+        transcript = "not_applicable" if rec.get("modality") == "audio_only" else rec.get("condition", "native")
+        key = (model, mod, transcript, route)
+        macro = rec.get("macro_pooled")
+        pos = rec.get("positive_pooled")
+        if macro is None:
+            continue
+        if key in TURKISH_POOLED_MIXED_LOOKUP:
+            old = TURKISH_POOLED_MIXED_LOOKUP[key]
+            TURKISH_POOLED_MIXED_LOOKUP[key] = (macro, pos if pos is not None else old[1])
+
+
 def build_gemma4(wb: Workbook) -> None:
     ws = wb.create_sheet("Gemma 4 DAIC")
     _widths(ws, {"A": 20, "B": 14, "C": 14, "D": 14, "E": 14, "F": 14, "G": 14, "H": 60, "I": 46})
@@ -1262,10 +1433,11 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
         "cell shows 'Macro-F1 / Positive-F1'; 'n/a' marks a positive-F1 with no local evidence. "
         "XGBoost uses the standardized search of 100 trials (the default), seed 1337, for both models; "
         "the runbook fits no fixed XGB head for Gemma. Delta = Gemma minus Qwen on macro-F1 only. "
-        "DAIC = official 47-subject test; CMDC/Turkish = 5-fold mean (train_val); D3TEC/Androids = "
-        "pooled 5-fold subject-level; merged CV = mean over the five datasets; merged Final = DAIC "
-        "official test. Per-cell provenance: Provenance sheet.",
-        7, height=120,
+        "All CV cells are seed-1337 pooled subject-level (5-fold subjects in one pool, single F1; "
+        "INVALID counts as wrong); DAIC = official 47-subject test; merged CV = per-dataset pooled, "
+        "then unweighted mean over the five datasets; merged Final = DAIC official test. "
+        "Pooled vs fold-mean comparison: 'Pooled vs Fold-Mean' sheet. Per-cell provenance: Provenance sheet.",
+        7, height=130,
     )
     _header_row(ws, 4, ["Experiment", "Dataset", "Modality", "Method", "Qwen", "Gemma 4", "Δ (Gemma − Qwen)"])
 
@@ -1999,6 +2171,75 @@ def build_turkish_pooled_qcond_provenance(ws, put, *, report_path: Path) -> None
 
 
 # --------------------------------------------------------------------------- sheets
+def build_pooled_vs_foldmean(wb: Workbook) -> None:
+    """Pooled vs Fold-Mean audit sheet: for every CV cell shows the seed-1337
+    pooled subject-level F1, the five-fold-mean F1, their difference, the
+    fold-SD, and positive-F1 under both conventions. Official-test rows (DAIC
+    standalone, merged final) carry no pooling and are flagged as such.
+    """
+    if not POOLED_AUDIT.exists():
+        return
+    audit = json.loads(POOLED_AUDIT.read_text())
+    rows = [r for r in audit["rows"] if "error" not in r]
+    if not rows:
+        return
+
+    ws = wb.create_sheet("Pooled vs Fold-Mean")
+    _widths(ws, {"A": 12, "B": 20, "C": 14, "D": 9, "E": 16, "F": 15, "G": 15, "H": 13,
+                 "I": 15, "J": 15, "K": 13, "L": 40})
+    _title(ws, "Seed-1337 pooled subject-level F1 vs five-fold-mean F1", 12)
+    _note(
+        ws, 2,
+        "Every CV cell under both conventions (macro-F1 and positive-F1; INVALID counts as wrong). "
+        "'Pooled' = all 5-fold subject predictions in one pool, a single F1. 'Fold-mean' = mean of the "
+        "five per-fold F1 values; SD = population SD over the five folds. 'Diff' = pooled minus fold-mean. "
+        "Official-test rows (DAIC standalone, merged final) have no CV and are flagged 'official test'. "
+        "Generated from tools/compute_pooled_f1.py audit JSON; ranking cells in the main sheets use the "
+        "pooled column only.",
+        12, height=100,
+    )
+    _header_row(ws, 4, ["Group", "Dataset / Stage", "Modality", "Model", "Route", "Pooled macro",
+                        "Fold-mean macro", "Diff macro", "Fold-SD", "Pooled pos-F1",
+                        "Fold-mean pos-F1", "Sources"])
+    row = 5
+    for r in sorted(rows, key=lambda x: (x.get("cell_group", ""), x.get("dataset", ""),
+                                         x.get("modality", ""), x.get("model", ""), x.get("route", ""))):
+        group = r.get("cell_group", "")
+        ds = r.get("dataset", "")
+        if group == "merged_cv":
+            ds_label = "Merged — CV (5-fold)"
+        elif ds == "merged":
+            ds_label = r.get("stage", "merged")
+        else:
+            ds_label = DS_LABEL.get(ds, ds)
+        mod = MOD_LABEL.get(r.get("modality", ""), r.get("modality", ""))
+        model = r.get("model", "")
+        route = r.get("route", "")
+        if route == "xgb_fixed":
+            route_label = "XGB fixed"
+        elif route == "xgb_optuna100":
+            route_label = "XGB optuna-100"
+        else:
+            route_label = {"teacher_forced": "TF", "logreg": "LogReg"}.get(route, route)
+        official = "official test" if r.get("official_test") else ""
+        ws.cell(row, 1, group).font = BODY_FONT
+        ws.cell(row, 2, ds_label).font = BODY_FONT
+        ws.cell(row, 3, mod).font = BODY_FONT
+        ws.cell(row, 4, model).font = BODY_FONT
+        ws.cell(row, 5, route_label).font = BODY_FONT
+        _body_cell(ws, row, 6, round(r["macro_pooled"], 4))
+        _body_cell(ws, row, 7, round(r.get("macro_foldmean", float("nan")), 4))
+        diff = r.get("macro_pooled", 0) - r.get("macro_foldmean", r.get("macro_pooled", 0))
+        _body_cell(ws, row, 8, round(diff, 4))
+        _body_cell(ws, row, 9, round(r.get("macro_foldsd", 0.0), 4))
+        _body_cell(ws, row, 10, round(r.get("positive_pooled", float("nan")), 4))
+        _body_cell(ws, row, 11, round(r.get("positive_foldmean", float("nan")), 4))
+        _body_cell(ws, row, 12, (official if official else "; ".join(
+            str(s) for s in r.get("sources", [])[:2])))
+        row += 1
+    ws.freeze_panes = "A5"
+
+
 def build_summary(wb: Workbook, *, detailed: bool) -> None:
     """Compact headline: the standardized XGBoost macro-F1 for the three main
     experiments, both models, with the Gemma-minus-Qwen delta. The full
@@ -2013,9 +2254,11 @@ def build_summary(wb: Workbook, *, detailed: bool) -> None:
         ws, 2,
         "Standardized XGBoost (100-trial search, seed 1337) for the three main experiments, both models. "
         "Every score cell shows 'Macro-F1 / Positive-F1'; 'n/a' marks a positive-F1 with no local evidence. "
-        "Delta = Gemma minus Qwen on macro-F1 only. Full teacher-forced, LogReg, and XGBoost detail: "
-        "'Qwen vs Gemma' sheet. Per-cell provenance: Provenance sheet.",
-        5, height=78,
+        "Delta = Gemma minus Qwen on macro-F1 only. All CV cells are seed-1337 pooled subject-level "
+        "(5-fold subjects in one pool, single F1; INVALID counts as wrong); DAIC and merged Final are "
+        "official test. Full teacher-forced, LogReg, and XGBoost detail: 'Qwen vs Gemma' sheet; "
+        "pooled vs fold-mean: 'Pooled vs Fold-Mean' sheet. Per-cell provenance: Provenance sheet.",
+        5, height=110,
     )
     _header_row(ws, 4, ["Experiment", "Dataset / Stage", "Qwen", "Gemma 4", "Δ (Gemma − Qwen)"])
     row = 5
@@ -3273,6 +3516,8 @@ def main() -> None:
         # English cells across Summary, Qwen-vs-Gemma, and Provenance show the
         # pooled "mixed" question-condition values.
         _build_turkish_pooled_lookup(turkish_pooled_qcond_report_path)
+    apply_pooled_overrides()
+    build_pooled_vs_foldmean(wb)
     build_summary(wb, detailed=detailed)
     build_gemma_vs_qwen(wb)
     build_native_vs_english(wb, report_path=native_en_report_path)
