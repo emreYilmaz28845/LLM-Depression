@@ -940,6 +940,50 @@ def apply_pooled_overrides() -> None:
                     if label_key in GEMMA_OPTUNA_POSF1 and pos is not None:
                         GEMMA_OPTUNA_POSF1[label_key] = pos
 
+    # HARMONIZED_EN_QWEN / HARMONIZED_EN_HEADS feed the "EN Translation" and
+    # "EN heads" provenance rows. Refresh their macro values from the audit so
+    # the Provenance sheet agrees with the pooled headline cells.
+    en_ds_to_label = {"d3tec": "D3TEC", "androids_interview": "Androids Interview",
+                      "cmdc": "CMDC", "turkish": "Turkish"}
+    en_mod_to_label = {"audio_text": "Audio + Text", "audio_only": "Audio only", "text_only": "Text only"}
+    for rec in audit["rows"]:
+        if "error" in rec or rec.get("cell_group") != "standalone":
+            continue
+        dsl = en_ds_to_label.get(rec.get("dataset", ""))
+        modl = en_mod_to_label.get(rec.get("modality", ""))
+        if not dsl or not modl or dsl == "Turkish":
+            continue
+        model = rec.get("model")
+        route = rec.get("route")
+        cond = rec.get("condition")
+        macro = rec.get("macro_pooled")
+        pos = rec.get("positive_pooled")
+        if macro is None or model != "qwen":
+            continue
+        key = (dsl, modl)
+        if key not in HARMONIZED_EN_QWEN:
+            continue
+        if route == "teacher_forced":
+            # HARMONIZED_EN_QWEN holds the teacher-forced native/EN macro cells;
+            # only the TF audit row updates them (XGB/LogReg rows would clobber).
+            old = HARMONIZED_EN_QWEN[key]
+            nm, np1, em, ep1, agg, shared = old
+            if cond == "english":
+                em, ep1 = macro, pos if pos is not None else ep1
+            elif cond == "native":
+                nm, np1 = macro, pos if pos is not None else np1
+            agg = "pooled 5-fold subject-level" if AGGREGATION == "pooled" else agg
+            HARMONIZED_EN_QWEN[key] = (nm, np1, em, ep1, agg, shared)
+        # EN heads logreg slot (index 0 = native, 2 = en) mirrors the pooled TF
+        # provenance rows only where the head was run on the same folds.
+        if route == "logreg" and key in HARMONIZED_EN_HEADS:
+            hl = list(HARMONIZED_EN_HEADS[key])
+            if cond == "english":
+                hl[2] = macro
+            elif cond == "native":
+                hl[0] = macro
+            HARMONIZED_EN_HEADS[key] = tuple(hl)
+
     # Merged CV rows (cell_group == "merged_cv"): per-dataset pooled -> unweighted
     # dataset mean; the workbook merged CV lookup key is ("cv", modality label).
     merged_tables = {"teacher_forced": MERGED_TF, "logreg": MERGED_LR,
@@ -2967,9 +3011,13 @@ def build_provenance(
         run = f"{en_run_prefix}_{en_ds_key[dataset]}_{en_mod_key[modality]}"
         source = f"campaign {campaign['campaign_id']}, run {run}, folds 0-4, source {campaign['source_sha'][:8]}"
         evidence = f"outputs/hidden_classifiers/harmonized_v1_en/{en_ds_key[dataset]}/{run}/fold_<n>/variant_summary.json"
-        for value, method in ((el, "LogReg head (EN)"), (ex, "XGBoost fixed (EN)")):
-            put("EN heads", dataset, modality, method, value, source,
-                "5-fold mean, subject-level macro-F1",
+        for value, method, agg in (
+            (el, "LogReg head (EN)",
+             "seed-1337 pooled subject-level, macro-F1 (INVALID counts as wrong)"
+             if AGGREGATION == "pooled" else "5-fold mean, subject-level macro-F1"),
+            (ex, "XGBoost fixed (EN)",
+             "fixed XGB head, 5-fold mean, subject-level macro-F1 (legacy)")):
+            put("EN heads", dataset, modality, method, value, source, agg,
                 evidence,
                 "recomputed from locally synced variant_summary.json")
     for dataset, modality in HARMONIZED_EN_HEADS:
@@ -2981,22 +3029,31 @@ def build_provenance(
             source = f"shared native audio-only control (native harmonized heads; not separately trained); EN cell reuses {run}"
         else:
             source = f"campaign {campaign['campaign_id']}, run {run}, folds 0-4, source {campaign['source_sha'][:8]}"
-        for value, method in ((nl, "LogReg head (native)"), (nx, "XGBoost fixed (native)")):
-            put("EN heads", dataset, modality, method, value, source,
-                "5-fold mean, subject-level macro-F1 (STANDALONE_HEADS convention)",
+        for value, method, agg in (
+            (nl, "LogReg head (native)",
+             "seed-1337 pooled subject-level, macro-F1 (INVALID counts as wrong)"
+             if AGGREGATION == "pooled" else "5-fold mean, subject-level macro-F1"),
+            (nx, "XGBoost fixed (native)",
+             "fixed XGB head, 5-fold mean, subject-level macro-F1 (legacy)")):
+            put("EN heads", dataset, modality, method, value, source, agg,
                 "outputs/hidden_classifiers/<dataset>/ (native campaign; verified 2026-08-10)",
                 "matched to audited hidden-classifier outputs")
     for dataset in DATASETS:
         for modality in MODALITIES:
             logreg, xgb, optuna, os_ = STANDALONE_HEADS[(dataset, modality)]
-            for value, method in ((logreg, "LogReg head"), (xgb, "XGBoost fixed")):
+            for value, method, agg in (
+                (logreg, "LogReg head",
+                 "seed-1337 pooled subject-level, macro-F1 (INVALID counts as wrong)"
+                 if AGGREGATION == "pooled" else "pooled subject-level, 5-fold"),
+                (xgb, "XGBoost fixed",
+                 "fixed XGB head, 5-fold mean, subject-level macro-F1 (legacy)")):
                 if value is None:
                     continue
                 if pooled_active and dataset == "Turkish":
                     continue
                 put("Standalone heads", dataset, modality, method, value,
                     "hidden-state heads on frozen Qwen checkpoints (see docs)",
-                    "pooled subject-level, 5-fold",
+                    agg,
                     f"outputs/hidden_classifiers/{dataset.lower()}/ + docs/D3TEC_HIDDEN_CLASSIFIER_REPORT_2026-07-29.md / "
                     "reports/androids_hidden_classifier_*.md / outputs/daic_coverage_heads/ (MN5)",
                     "matched to audited hidden-classifier outputs")
@@ -3136,6 +3193,19 @@ def build_optuna100_provenance(ws, put) -> None:
                           f"outputs/experiment_reports/optuna100_officialdev/daic_{mod_key[modality]}_{backend}/group_report.json"))
     agg = ("Optuna-100 fold-mean, 100 TPE trials seed 1337, 3 subject-grouped inner folds, "
            "macro-F1 objective, harmonized_all_windows_full_coverage, headline/binary-strict")
+    pooled_agg = ("seed-1337 pooled subject-level, 100 TPE trials seed 1337, 3 subject-grouped "
+                  "inner folds, macro-F1 objective, harmonized_all_windows_full_coverage, "
+                  "headline/binary-strict")
+    pooled_lookup = {}
+    if AGGREGATION == "pooled" and POOLED_AUDIT.exists():
+        arows = json.loads(POOLED_AUDIT.read_text())["rows"]
+        for ar in arows:
+            if "error" in ar or ar.get("cell_group") not in ("standalone", "merged_cv"):
+                continue
+            if ar.get("route") != "xgb_optuna100":
+                continue
+            key = (ar.get("dataset"), ar.get("modality"), ar.get("condition"), ar.get("model"))
+            pooled_lookup[key] = ar.get("macro_pooled")
     for family, dataset, modality, backend, report in cells:
         if _turkish_pooled_active() and dataset == "Turkish":
             # Turkish standalone/English XGB provenance now points at the pooled
@@ -3149,8 +3219,29 @@ def build_optuna100_provenance(ws, put) -> None:
             f"campaign {run_ids[family]}, {backend_label[backend]} backend, 100 trials/fold, "
             f"all attempts REPORTABLE in registry (group {family}-optuna100-{run_ids[family]})"
         )
+        out_agg = agg
+        # Pooled workbook: headline XGB cells are pooled subject-level F1; the
+        # group-report aggregate (fold-mean) is kept only as the reported value
+        # when no pooled audit row exists (DAIC official test).
+        if family in ("native", "english", "merged"):
+            cond = "native" if family == "native" else "english" if family == "english" else "native"
+            ds_audit = {"D3TEC": "d3tec", "Androids Interview": "androids_interview",
+                        "CMDC": "cmdc", "Turkish": "turkish", "DAIC": "daic"}.get(dataset, dataset)
+            mod_audit = {"Audio + Text": "audio_text", "Audio only": "audio_only",
+                         "Text only": "text_only"}.get(modality, modality)
+            if family == "merged":
+                # merged rows key on modality only (condition native in audit)
+                key = ("merged", mod_audit, "native", backend)
+                if AGGREGATION == "pooled" and key in pooled_lookup:
+                    value = pooled_lookup[key]
+                    out_agg = pooled_agg
+            else:
+                key = (ds_audit, mod_audit, cond, backend)
+                if AGGREGATION == "pooled" and key in pooled_lookup:
+                    value = pooled_lookup[key]
+                    out_agg = pooled_agg
         put(f"Optuna100 {family}", dataset, modality,
-            f"XGBoost Optuna-100 ({backend_label[backend]})", value, source, agg,
+            f"XGBoost Optuna-100 ({backend_label[backend]})", value, source, out_agg,
             report, "group report OK; attempts REPORTABLE")
 
 
@@ -3307,7 +3398,9 @@ def build_gemma_native_provenance(ws, put) -> None:
             if _turkish_pooled_active() and dataset == "Turkish":
                 continue
             m = mod_key[modality]
-            if dataset == "CMDC" or dataset == "Turkish":
+            if AGGREGATION == "pooled":
+                agg = "seed-1337 pooled subject-level (5-fold subjects in one pool, single F1; INVALID counts as wrong), teacher-forced, binary-strict, harmonized_all_windows_full_coverage"
+            elif dataset == "CMDC" or dataset == "Turkish":
                 agg = "5-fold mean (train_val protocol), teacher-forced, binary-strict, harmonized_all_windows_full_coverage"
             else:
                 agg = "pooled 5-fold subject-level, teacher-forced, binary-strict, harmonized_all_windows_full_coverage"
@@ -3322,7 +3415,11 @@ def build_gemma_native_provenance(ws, put) -> None:
                 GEMMA_NATIVE_LR[(dataset, modality)], source, lr_agg, lr_report,
                 "recomputed from predictions_subject_level.csv (matches metrics.json)")
             optuna_report = GEMMA_NATIVE_EVIDENCE["optuna"].replace("{ds}", ds_key[dataset]).replace("{mod}", m).replace("{backend}", "gemma4")
-            optuna_agg = "Optuna-100 fold-mean, 100 trials seed 1337, 3 inner folds, subject-level macro-F1 objective"
+            if AGGREGATION == "pooled":
+                optuna_agg = ("seed-1337 pooled subject-level, 100 Optuna trials seed 1337, "
+                              "3 inner folds, subject-level macro-F1 objective")
+            else:
+                optuna_agg = "Optuna-100 fold-mean, 100 trials seed 1337, 3 inner folds, subject-level macro-F1 objective"
             put("Gemma native", dataset, modality, "Gemma XGBoost Optuna-100 raw hidden head",
                 GEMMA_OPTUNA[(dataset, modality)], source, optuna_agg, optuna_report,
                 "group report OK; attempt REPORTABLE in registry")
