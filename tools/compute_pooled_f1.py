@@ -529,10 +529,10 @@ def build_rows() -> list[dict]:
 
 
 def _check_against_workbook(rows: list[dict]) -> tuple[int, list[str]]:
-    """Compare computed fold-means against the current workbook 'Qwen vs Gemma'
-    cells for the cells where the workbook used fold-mean (i.e. everything
-    except Qwen TF D3TEC/Androids pooled and the Turkish pooled campaign rows).
-    Returns (n_checked, mismatches)."""
+    """Compare computed pooled values against the current workbook 'Qwen vs Gemma'
+    cells for every pooled CV cell (DAIC official test and the Turkish pooled
+    campaign rows are excluded: DAIC has no CV and Turkish cells are compared
+    against the campaign report elsewhere). Returns (n_checked, mismatches)."""
     import openpyxl
 
     wb = openpyxl.load_workbook(ROOT / "depression_results_clean.xlsx", data_only=True)
@@ -563,18 +563,15 @@ def _check_against_workbook(rows: list[dict]) -> tuple[int, list[str]]:
         if "error" in r or r.get("cell_group") != "standalone":
             continue
         if r["dataset"] in ("turkish", "daic"):
-            continue  # turkish = pooled campaign; daic = single official test
+            continue  # turkish = pooled campaign report cells; daic = official test
         key = (r["dataset"], r["modality"], r["condition"], r["model"], r["route"])
         wv = wbmap.get(key)
         if not wv:
             continue
-        # workbook pooled Qwen TF on d3tec/androids (native and EN)
-        wb_pooled = (r["route"] == "teacher_forced" and r["model"] == "qwen"
-                     and r["dataset"] in ("d3tec", "androids_interview"))
-        calc = r["macro_pooled"] if wb_pooled else r["macro_foldmean"]
+        calc = r["macro_pooled"]
         checked += 1
         if abs(calc - wv[0]) > 0.0003:
-            mismatches.append(f"{key}: computed {calc:.4f} vs workbook {wv[0]:.4f}")
+            mismatches.append(f"{key}: computed pooled {calc:.4f} vs workbook {wv[0]:.4f}")
     return checked, mismatches
 
 
