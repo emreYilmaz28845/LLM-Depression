@@ -811,6 +811,16 @@ def apply_pooled_overrides() -> None:
     # populated before the per-cell overrides below touch it.
     if TURKISH_POOLED_MIXED_REPORT_PATH.exists() and not TURKISH_POOLED_MIXED_LOOKUP:
         _build_turkish_pooled_lookup(TURKISH_POOLED_MIXED_REPORT_PATH)
+    # Provenance aggregation strings for the pooled headline cells.
+    for ds_key in ("CMDC", "Turkish", "D3TEC", "Androids Interview"):
+        if ds_key in STANDALONE_QWEN_SOURCE:
+            run, _agg, art = STANDALONE_QWEN_SOURCE[ds_key]
+            STANDALONE_QWEN_SOURCE[ds_key] = (
+                run,
+                "seed-1337 pooled subject-level (5-fold subjects in one pool, single F1; INVALID counts as wrong), "
+                "teacher-forced, binary-strict, harmonized_all_windows_full_coverage",
+                art,
+            )
     for rec in audit["rows"]:
         if "error" in rec or "macro_pooled" not in rec:
             continue
@@ -3066,8 +3076,13 @@ def build_en_merged_gemma_provenance(ws, put) -> None:
                 continue
             run = f"{en_campaign}_{ds_key[dataset]}_{mk}"
             source = f"campaign {en_campaign}, group gemma4-harmonized-v1-en-{en_campaign}, 5 folds REPORTABLE"
-            agg = ("English-translated, pooled 5-fold subject-level (D3TEC/Androids) or 5-fold mean "
-                   "(CMDC/Turkish), teacher-forced, binary-strict, harmonized_all_windows_full_coverage")
+            if AGGREGATION == "pooled":
+                agg = ("English-translated, seed-1337 pooled subject-level (5-fold subjects in one pool, "
+                       "single F1; INVALID counts as wrong), teacher-forced, binary-strict, "
+                       "harmonized_all_windows_full_coverage")
+            else:
+                agg = ("English-translated, pooled 5-fold subject-level (D3TEC/Androids) or 5-fold mean "
+                       "(CMDC/Turkish), teacher-forced, binary-strict, harmonized_all_windows_full_coverage")
             put("Gemma EN", dataset, modality, "Fine-tuned Gemma (teacher-forced)",
                 EN_TF[(dataset, modality)][1], source, agg,
                 f"output_model/harmonized_v1_en_gemma4/{mk}/{ds_key[dataset]}/{run}/fold_*/best_model/standalone_eval",
@@ -3095,15 +3110,25 @@ def build_en_merged_gemma_provenance(ws, put) -> None:
                      "gemma4/daic/metrics_original_teacher_forced.json + predictions_subject_level.csv"),
                     "recomputed locally from 47 subject predictions; zero invalid subjects")
             else:
+                if AGGREGATION == "pooled":
+                    merged_agg = (f"{stage_label}, teacher-forced, per-dataset pooled subject-level then "
+                                  "unweighted mean over five datasets (INVALID counts as wrong)")
+                else:
+                    merged_agg = f"{stage_label}, teacher-forced, mean over five datasets"
                 put("Gemma merged", stage_label, modality, "Teacher-forced",
                     g, f"campaign {merged_campaign}, merged training selection (mean_dataset_macro_f1)",
-                    f"{stage_label}, teacher-forced, mean over five datasets",
+                    merged_agg,
                     f"output_model/symmetric_merged/gemma4/harmonized_v1/{mk}/{merged_campaign}/{stage}/fold_0/logs/training_history.json",
                     "from local training_history selected epoch")
             q, g = MERGED_LR[(stage, modality)]
+            if AGGREGATION == "pooled":
+                merged_lr_agg = (f"{stage_label}, LogReg raw hidden head, per-dataset pooled subject-level "
+                                 "then unweighted mean over five datasets")
+            else:
+                merged_lr_agg = f"{stage_label}, LogReg raw hidden head, mean over five datasets"
             put("Gemma merged", stage_label, modality, "LogReg head",
                 g, f"campaign {merged_campaign}, merged heads",
-                f"{stage_label}, LogReg raw hidden head, mean over five datasets",
+                merged_lr_agg,
                 f"outputs/symmetric_merged/gemma4/harmonized_v1/{mk}/{merged_campaign}/{stage}/fold_0/heads/logreg/metrics_by_dataset.json",
                 "recomputed from predictions (matches metrics_by_dataset.json)")
 
