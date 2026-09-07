@@ -1465,7 +1465,10 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
                         _body_cell(ws, row, 4, method)
                         _body_cell(ws, row, 5, _paired_f1(*q_pair) if q_pair is not None else None)
                         _body_cell(ws, row, 6, _paired_f1(*g_pair) if g_pair is not None else None)
-                        _body_cell(ws, row, 7, None)
+                        if q_pair is not None and g_pair is not None:
+                            _delta_cell(ws, row, 7, g_pair[0] - q_pair[0])
+                        else:
+                            _body_cell(ws, row, 7, None)
                         row += 1
 
     _section(ws, row, "English (translated)", 7)
