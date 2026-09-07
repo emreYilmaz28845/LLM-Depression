@@ -802,11 +802,45 @@ GEMMA4_HEADS_EVIDENCE = "output_model/harmonized_v1_gemma4_heads/<modality>/daic
 # overridden with seed-1337 pooled subject-level F1 values read from the audit
 # JSON produced by tools/compute_pooled_f1.py. Setting AGGREGATION = "fold_mean"
 # restores the hard-coded legacy five-fold-mean values (nothing is deleted).
+
+# Merged per-dataset pooled values, keyed by (modality_label, model, route):
+# value = list over MERGED_DATASETS of (macro_pooled, positive_pooled,
+#         macro_foldmean, macro_foldsd).
+MERGED_PER_DATASET: dict[tuple[str, str, str], list[tuple[float, float | None, float, float]]] = {}
+MERGED_DATASET_ORDER = ["Androids Interview", "CMDC", "D3TEC", "DAIC", "Turkish"]
+_MERGED_DS_AUDIT_KEY = {"Androids Interview": "androids_interview", "CMDC": "cmdc",
+                        "D3TEC": "d3tec", "DAIC": "daic", "Turkish": "turkish"}
+
+
 def apply_pooled_overrides() -> None:
     """Overwrite the Qwen-vs-Gemma headline lookups with pooled values."""
     if AGGREGATION != "pooled" or not POOLED_AUDIT.exists():
         return
     audit = json.loads(POOLED_AUDIT.read_text())
+    # Collect merged per-dataset pooled macro/positive values for the sheet
+    # expansions (Summary, Qwen vs Gemma, Pooled vs Fold-Mean).
+    MERGED_PER_DATASET.clear()
+    for rec in audit["rows"]:
+        if "error" in rec or rec.get("cell_group") != "merged_cv":
+            continue
+        mod = MOD_LABEL.get(rec.get("modality", ""))
+        model = rec.get("model")
+        route = rec.get("route")
+        if not mod or model not in ("qwen", "gemma4"):
+            continue
+        macros = rec.get("macro_per_dataset_pooled")
+        poss = rec.get("positive_per_dataset_pooled")
+        fms = rec.get("macro_per_dataset_foldmean")
+        sds = rec.get("macro_per_dataset_foldsd")
+        if not macros or len(macros) != 5:
+            continue
+        pairs = []
+        for i in range(5):
+            pos = poss[i] if poss and i < len(poss) else None
+            fm = fms[i] if fms and i < len(fms) else 0.0
+            sd = sds[i] if sds and i < len(sds) else 0.0
+            pairs.append((macros[i], pos, fm, sd))
+        MERGED_PER_DATASET[(mod, model, route)] = pairs
     # Turkish pooled cells draw on the campaign report lookup; make sure it is
     # populated before the per-cell overrides below touch it.
     if TURKISH_POOLED_MIXED_REPORT_PATH.exists() and not TURKISH_POOLED_MIXED_LOOKUP:
@@ -1500,6 +1534,27 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
                 qp, gp = pos_table[(stage, mod_label)]
                 _fill_cell(ws, row, f"Merged — {stage_label}", "Merged", mod_label, method, q, g, qp, gp)
                 row += 1
+                # Expand the merged CV average with per-dataset pooled rows.
+                if stage == "cv" and MERGED_PER_DATASET:
+                    route_key = {"Teacher-forced": "teacher_forced",
+                                 "LogReg head": "logreg", "XGBoost": "xgb_optuna100"}[method]
+                    q_per_ds = MERGED_PER_DATASET.get((mod_label, "qwen", route_key))
+                    g_per_ds = MERGED_PER_DATASET.get((mod_label, "gemma4", route_key))
+                    if q_per_ds and g_per_ds:
+                        for i, dsk_label in enumerate(MERGED_DATASET_ORDER):
+                            qm, qp2, _qf, _qs = q_per_ds[i]
+                            gm, gp2, _gf, _gs = g_per_ds[i]
+                            ws.cell(row, 1, "CV per-dataset").font = BODY_FONT
+                            ws.cell(row, 1).fill = BODY
+                            ws.cell(row, 1).alignment = LEFT
+                            ws.cell(row, 1).border = BORDER
+                            _body_cell(ws, row, 2, dsk_label)
+                            _body_cell(ws, row, 3, mod_label)
+                            _body_cell(ws, row, 4, method)
+                            _body_cell(ws, row, 5, _paired_f1(qm, qp2))
+                            _body_cell(ws, row, 6, _paired_f1(gm, gp2))
+                            _body_cell(ws, row, 7, None)
+                            row += 1
 
     _section(ws, row, "English (translated)", 7)
     row += 1
@@ -2247,6 +2302,32 @@ def build_pooled_vs_foldmean(wb: Workbook) -> None:
         _body_cell(ws, row, 12, (official if official else "; ".join(
             str(s) for s in r.get("sources", [])[:2])))
         row += 1
+        # Merged CV rows: expand with the five per-dataset pooled values.
+        if group == "merged_cv":
+            mod = MOD_LABEL.get(r.get("modality", ""), "")
+            macros = r.get("macro_per_dataset_pooled")
+            poss = r.get("positive_per_dataset_pooled")
+            fms = r.get("macro_per_dataset_foldmean")
+            sds = r.get("macro_per_dataset_foldsd")
+            if macros and len(macros) == 5:
+                for i, dsk_label in enumerate(MERGED_DATASET_ORDER):
+                    dm = macros[i]
+                    dp = poss[i] if poss and i < len(poss) else None
+                    dfm = fms[i] if fms and i < len(fms) else float("nan")
+                    dsd = sds[i] if sds and i < len(sds) else 0.0
+                    ws.cell(row, 1, "  " + dsk_label).font = SMALL_FONT
+                    ws.cell(row, 2, ds_label + f" — {dsk_label}").font = SMALL_FONT
+                    ws.cell(row, 3, mod).font = SMALL_FONT
+                    ws.cell(row, 4, model).font = SMALL_FONT
+                    ws.cell(row, 5, route_label).font = SMALL_FONT
+                    _body_cell(ws, row, 6, round(dm, 4))
+                    _body_cell(ws, row, 7, round(dfm, 4) if dfm == dfm else None)
+                    _body_cell(ws, row, 8, round(dm - dfm, 4) if dfm == dfm else None)
+                    _body_cell(ws, row, 9, round(dsd, 4))
+                    _body_cell(ws, row, 10, round(dp, 4) if dp is not None else None)
+                    _body_cell(ws, row, 11, None)
+                    _body_cell(ws, row, 12, None)
+                    row += 1
     ws.freeze_panes = "A5"
 
 
@@ -2291,6 +2372,16 @@ def build_summary(wb: Workbook, *, detailed: bool) -> None:
             qp, gp = MERGED_OPTUNA_POSF1[(stage, mod_label)]
             _summary_row(ws, row, "Merged", f"{stage_label} — {mod_label}", q, g, qp, gp)
             row += 1
+            if stage == "cv" and MERGED_PER_DATASET:
+                q_per_ds = MERGED_PER_DATASET.get((mod_label, "qwen", "xgb_optuna100"))
+                g_per_ds = MERGED_PER_DATASET.get((mod_label, "gemma4", "xgb_optuna100"))
+                if q_per_ds and g_per_ds:
+                    for i, dsk_label in enumerate(MERGED_DATASET_ORDER):
+                        qm, qp2, _qf, _qs = q_per_ds[i]
+                        gm, gp2, _gf, _gs = g_per_ds[i]
+                        _summary_row(ws, row, "Merged per-dataset", f"{dsk_label} — {mod_label}",
+                                     qm, gm, qp2, gp2)
+                        row += 1
     for dataset in ("D3TEC", "Androids Interview", "CMDC", "Turkish"):
         for mod_label in ("Audio + Text", "Text only"):
             q, g = EN_XGB[(dataset, mod_label)]

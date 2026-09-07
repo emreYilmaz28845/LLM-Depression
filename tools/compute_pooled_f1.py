@@ -318,15 +318,18 @@ def _pick_merged_optuna_run(root: Path, mod: str) -> Path | None:
     return None
 
 
-def _pooled_by_dataset(files_by_fold: list[Path]) -> tuple[list[float], list[float], list[float]]:
-    """Pooled + fold-mean macro-F1 per dataset over the given per-fold files.
+def _pooled_by_dataset(files_by_fold: list[Path]) -> tuple[list[float], list[float], list[float], list[float], list[float]]:
+    """Pooled + fold-mean macro and positive-F1 per dataset.
 
-    Each file carries a dataset column (merged eval). Returns (per-dataset
-    pooled macro, per-dataset fold-mean macro, per-dataset fold-SD) lists.
+    Each file carries a dataset column (merged eval). Returns
+    (per-dataset pooled macro, per-dataset pooled positive,
+     per-dataset fold-mean macro, per-dataset fold-SD, per-dataset fold-mean positive).
     """
     ds_pooled = []
+    ds_pos_pooled = []
     ds_foldmeans = []
     ds_foldsds = []
+    ds_pos_foldmeans = []
     for dsk in MERGED_DATASETS:
         summed = None
         per_fold = []
@@ -344,11 +347,14 @@ def _pooled_by_dataset(files_by_fold: list[Path]) -> tuple[list[float], list[flo
                     summed[i][j] += cm[i][j]
         if summed is None or len(per_fold) < 5:
             continue
-        ds_pooled.append(_f1_from_cm(summed)[0])
-        fold_f1s = [_f1_from_cm(cm)[0] for cm in per_fold]
-        ds_foldmeans.append(mean(fold_f1s))
-        ds_foldsds.append(pstdev(fold_f1s) if len(fold_f1s) > 1 else 0.0)
-    return ds_pooled, ds_foldmeans, ds_foldsds
+        m, p = _f1_from_cm(summed)
+        ds_pooled.append(m)
+        ds_pos_pooled.append(p)
+        fold_f1s = [_f1_from_cm(cm) for cm in per_fold]
+        ds_foldmeans.append(mean(x[0] for x in fold_f1s))
+        ds_pos_foldmeans.append(mean(x[1] for x in fold_f1s))
+        ds_foldsds.append(pstdev(x[0] for x in fold_f1s) if len(fold_f1s) > 1 else 0.0)
+    return ds_pooled, ds_pos_pooled, ds_foldmeans, ds_foldsds, ds_pos_foldmeans
 
 
 def _pick_campaign(root: Path, mod: str) -> Path | None:
@@ -426,6 +432,10 @@ def merged_rows() -> list[dict]:
                                 "positive_pooled": round(mean(ds_pos_pooled), 6),
                                 "positive_foldmean": round(mean(ds_pos_foldmeans), 6),
                                 "macro_per_dataset_pooled": [round(x, 6) for x in ds_pooled],
+                                "positive_per_dataset_pooled": [round(x, 6) for x in ds_pos_pooled],
+                                "macro_per_dataset_foldmean": [round(x, 6) for x in ds_foldmeans],
+                                "macro_per_dataset_foldsd": [round(x, 6) for x in ds_foldsds],
+                                "positive_per_dataset_foldmean": [round(x, 6) for x in ds_pos_foldmeans],
                                 "sources": [str(f) for ds_files in per_ds.values() for f in ds_files],
                                 "n_datasets": 5})
             # Head rows: logreg/xgb_fixed per dataset via the dataset column
@@ -433,29 +443,43 @@ def merged_rows() -> list[dict]:
                 files = foldmap.get(f"head_{head}", {}).get("_all", [])
                 if len(files) != 5:
                     continue
-                ds_pooled, ds_foldmeans, ds_foldsds = _pooled_by_dataset(files)
+                (ds_pooled, ds_pos_pooled, ds_foldmeans, ds_foldsds,
+                 ds_pos_foldmeans) = _pooled_by_dataset(files)
                 if len(ds_pooled) == 5:
                     out.append({"dataset": "merged", "modality": mod, "condition": "native",
                                 "model": model, "route": "xgb_fixed" if head == "xgb_fixed" else "logreg",
                                 "cell_group": "merged_cv",
                                 "macro_pooled": round(mean(ds_pooled), 6),
+                                "positive_pooled": round(mean(ds_pos_pooled), 6),
                                 "macro_foldmean": round(mean(ds_foldmeans), 6),
                                 "macro_foldsd": round(mean(ds_foldsds), 6),
+                                "positive_foldmean": round(mean(ds_pos_foldmeans), 6),
                                 "macro_per_dataset_pooled": [round(x, 6) for x in ds_pooled],
+                                "positive_per_dataset_pooled": [round(x, 6) for x in ds_pos_pooled],
+                                "macro_per_dataset_foldmean": [round(x, 6) for x in ds_foldmeans],
+                                "macro_per_dataset_foldsd": [round(x, 6) for x in ds_foldsds],
+                                "positive_per_dataset_foldmean": [round(x, 6) for x in ds_pos_foldmeans],
                                 "n_datasets": 5})
             # Optuna-100 merged XGB lives under output_model/..._merged_optuna100
             orun = _pick_merged_optuna_run(MERGED_OPTUNA_ROOTS[model], mod)
             if orun:
                 files = sorted((orun).glob("fold_*/xgb_optuna100_harmonized_v1/predictions_subject_level.csv"))
                 if len(files) == 5:
-                    ds_pooled, ds_foldmeans, ds_foldsds = _pooled_by_dataset(files)
+                    (ds_pooled, ds_pos_pooled, ds_foldmeans, ds_foldsds,
+                     ds_pos_foldmeans) = _pooled_by_dataset(files)
                     if len(ds_pooled) == 5:
                         out.append({"dataset": "merged", "modality": mod, "condition": "native",
                                     "model": model, "route": "xgb_optuna100", "cell_group": "merged_cv",
                                     "macro_pooled": round(mean(ds_pooled), 6),
+                                    "positive_pooled": round(mean(ds_pos_pooled), 6),
                                     "macro_foldmean": round(mean(ds_foldmeans), 6),
                                     "macro_foldsd": round(mean(ds_foldsds), 6),
+                                    "positive_foldmean": round(mean(ds_pos_foldmeans), 6),
                                     "macro_per_dataset_pooled": [round(x, 6) for x in ds_pooled],
+                                    "positive_per_dataset_pooled": [round(x, 6) for x in ds_pos_pooled],
+                                    "macro_per_dataset_foldmean": [round(x, 6) for x in ds_foldmeans],
+                                    "macro_per_dataset_foldsd": [round(x, 6) for x in ds_foldsds],
+                                    "positive_per_dataset_foldmean": [round(x, 6) for x in ds_pos_foldmeans],
                                     "n_datasets": 5,
                                     "sources": [str(f) for f in files]})
     return out
