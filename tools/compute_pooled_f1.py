@@ -266,7 +266,10 @@ def standalone_rows() -> list[dict]:
     out = []
     for rec in evidence_records():
         ds = rec["dataset"]
-        if rec["condition"] == "turkish_pooled":
+        # Turkish cells come only from the pooled campaign (turkish_rows);
+        # the three-route evidence still carries pre-campaign Turkish folds,
+        # which would duplicate/confuse the pooled workbook rows.
+        if rec["condition"] == "turkish_pooled" or ds == "turkish":
             continue
         mod, cond, model, route = rec["modality"], rec["condition"], rec["model"], rec["route"]
         if cond == "english" and mod == "audio_only":
