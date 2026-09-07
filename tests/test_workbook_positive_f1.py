@@ -235,16 +235,18 @@ def test_optuna_merged_posf1(stage, st, modality):
     exp_q, exp_g = build_clean_workbook.MERGED_OPTUNA_POSF1[(stage, modality)]
 
     def _merged_optuna_pos(base: str, backend: str) -> float:
-        pat = f"{base}/{m}/*_merged_optuna100_*_{m}_{st}/fold_*/xgb_optuna100_harmonized_v1/evaluations.json"
-        vals = []
+        # fold basina dataset_metrics positive-F1 ortalamasi, sonra fold ortalamasi
+        # (fold-mean reporting policy; evaluations.json positive_f1 is the pooled
+        # subject view and must not be used for the headline).
+        pat = f"{base}/{m}/*_merged_optuna100_*_{m}_{st}/fold_*/xgb_optuna100_harmonized_v1/metrics.json"
+        fold_vals = []
         for p in sorted(glob.glob(str(ROOT / pat))):
             d = json.loads(Path(p).read_text())
-            for ev in d.get("evaluations", []):
-                for mm in ev.get("metrics", []):
-                    if mm["name"] == "positive_f1":
-                        vals.append(mm["value"])
-        assert vals, f"no evaluations found for {pat}"
-        return _mean(vals)
+            dm = d.get("dataset_metrics", {})
+            if dm:
+                fold_vals.append(_mean([v["positive_f1"] for v in dm.values()]))
+        assert fold_vals, f"no metrics.json found for {pat}"
+        return _mean(fold_vals)
 
     q = _merged_optuna_pos("output_model/harmonized_v1_merged_optuna100", "qwen")
     g = _merged_optuna_pos("output_model/harmonized_v1_gemma4_merged_optuna100", "gemma4")

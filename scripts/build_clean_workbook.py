@@ -570,8 +570,10 @@ GEMMA_OPTUNA_POSF1 = {
 # Qwen merged TF/LogReg from the historical merged campaign (Merged Symmetric
 # Summary); Gemma merged CV TF from training selection, merged final TF from
 # the postprocess teacher-forced DAIC evaluation, and LogReg from the merged
-# heads (verified local evidence). XGBoost = the standardized Optuna-100
-# fold-mean for both backends.
+# heads (verified local evidence). XGBoost = standardized Optuna-100, reported
+# as the per-dataset macro-F1 mean within each fold, then the five-fold mean
+# (dataset_metrics in the merged optuna100 metrics.json; matches the fold-mean
+# reporting policy and the Optuna inner objective). Recomputed 2026-09-07.
 MERGED_TF = {
     ("cv", "Audio + Text"): (0.6976, 0.761239),
     ("cv", "Audio only"): (0.69046, 0.386284),
@@ -589,9 +591,11 @@ MERGED_LR = {
     ("final", "Text only"): (0.7157, 0.70625),
 }
 MERGED_XGB = {
-    ("cv", "Audio + Text"): (0.741211, 0.764446),
-    ("cv", "Audio only"): (0.747404, 0.700808),
-    ("cv", "Text only"): (0.760274, 0.765794),
+    # cv = per-dataset macro mean within fold, then five-fold mean (dataset_metrics)
+    ("cv", "Audio + Text"): (0.700179, 0.731536),
+    ("cv", "Audio only"): (0.673745, 0.599528),
+    ("cv", "Text only"): (0.732029, 0.738611),
+    # final = single DAIC official test fold (unchanged)
     ("final", "Audio + Text"): (0.743235, 0.745671),
     ("final", "Audio only"): (0.472823, 0.555405),
     ("final", "Text only"): (0.755208, 0.763105),
@@ -623,9 +627,11 @@ MERGED_LR_POSF1 = {
 }
 # Optuna-100 merged XGB positive fold-means (evaluations.json per fold).
 MERGED_OPTUNA_POSF1 = {
-    ("cv", "Audio + Text"): (0.734006, 0.747262),
-    ("cv", "Audio only"): (0.727402, 0.674617),
-    ("cv", "Text only"): (0.749302, 0.749152),
+    # cv = per-dataset positive-F1 mean within fold, then five-fold mean
+    ("cv", "Audio + Text"): (0.720873, 0.731690),
+    ("cv", "Audio only"): (0.674476, 0.596655),
+    ("cv", "Text only"): (0.737066, 0.740288),
+    # final = single DAIC official test fold (unchanged)
     ("final", "Audio + Text"): (0.666667, 0.642857),
     ("final", "Audio only"): (0.125000, 0.300000),
     ("final", "Text only"): (0.666667, 0.687500),
