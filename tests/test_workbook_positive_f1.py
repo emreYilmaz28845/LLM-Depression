@@ -235,16 +235,18 @@ def test_optuna_merged_posf1(stage, st, modality):
     exp_q, exp_g = build_clean_workbook.MERGED_OPTUNA_POSF1[(stage, modality)]
 
     def _merged_optuna_pos(base: str, backend: str) -> float:
-        pat = f"{base}/{m}/*_merged_optuna100_*_{m}_{st}/fold_*/xgb_optuna100_harmonized_v1/evaluations.json"
-        vals = []
+        # fold basina dataset_metrics positive-F1 ortalamasi, sonra fold ortalamasi
+        # (fold-mean reporting policy; evaluations.json positive_f1 is the pooled
+        # subject view and must not be used for the headline).
+        pat = f"{base}/{m}/*_merged_optuna100_*_{m}_{st}/fold_*/xgb_optuna100_harmonized_v1/metrics.json"
+        fold_vals = []
         for p in sorted(glob.glob(str(ROOT / pat))):
             d = json.loads(Path(p).read_text())
-            for ev in d.get("evaluations", []):
-                for mm in ev.get("metrics", []):
-                    if mm["name"] == "positive_f1":
-                        vals.append(mm["value"])
-        assert vals, f"no evaluations found for {pat}"
-        return _mean(vals)
+            dm = d.get("dataset_metrics", {})
+            if dm:
+                fold_vals.append(_mean([v["positive_f1"] for v in dm.values()]))
+        assert fold_vals, f"no metrics.json found for {pat}"
+        return _mean(fold_vals)
 
     q = _merged_optuna_pos("output_model/harmonized_v1_merged_optuna100", "qwen")
     g = _merged_optuna_pos("output_model/harmonized_v1_gemma4_merged_optuna100", "gemma4")
@@ -352,11 +354,27 @@ def test_merged_qwen_posf1(stage, modality):
         g_tf = json.loads((gemma_model_base / "fold_0/logs/postprocess/final_daic_metrics_original_teacher_forced.json").read_text())["positive_f1"]
     else:
         q_tf = _mean(per_dataset_mean(f, "qwen/summary.json") for f in folds)
-        g_tf = _mean(
-            json.loads((f / "logs/selection/combined_selection_metrics.json").read_text())["positive_f1"]
-            for f in sorted(gemma_model_base.glob("fold_*"))
-            if (f / "logs/selection/combined_selection_metrics.json").is_file()
-        )
+        # Gemma CV TF: per-dataset positive-F1 from the eval subject predictions
+        # (same basis as Qwen); the earlier training-selection source was
+        # replaced in PR #243.
+        def _gemma_tf_per_ds(fdir: Path) -> float:
+            vals = []
+            for ds_dir in sorted((fdir / "gemma4").glob("*")):
+                if not ds_dir.is_dir():
+                    continue
+                p = ds_dir / "predictions_subject_level.csv"
+                if not p.is_file():
+                    continue
+                with p.open(newline="", encoding="utf-8") as fh:
+                    rows = list(csv.DictReader(fh))
+                tp = sum(1 for r in rows if str(r.get("label")) == "1" and str(r.get("prediction")) == "1")
+                fp = sum(1 for r in rows if str(r.get("label")) == "0" and str(r.get("prediction")) == "1")
+                fn = sum(1 for r in rows if str(r.get("label")) == "1" and str(r.get("prediction")) != "1")
+                pos = 2 * tp / (2 * tp + fp + fn) if (2 * tp + fp + fn) else 0.0
+                vals.append(pos)
+            return _mean(vals)
+
+        g_tf = _mean(_gemma_tf_per_ds(f) for f in sorted(gemma_outputs_base.glob("fold_*")))
     assert q_tf == pytest.approx(exp_tf_q, abs=1e-5)
     assert g_tf == pytest.approx(exp_tf_g, abs=1e-5)
 
