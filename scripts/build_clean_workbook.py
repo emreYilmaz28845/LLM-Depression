@@ -260,6 +260,111 @@ DATASET_LABELS = {
     "d3tec": "D3TEC",
     "androids_interview": "Androids Interview",
 }
+
+# Merged per-dataset fold-mean macro-F1, keyed by (modality_key, model, method_key, dataset_key).
+# Sources: TF/LogReg from the merged CV subject predictions
+# (outputs/symmetric_merged/<root>/<mod>/<campaign>/cv/fold_<n>/...), XGB from
+# the merged optuna100 metrics.json dataset_metrics view. Populated by
+# _load_merged_per_dataset_foldmeans() before sheets are built.
+MERGED_PER_DATASET_FOLDMEAN: dict[tuple[str, str, str, str], float] = {}
+
+
+def _load_merged_per_dataset_foldmeans() -> None:
+    """Per-dataset macro fold-mean for every merged CV method (TF/LogReg/XGB).
+
+    TF:   cv/fold_<n>/<model>/<dataset>/predictions_subject_level.csv
+    LogReg: cv/fold_<n>/heads/logreg/predictions_subject_level.csv (dataset col)
+    XGB:  output_model/(harmonized_v1|gemma4_)_merged_optuna100/<mod>/<run>_cv/
+          fold_<n>/xgb_optuna100_harmonized_v1/metrics.json dataset_metrics
+    """
+    import csv
+    import glob
+    from statistics import mean
+
+    def _f1(rows):
+        tp = sum(1 for r in rows if str(r.get("label")) == "1" and str(r.get("prediction")) == "1")
+        fp = sum(1 for r in rows if str(r.get("label")) == "0" and str(r.get("prediction")) == "1")
+        fn = sum(1 for r in rows if str(r.get("label")) == "1" and str(r.get("prediction")) != "1")
+        tn = sum(1 for r in rows if str(r.get("label")) == "0" and str(r.get("prediction")) == "0")
+        pos = 2 * tp / (2 * tp + fp + fn) if (2 * tp + fp + fn) else 0.0
+        neg = 2 * tn / (2 * tn + fp + fn) if (2 * tn + fp + fn) else 0.0
+        return (pos + neg) / 2
+
+    MERGED_PER_DATASET_FOLDMEAN.clear()
+    roots = {
+        "qwen": PROJECT_ROOT / "outputs" / "symmetric_merged" / "harmonized_v1",
+        "gemma4": PROJECT_ROOT / "outputs" / "symmetric_merged" / "gemma4" / "harmonized_v1",
+    }
+    mod_key = {"audio_text": "audio_text", "audio_only": "audio_only", "text_only": "text_only"}
+    for model, root in roots.items():
+        for mk, mdir_name in mod_key.items():
+            mroot = root / mdir_name
+            if not mroot.exists():
+                continue
+            campaign = None
+            for cand in sorted(mroot.glob("*")):
+                if "preflight" not in cand.name and "smoke" not in cand.name and (cand / "cv").exists():
+                    campaign = cand
+                    break
+            if campaign is None:
+                continue
+            # TF: per-dataset dirs under cv/fold_*/<model>/<dataset>/
+            for ds_key in DATASET_LABELS:
+                per = []
+                for fd in sorted((campaign / "cv").glob("fold_*")):
+                    p = fd / model / ds_key / "predictions_subject_level.csv"
+                    if not p.exists():
+                        continue
+                    with p.open(newline="", encoding="utf-8") as f:
+                        rows = list(csv.DictReader(f))
+                    if rows:
+                        per.append(_f1(rows))
+                if len(per) == 5:
+                    MERGED_PER_DATASET_FOLDMEAN[(mk, model, "teacher_forced", ds_key)] = mean(per)
+            # LogReg: shared heads csv with a dataset column
+            for ds_key in DATASET_LABELS:
+                per = []
+                for fd in sorted((campaign / "cv").glob("fold_*")):
+                    p = fd / "heads" / "logreg" / "predictions_subject_level.csv"
+                    if not p.exists():
+                        continue
+                    with p.open(newline="", encoding="utf-8") as f:
+                        rows = [r for r in csv.DictReader(f) if r.get("dataset") == ds_key]
+                    if rows:
+                        per.append(_f1(rows))
+                if len(per) == 5:
+                    MERGED_PER_DATASET_FOLDMEAN[(mk, model, "logreg", ds_key)] = mean(per)
+    # XGB: merged optuna100 metrics.json dataset_metrics (fold dataset-mean is
+    # the per-dataset macro within the fold; aggregate the per-dataset series
+    # across folds per dataset).
+    optuna_roots = {
+        "qwen": PROJECT_ROOT / "output_model" / "harmonized_v1_merged_optuna100",
+        "gemma4": PROJECT_ROOT / "output_model" / "harmonized_v1_gemma4_merged_optuna100",
+    }
+    for model, oroot in optuna_roots.items():
+        for mk, mdir_name in mod_key.items():
+            omk = oroot / mdir_name
+            if not omk.exists():
+                continue
+            orun = None
+            for cand in sorted(omk.glob("*")):
+                if "_cv" in cand.name and (cand / "fold_0").exists():
+                    orun = cand
+                    break
+            if orun is None:
+                continue
+            per_ds: dict[str, list[float]] = {k: [] for k in DATASET_LABELS}
+            for fold_dir in sorted(orun.glob("fold_*")):
+                mp = fold_dir / "xgb_optuna100_harmonized_v1" / "metrics.json"
+                if not mp.exists():
+                    continue
+                dm = json.loads(mp.read_text()).get("dataset_metrics", {})
+                for ds_key in DATASET_LABELS:
+                    if ds_key in dm:
+                        per_ds[ds_key].append(dm[ds_key]["macro_f1"])
+            for ds_key in DATASET_LABELS:
+                if len(per_ds[ds_key]) == 5:
+                    MERGED_PER_DATASET_FOLDMEAN[(mk, model, "xgb_optuna100", ds_key)] = mean(per_ds[ds_key])
 MODALITY_LABELS = {"audio_text": "Audio + Text", "audio_only": "Audio only", "text_only": "Text only"}
 METHOD_LABELS = {"qwen": "Fine-tuned Qwen", "logreg": "LogReg head", "xgb_fixed": "XGBoost fixed", "xgb_optuna": "XGBoost Optuna"}
 METHOD_LABELS_SHORT = {"qwen": "qwen", "logreg": "logreg", "xgb_fixed": "xgb_fixed", "xgb_optuna": "xgb_optuna"}
@@ -567,17 +672,22 @@ GEMMA_OPTUNA_POSF1 = {
     ("Androids Interview", "Audio + Text"): 0.873594, ("Androids Interview", "Audio only"): 0.835794, ("Androids Interview", "Text only"): 0.773857,
 }
 # --------------------------------------------------------------------------- Merged (symmetric) comparison values
-# Qwen merged TF/LogReg from the historical merged campaign (Merged Symmetric
-# Summary); Gemma merged CV TF from training selection, merged final TF from
-# the postprocess teacher-forced DAIC evaluation, and LogReg from the merged
-# heads (verified local evidence). XGBoost = standardized Optuna-100, reported
-# as the per-dataset macro-F1 mean within each fold, then the five-fold mean
-# (dataset_metrics in the merged optuna100 metrics.json; matches the fold-mean
-# reporting policy and the Optuna inner objective). Recomputed 2026-09-07.
+# Qwen merged TF from the historical merged campaign (Merged Symmetric
+# Summary); Gemma merged CV TF recomputed 2026-09-07 from the merged CV subject
+# predictions (per-dataset fold-mean, then unweighted dataset mean) so it uses
+# the same evaluation basis as Qwen — the earlier Gemma CV TF values came from
+# the training-selection metric and could not be reproduced locally. Merged
+# final TF/DAIC values are the postprocess teacher-forced DAIC evaluation, and
+# LogReg from the merged heads (verified local evidence). XGBoost = standardized
+# Optuna-100, reported as the per-dataset macro-F1 mean within each fold, then
+# the five-fold mean (dataset_metrics in the merged optuna100 metrics.json;
+# matches the fold-mean reporting policy and the Optuna inner objective).
 MERGED_TF = {
-    ("cv", "Audio + Text"): (0.6976, 0.761239),
-    ("cv", "Audio only"): (0.69046, 0.386284),
-    ("cv", "Text only"): (0.75408, 0.776333),
+    # cv = per-dataset fold-mean, then unweighted dataset mean (eval subject CSVs)
+    ("cv", "Audio + Text"): (0.6976, 0.720241),
+    ("cv", "Audio only"): (0.69046, 0.386466),
+    ("cv", "Text only"): (0.75408, 0.711550),
+    # final = single DAIC official test fold (postprocess evaluation)
     ("final", "Audio + Text"): (0.7631, 0.7257294429708223),
     ("final", "Audio only"): (0.5332, 0.5190058479532164),
     ("final", "Text only"): (0.7756, 0.7755968169761273),
@@ -601,18 +711,20 @@ MERGED_XGB = {
     ("final", "Text only"): (0.755208, 0.763105),
 }
 
-# Positive-F1 paired with the merged comparison cells, recomputed 2026-09-06.
+# Positive-F1 paired with the merged comparison cells, recomputed 2026-09-06/07.
 # Qwen: outputs/symmetric_merged/harmonized_v1/<mod>/harmonized_v1_prod_.../
 #   cv/fold_<n>/{qwen/summary.json, heads/{logreg,xgb_fixed}/metrics_by_dataset.json}
 #   (CV = mean over five per-dataset fold-means) and final/fold_0/qwen/summary.json
 #   (DAIC official test).
-# Gemma CV TF: cv/fold_<n>/logs/selection/combined_selection_metrics.json fold-mean;
+# Gemma CV TF: cv/fold_<n>/gemma4/<dataset>/predictions_subject_level.csv
+#   per-dataset fold-mean then unweighted dataset mean (same basis as Qwen);
 # Gemma final TF: final/fold_0/logs/postprocess/final_daic_metrics_original_teacher_forced.json;
 # Gemma LR: cv/fold_<n>/heads/logreg/metrics_by_dataset.json or final/.../heads/logreg/...
 MERGED_TF_POSF1 = {
-    ("cv", "Audio + Text"): (0.698703, 0.748489),
-    ("cv", "Audio only"): (0.709992, 0.105832),
-    ("cv", "Text only"): (0.753764, 0.792869),
+    # cv = per-dataset positive-F1 fold-mean, then unweighted dataset mean
+    ("cv", "Audio + Text"): (0.698703, 0.718316),
+    ("cv", "Audio only"): (0.709992, 0.103919),
+    ("cv", "Text only"): (0.753764, 0.736453),
     ("final", "Audio + Text"): (0.687500, 0.620690),
     ("final", "Audio only"): (0.235294, 0.222222),
     ("final", "Text only"): (0.689655, 0.689655),
@@ -1312,6 +1424,9 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
 
     _section(ws, row, "Merged (symmetric)", 7)
     row += 1
+    merged_ds_order = ["Androids Interview", "CMDC", "D3TEC", "DAIC", "Turkish"]
+    merged_ds_key = {"Androids Interview": "androids_interview", "CMDC": "cmdc",
+                     "D3TEC": "d3tec", "DAIC": "daic", "Turkish": "turkish"}
     for stage, stage_label in (("cv", "CV (5-fold)"), ("final", "Final (DAIC test)")):
         for mod_label in mod_keys:
             for method, table, pos_table in (
@@ -1324,6 +1439,27 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
                 qp, gp = pos_table[(stage, mod_label)]
                 _fill_cell(ws, row, f"Merged — {stage_label}", "Merged", mod_label, method, q, g, qp, gp)
                 row += 1
+                # Expand the merged CV average with per-dataset fold-mean rows.
+                if stage == "cv":
+                    mkey = {"Audio + Text": "audio_text", "Audio only": "audio_only",
+                            "Text only": "text_only"}[mod_label]
+                    method_key = {"Teacher-forced": "teacher_forced", "LogReg head": "logreg",
+                                  "XGBoost": "xgb_optuna100"}[method]
+                    for ds_label in merged_ds_order:
+                        dsk = merged_ds_key[ds_label]
+                        qv = MERGED_PER_DATASET_FOLDMEAN.get((mkey, "qwen", method_key, dsk))
+                        gv = MERGED_PER_DATASET_FOLDMEAN.get((mkey, "gemma4", method_key, dsk))
+                        ws.cell(row, 1, "CV per-dataset").font = BODY_FONT
+                        ws.cell(row, 1).fill = BODY
+                        ws.cell(row, 1).alignment = LEFT
+                        ws.cell(row, 1).border = BORDER
+                        _body_cell(ws, row, 2, ds_label)
+                        _body_cell(ws, row, 3, mod_label)
+                        _body_cell(ws, row, 4, method)
+                        _body_cell(ws, row, 5, _paired_f1(qv, None) if qv is not None else None)
+                        _body_cell(ws, row, 6, _paired_f1(gv, None) if gv is not None else None)
+                        _body_cell(ws, row, 7, None)
+                        row += 1
 
     _section(ws, row, "English (translated)", 7)
     row += 1
@@ -2875,10 +3011,10 @@ def build_en_merged_gemma_provenance(ws, put) -> None:
                     "recomputed locally from 47 subject predictions; zero invalid subjects")
             else:
                 put("Gemma merged", stage_label, modality, "Teacher-forced",
-                    g, f"campaign {merged_campaign}, merged training selection (mean_dataset_macro_f1)",
-                    f"{stage_label}, teacher-forced, mean over five datasets",
-                    f"output_model/symmetric_merged/gemma4/harmonized_v1/{mk}/{merged_campaign}/{stage}/fold_0/logs/training_history.json",
-                    "from local training_history selected epoch")
+                    g, f"campaign {merged_campaign}, merged CV eval subject predictions (per-dataset fold-mean, then unweighted dataset mean)",
+                    f"{stage_label}, teacher-forced, per-dataset fold-mean then unweighted dataset mean",
+                    f"outputs/symmetric_merged/gemma4/harmonized_v1/{mk}/{merged_campaign}/{stage}/fold_<n>/gemma4/<dataset>/predictions_subject_level.csv",
+                    "recomputed locally from subject predictions; replaces the earlier training-selection value (see PR #243)")
             q, g = MERGED_LR[(stage, modality)]
             put("Gemma merged", stage_label, modality, "LogReg head",
                 g, f"campaign {merged_campaign}, merged heads",
@@ -3292,6 +3428,7 @@ def main() -> None:
 
     wb = Workbook()
     wb.remove(wb.active)
+    _load_merged_per_dataset_foldmeans()
     if turkish_pooled_qcond_report_path is not None:
         # Load the validated pooled report up front so the Turkish standalone/
         # English cells across Summary, Qwen-vs-Gemma, and Provenance show the

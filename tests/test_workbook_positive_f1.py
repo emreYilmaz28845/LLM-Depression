@@ -354,11 +354,27 @@ def test_merged_qwen_posf1(stage, modality):
         g_tf = json.loads((gemma_model_base / "fold_0/logs/postprocess/final_daic_metrics_original_teacher_forced.json").read_text())["positive_f1"]
     else:
         q_tf = _mean(per_dataset_mean(f, "qwen/summary.json") for f in folds)
-        g_tf = _mean(
-            json.loads((f / "logs/selection/combined_selection_metrics.json").read_text())["positive_f1"]
-            for f in sorted(gemma_model_base.glob("fold_*"))
-            if (f / "logs/selection/combined_selection_metrics.json").is_file()
-        )
+        # Gemma CV TF: per-dataset positive-F1 from the eval subject predictions
+        # (same basis as Qwen); the earlier training-selection source was
+        # replaced in PR #243.
+        def _gemma_tf_per_ds(fdir: Path) -> float:
+            vals = []
+            for ds_dir in sorted((fdir / "gemma4").glob("*")):
+                if not ds_dir.is_dir():
+                    continue
+                p = ds_dir / "predictions_subject_level.csv"
+                if not p.is_file():
+                    continue
+                with p.open(newline="", encoding="utf-8") as fh:
+                    rows = list(csv.DictReader(fh))
+                tp = sum(1 for r in rows if str(r.get("label")) == "1" and str(r.get("prediction")) == "1")
+                fp = sum(1 for r in rows if str(r.get("label")) == "0" and str(r.get("prediction")) == "1")
+                fn = sum(1 for r in rows if str(r.get("label")) == "1" and str(r.get("prediction")) != "1")
+                pos = 2 * tp / (2 * tp + fp + fn) if (2 * tp + fp + fn) else 0.0
+                vals.append(pos)
+            return _mean(vals)
+
+        g_tf = _mean(_gemma_tf_per_ds(f) for f in sorted(gemma_outputs_base.glob("fold_*")))
     assert q_tf == pytest.approx(exp_tf_q, abs=1e-5)
     assert g_tf == pytest.approx(exp_tf_g, abs=1e-5)
 
