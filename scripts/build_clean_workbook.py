@@ -261,16 +261,17 @@ DATASET_LABELS = {
     "androids_interview": "Androids Interview",
 }
 
-# Merged per-dataset fold-mean macro-F1, keyed by (modality_key, model, method_key, dataset_key).
-# Sources: TF/LogReg from the merged CV subject predictions
-# (outputs/symmetric_merged/<root>/<mod>/<campaign>/cv/fold_<n>/...), XGB from
-# the merged optuna100 metrics.json dataset_metrics view. Populated by
-# _load_merged_per_dataset_foldmeans() before sheets are built.
-MERGED_PER_DATASET_FOLDMEAN: dict[tuple[str, str, str, str], float] = {}
+# Merged per-dataset fold-mean (macro, positive), keyed by
+# (modality_key, model, method_key, dataset_key). Sources: TF/LogReg from the
+# merged CV subject predictions (outputs/symmetric_merged/<root>/<mod>/
+# <campaign>/cv/fold_<n>/...), XGB from the merged optuna100 metrics.json
+# dataset_metrics view. Populated by _load_merged_per_dataset_foldmeans()
+# before sheets are built.
+MERGED_PER_DATASET_FOLDMEAN: dict[tuple[str, str, str, str], tuple[float, float]] = {}
 
 
 def _load_merged_per_dataset_foldmeans() -> None:
-    """Per-dataset macro fold-mean for every merged CV method (TF/LogReg/XGB).
+    """Per-dataset (macro, positive) fold-mean for merged CV TF/LogReg/XGB.
 
     TF:   cv/fold_<n>/<model>/<dataset>/predictions_subject_level.csv
     LogReg: cv/fold_<n>/heads/logreg/predictions_subject_level.csv (dataset col)
@@ -278,7 +279,6 @@ def _load_merged_per_dataset_foldmeans() -> None:
           fold_<n>/xgb_optuna100_harmonized_v1/metrics.json dataset_metrics
     """
     import csv
-    import glob
     from statistics import mean
 
     def _f1(rows):
@@ -288,7 +288,12 @@ def _load_merged_per_dataset_foldmeans() -> None:
         tn = sum(1 for r in rows if str(r.get("label")) == "0" and str(r.get("prediction")) == "0")
         pos = 2 * tp / (2 * tp + fp + fn) if (2 * tp + fp + fn) else 0.0
         neg = 2 * tn / (2 * tn + fp + fn) if (2 * tn + fp + fn) else 0.0
-        return (pos + neg) / 2
+        return (pos + neg) / 2, pos
+
+    def _put(mk, model, method_key, ds_key, per_macro, per_pos):
+        if len(per_macro) == 5 and len(per_pos) == 5:
+            MERGED_PER_DATASET_FOLDMEAN[(mk, model, method_key, ds_key)] = (
+                mean(per_macro), mean(per_pos))
 
     MERGED_PER_DATASET_FOLDMEAN.clear()
     roots = {
@@ -310,7 +315,7 @@ def _load_merged_per_dataset_foldmeans() -> None:
                 continue
             # TF: per-dataset dirs under cv/fold_*/<model>/<dataset>/
             for ds_key in DATASET_LABELS:
-                per = []
+                per_macro, per_pos = [], []
                 for fd in sorted((campaign / "cv").glob("fold_*")):
                     p = fd / model / ds_key / "predictions_subject_level.csv"
                     if not p.exists():
@@ -318,12 +323,13 @@ def _load_merged_per_dataset_foldmeans() -> None:
                     with p.open(newline="", encoding="utf-8") as f:
                         rows = list(csv.DictReader(f))
                     if rows:
-                        per.append(_f1(rows))
-                if len(per) == 5:
-                    MERGED_PER_DATASET_FOLDMEAN[(mk, model, "teacher_forced", ds_key)] = mean(per)
+                        m_, p_ = _f1(rows)
+                        per_macro.append(m_)
+                        per_pos.append(p_)
+                _put(mk, model, "teacher_forced", ds_key, per_macro, per_pos)
             # LogReg: shared heads csv with a dataset column
             for ds_key in DATASET_LABELS:
-                per = []
+                per_macro, per_pos = [], []
                 for fd in sorted((campaign / "cv").glob("fold_*")):
                     p = fd / "heads" / "logreg" / "predictions_subject_level.csv"
                     if not p.exists():
@@ -331,12 +337,12 @@ def _load_merged_per_dataset_foldmeans() -> None:
                     with p.open(newline="", encoding="utf-8") as f:
                         rows = [r for r in csv.DictReader(f) if r.get("dataset") == ds_key]
                     if rows:
-                        per.append(_f1(rows))
-                if len(per) == 5:
-                    MERGED_PER_DATASET_FOLDMEAN[(mk, model, "logreg", ds_key)] = mean(per)
-    # XGB: merged optuna100 metrics.json dataset_metrics (fold dataset-mean is
-    # the per-dataset macro within the fold; aggregate the per-dataset series
-    # across folds per dataset).
+                        m_, p_ = _f1(rows)
+                        per_macro.append(m_)
+                        per_pos.append(p_)
+                _put(mk, model, "logreg", ds_key, per_macro, per_pos)
+    # XGB: merged optuna100 metrics.json dataset_metrics (aggregate the
+    # per-dataset series across folds per dataset).
     optuna_roots = {
         "qwen": PROJECT_ROOT / "output_model" / "harmonized_v1_merged_optuna100",
         "gemma4": PROJECT_ROOT / "output_model" / "harmonized_v1_gemma4_merged_optuna100",
@@ -354,6 +360,7 @@ def _load_merged_per_dataset_foldmeans() -> None:
             if orun is None:
                 continue
             per_ds: dict[str, list[float]] = {k: [] for k in DATASET_LABELS}
+            per_ds_pos: dict[str, list[float]] = {k: [] for k in DATASET_LABELS}
             for fold_dir in sorted(orun.glob("fold_*")):
                 mp = fold_dir / "xgb_optuna100_harmonized_v1" / "metrics.json"
                 if not mp.exists():
@@ -362,9 +369,9 @@ def _load_merged_per_dataset_foldmeans() -> None:
                 for ds_key in DATASET_LABELS:
                     if ds_key in dm:
                         per_ds[ds_key].append(dm[ds_key]["macro_f1"])
+                        per_ds_pos[ds_key].append(dm[ds_key]["positive_f1"])
             for ds_key in DATASET_LABELS:
-                if len(per_ds[ds_key]) == 5:
-                    MERGED_PER_DATASET_FOLDMEAN[(mk, model, "xgb_optuna100", ds_key)] = mean(per_ds[ds_key])
+                _put(mk, model, "xgb_optuna100", ds_key, per_ds[ds_key], per_ds_pos[ds_key])
 MODALITY_LABELS = {"audio_text": "Audio + Text", "audio_only": "Audio only", "text_only": "Text only"}
 METHOD_LABELS = {"qwen": "Fine-tuned Qwen", "logreg": "LogReg head", "xgb_fixed": "XGBoost fixed", "xgb_optuna": "XGBoost Optuna"}
 METHOD_LABELS_SHORT = {"qwen": "qwen", "logreg": "logreg", "xgb_fixed": "xgb_fixed", "xgb_optuna": "xgb_optuna"}
@@ -1447,8 +1454,8 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
                                   "XGBoost": "xgb_optuna100"}[method]
                     for ds_label in merged_ds_order:
                         dsk = merged_ds_key[ds_label]
-                        qv = MERGED_PER_DATASET_FOLDMEAN.get((mkey, "qwen", method_key, dsk))
-                        gv = MERGED_PER_DATASET_FOLDMEAN.get((mkey, "gemma4", method_key, dsk))
+                        q_pair = MERGED_PER_DATASET_FOLDMEAN.get((mkey, "qwen", method_key, dsk))
+                        g_pair = MERGED_PER_DATASET_FOLDMEAN.get((mkey, "gemma4", method_key, dsk))
                         ws.cell(row, 1, "CV per-dataset").font = BODY_FONT
                         ws.cell(row, 1).fill = BODY
                         ws.cell(row, 1).alignment = LEFT
@@ -1456,8 +1463,8 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
                         _body_cell(ws, row, 2, ds_label)
                         _body_cell(ws, row, 3, mod_label)
                         _body_cell(ws, row, 4, method)
-                        _body_cell(ws, row, 5, _paired_f1(qv, None) if qv is not None else None)
-                        _body_cell(ws, row, 6, _paired_f1(gv, None) if gv is not None else None)
+                        _body_cell(ws, row, 5, _paired_f1(*q_pair) if q_pair is not None else None)
+                        _body_cell(ws, row, 6, _paired_f1(*g_pair) if g_pair is not None else None)
                         _body_cell(ws, row, 7, None)
                         row += 1
 
