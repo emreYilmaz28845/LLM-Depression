@@ -39,21 +39,35 @@ def test_native_vs_en_sheet_has_locked_summary_and_seed_detail_cardinalities(tmp
     assert sheet.cell(6, 4).value == "LogReg"
     assert sheet.cell(6, 5).value is None
 
-    summary_rows = [
-        row for row in range(6, 30)
-        if sheet.cell(row, 1).value in {"Standalone", "Merged CV", "Final merged DAIC"}
-    ]
-    assert len(summary_rows) == 24
     detail_header = next(
         row for row in range(1, sheet.max_row + 1)
         if sheet.cell(row, 1).value == "Endpoint"
         and sheet.cell(row, 5).value == "Training seed"
     )
+    summary_rows = [
+        row for row in range(6, detail_header)
+        if sheet.cell(row, 1).value
+        in {"Standalone", "Merged CV", "Merged CV per-dataset", "Final merged DAIC"}
+    ]
+    assert len(summary_rows) == 44
+    merged_per_dataset = [
+        row for row in summary_rows
+        if sheet.cell(row, 1).value == "Merged CV per-dataset"
+    ]
+    # 2 backbones x 2 heads x 5 datasets, one rollup row per backbone/head.
+    assert len(merged_per_dataset) == 20
+    assert [sheet.cell(row, 2).value for row in merged_per_dataset[:5]] == [
+        "Androids Interview",
+        "CMDC",
+        "D3TEC",
+        "DAIC",
+        "Turkish",
+    ]
     detail_rows = [
         row for row in range(detail_header + 1, sheet.max_row + 1)
         if sheet.cell(row, 5).value in {7, 1337, 2024}
     ]
-    assert len(detail_rows) == 72
+    assert len(detail_rows) == 132
 
 
 def test_native_vs_en_sheet_marks_missing_evidence_without_inventing_values(tmp_path) -> None:

@@ -162,11 +162,11 @@ def resolve_native_en_selection(
 
 def _load_native_en_report(report_path: Path) -> dict[str, Any]:
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    if report.get("schema_version") != "native_en_text_heads_v2_report.v1":
+    if report.get("schema_version") != "native_en_text_heads_v2_report.v2":
         raise ValueError(f"unsupported Native vs EN report schema: {report_path}")
     if report.get("status") != "passed":
         raise ValueError(f"Native vs EN report is not passed: {report_path}")
-    if len(report.get("summary", [])) != 24 or len(report.get("seed_details", [])) != 72:
+    if len(report.get("summary", [])) != 44 or len(report.get("seed_details", [])) != 132:
         raise ValueError(f"Native vs EN report has unexpected row counts: {report_path}")
     return report
 

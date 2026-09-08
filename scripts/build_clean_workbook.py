@@ -1581,9 +1581,9 @@ def _load_native_en_report(report_path: Path | None = None) -> dict[str, Any] | 
     if not path.is_file():
         return None
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("schema_version") != "native_en_text_heads_v2_report.v1" or payload.get("status") != "passed":
+    if payload.get("schema_version") != "native_en_text_heads_v2_report.v2" or payload.get("status") != "passed":
         raise ValueError(f"native-vs-English report is not a passed v2 report: {path}")
-    if len(payload.get("summary", [])) != 24 or len(payload.get("seed_details", [])) != 72:
+    if len(payload.get("summary", [])) != 44 or len(payload.get("seed_details", [])) != 132:
         raise ValueError(f"native-vs-English report has the wrong row counts: {path}")
     for row in payload["summary"]:
         if row.get("endpoint") in {"standalone", "merged_cv"}:
@@ -1597,46 +1597,57 @@ def _native_en_placeholder_report() -> dict[str, Any]:
     """Return blank rows until local reportable evidence exists."""
     summary: list[dict[str, Any]] = []
     details: list[dict[str, Any]] = []
-    for endpoint in ("standalone", "merged_cv", "merged_final"):
-        datasets = ("d3tec", "androids_interview", "cmdc", "turkish") if endpoint == "standalone" else ("merged",)
-        for dataset in datasets:
-            for backbone in ("qwen", "gemma4"):
-                for head in ("logreg", "xgb_optuna100"):
-                    row = {
-                        "endpoint": endpoint,
-                        "dataset": dataset,
-                        "backbone": backbone,
-                        "head": head,
-                        "aggregation": "pending local evidence",
-                        "seed_count": 3,
-                        "provenance_key": f"native-en-text-heads-v2-20260822|{endpoint}|{dataset}|{backbone}|{head}",
-                        "provenance_status": "pending_local_evidence",
-                        **{metric: None for metric in NATIVE_EN_SUMMARY_METRICS},
-                    }
-                    summary.append(row)
-                    for seed in (7, 1337, 2024):
-                        details.append({
-                            "endpoint": endpoint,
-                            "dataset": "daic" if endpoint == "merged_final" else dataset,
-                            "backbone": backbone,
-                            "head": head,
-                            "seed": seed,
-                            "native_macro_f1": None,
-                            "english_macro_f1": None,
-                            "delta_macro_f1": None,
-                            "native_positive_f1": None,
-                            "english_positive_f1": None,
-                            "delta_positive_f1": None,
-                            "split_seed": 1337,
-                            "head_seed": 1337,
-                            "head_protocol": "native_en_text_heads_v2",
-                            "evaluation_view": "harmonized_all_windows_full_coverage",
-                            "aggregation": "pending local evidence",
-                            "status": "pending_local_evidence",
-                            "native_provenance": [],
-                            "english_provenance": [],
-                        })
-    return {"schema_version": "native_en_text_heads_v2_report.v1", "status": "pending", "summary": summary, "seed_details": details}
+
+    def _append_cell(endpoint: str, dataset: str, backbone: str, head: str) -> None:
+        summary.append({
+            "endpoint": endpoint,
+            "dataset": dataset,
+            "backbone": backbone,
+            "head": head,
+            "aggregation": "pending local evidence",
+            "seed_count": 3,
+            "provenance_key": f"native-en-text-heads-v2-20260822|{endpoint}|{dataset}|{backbone}|{head}",
+            "provenance_status": "pending_local_evidence",
+            **{metric: None for metric in NATIVE_EN_SUMMARY_METRICS},
+        })
+        for seed in (7, 1337, 2024):
+            details.append({
+                "endpoint": endpoint,
+                "dataset": "daic" if endpoint == "merged_final" else dataset,
+                "backbone": backbone,
+                "head": head,
+                "seed": seed,
+                "native_macro_f1": None,
+                "english_macro_f1": None,
+                "delta_macro_f1": None,
+                "native_positive_f1": None,
+                "english_positive_f1": None,
+                "delta_positive_f1": None,
+                "split_seed": 1337,
+                "head_seed": 1337,
+                "head_protocol": "native_en_text_heads_v2",
+                "evaluation_view": "harmonized_all_windows_full_coverage",
+                "aggregation": "pending local evidence",
+                "status": "pending_local_evidence",
+                "native_provenance": [],
+                "english_provenance": [],
+            })
+
+    # Same emission order as tools/native_en_text_heads_report.py build_report:
+    # standalone per dataset, merged CV rollup + per-dataset rows per
+    # backbone/head, merged final per backbone/head.
+    for dataset in ("d3tec", "androids_interview", "cmdc", "turkish"):
+        for backbone in ("qwen", "gemma4"):
+            for head in ("logreg", "xgb_optuna100"):
+                _append_cell("standalone", dataset, backbone, head)
+    for backbone in ("qwen", "gemma4"):
+        for head in ("logreg", "xgb_optuna100"):
+            for dataset in ("merged", "androids_interview", "cmdc", "d3tec", "daic", "turkish"):
+                _append_cell("merged_cv", dataset, backbone, head)
+    for backbone in ("qwen", "gemma4"):
+        for head in ("logreg", "xgb_optuna100"):
+            _append_cell("merged_final", "merged", backbone, head)
+    return {"schema_version": "native_en_text_heads_v2_report.v2", "status": "pending", "summary": summary, "seed_details": details}
 
 
 def _native_en_report_or_placeholder(report_path: Path | None = None) -> dict[str, Any]:
@@ -1657,8 +1668,17 @@ def _native_en_workbook_key(item: dict[str, Any], metric: str) -> str:
     return f"Native vs EN v2|{dataset}|{modality}|{method} — {NATIVE_EN_METRIC_LABELS[metric]}"
 
 
+def _native_en_display_endpoint(item: dict[str, Any]) -> str:
+    """Column-A text: merged-CV per-dataset rows get their own label so the
+    rollup rows and their five per-dataset rows scan like the Qwen vs Gemma
+    sheet. Workbook keys stay report-driven (see _native_en_workbook_key)."""
+    if item.get("endpoint") == "merged_cv" and item.get("dataset") not in (None, "", "merged"):
+        return "Merged CV per-dataset"
+    return NATIVE_EN_ENDPOINT_LABELS.get(item.get("endpoint"), item.get("endpoint"))
+
+
 def build_native_vs_english(wb: Workbook, *, report_path: Path | None = None) -> None:
-    """Render the locked 24-row summary and 72-row seed-detail report."""
+    """Render the locked 44-row summary and 132-row seed-detail report."""
     report = _native_en_report_or_placeholder(report_path)
     ws = wb.create_sheet("Native vs EN")
     summary_headers = [
@@ -1683,18 +1703,20 @@ def build_native_vs_english(wb: Workbook, *, report_path: Path | None = None) ->
     _title(ws, "Native versus English text-only LogReg and Optuna-100 XGBoost", len(summary_headers))
     _note(
         ws, 2,
-        "This sheet is generated from the deterministic v2 report. It contains 24 paired summary rows "
-        "and 72 seed-detail rows. Delta = English minus native. All displayed metric cells remain blank "
+        f"This sheet is generated from the deterministic v2 report. It contains "
+        f"{len(report['summary'])} paired summary rows (standalone per dataset; merged CV as a "
+        f"five-dataset rollup plus one row per dataset) and {len(report['seed_details'])} seed-detail "
+        "rows. Delta = English minus native. All displayed metric cells remain blank "
         "until the corresponding attempts are locally validated and REPORTABLE; the Provenance sheet "
         "contains the attempt, evaluation, artifact, job, and source references.",
         len(summary_headers), height=60,
     )
-    _section(ws, 4, "24-row paired summary", len(summary_headers))
+    _section(ws, 4, f"{len(report['summary'])}-row paired summary", len(summary_headers))
     _header_row(ws, 5, summary_headers)
     row = 6
     for item in report["summary"]:
         values = [
-            NATIVE_EN_ENDPOINT_LABELS.get(item.get("endpoint"), item.get("endpoint")),
+            _native_en_display_endpoint(item),
             NATIVE_EN_DATASET_LABELS.get(item.get("dataset"), item.get("dataset")),
             "Gemma 4" if item.get("backbone") == "gemma4" else "Qwen",
             NATIVE_EN_HEAD_LABELS.get(item.get("head"), item.get("head")),
@@ -1712,12 +1734,12 @@ def build_native_vs_english(wb: Workbook, *, report_path: Path | None = None) ->
         ws.cell(row, 19).alignment = WRAP
         row += 1
     detail_start = row + 1
-    _section(ws, detail_start, "72-row seed detail", len(detail_headers))
+    _section(ws, detail_start, f"{len(report['seed_details'])}-row seed detail", len(detail_headers))
     _header_row(ws, detail_start + 1, detail_headers)
     row = detail_start + 2
     for item in report["seed_details"]:
         values = [
-            NATIVE_EN_ENDPOINT_LABELS.get(item.get("endpoint"), item.get("endpoint")),
+            _native_en_display_endpoint(item),
             NATIVE_EN_DATASET_LABELS.get(item.get("dataset"), item.get("dataset")),
             "Gemma 4" if item.get("backbone") == "gemma4" else "Qwen",
             NATIVE_EN_HEAD_LABELS.get(item.get("head"), item.get("head")),
@@ -1749,7 +1771,9 @@ def build_native_vs_english(wb: Workbook, *, report_path: Path | None = None) ->
         ws, row + 1,
         "The reporting policy is unweighted fold-mean for every standalone CV dataset. "
         "This supersedes older pooled-CV summaries; merged CV uses an "
-        "unweighted dataset mean within fold followed by a five-fold mean, and final merged results "
+        "unweighted dataset mean within fold followed by a five-fold mean, expanded per dataset "
+        "('Merged CV per-dataset' rows: unweighted five-fold mean of that dataset's fold scores), "
+        "and final merged results "
         "use the DAIC subject-level evaluation. Missing evidence is shown as blank, never as zero.",
         len(detail_headers), height=48,
     )
