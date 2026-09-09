@@ -44,6 +44,11 @@ EXPECTED_FOLDS = (0, 1, 2, 3, 4)
 METHOD_TO_CONFIG = {"logreg": "logreg", "xgb_optuna100": "xgb_optuna"}
 DATASET_ORDER = ("d3tec", "androids_interview", "cmdc", "turkish")
 ENDPOINT_ORDER = ("standalone", "merged_cv", "merged_final")
+# Per-dataset expansion order for merged CV cells (mirrors the Qwen vs Gemma
+# sheet's "CV per-dataset" row order).
+MERGED_DATASET_ORDER = ("androids_interview", "cmdc", "d3tec", "daic", "turkish")
+MERGED_CV_AGGREGATION = "unweighted dataset mean within fold, then unweighted five-fold mean"
+MERGED_CV_PER_DATASET_AGGREGATION = "unweighted five-fold mean of per-dataset fold scores"
 
 
 class ReportError(ValueError):
@@ -460,7 +465,14 @@ def _validate_matrix(records: list[dict[str, Any]], plan: dict[str, Any]) -> Non
                                         )
 
 
-def _record_provenance(record: dict[str, Any]) -> dict[str, Any]:
+def _record_provenance(record: dict[str, Any], dataset: str | None = None) -> dict[str, Any]:
+    evaluations = record["evaluations"]
+    if dataset is not None:
+        evaluations = [item for item in evaluations if item["dataset"] == dataset]
+        if len(evaluations) != 1:
+            raise ReportError(
+                f"expected exactly one {dataset} evaluation for {record['attempt_id']}"
+            )
     return {
         "attempt_id": record["attempt_id"],
         "logical_run_name": record["logical_run_name"],
@@ -471,7 +483,7 @@ def _record_provenance(record: dict[str, Any]) -> dict[str, Any]:
         "manifest_sha256": record["manifest_sha256"],
         "split_sha256": record["split_sha256"],
         "checkpoint_path": record["checkpoint_path"],
-        "evaluation_ids": [item["evaluation_id"] for item in record["evaluations"]],
+        "evaluation_ids": [item["evaluation_id"] for item in evaluations],
         "metrics_artifacts": [
             {
                 "path": item["metrics_path"],
@@ -479,7 +491,7 @@ def _record_provenance(record: dict[str, Any]) -> dict[str, Any]:
                 "prediction_path": item["prediction_path"],
                 "prediction_sha256": item["prediction_sha256"],
             }
-            for item in record["evaluations"]
+            for item in evaluations
         ],
         "slurm_job_ids": record["jobs"]["slurm_job_ids"],
         "failures": record["jobs"]["failures"],
@@ -532,9 +544,11 @@ def _aggregate_cell(
     backbone: str,
     method: str,
     dataset: str,
+    per_dataset: bool = False,
 ) -> dict[str, Any]:
     by_seed = {int(record["seed"]): record for record in records}
     seed_rows: list[dict[str, Any]] = []
+    provenance_dataset = dataset if per_dataset else None
     for seed in TRAINING_SEEDS:
         seed_records = [record for record in records if int(record["seed"]) == seed]
         if endpoint == "standalone":
@@ -547,12 +561,16 @@ def _aggregate_cell(
             }
             aggregation = "unweighted mean of five outer-fold subject-level scores"
         elif endpoint == "merged_cv":
-            fold_metrics = [_fold_metrics(record) for record in seed_records]
+            if per_dataset:
+                fold_metrics = [_fold_metrics(record, dataset) for record in seed_records]
+                aggregation = MERGED_CV_PER_DATASET_AGGREGATION
+            else:
+                fold_metrics = [_fold_metrics(record) for record in seed_records]
+                aggregation = MERGED_CV_AGGREGATION
             metrics = {
                 metric: float(statistics.mean(item[metric] for item in fold_metrics))
                 for metric in ("macro_f1", "positive_f1")
             }
-            aggregation = "unweighted dataset mean within fold, then unweighted five-fold mean"
         else:
             metrics = _fold_metrics(seed_records[0], "daic")
             aggregation = "DAIC subject-level final evaluation"
@@ -563,7 +581,7 @@ def _aggregate_cell(
                 "macro_f1": metrics["macro_f1"],
                 "positive_f1": metrics["positive_f1"],
                 "provenance": [
-                    _record_provenance(record)
+                    _record_provenance(record, provenance_dataset)
                     for record in sorted(seed_records, key=lambda item: int(item["fold"]))
                 ],
             }
@@ -667,37 +685,89 @@ def build_report(plan_path: str | Path, attempts: set[str] | None = None) -> dic
         ).append(record)
 
     summaries: list[dict[str, Any]] = []
+
+    def _paired_cell(
+        *,
+        endpoint: str,
+        cell_dataset: str,
+        target_dataset: str,
+        backbone: str,
+        method: str,
+        per_dataset: bool,
+    ) -> None:
+        native_records = by_cell[(endpoint, "native", backbone, method, cell_dataset)]
+        english_records = by_cell[(endpoint, "english", backbone, method, cell_dataset)]
+        native = _aggregate_cell(
+            native_records,
+            endpoint=endpoint,
+            condition="native",
+            backbone=backbone,
+            method=method,
+            dataset=target_dataset,
+            per_dataset=per_dataset,
+        )
+        english = _aggregate_cell(
+            english_records,
+            endpoint=endpoint,
+            condition="english",
+            backbone=backbone,
+            method=method,
+            dataset=target_dataset,
+            per_dataset=per_dataset,
+        )
+        summaries.append(_summary_pair(native, english))
+
     for endpoint in ENDPOINT_ORDER:
-        datasets = DATASET_ORDER if endpoint == "standalone" else ("merged",)
-        report_dataset = "daic" if endpoint == "merged_final" else None
-        for dataset in datasets:
-            target = report_dataset or dataset
+        if endpoint == "standalone":
+            for dataset in DATASET_ORDER:
+                for backbone in BACKBONES:
+                    for method in HEADS:
+                        _paired_cell(
+                            endpoint=endpoint,
+                            cell_dataset=dataset,
+                            target_dataset=dataset,
+                            backbone=backbone,
+                            method=method,
+                            per_dataset=False,
+                        )
+        elif endpoint == "merged_cv":
+            # Rollup cell first, then one per-dataset cell per merged dataset,
+            # mirroring the Qwen vs Gemma sheet layout.
             for backbone in BACKBONES:
                 for method in HEADS:
-                    native_records = by_cell[(endpoint, "native", backbone, method, dataset)]
-                    english_records = by_cell[(endpoint, "english", backbone, method, dataset)]
-                    native = _aggregate_cell(
-                        native_records,
+                    _paired_cell(
                         endpoint=endpoint,
-                        condition="native",
+                        cell_dataset="merged",
+                        target_dataset="merged",
                         backbone=backbone,
                         method=method,
-                        dataset=target,
+                        per_dataset=False,
                     )
-                    english = _aggregate_cell(
-                        english_records,
+                    for dataset in MERGED_DATASET_ORDER:
+                        _paired_cell(
+                            endpoint=endpoint,
+                            cell_dataset="merged",
+                            target_dataset=dataset,
+                            backbone=backbone,
+                            method=method,
+                            per_dataset=True,
+                        )
+        else:
+            for backbone in BACKBONES:
+                for method in HEADS:
+                    _paired_cell(
                         endpoint=endpoint,
-                        condition="english",
+                        cell_dataset="merged",
+                        target_dataset="daic",
                         backbone=backbone,
                         method=method,
-                        dataset=target,
+                        per_dataset=False,
                     )
-                    summaries.append(_summary_pair(native, english))
     details = [detail for summary in summaries for detail in summary.pop("seed_details")]
-    if len(summaries) != 24 or len(details) != 72:
+    if len(summaries) != 44 or len(details) != 132:
         raise ReportError(f"report cardinality mismatch: summaries={len(summaries)} details={len(details)}")
     return {
-        "schema_version": "native_en_text_heads_v2_report.v1",
+        "schema_version": "native_en_text_heads_v2_report.v2",
         "status": "passed",
         "group_id": GROUP_ID,
         "plan_path": str(Path(plan_path).resolve()),
@@ -708,7 +778,8 @@ def build_report(plan_path: str | Path, attempts: set[str] | None = None) -> dic
         "aggregation": {
             "d3tec_androids_interview": "unweighted mean of five outer-fold subject-level scores",
             "cmdc_turkish": "unweighted mean of five outer-fold subject-level scores",
-            "merged_cv": "unweighted dataset mean within fold, then unweighted five-fold mean",
+            "merged_cv": MERGED_CV_AGGREGATION,
+            "merged_cv_per_dataset": MERGED_CV_PER_DATASET_AGGREGATION,
             "merged_final": "DAIC subject-level final evaluation",
         },
         "summary": summaries,

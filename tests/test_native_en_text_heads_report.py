@@ -141,3 +141,91 @@ def test_source_provenance_rejects_unlisted_source_mismatch() -> None:
             plan,
             {"attempt_id": "unlisted-attempt"},
         )
+
+
+def _merged_record(attempt_id: str) -> dict:
+    return {
+        "attempt_id": attempt_id,
+        "logical_run_name": "run",
+        "fold": 0,
+        "seed": 7,
+        "config_path": f"{attempt_id}/run_config.yaml",
+        "config_sha256": "c",
+        "manifest_sha256": "m",
+        "split_sha256": "s",
+        "checkpoint_path": "ckpt",
+        "jobs": {"slurm_job_ids": [1], "failures": []},
+        "source": {"git_commit": "x"},
+        "evaluations": [
+            {
+                "evaluation_id": f"eval-{dataset}-{attempt_id}",
+                "dataset": dataset,
+                "metrics_path": f"{attempt_id}/metrics.json",
+                "metrics_sha256": f"h-{dataset}",
+                "prediction_path": f"{attempt_id}/predictions.jsonl",
+                "prediction_sha256": f"p-{dataset}",
+            }
+            for dataset in ("androids_interview", "cmdc", "d3tec", "daic", "turkish")
+        ],
+        "backend": "tf",
+        "split_seed": 1337,
+        "head_seed": 1337,
+    }
+
+
+def test_record_provenance_can_filter_to_one_merged_dataset() -> None:
+    provenance = report._record_provenance(_merged_record("att-1"))
+
+    assert len(provenance["evaluation_ids"]) == 5
+    assert len(provenance["metrics_artifacts"]) == 5
+
+    daic = report._record_provenance(_merged_record("att-1"), "daic")
+
+    assert daic["evaluation_ids"] == ["eval-daic-att-1"]
+    assert len(daic["metrics_artifacts"]) == 1
+    assert daic["metrics_artifacts"][0]["sha256"] == "h-daic"
+
+    with pytest.raises(report.ReportError, match="exactly one nosuch evaluation"):
+        report._record_provenance(_merged_record("att-1"), "nosuch")
+
+
+def test_merged_cv_per_dataset_cell_means_that_datasets_fold_scores(monkeypatch) -> None:
+    records = [{"seed": seed, "fold": fold} for seed in report.TRAINING_SEEDS for fold in range(5)]
+
+    def fake_fold_metrics(record, dataset=None):
+        base = record["fold"] / 4
+        extra = 0.1 if dataset == "daic" else 0.0
+        return {"macro_f1": base + extra, "positive_f1": base / 2}
+
+    seen: list[str | None] = []
+
+    def fake_provenance(record, dataset=None):
+        seen.append(dataset)
+        return {"dataset": dataset}
+
+    monkeypatch.setattr(report, "_fold_metrics", fake_fold_metrics)
+    monkeypatch.setattr(report, "_record_provenance", fake_provenance)
+
+    cell = report._aggregate_cell(
+        records, endpoint="merged_cv", condition="native",
+        backbone="qwen", method="logreg", dataset="daic", per_dataset=True,
+    )
+
+    assert cell["aggregation"] == report.MERGED_CV_PER_DATASET_AGGREGATION
+    assert cell["dataset"] == "daic"
+    for row in cell["seed_rows"]:
+        assert row["macro_f1"] == pytest.approx(0.6)
+        assert row["positive_f1"] == pytest.approx(0.25)
+    # One provenance entry per fold, each restricted to the daic evaluation.
+    assert seen == ["daic"] * 15
+    assert all(entry["dataset"] == "daic" for row in cell["seed_rows"] for entry in row["provenance"])
+
+    rollup = report._aggregate_cell(
+        records, endpoint="merged_cv", condition="native",
+        backbone="qwen", method="logreg", dataset="merged",
+    )
+
+    assert rollup["aggregation"] == report.MERGED_CV_AGGREGATION
+    for row in rollup["seed_rows"]:
+        assert row["macro_f1"] == pytest.approx(0.5)
+    assert seen == ["daic"] * 15 + [None] * 15

@@ -216,15 +216,15 @@ def test_substep5_native_en_selected_export_reads_report_without_copying_values(
         }
     ] + [
         {"provenance_key": f"other-{index}", "native_macro_mean": 0.1}
-        for index in range(23)
+        for index in range(43)
     ]
     report.write_text(
         json.dumps(
             {
-                "schema_version": "native_en_text_heads_v2_report.v1",
+                "schema_version": "native_en_text_heads_v2_report.v2",
                 "status": "passed",
                 "summary": summary,
-                "seed_details": [{} for _ in range(72)],
+                "seed_details": [{} for _ in range(132)],
             }
         ),
         encoding="utf-8",

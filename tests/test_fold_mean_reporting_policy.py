@@ -11,7 +11,7 @@ from scripts import build_clean_workbook as workbook
 def test_every_standalone_cell_uses_equal_fold_weights(monkeypatch, dataset, backbone):
     records = [{"seed": seed, "fold": fold} for seed in report.TRAINING_SEEDS for fold in range(5)]
     monkeypatch.setattr(report, "_fold_metrics", lambda r, ds: {"macro_f1": r["fold"] / 4, "positive_f1": r["fold"] / 8})
-    monkeypatch.setattr(report, "_record_provenance", lambda r: r)
+    monkeypatch.setattr(report, "_record_provenance", lambda r, dataset=None: r)
     monkeypatch.setattr(report, "_pooled_metrics", lambda *a: pytest.fail("pooled CV is forbidden"))
     cell = report._aggregate_cell(records, endpoint="standalone", condition="native", backbone=backbone, method="logreg", dataset=dataset)
     assert "mean" in cell["aggregation"] and "pooled" not in cell["aggregation"]
@@ -30,9 +30,24 @@ def test_missing_or_duplicate_folds_fail_closed():
 
 def test_workbook_rejects_old_pooled_native_english_report(tmp_path):
     path = tmp_path / "report.json"
-    path.write_text(json.dumps({"schema_version": "native_en_text_heads_v2_report.v1", "status": "passed", "summary": [{"endpoint": "standalone", "aggregation": "pooled subject-level"}] * 24, "seed_details": [{}] * 72}))
+    path.write_text(json.dumps({"schema_version": "native_en_text_heads_v2_report.v2", "status": "passed", "summary": [{"endpoint": "standalone", "aggregation": "pooled subject-level"}] * 44, "seed_details": [{}] * 132}))
     with pytest.raises(ValueError, match="requires fold-mean"):
         workbook._load_native_en_report(path)
+
+
+@pytest.mark.parametrize("dataset", ["androids_interview", "cmdc", "d3tec", "daic", "turkish"])
+@pytest.mark.parametrize("backbone", ["qwen", "gemma4"])
+def test_merged_cv_per_dataset_cell_uses_equal_fold_weights(monkeypatch, dataset, backbone):
+    records = [{"seed": seed, "fold": fold} for seed in report.TRAINING_SEEDS for fold in range(5)]
+    monkeypatch.setattr(report, "_fold_metrics", lambda r, ds=None: {"macro_f1": r["fold"] / 4, "positive_f1": r["fold"] / 8})
+    monkeypatch.setattr(report, "_record_provenance", lambda r, dataset=None: r)
+    monkeypatch.setattr(report, "_pooled_metrics", lambda *a: pytest.fail("pooled CV is forbidden"))
+    cell = report._aggregate_cell(records, endpoint="merged_cv", condition="native", backbone=backbone, method="logreg", dataset=dataset, per_dataset=True)
+    assert cell["aggregation"] == report.MERGED_CV_PER_DATASET_AGGREGATION
+    assert "mean" in cell["aggregation"] and "pooled" not in cell["aggregation"]
+    for row in cell["seed_rows"]:
+        assert row["macro_f1"] == pytest.approx(.5)
+        assert row["positive_f1"] == pytest.approx(.25)
 
 
 def test_workbook_cv_source_labels_and_translation_tables_use_mean():
