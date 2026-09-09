@@ -2190,18 +2190,19 @@ def build_turkish_pooled_qcond_provenance(ws, put, *, report_path: Path) -> None
 
 # --------------------------------------------------------------------------- sheets
 def build_summary(wb: Workbook, *, detailed: bool) -> None:
-    """Compact headline: the standardized XGBoost macro-F1 for the three main
-    experiments, both models, with the Gemma-minus-Qwen delta. The full
-    teacher-forced / LogReg / XGBoost detail lives in the Qwen vs Gemma sheet.
-    When the Turkish pooled mixed report is available, Turkish standalone rows
-    show the pooled mixed (positive+negative question) results.
+    """Compact headline: the canonical teacher-forced (binary-strict,
+    best_model, macro-F1-selected) macro-F1 for the three main experiments,
+    both models, with the Gemma-minus-Qwen delta. The full teacher-forced /
+    LogReg / XGBoost detail lives in the Qwen vs Gemma sheet. When the Turkish
+    pooled mixed report is available, Turkish standalone rows show the pooled
+    mixed (positive+negative question) results.
     """
     ws = wb.create_sheet("Summary")
     _widths(ws, {"A": 22, "B": 26, "C": 20, "D": 20, "E": 14})
-    _title(ws, "Depression Detection — XGBoost Macro-F1 / Positive-F1 summary (Qwen vs Gemma)", 5)
+    _title(ws, "Depression Detection — Teacher-forced Macro-F1 / Positive-F1 summary (Qwen vs Gemma)", 5)
     _note(
         ws, 2,
-        "Standardized XGBoost (100-trial search, seed 1337) for the three main experiments, both models. "
+        "Teacher-forced, binary-strict macro-F1 for the three main experiments, both models. "
         "Every score cell shows 'Macro-F1 / Positive-F1'; 'n/a' marks a positive-F1 with no local evidence. "
         "Delta = Gemma minus Qwen on macro-F1 only. Full teacher-forced, LogReg, and XGBoost detail: "
         "'Qwen vs Gemma' sheet. Per-cell provenance: Provenance sheet.",
@@ -2211,32 +2212,32 @@ def build_summary(wb: Workbook, *, detailed: bool) -> None:
     row = 5
     for dataset in ("D3TEC", "Androids Interview", "CMDC", "Turkish", "DAIC"):
         for mod_label in ("Audio + Text", "Audio only", "Text only"):
-            q = QWEN_OPTUNA[(dataset, mod_label)]
-            g = GEMMA_OPTUNA[(dataset, mod_label)]
-            qp = QWEN_OPTUNA_POSF1[(dataset, mod_label)]
-            gp = GEMMA_OPTUNA_POSF1[(dataset, mod_label)]
+            q = STANDALONE_QWEN[(dataset, mod_label)]
+            g = GEMMA_NATIVE_TF[(dataset, mod_label)]
+            qp = STANDALONE_QWEN_POSF1[(dataset, mod_label)]
+            gp = GEMMA_NATIVE_TF_POSF1[(dataset, mod_label)]
             if dataset == "Turkish":
-                q = _turkish_mixed_value("Qwen", mod_label, _turkish_transcript_for_modality(mod_label), "xgb_optuna100") or q
-                g = _turkish_mixed_value("Gemma 4", mod_label, _turkish_transcript_for_modality(mod_label), "xgb_optuna100") or g
-                qp = _turkish_mixed_pos_value("Qwen", mod_label, _turkish_transcript_for_modality(mod_label), "xgb_optuna100") or qp
-                gp = _turkish_mixed_pos_value("Gemma 4", mod_label, _turkish_transcript_for_modality(mod_label), "xgb_optuna100") or gp
+                q = _turkish_mixed_value("Qwen", mod_label, _turkish_transcript_for_modality(mod_label), "teacher_forced") or q
+                g = _turkish_mixed_value("Gemma 4", mod_label, _turkish_transcript_for_modality(mod_label), "teacher_forced") or g
+                qp = _turkish_mixed_pos_value("Qwen", mod_label, _turkish_transcript_for_modality(mod_label), "teacher_forced") or qp
+                gp = _turkish_mixed_pos_value("Gemma 4", mod_label, _turkish_transcript_for_modality(mod_label), "teacher_forced") or gp
             _summary_row(ws, row, "Standalone", f"{dataset} — {mod_label}", q, g, qp, gp)
             row += 1
     for stage, stage_label in (("cv", "CV (5-fold)"), ("final", "Final (DAIC test)")):
         for mod_label in ("Audio + Text", "Audio only", "Text only"):
-            q, g = MERGED_XGB[(stage, mod_label)]
-            qp, gp = MERGED_OPTUNA_POSF1[(stage, mod_label)]
+            q, g = MERGED_TF[(stage, mod_label)]
+            qp, gp = MERGED_TF_POSF1[(stage, mod_label)]
             _summary_row(ws, row, "Merged", f"{stage_label} — {mod_label}", q, g, qp, gp)
             row += 1
     for dataset in ("D3TEC", "Androids Interview", "CMDC", "Turkish"):
         for mod_label in ("Audio + Text", "Text only"):
-            q, g = EN_XGB[(dataset, mod_label)]
-            qp, gp = EN_XGB_POSF1[(dataset, mod_label)]
+            q, g = EN_TF[(dataset, mod_label)]
+            qp, gp = EN_TF_POSF1[(dataset, mod_label)]
             if dataset == "Turkish":
-                q = _turkish_mixed_value("Qwen", mod_label, "english", "xgb_optuna100") or q
-                g = _turkish_mixed_value("Gemma 4", mod_label, "english", "xgb_optuna100") or g
-                qp = _turkish_mixed_pos_value("Qwen", mod_label, "english", "xgb_optuna100") or qp
-                gp = _turkish_mixed_pos_value("Gemma 4", mod_label, "english", "xgb_optuna100") or gp
+                q = _turkish_mixed_value("Qwen", mod_label, "english", "teacher_forced") or q
+                g = _turkish_mixed_value("Gemma 4", mod_label, "english", "teacher_forced") or g
+                qp = _turkish_mixed_pos_value("Qwen", mod_label, "english", "teacher_forced") or qp
+                gp = _turkish_mixed_pos_value("Gemma 4", mod_label, "english", "teacher_forced") or gp
             _summary_row(ws, row, "English", f"{dataset} — {mod_label}", q, g, qp, gp)
             row += 1
     if _turkish_pooled_active():
