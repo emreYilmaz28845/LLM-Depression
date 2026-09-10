@@ -10,7 +10,13 @@ from datetime import datetime, timezone
 import pytest
 
 from src.experiment_tracking.schemas import validate_experiment_lane
-from tools.exp import _load_linked_experiment_group
+import tools.exp as exp_tool
+from tools.exp import (
+    LaneResolutionError,
+    _load_linked_experiment_group,
+    _new_managed_worktree_root,
+    _resolve_lane,
+)
 
 # Test helpers for worktree pin and lane creation
 
@@ -215,7 +221,7 @@ def test_exp_create_writes_definition_into_new_worktree_and_pin_passes(tmp_path)
 
     date = datetime.now(timezone.utc).strftime("%Y%m%d")
     experiment_id = f"exp-definition-location-{date}"
-    worktree = pathlib.Path(env["HOME"]) / "worktrees" / "LLM-Depression-exp-definition-location"
+    worktree = repo.parent / "worktrees" / "LLM-Depression-exp-definition-location"
     definition = worktree / "experiments" / "definitions" / "lanes" / f"{experiment_id}.yaml"
     pin = worktree / ".agent-pin.json"
 
@@ -238,6 +244,74 @@ def test_exp_create_writes_definition_into_new_worktree_and_pin_passes(tmp_path)
         env=env,
     )
     assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+def _write_lane_pin(worktree, *, experiment_id, branch):
+    worktree.mkdir(parents=True)
+    pin = {
+        "schema_version": "audiollm.agent_pin.v1",
+        "experiment_id": experiment_id,
+        "branch": branch,
+        "worktree": str(worktree),
+        "allowed_paths": [str(worktree)],
+        "protected_paths": [],
+    }
+    (worktree / ".agent-pin.json").write_text(json.dumps(pin), encoding="utf-8")
+    return pin
+
+
+def test_resolve_lane_prefers_new_root_and_supports_legacy_root(tmp_path, monkeypatch):
+    repo = tmp_path / "AudioLLM" / "LLM-Depression"
+    repo.mkdir(parents=True)
+    home = tmp_path / "home"
+    monkeypatch.setattr(exp_tool, "PROJECT_ROOT", repo)
+    monkeypatch.setenv("HOME", str(home))
+
+    new_worktree = repo.parent / "worktrees" / "LLM-Depression-exp-new"
+    new_pin = _write_lane_pin(
+        new_worktree,
+        experiment_id="exp-new-20260910",
+        branch="agent/exp-new",
+    )
+    assert _resolve_lane("exp-new") == (new_worktree.resolve(), new_pin)
+
+    legacy_worktree = home / "worktrees" / "LLM-Depression-exp-legacy"
+    legacy_pin = _write_lane_pin(
+        legacy_worktree,
+        experiment_id="exp-legacy-20260821",
+        branch="agent/exp-legacy",
+    )
+    assert _resolve_lane("exp-legacy") == (legacy_worktree.resolve(), legacy_pin)
+
+
+def test_resolve_lane_rejects_same_lane_in_both_roots(tmp_path, monkeypatch):
+    repo = tmp_path / "AudioLLM" / "LLM-Depression"
+    repo.mkdir(parents=True)
+    home = tmp_path / "home"
+    monkeypatch.setattr(exp_tool, "PROJECT_ROOT", repo)
+    monkeypatch.setenv("HOME", str(home))
+
+    for root in (repo.parent / "worktrees", home / "worktrees"):
+        _write_lane_pin(
+            root / "LLM-Depression-exp-duplicate",
+            experiment_id="exp-duplicate-20260910",
+            branch="agent/exp-duplicate",
+        )
+
+    with pytest.raises(LaneResolutionError, match="ambiguous managed lane") as exc_info:
+        _resolve_lane("exp-duplicate")
+    message = str(exc_info.value)
+    assert str(repo.parent / "worktrees") in message
+    assert str(home / "worktrees") in message
+
+
+def test_new_root_is_stable_when_tool_runs_inside_managed_worktree(tmp_path, monkeypatch):
+    audiollm_root = tmp_path / "AudioLLM"
+    worktree_checkout = audiollm_root / "worktrees" / "LLM-Depression-exp-child"
+    worktree_checkout.mkdir(parents=True)
+    monkeypatch.setattr(exp_tool, "PROJECT_ROOT", worktree_checkout)
+
+    assert _new_managed_worktree_root() == (audiollm_root / "worktrees").resolve()
 
 
 def test_lane_schema_accepts_operational_identity_without_scientific_group():
@@ -341,7 +415,7 @@ def test_exp_create_rejects_missing_explicit_parent_without_mutation(tmp_path):
     )
     assert result.returncode != 0
     assert "could not resolve parent ref" in result.stderr
-    assert not (pathlib.Path(env["HOME"]) / "worktrees").exists()
+    assert not (repo.parent / "worktrees").exists()
     assert run_cmd(["git", "branch", "--list", "agent/exp-missing-parent"], cwd=repo).stdout == ""
 
 
@@ -362,7 +436,7 @@ def test_exp_create_rejects_unsafe_or_mismatched_slug(tmp_path, slug, tier, mess
     )
     assert result.returncode != 0
     assert message in result.stderr
-    assert not (pathlib.Path(env["HOME"]) / "worktrees").exists()
+    assert not (repo.parent / "worktrees").exists()
 
 
 def test_pin_rejects_definition_identity_mismatch(tmp_path):
@@ -374,7 +448,7 @@ def test_pin_rejects_definition_identity_mismatch(tmp_path):
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
-    worktree = pathlib.Path(env["HOME"]) / "worktrees" / "LLM-Depression-exp-pin-mismatch"
+    worktree = repo.parent / "worktrees" / "LLM-Depression-exp-pin-mismatch"
     pin = worktree / ".agent-pin.json"
     payload = json.loads(pin.read_text(encoding="utf-8"))
     definition = worktree / payload["definition_path"]

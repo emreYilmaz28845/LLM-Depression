@@ -42,6 +42,27 @@ PROTECTED_PATHS = [
     Path("/home/emre/Projects/AudioLLM/LLM-Depression-teacher"),
 ]
 
+
+class LaneResolutionError(ValueError):
+    """Raised when a managed lane cannot be resolved unambiguously."""
+
+
+def _new_managed_worktree_root() -> Path:
+    """Resolve the shared worktree root from a checkout inside AudioLLM."""
+    for candidate in (PROJECT_ROOT, *PROJECT_ROOT.parents):
+        if candidate.name == "AudioLLM":
+            return (candidate / "worktrees").resolve()
+    return (PROJECT_ROOT.parent / "worktrees").resolve()
+
+
+def _managed_worktree_roots() -> tuple[Path, ...]:
+    """Return the new managed root first, followed by the legacy root."""
+    roots = (
+        _new_managed_worktree_root(),
+        (Path.home() / "worktrees").resolve(),
+    )
+    return tuple(dict.fromkeys(roots))
+
 # The execution ledger lives in the canonical main checkout, not in whichever
 # worktree invokes this tool. Override with PARALLEL_WORKFLOW_STATE if needed.
 EXECUTION_LEDGER_PATH = Path(
@@ -206,32 +227,57 @@ def _rollback_created_lane(project_root: Path, worktree_path: Path, branch: str)
 
 def _resolve_lane(slug: str):
     """Resolve a lane slug to (worktree, pin_data) by scanning managed pins."""
-    worktrees_root = Path.home() / "worktrees"
-    candidates = []
-    direct = worktrees_root / f"LLM-Depression-{slug}"
-    if direct.exists():
-        candidates.append(direct)
-    if worktrees_root.exists():
-        for entry in sorted(worktrees_root.glob("LLM-Depression-*")):
-            pin_path = entry / ".agent-pin.json"
+    candidates: dict[Path, dict] = {}
+    for worktrees_root in _managed_worktree_roots():
+        direct = worktrees_root / f"LLM-Depression-{slug}"
+        entries = [direct] if direct.exists() else []
+        if worktrees_root.exists():
+            entries.extend(sorted(worktrees_root.glob("LLM-Depression-*")))
+        for entry in entries:
+            candidate = entry.resolve()
+            if candidate in candidates:
+                continue
+            pin_path = candidate / ".agent-pin.json"
             if not pin_path.exists():
                 continue
             try:
                 pin = json.loads(pin_path.read_text(encoding="utf-8"))
             except Exception:
                 continue
-            if pin.get("experiment_id") == slug or pin.get("branch") == f"agent/{slug}":
-                candidates.append(entry)
-    for candidate in candidates:
-        pin_path = candidate / ".agent-pin.json"
-        if not pin_path.exists():
-            continue
-        try:
-            pin = json.loads(pin_path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
+            if (
+                candidate == direct.resolve()
+                or pin.get("experiment_id") == slug
+                or pin.get("branch") == f"agent/{slug}"
+            ):
+                candidates[candidate] = pin
+    if len(candidates) > 1:
+        matches = ", ".join(str(path) for path in sorted(candidates))
+        raise LaneResolutionError(
+            f"ambiguous managed lane {slug!r}; matching pins found at: {matches}"
+        )
+    for candidate, pin in candidates.items():
         return candidate.resolve(), pin
     return None, None
+
+
+def _resolve_lane_for_command(slug: str):
+    try:
+        worktree_path, pin = _resolve_lane(slug)
+    except LaneResolutionError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return None, None
+    if worktree_path is None or pin is None:
+        print(
+            f"ERROR: no managed lane with pin found for slug {slug!r}; "
+            f"searched: {_managed_roots_display()}",
+            file=sys.stderr,
+        )
+        return None, None
+    return worktree_path, pin
+
+
+def _managed_roots_display() -> str:
+    return ", ".join(str(path) for path in _managed_worktree_roots())
 
 
 def _check_pin(worktree_path: Path) -> tuple[bool, str]:
@@ -315,9 +361,8 @@ def _cmd_deploy(args) -> int:
         print("ERROR: specify either --dry-run or --execute, not both", file=sys.stderr)
         return 1
 
-    worktree_path, pin = _resolve_lane(slug)
+    worktree_path, pin = _resolve_lane_for_command(slug)
     if worktree_path is None or pin is None:
-        print(f"ERROR: no managed lane with pin found for slug {slug!r} under ~/worktrees/", file=sys.stderr)
         return 1
     experiment_id = pin.get("experiment_id") or slug
     branch = pin.get("branch") or f"agent/{slug}"
@@ -483,9 +528,8 @@ def _cmd_submit(args) -> int:
         print("ERROR: specify either --dry-run or --execute, not both", file=sys.stderr)
         return 1
 
-    worktree_path, pin = _resolve_lane(slug)
+    worktree_path, pin = _resolve_lane_for_command(slug)
     if worktree_path is None or pin is None:
-        print(f"ERROR: no managed lane with pin found for slug {slug!r}", file=sys.stderr)
         return 1
     experiment_id = pin.get("experiment_id") or slug
     ok, message = _check_pin(worktree_path)
@@ -751,13 +795,13 @@ def _cmd_create(args) -> int:
         branch = f"agent/{prefix}-{slug}"
         branch_suffix = f"{prefix}-{slug}"
 
-    # Worktree path: ~/worktrees/LLM-Depression-<branch_suffix>
+    # Worktree path: <AudioLLM>/worktrees/LLM-Depression-<branch_suffix>
     # Use branch_suffix as after agent/
     worktree_name = f"LLM-Depression-{branch_suffix}"
-    worktree_path = Path.home() / "worktrees" / worktree_name
+    worktree_path = _new_managed_worktree_root() / worktree_name
     # Resolve canonical
     worktree_path_resolved = worktree_path.resolve()
-    worktrees_root = (Path.home() / "worktrees").resolve()
+    worktrees_root = _new_managed_worktree_root()
     if worktrees_root not in worktree_path_resolved.parents:
         print(f"ERROR: worktree path escapes managed root {worktrees_root}", file=sys.stderr)
         return 1
@@ -948,9 +992,8 @@ def _cmd_status(args) -> int:
     worktree_path, pin = (None, None)
     experiment_id = None
     if slug:
-        worktree_path, pin = _resolve_lane(slug)
+        worktree_path, pin = _resolve_lane_for_command(slug)
         if pin is None:
-            print(f"ERROR: no managed lane with pin found for slug {slug!r}", file=sys.stderr)
             return 1
         experiment_id = pin.get("experiment_id") or slug
 
@@ -1178,7 +1221,9 @@ def _cmd_collect(args) -> int:
                 candidates.append(contract_path)
         lane_pin_experiment = None
         if slug:
-            _, pin = _resolve_lane(slug)
+            _, pin = _resolve_lane_for_command(slug)
+            if pin is None:
+                return 1
             lane_pin_experiment = pin.get("experiment_id") if pin else None
         chosen = None
         for contract_path in reversed(candidates):
