@@ -4,6 +4,7 @@ import argparse
 import json
 import re
 import shlex
+import shutil
 import sys
 import subprocess
 from pathlib import Path
@@ -37,10 +38,45 @@ try:
 except ImportError:
     build_deployment_record = generate_deployment_id = get_source_manifest_hash = is_clean = build_rsync_command = validate_deployment_paths = None
 
+from tools.journal_append import journal_root
+
 PROTECTED_PATHS = [
     Path("/home/emre/Projects/AudioLLM/Teacher-System"),
     Path("/home/emre/Projects/AudioLLM/LLM-Depression-teacher"),
 ]
+
+# Private local overlay copied into every new lane worktree. Git never copies
+# these paths because they are gitignored, so a lane agent would otherwise start
+# without its instructions and skills. Keep this an explicit allowlist: other
+# ignored paths such as `.env`, `.deps/`, `.provenance/`, `output_model/`,
+# `logs/`, and `outputs/` must never be copied.
+OVERLAY_PATHS = (
+    Path("AGENTS.md"),
+    Path(".agents") / "skills",
+    Path("skills-lock.json"),
+)
+
+
+def _copy_private_overlay(source_root: Path, worktree_path: Path) -> list[Path]:
+    """Copy the allowlisted private overlay into a new lane worktree."""
+    copied: list[Path] = []
+    for relative in OVERLAY_PATHS:
+        source = source_root / relative
+        if not source.exists():
+            continue
+        target = worktree_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(
+                source,
+                target,
+                dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+            )
+        else:
+            shutil.copy2(source, target)
+        copied.append(target)
+    return copied
 
 
 class LaneResolutionError(ValueError):
@@ -884,7 +920,8 @@ def _cmd_create(args) -> int:
         print(f"parent branch: {parent_branch}")
     print(f"definition: {definition_path}")
     print(f"pin: {worktree_path}/.agent-pin.json")
-    print(f"allowed_paths: [{worktree_path}]")
+    print(f"overlay: {[str(worktree_path / p) for p in OVERLAY_PATHS]}")
+    print(f"allowed_paths: [{worktree_path}, {journal_root()}]")
     print(f"protected_paths: {PROTECTED_PATHS}")
     if branch_suffix.startswith("exp-"):
         print("merge strategy: squash if selected")
@@ -920,6 +957,16 @@ def _cmd_create(args) -> int:
     res = _run_git(["worktree", "add", str(worktree_path), branch], cwd=project_root)
     if res.returncode != 0:
         print(f"ERROR: failed to create worktree: {res.stderr}", file=sys.stderr)
+        _rollback_created_lane(project_root, worktree_path, branch)
+        return 1
+
+    # Copy the private local overlay before anything else runs in the worktree,
+    # so the lane agent has its instructions and skills from the first turn.
+    try:
+        for copied in _copy_private_overlay(project_root, worktree_path):
+            print(f"copied overlay {copied}")
+    except Exception as e:
+        print(f"ERROR: failed to copy the private overlay: {e}", file=sys.stderr)
         _rollback_created_lane(project_root, worktree_path, branch)
         return 1
 
@@ -960,7 +1007,7 @@ experiment_group_path: null
         "parent_branch": parent_branch,
         "parent_sha": parent_sha,
         "definition_path": definition_relpath,
-        "allowed_paths": [str(worktree_path)],
+        "allowed_paths": [str(worktree_path), str(journal_root())],
         "protected_paths": [str(p) for p in PROTECTED_PATHS],
     }
 

@@ -35,6 +35,38 @@ def test_init_and_show(tmp_path):
     data = json.loads(res.stdout)
     assert data["execution_id"] == "20260820T205735Z-parallel-workflow-2d995f4c"
 
+def test_init_defaults_grant_journal_to_the_current_year_file(tmp_path):
+    from tools.journal_append import istanbul_now, journal_file
+
+    state_path = init_state(tmp_path)
+    data = json.loads(state_path.read_text())
+    today = istanbul_now().date()
+    assert data["grant_journal_path"] == str(journal_file(today))
+    assert data["grant_journal_path"].endswith(f"agent-journal-{today.year}.md")
+    assert "docs/agent-journal" not in data["grant_journal_path"]
+
+
+def test_init_honours_explicit_grant_journal(tmp_path):
+    state_path = init_state(tmp_path)
+    runbook = pathlib.Path(__file__).resolve().parents[1] / "docs" / "PARALLEL_EXPERIMENT_WORKFLOW_PLAN.md"
+    explicit = tmp_path / "other" / "state.json"
+    res = run_tool(
+        "init",
+        "--runbook",
+        str(runbook),
+        "--execution-id",
+        "20260912T000000Z-explicit-grant",
+        "--output",
+        str(explicit),
+        "--grant-journal",
+        "/tmp/custom-journal.md",
+    )
+    assert res.returncode == 0, res.stderr
+    data = json.loads(explicit.read_text())
+    assert data["grant_journal_path"] == "/tmp/custom-journal.md"
+    assert state_path.exists()
+
+
 def test_record_and_pass_phase0_requires_evidence(tmp_path):
     state_path = init_state(tmp_path)
     res = run_tool("pass", "--state", str(state_path), "--phase", "0", "--next-phase", "1")

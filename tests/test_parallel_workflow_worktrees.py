@@ -22,6 +22,7 @@ from tools.exp import (
 
 TOOL_PIN = pathlib.Path("tools/check_worktree_pin.py")
 TOOL_EXP = pathlib.Path("tools/exp.py")
+TOOL_JOURNAL = pathlib.Path("tools/journal_append.py")
 
 def run_cmd(cmd, cwd=None, env=None):
     result = subprocess.run(
@@ -45,7 +46,7 @@ def make_create_test_repo(tmp_path):
         encoding="utf-8",
     )
     (repo / "README.md").write_text("test repo\n", encoding="utf-8")
-    for tool in [TOOL_PIN, TOOL_EXP]:
+    for tool in [TOOL_PIN, TOOL_EXP, TOOL_JOURNAL]:
         src = pathlib.Path.cwd() / tool
         dst = repo / tool
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -192,7 +193,7 @@ def test_exp_create_collision_refusal(tmp_path):
     run_cmd(["git", "add", "README.md"], cwd=tmp_repo)
     run_cmd(["git", "commit", "-m", "init"], cwd=tmp_repo)
     # Copy our tools into tmp_repo for testing
-    for tool in [TOOL_PIN, TOOL_EXP]:
+    for tool in [TOOL_PIN, TOOL_EXP, TOOL_JOURNAL]:
         src = pathlib.Path.cwd() / tool
         dst = tmp_repo / tool
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -244,6 +245,116 @@ def test_exp_create_writes_definition_into_new_worktree_and_pin_passes(tmp_path)
         env=env,
     )
     assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+def make_overlay_test_repo(tmp_path):
+    """A create-test repo whose private overlay is ignored and untracked."""
+    repo, env = make_create_test_repo(tmp_path)
+    (repo / ".gitignore").write_text(
+        "outputs/\n.agent-pin.json\n__pycache__/\n*.pyc\n"
+        "AGENTS.md\n.agents/\nskills-lock.json\ndocs/\n.env\n.provenance/\n",
+        encoding="utf-8",
+    )
+    run_cmd(["git", "add", ".gitignore"], cwd=repo)
+    run_cmd(["git", "commit", "-m", "ignore the private overlay"], cwd=repo)
+
+    (repo / "AGENTS.md").write_text("# local instructions\n", encoding="utf-8")
+    skill = repo / ".agents" / "skills" / "agent-journal"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: agent-journal\n---\n", encoding="utf-8")
+    (repo / "skills-lock.json").write_text('{"version": 1}\n', encoding="utf-8")
+
+    # Decoys: other ignored paths must never reach a lane worktree.
+    (repo / ".env").write_text("TOKEN=secret\n", encoding="utf-8")
+    (repo / "outputs").mkdir()
+    (repo / "outputs" / "keep.txt").write_text("x\n", encoding="utf-8")
+    (repo / ".provenance").mkdir()
+    (repo / ".provenance" / "prov.json").write_text("{}\n", encoding="utf-8")
+    (repo / "docs").mkdir()
+    (repo / "docs" / "plan.md").write_text("private notes\n", encoding="utf-8")
+
+    journal_root = tmp_path / "Agent-Journal"
+    journal_root.mkdir()
+    env = dict(env)
+    env["AGENT_JOURNAL_ROOT"] = str(journal_root)
+    return repo, env, journal_root
+
+
+def test_exp_create_copies_only_the_allowlisted_overlay(tmp_path):
+    repo, env, journal_root = make_overlay_test_repo(tmp_path)
+    result = run_cmd(
+        [sys.executable, str(repo / TOOL_EXP), "create", "overlay-probe", "--tier", "1"],
+        cwd=repo,
+        env=env,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    worktree = repo.parent / "worktrees" / "LLM-Depression-exp-overlay-probe"
+
+    assert (worktree / "AGENTS.md").is_file()
+    assert (worktree / ".agents" / "skills" / "agent-journal" / "SKILL.md").is_file()
+    assert (worktree / "skills-lock.json").is_file()
+
+    assert not (worktree / ".env").exists()
+    assert not (worktree / "outputs").exists()
+    assert not (worktree / ".provenance").exists()
+    assert not (worktree / "docs").exists()
+
+    # The copied overlay must not dirty the worktree and must stay ignored, so
+    # `exp deploy` still sees a clean committed source and the overlay can never
+    # be committed. The untracked lane definition is the only expected entry.
+    status = run_cmd(["git", "status", "--porcelain"], cwd=worktree).stdout
+    assert status.strip() == "?? experiments/"
+    ignored = run_cmd(
+        [
+            "git",
+            "check-ignore",
+            "-v",
+            "AGENTS.md",
+            ".agents/skills/agent-journal/SKILL.md",
+            "skills-lock.json",
+        ],
+        cwd=worktree,
+    )
+    assert ignored.returncode == 0
+    assert len(ignored.stdout.strip().splitlines()) == 3
+
+    pin = json.loads((worktree / ".agent-pin.json").read_text(encoding="utf-8"))
+    assert pin["allowed_paths"] == [str(worktree), str(journal_root.resolve())]
+
+    checked = run_cmd(
+        [
+            sys.executable,
+            str(repo / TOOL_PIN),
+            "--cwd",
+            str(worktree),
+            "--pin",
+            str(worktree / ".agent-pin.json"),
+        ],
+        cwd=worktree,
+        env=env,
+    )
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+def test_exp_create_dry_run_lists_overlay_and_journal_root(tmp_path):
+    repo, env, journal_root = make_overlay_test_repo(tmp_path)
+    result = run_cmd(
+        [
+            sys.executable,
+            str(repo / TOOL_EXP),
+            "create",
+            "overlay-dry",
+            "--tier",
+            "1",
+            "--dry-run",
+        ],
+        cwd=repo,
+        env=env,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "AGENTS.md" in result.stdout
+    assert str(journal_root) in result.stdout
+    assert not (repo.parent / "worktrees" / "LLM-Depression-exp-overlay-dry").exists()
 
 
 def _write_lane_pin(worktree, *, experiment_id, branch):
