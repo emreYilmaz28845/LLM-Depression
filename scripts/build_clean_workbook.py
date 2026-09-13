@@ -207,6 +207,49 @@ STANDALONE_HEADS_POSF1: dict[tuple[str, str], tuple[float | None, float | None, 
     ("Androids Interview", "Text only"): (0.863468, 0.858706, None, None),
 }
 
+# UAR (unweighted average recall = balanced accuracy) for the same standalone
+# cells, recomputed 2026-09-13 from the same local artifacts: the saved
+# macro_recall of each strict subject-level metrics file, cross-checked against
+# (tp/(tp+fn+invalid) + tn/(tn+fp+invalid)) / 2 from the strict confusion matrix.
+# Turkish rows stay None on purpose: the current Turkish headlines come from the
+# pooled mixed question-condition report, whose UAR is computed at build time
+# (TURKISH_POOLED_MIXED_LOOKUP); these tables carry the pre-pooled fallback
+# values, for which no local UAR evidence is claimed.
+STANDALONE_QWEN_UAR: dict[tuple[str, str], float | None] = {
+    ("DAIC", "Audio + Text"): 0.751082,
+    ("DAIC", "Audio only"): 0.55303,
+    ("DAIC", "Text only"): 0.751082,
+    ("CMDC", "Audio + Text"): 0.97,
+    ("CMDC", "Audio only"): 0.95,
+    ("CMDC", "Text only"): 0.98,
+    ("Turkish", "Audio + Text"): None,
+    ("Turkish", "Audio only"): None,
+    ("Turkish", "Text only"): None,
+    ("D3TEC", "Audio + Text"): 0.551905,
+    ("D3TEC", "Audio only"): 0.665714,
+    ("D3TEC", "Text only"): 0.608095,
+    ("Androids Interview", "Audio + Text"): 0.885726,
+    ("Androids Interview", "Audio only"): 0.884211,
+    ("Androids Interview", "Text only"): 0.769083,
+}
+STANDALONE_HEADS_UAR: dict[tuple[str, str], tuple[float | None, float | None, float | None, float | None]] = {
+    ("DAIC", "Audio + Text"): (0.771645, None, None, None),
+    ("DAIC", "Audio only"): (0.557359, None, None, None),
+    ("DAIC", "Text only"): (0.756494, None, None, None),
+    ("CMDC", "Audio + Text"): (0.971818, None, None, None),
+    ("CMDC", "Audio only"): (0.98, None, None, None),
+    ("CMDC", "Text only"): (0.95, None, None, None),
+    ("Turkish", "Audio + Text"): (None, None, None, None),
+    ("Turkish", "Audio only"): (None, None, None, None),
+    ("Turkish", "Text only"): (None, None, None, None),
+    ("D3TEC", "Audio + Text"): (0.515238, None, None, None),
+    ("D3TEC", "Audio only"): (0.620952, None, None, None),
+    ("D3TEC", "Text only"): (0.482381, None, None, None),
+    ("Androids Interview", "Audio + Text"): (0.901636, None, None, None),
+    ("Androids Interview", "Audio only"): (0.862716, None, None, None),
+    ("Androids Interview", "Text only"): (0.841904, None, None, None),
+}
+
 # Merged symmetric runs. modality -> (run_id, official DAIC macro per method,
 # pooled-CV macro per (dataset, method)).
 MERGED_RUNS: dict[str, dict[str, Any]] = {
@@ -261,22 +304,52 @@ DATASET_LABELS = {
     "androids_interview": "Androids Interview",
 }
 
-# Merged per-dataset fold-mean (macro, positive), keyed by
+# Merged per-dataset fold-mean (macro, positive, UAR), keyed by
 # (modality_key, model, method_key, dataset_key). Sources: TF/LogReg from the
 # merged CV subject predictions (outputs/symmetric_merged/<root>/<mod>/
 # <campaign>/cv/fold_<n>/...), XGB from the merged optuna100 metrics.json
 # dataset_metrics view. Populated by _load_merged_per_dataset_foldmeans()
-# before sheets are built.
-MERGED_PER_DATASET_FOLDMEAN: dict[tuple[str, str, str, str], tuple[float, float]] = {}
+# before sheets are built. UAR uses the same rows as the paired macro/positive
+# values: an invalid output is a false negative for its true class.
+MERGED_PER_DATASET_FOLDMEAN: dict[tuple[str, str, str, str], tuple[float, float, float | None]] = {}
+# Merged CV average and merged final (DAIC official test) UAR, keyed by
+# (modality_key, model, method_key). The CV average follows the MERGED_TF/LR/XGB
+# macro rule (per-dataset fold mean, then unweighted dataset mean); the final
+# value is the single DAIC official-test fold of the merged run.
+MERGED_CV_AVG_UAR: dict[tuple[str, str, str], float] = {}
+MERGED_FINAL_UAR: dict[tuple[str, str, str], float] = {}
+
+
+def _confusion_uar(cm) -> float:
+    """UAR from a strict confusion matrix: mean of the two class recalls,
+    counting an invalid output as a false negative for its true class."""
+    ni = cm[0][2] if len(cm[0]) > 2 else 0
+    pi = cm[1][2] if len(cm[1]) > 2 else 0
+    tn, fp = cm[0][:2]
+    fn, tp = cm[1][:2]
+    pos = tp / (tp + fn + pi) if (tp + fn + pi) else 0.0
+    neg = tn / (tn + fp + ni) if (tn + fp + ni) else 0.0
+    return (pos + neg) / 2
+
+
+def _metrics_uar(metrics: dict[str, Any]) -> float | None:
+    """Saved strict UAR: macro_recall when present, else the strict matrix."""
+    if metrics.get("macro_recall") is not None:
+        return metrics["macro_recall"]
+    if "binary_strict_confusion_matrix" in metrics:
+        return _confusion_uar(metrics["binary_strict_confusion_matrix"])
+    return None
 
 
 def _load_merged_per_dataset_foldmeans() -> None:
-    """Per-dataset (macro, positive) fold-mean for merged CV TF/LogReg/XGB.
+    """Per-dataset (macro, positive, UAR) fold-mean for merged CV TF/LogReg/XGB.
 
     TF:   cv/fold_<n>/<model>/<dataset>/predictions_subject_level.csv
     LogReg: cv/fold_<n>/heads/logreg/predictions_subject_level.csv (dataset col)
     XGB:  output_model/(harmonized_v1|gemma4_)_merged_optuna100/<mod>/<run>_cv/
           fold_<n>/xgb_optuna100_harmonized_v1/metrics.json dataset_metrics
+    The merged CV average and merged final UAR are filled from the same campaign
+    (final: final/fold_0/<model>/summary.json, final heads, XGB *_final run).
     """
     import csv
     from statistics import mean
@@ -286,21 +359,27 @@ def _load_merged_per_dataset_foldmeans() -> None:
         fp = sum(1 for r in rows if str(r.get("label")) == "0" and str(r.get("prediction")) == "1")
         fn = sum(1 for r in rows if str(r.get("label")) == "1" and str(r.get("prediction")) != "1")
         tn = sum(1 for r in rows if str(r.get("label")) == "0" and str(r.get("prediction")) == "0")
+        ni = sum(1 for r in rows if str(r.get("label")) == "0" and str(r.get("prediction")) not in ("0", "1"))
         pos = 2 * tp / (2 * tp + fp + fn) if (2 * tp + fp + fn) else 0.0
         neg = 2 * tn / (2 * tn + fp + fn) if (2 * tn + fp + fn) else 0.0
-        return (pos + neg) / 2, pos
+        pos_recall = tp / (tp + fn) if (tp + fn) else 0.0
+        neg_recall = tn / (tn + fp + ni) if (tn + fp + ni) else 0.0
+        return (pos + neg) / 2, pos, (pos_recall + neg_recall) / 2
 
-    def _put(mk, model, method_key, ds_key, per_macro, per_pos):
+    def _put(mk, model, method_key, ds_key, per_macro, per_pos, per_uar):
         if len(per_macro) == 5 and len(per_pos) == 5:
             MERGED_PER_DATASET_FOLDMEAN[(mk, model, method_key, ds_key)] = (
-                mean(per_macro), mean(per_pos))
+                mean(per_macro), mean(per_pos), mean(per_uar) if len(per_uar) == 5 else None)
 
     MERGED_PER_DATASET_FOLDMEAN.clear()
+    MERGED_CV_AVG_UAR.clear()
+    MERGED_FINAL_UAR.clear()
     roots = {
         "qwen": PROJECT_ROOT / "outputs" / "symmetric_merged" / "harmonized_v1",
         "gemma4": PROJECT_ROOT / "outputs" / "symmetric_merged" / "gemma4" / "harmonized_v1",
     }
     mod_key = {"audio_text": "audio_text", "audio_only": "audio_only", "text_only": "text_only"}
+    campaigns: dict[tuple[str, str], Path] = {}
     for model, root in roots.items():
         for mk, mdir_name in mod_key.items():
             mroot = root / mdir_name
@@ -313,9 +392,10 @@ def _load_merged_per_dataset_foldmeans() -> None:
                     break
             if campaign is None:
                 continue
+            campaigns[(model, mk)] = campaign
             # TF: per-dataset dirs under cv/fold_*/<model>/<dataset>/
             for ds_key in DATASET_LABELS:
-                per_macro, per_pos = [], []
+                per_macro, per_pos, per_uar = [], [], []
                 for fd in sorted((campaign / "cv").glob("fold_*")):
                     p = fd / model / ds_key / "predictions_subject_level.csv"
                     if not p.exists():
@@ -323,13 +403,14 @@ def _load_merged_per_dataset_foldmeans() -> None:
                     with p.open(newline="", encoding="utf-8") as f:
                         rows = list(csv.DictReader(f))
                     if rows:
-                        m_, p_ = _f1(rows)
+                        m_, p_, u_ = _f1(rows)
                         per_macro.append(m_)
                         per_pos.append(p_)
-                _put(mk, model, "teacher_forced", ds_key, per_macro, per_pos)
+                        per_uar.append(u_)
+                _put(mk, model, "teacher_forced", ds_key, per_macro, per_pos, per_uar)
             # LogReg: shared heads csv with a dataset column
             for ds_key in DATASET_LABELS:
-                per_macro, per_pos = [], []
+                per_macro, per_pos, per_uar = [], [], []
                 for fd in sorted((campaign / "cv").glob("fold_*")):
                     p = fd / "heads" / "logreg" / "predictions_subject_level.csv"
                     if not p.exists():
@@ -337,10 +418,11 @@ def _load_merged_per_dataset_foldmeans() -> None:
                     with p.open(newline="", encoding="utf-8") as f:
                         rows = [r for r in csv.DictReader(f) if r.get("dataset") == ds_key]
                     if rows:
-                        m_, p_ = _f1(rows)
+                        m_, p_, u_ = _f1(rows)
                         per_macro.append(m_)
                         per_pos.append(p_)
-                _put(mk, model, "logreg", ds_key, per_macro, per_pos)
+                        per_uar.append(u_)
+                _put(mk, model, "logreg", ds_key, per_macro, per_pos, per_uar)
     # XGB: merged optuna100 metrics.json dataset_metrics (aggregate the
     # per-dataset series across folds per dataset).
     optuna_roots = {
@@ -361,6 +443,7 @@ def _load_merged_per_dataset_foldmeans() -> None:
                 continue
             per_ds: dict[str, list[float]] = {k: [] for k in DATASET_LABELS}
             per_ds_pos: dict[str, list[float]] = {k: [] for k in DATASET_LABELS}
+            per_ds_uar: dict[str, list[float]] = {k: [] for k in DATASET_LABELS}
             for fold_dir in sorted(orun.glob("fold_*")):
                 mp = fold_dir / "xgb_optuna100_harmonized_v1" / "metrics.json"
                 if not mp.exists():
@@ -370,8 +453,42 @@ def _load_merged_per_dataset_foldmeans() -> None:
                     if ds_key in dm:
                         per_ds[ds_key].append(dm[ds_key]["macro_f1"])
                         per_ds_pos[ds_key].append(dm[ds_key]["positive_f1"])
+                        if dm[ds_key].get("macro_recall") is not None:
+                            per_ds_uar[ds_key].append(dm[ds_key]["macro_recall"])
             for ds_key in DATASET_LABELS:
-                _put(mk, model, "xgb_optuna100", ds_key, per_ds[ds_key], per_ds_pos[ds_key])
+                _put(mk, model, "xgb_optuna100", ds_key, per_ds[ds_key], per_ds_pos[ds_key], per_ds_uar[ds_key])
+    # Merged CV average UAR: mean over the five datasets of the per-dataset fold
+    # means, matching the MERGED_TF/LR/XGB macro aggregation.
+    for (mk, model, method_key, _ds), value in MERGED_PER_DATASET_FOLDMEAN.items():
+        key = (mk, model, method_key)
+        if key in MERGED_CV_AVG_UAR:
+            continue
+        vals = [v[2] for (m_, mo_, me_, d_), v in MERGED_PER_DATASET_FOLDMEAN.items()
+                if (m_, mo_, me_) == key and v[2] is not None]
+        if len(vals) == len(DATASET_LABELS):
+            MERGED_CV_AVG_UAR[key] = mean(vals)
+    # Merged final UAR: the single DAIC official-test fold of the merged run.
+    for (model, mk), campaign in campaigns.items():
+        p = campaign / "final" / "fold_0" / model / "summary.json"
+        if p.is_file():
+            d = json.loads(p.read_text())
+            v = d.get("daic", d)
+            m = v["metrics"] if "metrics" in v else v
+            u = _metrics_uar(m) if isinstance(m, dict) else None
+            if u is not None:
+                MERGED_FINAL_UAR[(mk, model, "teacher_forced")] = u
+        p = campaign / "final" / "fold_0" / "heads" / "logreg" / "metrics_by_dataset.json"
+        if p.is_file():
+            dm = json.loads(p.read_text())
+            if isinstance(dm.get("daic"), dict) and dm["daic"].get("macro_recall") is not None:
+                MERGED_FINAL_UAR[(mk, model, "logreg")] = dm["daic"]["macro_recall"]
+    for model, oroot in optuna_roots.items():
+        for mk in mod_key:
+            paths = list((oroot / mk).glob("*_final/fold_0/xgb_optuna100_harmonized_v1/metrics.json"))
+            if len(paths) == 1:
+                dm = json.loads(paths[0].read_text()).get("dataset_metrics", {})
+                if isinstance(dm.get("daic"), dict) and dm["daic"].get("macro_recall") is not None:
+                    MERGED_FINAL_UAR[(mk, model, "xgb_optuna100")] = dm["daic"]["macro_recall"]
 MODALITY_LABELS = {"audio_text": "Audio + Text", "audio_only": "Audio only", "text_only": "Text only"}
 METHOD_LABELS = {"qwen": "Fine-tuned Qwen", "logreg": "LogReg head", "xgb_fixed": "XGBoost fixed", "xgb_optuna": "XGBoost Optuna"}
 METHOD_LABELS_SHORT = {"qwen": "qwen", "logreg": "logreg", "xgb_fixed": "xgb_fixed", "xgb_optuna": "xgb_optuna"}
@@ -678,6 +795,36 @@ GEMMA_OPTUNA_POSF1 = {
     ("D3TEC", "Audio + Text"): 0.577359, ("D3TEC", "Audio only"): 0.495964, ("D3TEC", "Text only"): 0.554089,
     ("Androids Interview", "Audio + Text"): 0.873594, ("Androids Interview", "Audio only"): 0.835794, ("Androids Interview", "Text only"): 0.773857,
 }
+# UAR paired with the Optuna-100 XGBoost and Gemma native cells; same artifact and
+# aggregation as the macro cells above (see STANDALONE_QWEN_UAR for the rule).
+QWEN_OPTUNA_UAR: dict[tuple[str, str], float | None] = {
+    ("DAIC", "Audio + Text"): 0.735931, ("DAIC", "Audio only"): 0.577922, ("DAIC", "Text only"): 0.730519,
+    ("CMDC", "Audio + Text"): 0.924242, ("CMDC", "Audio only"): 0.95, ("CMDC", "Text only"): 0.95,
+    ("Turkish", "Audio + Text"): None, ("Turkish", "Audio only"): None, ("Turkish", "Text only"): None,
+    ("D3TEC", "Audio + Text"): 0.548571, ("D3TEC", "Audio only"): 0.562381, ("D3TEC", "Text only"): 0.643333,
+    ("Androids Interview", "Audio + Text"): 0.877141, ("Androids Interview", "Audio only"): 0.822704, ("Androids Interview", "Text only"): 0.853015,
+}
+GEMMA_NATIVE_TF_UAR: dict[tuple[str, str], float | None] = {
+    ("DAIC", "Audio + Text"): 0.786797, ("DAIC", "Audio only"): 0.5, ("DAIC", "Text only"): 0.766234,
+    ("CMDC", "Audio + Text"): 1.0, ("CMDC", "Audio only"): 0.813333, ("CMDC", "Text only"): 0.970909,
+    ("Turkish", "Audio + Text"): None, ("Turkish", "Audio only"): None, ("Turkish", "Text only"): None,
+    ("D3TEC", "Audio + Text"): 0.574286, ("D3TEC", "Audio only"): 0.542857, ("D3TEC", "Text only"): 0.601429,
+    ("Androids Interview", "Audio + Text"): 0.875963, ("Androids Interview", "Audio only"): 0.822191, ("Androids Interview", "Text only"): 0.786371,
+}
+GEMMA_NATIVE_LR_UAR: dict[tuple[str, str], float | None] = {
+    ("DAIC", "Audio + Text"): 0.822511, ("DAIC", "Audio only"): 0.617965, ("DAIC", "Text only"): 0.715368,
+    ("CMDC", "Audio + Text"): 1.0, ("CMDC", "Audio only"): 0.98, ("CMDC", "Text only"): 0.953333,
+    ("Turkish", "Audio + Text"): None, ("Turkish", "Audio only"): None, ("Turkish", "Text only"): None,
+    ("D3TEC", "Audio + Text"): 0.504286, ("D3TEC", "Audio only"): 0.540952, ("D3TEC", "Text only"): 0.543333,
+    ("Androids Interview", "Audio + Text"): 0.884211, ("Androids Interview", "Audio only"): 0.828423, ("Androids Interview", "Text only"): 0.827343,
+}
+GEMMA_OPTUNA_UAR: dict[tuple[str, str], float | None] = {
+    ("DAIC", "Audio + Text"): 0.858225, ("DAIC", "Audio only"): 0.730519, ("DAIC", "Text only"): 0.807359,
+    ("CMDC", "Audio + Text"): 0.98, ("CMDC", "Audio only"): 0.954242, ("CMDC", "Text only"): 0.923333,
+    ("Turkish", "Audio + Text"): None, ("Turkish", "Audio only"): None, ("Turkish", "Text only"): None,
+    ("D3TEC", "Audio + Text"): 0.590952, ("D3TEC", "Audio only"): 0.557619, ("D3TEC", "Text only"): 0.602857,
+    ("Androids Interview", "Audio + Text"): 0.885493, ("Androids Interview", "Audio only"): 0.813326, ("Androids Interview", "Text only"): 0.779907,
+}
 # --------------------------------------------------------------------------- Merged (symmetric) comparison values
 # Qwen merged TF from the historical merged campaign (Merged Symmetric
 # Summary); Gemma merged CV TF recomputed 2026-09-07 from the merged CV subject
@@ -824,6 +971,41 @@ EN_XGB = {
     ("CMDC", "Text only"): (0.9698, 0.939796),
     ("Turkish", "Audio + Text"): (0.6287, 0.592804),
     ("Turkish", "Text only"): (0.6584, 0.629565),
+}
+
+# UAR paired with the English-translated comparison cells, recomputed 2026-09-13
+# from the same artifacts as the macro cells above. Turkish rows stay None for the
+# same reason as the native tables; the current Turkish values are pooled and come
+# from TURKISH_POOLED_MIXED_LOOKUP at build time.
+EN_TF_UAR: dict[tuple[str, str], tuple[float | None, float | None]] = {
+    ("D3TEC", "Audio + Text"): (0.61, 0.600476),
+    ("D3TEC", "Text only"): (0.561905, 0.531429),
+    ("Androids Interview", "Audio + Text"): (0.905963, 0.890591),
+    ("Androids Interview", "Text only"): (0.824285, 0.767288),
+    ("CMDC", "Audio + Text"): (0.99, 0.96),
+    ("CMDC", "Text only"): (0.98, 0.970909),
+    ("Turkish", "Audio + Text"): (None, None),
+    ("Turkish", "Text only"): (None, None),
+}
+EN_LR_UAR: dict[tuple[str, str], tuple[float | None, float | None]] = {
+    ("D3TEC", "Audio + Text"): (0.554286, 0.557619),
+    ("D3TEC", "Text only"): (0.542857, 0.618095),
+    ("Androids Interview", "Audio + Text"): (0.90263, 0.912929),
+    ("Androids Interview", "Text only"): (0.851721, 0.855676),
+    ("CMDC", "Audio + Text"): (0.99, 0.93),
+    ("CMDC", "Text only"): (0.97, 0.97),
+    ("Turkish", "Audio + Text"): (None, None),
+    ("Turkish", "Text only"): (None, None),
+}
+EN_XGB_UAR: dict[tuple[str, str], tuple[float | None, float | None]] = {
+    ("D3TEC", "Audio + Text"): (0.607619, 0.576667),
+    ("D3TEC", "Text only"): (0.542381, 0.589524),
+    ("Androids Interview", "Audio + Text"): (0.89965, 0.912929),
+    ("Androids Interview", "Text only"): (0.832277, 0.826166),
+    ("CMDC", "Audio + Text"): (0.9, 0.96),
+    ("CMDC", "Text only"): (0.97, 0.94),
+    ("Turkish", "Audio + Text"): (None, None),
+    ("Turkish", "Text only"): (None, None),
 }
 
 # Positive-F1 paired with the English-translated comparison cells, recomputed
@@ -1379,25 +1561,29 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
     shown side by side with the Gemma-minus-Qwen delta.
     """
     ws = wb.create_sheet("Qwen vs Gemma")
-    _widths(ws, {"A": 18, "B": 26, "C": 22, "D": 17, "E": 20, "F": 20, "G": 15})
-    _title(ws, "Qwen vs Gemma 4 — Macro-F1 / Positive-F1 (seed 1337)", 7)
+    _widths(ws, {"A": 18, "B": 26, "C": 22, "D": 17, "E": 20, "F": 20, "G": 15, "H": 14, "I": 14})
+    _title(ws, "Qwen vs Gemma 4 — Macro-F1 / Positive-F1 / UAR (seed 1337)", 9)
     _note(
         ws, 2,
         "Three main experiments, both models, binary-strict best_model harmonized view. Every score "
         "cell shows 'Macro-F1 / Positive-F1'; 'n/a' marks a positive-F1 with no local evidence. "
+        "Columns H and I repeat the same cells' UAR (unweighted average recall = balanced accuracy, "
+        "the unweighted mean of the two class recalls with an invalid output counted as wrong). "
         "XGBoost uses the standardized search of 100 trials (the default), seed 1337, for both models; "
         "the runbook fits no fixed XGB head for Gemma. Delta = Gemma minus Qwen on macro-F1 only. "
         "DAIC = official 47-subject test; all CV datasets/models/heads = "
         "unweighted 5-fold mean; CMDC/Turkish remain train_val; merged CV = dataset mean within fold, then fold mean; merged Final = DAIC "
-        "official test. Per-cell provenance: Provenance sheet.",
-        7, height=120,
+        "official test. Per-cell provenance: Provenance sheet; UAR is derived from the same subject "
+        "predictions as the adjacent Macro-F1/Positive-F1.",
+        9, height=130,
     )
-    _header_row(ws, 4, ["Experiment", "Dataset", "Modality", "Method", "Qwen", "Gemma 4", "Δ (Gemma − Qwen)"])
+    _header_row(ws, 4, ["Experiment", "Dataset", "Modality", "Method", "Qwen", "Gemma 4", "Δ (Gemma − Qwen)",
+                        "Qwen UAR", "Gemma 4 UAR"])
 
     mod_keys = ["Audio + Text", "Audio only", "Text only"]
     row = 5
 
-    _section(ws, row, "Standalone (native)", 7)
+    _section(ws, row, "Standalone (native)", 9)
     row += 1
     for dataset in ("D3TEC", "Androids Interview", "CMDC", "Turkish", "DAIC"):
         for mod_label in mod_keys:
@@ -1405,35 +1591,45 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
             gemma_tf = GEMMA_NATIVE_TF[(dataset, mod_label)]
             cells = [("Teacher-forced", qwen_tf, gemma_tf,
                       STANDALONE_QWEN_POSF1[(dataset, mod_label)],
-                      GEMMA_NATIVE_TF_POSF1[(dataset, mod_label)])]
+                      GEMMA_NATIVE_TF_POSF1[(dataset, mod_label)],
+                      STANDALONE_QWEN_UAR.get((dataset, mod_label)),
+                      GEMMA_NATIVE_TF_UAR.get((dataset, mod_label)))]
             logreg = STANDALONE_HEADS[(dataset, mod_label)][0]
             if logreg is not None:
                 cells.append(("LogReg head", logreg, GEMMA_NATIVE_LR[(dataset, mod_label)],
                               STANDALONE_HEADS_POSF1[(dataset, mod_label)][0],
-                              GEMMA_NATIVE_LR_POSF1[(dataset, mod_label)]))
+                              GEMMA_NATIVE_LR_POSF1[(dataset, mod_label)],
+                              STANDALONE_HEADS_UAR[(dataset, mod_label)][0],
+                              GEMMA_NATIVE_LR_UAR.get((dataset, mod_label))))
             cells.append(("XGBoost", QWEN_OPTUNA[(dataset, mod_label)], GEMMA_OPTUNA[(dataset, mod_label)],
                           QWEN_OPTUNA_POSF1[(dataset, mod_label)],
-                          GEMMA_OPTUNA_POSF1[(dataset, mod_label)]))
+                          GEMMA_OPTUNA_POSF1[(dataset, mod_label)],
+                          QWEN_OPTUNA_UAR.get((dataset, mod_label)),
+                          GEMMA_OPTUNA_UAR.get((dataset, mod_label))))
             if dataset == "Turkish":
                 transcript = _turkish_transcript_for_modality(mod_label)
-                for method, q, g, qp, gp in cells:
+                for method, q, g, qp, gp, qy, gy in cells:
                     route = {"Teacher-forced": "teacher_forced", "LogReg head": "logreg", "XGBoost": "xgb_optuna100"}[method]
                     q = _turkish_mixed_value("Qwen", mod_label, transcript, route) or q
                     g = _turkish_mixed_value("Gemma 4", mod_label, transcript, route) or g
                     qp = _turkish_mixed_pos_value("Qwen", mod_label, transcript, route) or qp
                     gp = _turkish_mixed_pos_value("Gemma 4", mod_label, transcript, route) or gp
-                    _fill_cell(ws, row, "Standalone", dataset, mod_label, method, q, g, qp, gp)
+                    qy = _turkish_mixed_uar_value("Qwen", mod_label, transcript, route) or qy
+                    gy = _turkish_mixed_uar_value("Gemma 4", mod_label, transcript, route) or gy
+                    _fill_cell(ws, row, "Standalone", dataset, mod_label, method, q, g, qp, gp, qy, gy)
                     row += 1
             else:
-                for method, q, g, qp, gp in cells:
-                    _fill_cell(ws, row, "Standalone", dataset, mod_label, method, q, g, qp, gp)
+                for method, q, g, qp, gp, qy, gy in cells:
+                    _fill_cell(ws, row, "Standalone", dataset, mod_label, method, q, g, qp, gp, qy, gy)
                     row += 1
 
-    _section(ws, row, "Merged (symmetric)", 7)
+    _section(ws, row, "Merged (symmetric)", 9)
     row += 1
     merged_ds_order = ["Androids Interview", "CMDC", "D3TEC", "DAIC", "Turkish"]
     merged_ds_key = {"Androids Interview": "androids_interview", "CMDC": "cmdc",
                      "D3TEC": "d3tec", "DAIC": "daic", "Turkish": "turkish"}
+    merged_mod_key = {"Audio + Text": "audio_text", "Audio only": "audio_only", "Text only": "text_only"}
+    merged_method_key = {"Teacher-forced": "teacher_forced", "LogReg head": "logreg", "XGBoost": "xgb_optuna100"}
     for stage, stage_label in (("cv", "CV (5-fold)"), ("final", "Final (DAIC test)")):
         for mod_label in mod_keys:
             for method, table, pos_table in (
@@ -1444,14 +1640,14 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
                 if g is None:
                     continue
                 qp, gp = pos_table[(stage, mod_label)]
-                _fill_cell(ws, row, f"Merged — {stage_label}", "Merged", mod_label, method, q, g, qp, gp)
+                mkey = merged_mod_key[mod_label]
+                method_key = merged_method_key[method]
+                uar_table = MERGED_CV_AVG_UAR if stage == "cv" else MERGED_FINAL_UAR
+                _fill_cell(ws, row, f"Merged — {stage_label}", "Merged", mod_label, method, q, g, qp, gp,
+                           uar_table.get((mkey, "qwen", method_key)), uar_table.get((mkey, "gemma4", method_key)))
                 row += 1
                 # Expand the merged CV average with per-dataset fold-mean rows.
                 if stage == "cv":
-                    mkey = {"Audio + Text": "audio_text", "Audio only": "audio_only",
-                            "Text only": "text_only"}[mod_label]
-                    method_key = {"Teacher-forced": "teacher_forced", "LogReg head": "logreg",
-                                  "XGBoost": "xgb_optuna100"}[method]
                     for ds_label in merged_ds_order:
                         dsk = merged_ds_key[ds_label]
                         q_pair = MERGED_PER_DATASET_FOLDMEAN.get((mkey, "qwen", method_key, dsk))
@@ -1463,54 +1659,61 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
                         _body_cell(ws, row, 2, ds_label)
                         _body_cell(ws, row, 3, mod_label)
                         _body_cell(ws, row, 4, method)
-                        _body_cell(ws, row, 5, _paired_f1(*q_pair) if q_pair is not None else None)
-                        _body_cell(ws, row, 6, _paired_f1(*g_pair) if g_pair is not None else None)
+                        _body_cell(ws, row, 5, _paired_f1(q_pair[0], q_pair[1]) if q_pair is not None else None)
+                        _body_cell(ws, row, 6, _paired_f1(g_pair[0], g_pair[1]) if g_pair is not None else None)
                         if q_pair is not None and g_pair is not None:
                             _delta_cell(ws, row, 7, g_pair[0] - q_pair[0])
                         else:
                             _body_cell(ws, row, 7, None)
+                        _body_cell(ws, row, 8, q_pair[2] if q_pair is not None else None, fmt="0.0000")
+                        _body_cell(ws, row, 9, g_pair[2] if g_pair is not None else None, fmt="0.0000")
                         row += 1
 
-    _section(ws, row, "English (translated)", 7)
+    _section(ws, row, "English (translated)", 9)
     row += 1
     for dataset in ("D3TEC", "Androids Interview", "CMDC", "Turkish"):
         for mod_label in ("Audio + Text", "Text only"):
-            for method, table, pos_table in (
-                    ("Teacher-forced", EN_TF, EN_TF_POSF1),
-                    ("LogReg head", EN_LR, EN_LR_POSF1),
-                    ("XGBoost", EN_XGB, EN_XGB_POSF1)):
+            for method, table, pos_table, uar_table in (
+                    ("Teacher-forced", EN_TF, EN_TF_POSF1, EN_TF_UAR),
+                    ("LogReg head", EN_LR, EN_LR_POSF1, EN_LR_UAR),
+                    ("XGBoost", EN_XGB, EN_XGB_POSF1, EN_XGB_UAR)):
                 q, g = table[(dataset, mod_label)]
                 qp, gp = pos_table[(dataset, mod_label)]
+                qy, gy = uar_table.get((dataset, mod_label), (None, None))
                 if dataset == "Turkish":
                     route = {"Teacher-forced": "teacher_forced", "LogReg head": "logreg", "XGBoost": "xgb_optuna100"}[method]
                     q = _turkish_mixed_value("Qwen", mod_label, "english", route) or q
                     g = _turkish_mixed_value("Gemma 4", mod_label, "english", route) or g
                     qp = _turkish_mixed_pos_value("Qwen", mod_label, "english", route) or qp
                     gp = _turkish_mixed_pos_value("Gemma 4", mod_label, "english", route) or gp
-                _fill_cell(ws, row, "English", dataset, mod_label, method, q, g, qp, gp)
+                    qy = _turkish_mixed_uar_value("Qwen", mod_label, "english", route) or qy
+                    gy = _turkish_mixed_uar_value("Gemma 4", mod_label, "english", route) or gy
+                _fill_cell(ws, row, "English", dataset, mod_label, method, q, g, qp, gp, qy, gy)
                 row += 1
 
     _note(ws, row, "Teacher-forced = backbone classification without hidden-state heads. Hidden heads "
                    "classify the final prompt-token hidden state with the locked LogReg or the standardized "
                    "XGBoost implementation. See the Provenance sheet for every value's run, aggregation, and "
-                   "local artifact.", 7, height=60)
+                   "local artifact.", 9, height=60)
     row += 1
     if _turkish_pooled_active():
         _note(
             ws, row,
             "Turkish standalone (native) and English rows show the pooled mixed question-condition results "
             "(positive + negative questions combined) from the turkish-pooled-qcond-clean-v1-20260903 "
-            "campaign, replacing the earlier positive-only standalone/English values. Turkish merged rows "
+            "campaign, replacing the earlier positive-only standalone/English values. Their UAR is the "
+            "five-fold mean of the same per-fold strict macro_recall values. Turkish merged rows "
             "are intentionally unchanged: the merged model was trained together with the other datasets, so "
             "its Turkish component is not a standalone mixed-Turkish result.",
-            7, height=70,
+            9, height=70,
         )
     ws.freeze_panes = "A5"
 
 
 def _fill_cell(ws, row: int, experiment: str, dataset: str, modality: str, method: str,
                qwen_value: float | None, gemma_value: float | None,
-               qwen_pos: float | None = None, gemma_pos: float | None = None) -> None:
+               qwen_pos: float | None = None, gemma_pos: float | None = None,
+               qwen_uar: float | None = None, gemma_uar: float | None = None) -> None:
     ws.cell(row, 1, experiment).font = BODY_FONT
     ws.cell(row, 1).fill = BODY
     ws.cell(row, 1).alignment = LEFT
@@ -1524,6 +1727,8 @@ def _fill_cell(ws, row: int, experiment: str, dataset: str, modality: str, metho
         _delta_cell(ws, row, 7, gemma_value - qwen_value)
     else:
         _body_cell(ws, row, 7, None)
+    _body_cell(ws, row, 8, qwen_uar, fmt="0.0000")
+    _body_cell(ws, row, 9, gemma_uar, fmt="0.0000")
 
 
 def _paired_f1(macro: float | None, pos: float | None) -> str | None:
@@ -1994,7 +2199,7 @@ def _load_turkish_pooled_qcond_report(report_path: Path) -> dict[str, Any]:
 # (model, modality label, transcript condition, route) -> (combined macro-F1 mean, combined positive-F1 mean)
 # Built from the validated pooled report's 30-cell summary; transcript condition is
 # "not_applicable" for audio-only cells, otherwise "native"/"english".
-TURKISH_POOLED_MIXED_LOOKUP: dict[tuple[str, str, str, str], tuple[float, float]] = {}
+TURKISH_POOLED_MIXED_LOOKUP: dict[tuple[str, str, str, str], tuple[float | None, float | None, float | None]] = {}
 
 
 def _build_turkish_pooled_lookup(report_path: Path | None = None) -> None:
@@ -2005,10 +2210,21 @@ def _build_turkish_pooled_lookup(report_path: Path | None = None) -> None:
     positive+negative question results — one seed, matching every other dataset,
     and fold-mean, matching the CMDC/Turkish train_val rule. The report's
     seed_results table stores per-seed fold means; seed 1337 is selected.
+
+    UAR (added 2026-09-13) is the mean of the five per-fold strict macro_recall
+    values recorded in the report's provenance_index.json artifacts; it stays
+    None when that index or those artifacts are unavailable.
     """
     if report_path is None:
         report_path = TURKISH_POOLED_MIXED_REPORT_PATH
     report = _load_turkish_pooled_qcond_report(report_path)
+    provenance_index = None
+    index_path = report_path.parent / "provenance_index.json"
+    if index_path.is_file():
+        try:
+            provenance_index = json.loads(index_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            provenance_index = None
     modality_label = {"audio_only": "Audio only", "text_only": "Text only", "audio_text": "Audio + Text"}
     rows = {}
     for item in report["tables"]["seed_results"]:
@@ -2018,9 +2234,26 @@ def _build_turkish_pooled_lookup(report_path: Path | None = None) -> None:
         modality = modality_label.get(str(item.get("modality")), str(item.get("modality")))
         transcript = str(item.get("transcript_condition") or "not_applicable")
         route = str(item.get("route"))
+        uar = None
+        if provenance_index is not None:
+            folds = []
+            for key in str(item.get("provenance_keys", "")).split(","):
+                ref = provenance_index.get(key.strip())
+                artifact = ref.get("evaluation_metrics_artifact") if isinstance(ref, dict) else None
+                if not artifact or not artifact.get("path"):
+                    continue
+                metrics_path = Path(artifact["path"])
+                if not metrics_path.is_file():
+                    continue
+                value = _metrics_uar(json.loads(metrics_path.read_text(encoding="utf-8")))
+                if value is not None:
+                    folds.append(value)
+            if len(folds) == 5:
+                uar = sum(folds) / 5.0
         rows[(model, modality, transcript, route)] = (
             item.get("combined_macro_f1_fold_mean"),
             item.get("combined_positive_f1_fold_mean"),
+            uar,
         )
     TURKISH_POOLED_MIXED_LOOKUP.clear()
     TURKISH_POOLED_MIXED_LOOKUP.update(rows)
@@ -2043,6 +2276,16 @@ def _turkish_mixed_pos_value(model: str, modality: str, transcript: str, route: 
     key = (model, modality, transcript, route)
     if key in TURKISH_POOLED_MIXED_LOOKUP:
         return TURKISH_POOLED_MIXED_LOOKUP[key][1]
+    return None
+
+
+def _turkish_mixed_uar_value(model: str, modality: str, transcript: str, route: str) -> float | None:
+    """Return the pooled mixed UAR (five-fold mean of the strict macro_recall of
+    the per-fold artifacts) for a Turkish standalone/English cell, or None when
+    the report or its provenance index is not loaded."""
+    key = (model, modality, transcript, route)
+    if key in TURKISH_POOLED_MIXED_LOOKUP:
+        return TURKISH_POOLED_MIXED_LOOKUP[key][2]
     return None
 
 
@@ -2751,7 +2994,9 @@ def build_provenance(
     ws = wb.create_sheet("Provenance")
     widths = {"A": 13, "B": 11, "C": 14, "D": 12, "E": 13, "F": 52, "G": 40, "H": 30, "I": 40}
     _widths(ws, widths)
-    _title(ws, "Provenance — every headline number maps to a run, aggregation, eval view, and artifact", 9)
+    _title(ws, "Provenance — every headline number maps to a run, aggregation, eval view, and artifact; "
+               "the Qwen vs Gemma UAR columns are the same cells' balanced accuracy (unweighted mean of the "
+               "two class recalls, invalid counted as wrong) recomputed from the same subject predictions", 9)
     _header_row(
         ws, 2,
         ["Experiment", "Dataset", "Modality", "Method", "Macro-F1", "Source run / checkpoint",

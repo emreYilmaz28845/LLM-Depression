@@ -345,6 +345,7 @@ def test_sidecars_validate_through_completed_on_mn5(tmp_path: Path, _patch_ident
             "positive_f1",
             "negative_f1",
             "macro_f1",
+            "binary_strict_uar",
         ]
         assert all(metric["support"] == 47 for metric in entry["metrics"])
         assert entry["locally_verified"] is False

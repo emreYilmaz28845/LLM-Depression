@@ -73,6 +73,7 @@ def _metrics_from_confusion_matrix(confusion_matrix: list[list[int]] | None) -> 
     )
     macro_f1 = (negative_f1 + positive_f1) / 2
     weighted_f1 = ((tn + fp) * negative_f1 + (fn + tp) * positive_f1) / total if total else 0.0
+    uar = (recall + negative_recall) / 2
     return {
         "accuracy": accuracy,
         "precision": precision,
@@ -80,6 +81,7 @@ def _metrics_from_confusion_matrix(confusion_matrix: list[list[int]] | None) -> 
         "positive_f1": positive_f1,
         "macro_f1": macro_f1,
         "weighted_f1": weighted_f1,
+        "uar": uar,
     }
 
 
@@ -264,6 +266,14 @@ def summarize_run(run_root: Path) -> None:
         "macro_f1_std": active_metric_summary.get("macro_f1", {}).get("std", 0.0),
         "weighted_f1_mean": active_metric_summary.get("weighted_f1", {}).get("mean", 0.0),
         "weighted_f1_std": active_metric_summary.get("weighted_f1", {}).get("std", 0.0),
+        # UAR (unweighted average recall / balanced accuracy) is the strict
+        # macro_recall of every fold; binary_strict_uar names it in new files.
+        "uar_mean": active_metric_summary.get(
+            "macro_recall", active_metric_summary.get("binary_strict_uar", {})
+        ).get("mean", 0.0),
+        "uar_std": active_metric_summary.get(
+            "macro_recall", active_metric_summary.get("binary_strict_uar", {})
+        ).get("std", 0.0),
         "auroc_mean": active_metric_summary.get("auroc", {}).get("mean", 0.0),
         "auroc_std": active_metric_summary.get("auroc", {}).get("std", 0.0),
         "pooled_accuracy": active_pooled_metrics.get("accuracy", 0.0),
@@ -272,6 +282,7 @@ def summarize_run(run_root: Path) -> None:
         "pooled_recall": active_pooled_metrics.get("recall", 0.0),
         "pooled_macro_f1": active_pooled_metrics.get("macro_f1", 0.0),
         "pooled_weighted_f1": active_pooled_metrics.get("weighted_f1", 0.0),
+        "pooled_uar": active_pooled_metrics.get("uar", 0.0),
         "pooled_support_negative": active_support_negative,
         "pooled_support_positive": active_support_positive,
         "pooled_confusion_matrix": active_confusion_matrix or [],
