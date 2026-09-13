@@ -1,19 +1,24 @@
 schema_version: audiollm.significance_family.v1
-declared: '2026-09-13'
+analysis_status: retrospective_exploratory
+frozen_for_final_rerun: '2026-09-13'
 alpha: 0.05
-iterations: 10000
+iterations: 1000000
+max_iterations: 10000000
+bootstrap_iterations: 100000
 seed: 1337
 metrics:
 - macro_f1
+- positive_f1
 - macro_recall
 metric_notes:
-  macro_f1: primary metric of the deck
-  macro_recall: UAR (unweighted average recall = balanced accuracy)
+  macro_f1: co-primary metric
+  positive_f1: co-primary metric; Depressed is positive
+  macro_recall: co-primary UAR (unweighted average recall = balanced accuracy)
 tests:
-  primary: paired_prediction_swap_permutation (two-sided, 10000 iterations, seed 1337)
-  effect_size: stratified_paired_bootstrap (delta and 95% CI)
-  binary_view: exact_mcnemar
-  correction: holm within each block and metric
+  metric_primary: paired_prediction_swap_permutation (two-sided; exact for single-seed binary predictions)
+  effect_size: observed comparison-minus-baseline delta with unadjusted subject-cluster bootstrap 95% CI
+  mcnemar_primary: exact_mcnemar correctness view
+  correction: joint Holm over comparisons x all three co-primary metrics within each block; separate block Holm for McNemar
 pairing: subject (subject_id); identical subject sets and labels required on both sides
 aggregation: pooled out-of-fold subject predictions; the deck headline cells are unweighted fold means
 excluded:
@@ -22,6 +27,17 @@ excluded:
 - 'Merged XGBoost: the merged optuna100 artifacts carry per-dataset metrics but no per-subject predictions'
 - 'Literature rows: the compared papers publish no per-subject predictions'
 - 'Cross-corpus comparisons: different subjects'
+generated_families:
+- id: model_qwen_vs_gemma4_hidden_routes
+  kind: backbone_same_route
+  description: Same native corpus, input, and hidden-head route; backbone changes.
+  datasets: [d3tec, androids_interview, cmdc, turkish, daic]
+  modalities: [audio_text, audio_only, text_only]
+  routes: [logreg, xgb_optuna100]
+  condition: native
+- id: native_vs_english_hidden_heads_three_seed
+  kind: native_en_hidden_heads
+  description: Standalone, merged-CV, and final-test three-seed hidden-head comparisons shown in the deck.
 families:
 - id: model_qwen_vs_gemma4_teacher_forced
   description: 'Headline route, native transcript: does one backbone beat the other on the same subjects?'
@@ -2769,3 +2785,17 @@ families:
       key: runtime_joint
       modality: audio_only
       route: XGB-raw
+- id: daic_official_development_backbone
+  description: DAIC official-development A+T teacher-forced comparison shown in the literature lane.
+  comparisons:
+  - id: DAIC official development|A+T|Qwen vs Gemma 4
+    dataset: daic
+    description: Same 35-subject official-development endpoint and subject-level contract.
+    baseline:
+      kind: path
+      dataset: daic
+      path: /home/emre/Projects/AudioLLM/LLM-Depression/output_model/harmonized_v1_officialdev/audio_text/daic/daic_officialdev_qwen_audio_text_seed1337_prod_20260813T150000Z_22f85e6e_22f85e6e/fold_0/best_model/standalone_eval/predictions_subject_level.csv
+    comparison:
+      kind: path
+      dataset: daic
+      path: /home/emre/Projects/AudioLLM/LLM-Depression/output_model/harmonized_v1_gemma4_officialdev/audio_text/daic/daic_officialdev_gemma4_audio_text_seed1337_prod_20260813T150000Z_22f85e6e_22f85e6e/fold_0/best_model/standalone_eval/predictions_subject_level.csv

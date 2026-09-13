@@ -1,6 +1,6 @@
 """Paired significance tests for the deck's within-corpus comparisons.
 
-Reads a pre-declared family file (default:
+Reads a frozen retrospective comparison-family file (default:
 ``experiments/definitions/significance_family.yaml``), resolves both sides of
 every comparison to subject-level predictions, and runs:
 
@@ -41,18 +41,64 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.daic_statistics import (  # noqa: E402
     exact_mcnemar,
+    exact_paired_prediction_swap,
     holm_adjust,
     paired_prediction_swap_permutation,
+    paired_prediction_swap_permutation_many,
     stratified_paired_bootstrap,
+    stratified_paired_bootstrap_many,
 )
 
 DEFAULT_FAMILY = PROJECT_ROOT / "experiments/definitions/significance_family.yaml"
-PRIMARY_METRICS = ("macro_f1", "macro_recall")  # macro_recall is UAR
+PRIMARY_METRICS = ("macro_f1", "positive_f1", "macro_recall")  # macro_recall is UAR
 METRIC_LABELS = {"macro_f1": "Macro-F1", "macro_recall": "UAR", "positive_f1": "Positive-F1"}
 
 
 class SignificanceError(RuntimeError):
     """Raised when the family or its evidence cannot be resolved."""
+
+
+def expand_generated_families(family: dict[str, Any], native_en_report: dict[str, Any] | None) -> None:
+    """Expand compact, reviewable matrix declarations into comparison rows."""
+    for declaration in family.get("generated_families", []):
+        kind = declaration["kind"]
+        comparisons: list[dict[str, Any]] = []
+        if kind == "backbone_same_route":
+            for dataset in declaration["datasets"]:
+                for modality in declaration["modalities"]:
+                    for route in declaration["routes"]:
+                        comparisons.append({
+                            "id": f"{dataset}|{modality}|{route}|Qwen vs Gemma 4",
+                            "dataset": dataset,
+                            "description": "Same route and input; backbone is the only displayed factor changed.",
+                            "baseline": {"kind": "record", "dataset": dataset, "modality": modality,
+                                         "condition": declaration.get("condition", "native"), "model": "qwen", "route": route},
+                            "comparison": {"kind": "record", "dataset": dataset, "modality": modality,
+                                           "condition": declaration.get("condition", "native"), "model": "gemma4", "route": route},
+                        })
+        elif kind == "native_en_hidden_heads":
+            if native_en_report is None:
+                raise SignificanceError("generated native/English hidden-head family requires --native-en-head-report")
+            for row in native_en_report["summary"]:
+                # The deck's aggregate "five datasets" row mixes different
+                # subjects and corpora, so it is coverage-only, not pairable.
+                if row["dataset"] == "merged":
+                    continue
+                base = {"kind": "native_en_head", "endpoint": row["endpoint"], "dataset": row["dataset"],
+                        "model": row["backbone"], "head": row["head"]}
+                comparisons.append({
+                    "id": f"{row['endpoint']}|{row['dataset']}|{row['backbone']}|{row['head']}|native vs English",
+                    "dataset": row["dataset"],
+                    "description": "Three-seed hidden-head native versus English comparison.",
+                    "baseline": {**base, "condition": "native"},
+                    "comparison": {**base, "condition": "english"},
+                })
+        else:
+            raise SignificanceError(f"unknown generated family kind: {kind!r}")
+        family["families"].append({
+            "id": declaration["id"], "description": declaration.get("description"),
+            "comparisons": comparisons,
+        })
 
 
 def sha256_file(path: Path) -> str:
@@ -80,22 +126,28 @@ def read_rows(path: Path, dataset: str | None = None) -> list[dict[str, Any]]:
                 "subject_id": str(row["subject_id"]),
                 "label": int(row["label"]),
                 "prediction": int(row["prediction"]),
+                "seed": int(row.get("seed", 0) or 0),
             }
         )
     return out
 
 
-def pool(entries: list[tuple[Path, str | None]]) -> list[dict[str, Any]]:
-    """Pool per-fold subject predictions; a subject must appear exactly once."""
-    merged: dict[str, dict[str, Any]] = {}
-    for path, dataset in entries:
+def pool(entries: list[tuple]) -> list[dict[str, Any]]:
+    """Pool per-fold predictions; each subject/seed key must appear once."""
+    merged: dict[tuple[str, int], dict[str, Any]] = {}
+    for entry in entries:
+        path, dataset = entry[0], entry[1]
+        forced_seed = int(entry[2]) if len(entry) > 2 else None
         rows = read_rows(path, dataset)
         if not rows:
             raise SignificanceError(f"no subject rows in {path} for dataset {dataset!r}")
         for row in rows:
-            if row["subject_id"] in merged:
-                raise SignificanceError(f"subject {row['subject_id']} appears in more than one fold file")
-            merged[row["subject_id"]] = row
+            if forced_seed is not None:
+                row["seed"] = forced_seed
+            key = (row["subject_id"], row["seed"])
+            if key in merged:
+                raise SignificanceError(f"subject/seed {key!r} appears in more than one fold file")
+            merged[key] = row
     if not merged:
         raise SignificanceError("no subject predictions found")
     return list(merged.values())
@@ -194,7 +246,71 @@ def resolve_side(spec: dict[str, Any], evidence: dict[str, Any],
         if not path.is_file():
             raise SignificanceError(f"missing predictions file {path}")
         return [(path, spec.get("dataset"))]
+    if kind == "native_en_head":
+        report = evidence.get("_native_en_head_report")
+        if report is None:
+            raise SignificanceError("native/English hidden-head report is required")
+        condition = spec["condition"]
+        key = (spec["endpoint"], spec["dataset"], spec["model"], spec["head"])
+        matches = [item for item in report["seed_details"]
+                   if (item["endpoint"], item["dataset"], item["backbone"], item["head"]) == key]
+        entries = []
+        provenance_key = f"{condition}_provenance"
+        for item in matches:
+            for fold in item[provenance_key]:
+                for artifact in fold.get("metrics_artifacts", []):
+                    path = Path(artifact["prediction_path"])
+                    if not path.is_file():
+                        raise SignificanceError(f"missing hidden-head predictions: {path}")
+                    entries.append((path, spec.get("dataset"), int(item["seed"])))
+        if not entries:
+            raise SignificanceError(f"no hidden-head predictions for {spec!r}")
+        return entries
     raise SignificanceError(f"unknown side kind: {kind!r}")
+
+
+def side_provenance(spec: dict[str, Any], evidence: dict[str, Any], joint: dict[str, Any] | None) -> dict[str, Any]:
+    """Return the available source-evidence chain without inventing missing fields."""
+    kind = spec.get("kind")
+    if kind == "record":
+        row = next(
+            (item for item in evidence["records"]
+             if (item["dataset"], item["modality"], item["condition"], item["model"], item["route"])
+             == (spec["dataset"], spec["modality"], spec.get("condition", "native"), spec["model"], spec["route"])),
+            None,
+        )
+        if row is None:
+            return {"kind": kind, "status": "missing"}
+        return {
+            "kind": kind,
+            "status": "locally_verified" if row.get("fold_evidence") else "legacy_incomplete",
+            "cell": row.get("cell"),
+            "aggregation": row.get("aggregation"),
+            "fold_evidence": row.get("fold_evidence", []),
+        }
+    if kind in {"merged_cv", "merged_final"}:
+        endpoint = "cv" if kind == "merged_cv" else "final"
+        matches = [item for item in evidence.get("merged_comparisons", [])
+                   if item.get("dataset") == spec.get("dataset") and item.get("model") == spec.get("model")
+                   and item.get("route") == spec.get("route")]
+        return {
+            "kind": kind, "endpoint": endpoint,
+            "status": "locally_verified" if matches else "legacy_incomplete",
+            "evidence": matches,
+        }
+    if kind == "joint_k4" and joint is not None:
+        row = next((item for item in joint.get("records", [])
+                    if item.get("key") == spec.get("key") and item.get("modality") == spec.get("modality")
+                    and item.get("route") == spec.get("route")), None)
+        return {"kind": kind, "status": "locally_verified" if row else "missing", "evidence": row}
+    if kind == "native_en_head":
+        report = evidence.get("_native_en_head_report") or {}
+        key = (spec["endpoint"], spec["dataset"], spec["model"], spec["head"])
+        matches = [item for item in report.get("seed_details", [])
+                   if (item["endpoint"], item["dataset"], item["backbone"], item["head"]) == key]
+        return {"kind": kind, "status": "reportable_local_evidence" if matches else "missing",
+                "condition": spec["condition"], "seed_evidence": matches}
+    return {"kind": kind, "status": "file_hash_only"}
 
 
 def normalize_subjects(rows: list[dict[str, Any]], dataset: str | None) -> list[dict[str, Any]]:
@@ -203,20 +319,22 @@ def normalize_subjects(rows: list[dict[str, Any]], dataset: str | None) -> list[
     Merged campaign artifacts namespace subject ids by dataset while standalone
     runs use the bare id; both name the same people within one corpus.
     """
-    out: dict[str, dict[str, Any]] = {}
+    out: dict[tuple[str, int], dict[str, Any]] = {}
     prefix = f"{dataset}::" if dataset else None
     for row in rows:
         subject_id = row["subject_id"]
         if prefix and subject_id.startswith(prefix):
             subject_id = subject_id[len(prefix):]
-        if subject_id in out:
-            raise SignificanceError(f"duplicate subject id after normalization: {subject_id}")
-        out[subject_id] = {**row, "subject_id": subject_id}
+        key = (subject_id, int(row.get("seed", 0)))
+        if key in out:
+            raise SignificanceError(f"duplicate subject/seed after normalization: {key!r}")
+        out[key] = {**row, "subject_id": subject_id}
     return list(out.values())
 
 
 def run_family(family: dict[str, Any], evidence: dict[str, Any], joint: dict[str, Any] | None,
-               *, iterations: int, seed: int, metrics: list[str]) -> dict[str, Any]:
+               *, iterations: int, bootstrap_iterations: int, seed: int,
+               metrics: list[str]) -> dict[str, Any]:
     blocks_out: list[dict[str, Any]] = []
     for block in family["families"]:
         rows_out: list[dict[str, Any]] = []
@@ -225,8 +343,8 @@ def run_family(family: dict[str, Any], evidence: dict[str, Any], joint: dict[str
             right_files = resolve_side(comparison["comparison"], evidence, joint)
             left_rows = normalize_subjects(pool(left_files), comparison.get("dataset"))
             right_rows = normalize_subjects(pool(right_files), comparison.get("dataset"))
-            left_keys = {row["subject_id"] for row in left_rows}
-            right_keys = {row["subject_id"] for row in right_rows}
+            left_keys = {(row["subject_id"], row.get("seed", 0)) for row in left_rows}
+            right_keys = {(row["subject_id"], row.get("seed", 0)) for row in right_rows}
             if left_keys != right_keys:
                 raise SignificanceError(
                     f"{comparison['id']}: subject sets differ ({len(left_keys)} vs {len(right_keys)})"
@@ -235,22 +353,34 @@ def run_family(family: dict[str, Any], evidence: dict[str, Any], joint: dict[str
                 "id": comparison["id"],
                 "description": comparison.get("description"),
                 "dataset": comparison.get("dataset"),
-                "n_subjects": len(left_keys),
-                "baseline_files": [str(path) for path, _ in left_files],
-                "comparison_files": [str(path) for path, _ in right_files],
-                "baseline_file_sha256": {str(path): sha256_file(path) for path, _ in left_files},
-                "comparison_file_sha256": {str(path): sha256_file(path) for path, _ in right_files},
-                "mcnemar": exact_mcnemar(left_rows, right_rows),
+                "n_subjects": len({key[0] for key in left_keys}),
+                "n_seeds": len({key[1] for key in left_keys}),
+                "baseline_files": [str(entry[0]) for entry in left_files],
+                "comparison_files": [str(entry[0]) for entry in right_files],
+                "baseline_file_sha256": {str(entry[0]): sha256_file(entry[0]) for entry in left_files},
+                "comparison_file_sha256": {str(entry[0]): sha256_file(entry[0]) for entry in right_files},
+                "baseline_provenance": side_provenance(comparison["baseline"], evidence, joint),
+                "comparison_provenance": side_provenance(comparison["comparison"], evidence, joint),
                 "metrics": {},
             }
+            if entry["n_seeds"] == 1:
+                entry["mcnemar"] = {**exact_mcnemar(left_rows, right_rows), "status": "tested"}
+                permutation = exact_paired_prediction_swap(left_rows, right_rows, metrics=metrics)
+            else:
+                entry["mcnemar"] = {
+                    "status": "not_identifiable",
+                    "reason": "multiple seeds do not define one final subject correctness decision",
+                }
+                permutation = paired_prediction_swap_permutation_many(
+                    left_rows, right_rows, metrics=metrics, iterations=iterations, seed=seed
+                )
+            bootstrap = stratified_paired_bootstrap_many(
+                left_rows, right_rows, metrics=metrics, iterations=bootstrap_iterations, seed=seed
+            )
             for metric in metrics:
                 entry["metrics"][metric] = {
-                    "permutation": paired_prediction_swap_permutation(
-                        left_rows, right_rows, metric=metric, iterations=iterations, seed=seed
-                    ),
-                    "bootstrap": stratified_paired_bootstrap(
-                        left_rows, right_rows, metric=metric, iterations=iterations, seed=seed
-                    ),
+                    "permutation": permutation[metric],
+                    "bootstrap": bootstrap[metric],
                 }
             rows_out.append(entry)
         blocks_out.append({
@@ -259,16 +389,44 @@ def run_family(family: dict[str, Any], evidence: dict[str, Any], joint: dict[str
             "comparisons": rows_out,
         })
 
-    # Holm inside every block: permutation p-values per metric, and McNemar p.
+    # Primary metric view: all comparison x co-primary metric p-values share
+    # one Holm family inside each scientific block.
     for block in blocks_out:
+        joint_refs = [
+            (row, metric)
+            for row in block["comparisons"]
+            for metric in metrics
+        ]
+        joint_adjusted = holm_adjust([
+            row["metrics"][metric]["permutation"]["p_value"]
+            for row, metric in joint_refs
+        ])
+        for (row, metric), value in zip(joint_refs, joint_adjusted):
+            row["metrics"][metric]["permutation"]["p_value_holm_joint_block"] = value
         for metric in metrics:
             p_values = [row["metrics"][metric]["permutation"]["p_value"] for row in block["comparisons"]]
             adjusted = holm_adjust(p_values)
             for row, value in zip(block["comparisons"], adjusted):
-                row["metrics"][metric]["permutation"]["p_value_holm"] = value
-        mcnemar_p = [row["mcnemar"]["p_value"] for row in block["comparisons"]]
-        for row, value in zip(block["comparisons"], holm_adjust(mcnemar_p)):
-            row["mcnemar"]["p_value_holm"] = value
+                row["metrics"][metric]["permutation"]["p_value_holm_metric_block"] = value
+        mcnemar_rows = [row for row in block["comparisons"] if row["mcnemar"]["status"] == "tested"]
+        mcnemar_p = [row["mcnemar"]["p_value"] for row in mcnemar_rows]
+        for row, value in zip(mcnemar_rows, holm_adjust(mcnemar_p)):
+            row["mcnemar"]["p_value_holm_block"] = value
+
+    metric_refs = [
+        (row, metric)
+        for block in blocks_out for row in block["comparisons"] for metric in metrics
+    ]
+    for (row, metric), value in zip(metric_refs, holm_adjust([
+        row["metrics"][metric]["permutation"]["p_value"] for row, metric in metric_refs
+    ])):
+        row["metrics"][metric]["permutation"]["p_value_holm_global"] = value
+    mcnemar_rows = [
+        row for block in blocks_out for row in block["comparisons"]
+        if row["mcnemar"]["status"] == "tested"
+    ]
+    for row, value in zip(mcnemar_rows, holm_adjust([row["mcnemar"]["p_value"] for row in mcnemar_rows])):
+        row["mcnemar"]["p_value_holm_global"] = value
     return {"blocks": blocks_out}
 
 
@@ -278,10 +436,13 @@ def format_markdown(payload: dict[str, Any], family: dict[str, Any]) -> str:
         "",
         f"Family file: `{payload['family_path']}` (sha256 `{payload['family_sha256'][:16]}…`)",
         f"Evidence: `{payload['evidence_path']}` (sha256 `{payload['evidence_sha256'][:16]}…`)",
-        f"Permutation: {payload['iterations']} iterations, seed {payload['seed']}; "
-        f"Holm correction inside every block; p-values are two-sided.",
-        "The permutation section reports the exact observed delta; the bootstrap section reports the mean of "
-        "the resampled deltas (slightly biased for nonlinear metrics) with its 95% CI.",
+        "Retrospective exploratory analysis; the results were inspected before this final analysis specification.",
+        f"Single-seed comparisons use exact paired swaps. Multi-seed comparisons use up to "
+        f"{payload['iterations']} subject-clustered permutations, seed {payload['seed']}.",
+        f"Bootstrap: {payload['bootstrap_iterations']} subject-clustered, label-stratified resamples.",
+        "Primary metric correction: Holm over every comparison × Macro-F1 × Positive-F1 × UAR inside each block.",
+        "McNemar is a separate correctness-based view with its own block-wise Holm correction.",
+        "Displayed deltas are exact observed differences; intervals are unadjusted bootstrap 95% CIs.",
         "Pooled out-of-fold subject predictions; the decks' headline cells are unweighted fold means.",
         "",
     ]
@@ -289,22 +450,90 @@ def format_markdown(payload: dict[str, Any], family: dict[str, Any]) -> str:
         lines.append(f"## {block['id']}")
         if block.get("description"):
             lines.append(block["description"])
-        lines += ["", "| Comparison | n | Δ Macro-F1 [95% CI] | p | p_Holm | Δ UAR [95% CI] | p | p_Holm | McNemar b/c | p | p_Holm |",
-                  "|---|---|---|---|---|---|---|---|---|---|---|"]
+        lines += ["", "| Comparison | n | Metric | Observed Δ [unadjusted 95% CI] | p | joint-block Holm | global Holm | McNemar b/c | McNemar p | McNemar block Holm |",
+                  "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|"]
         for row in block["comparisons"]:
-            f1 = row["metrics"]["macro_f1"]
-            uar = row["metrics"]["macro_recall"]
-            lines.append(
-                f"| {row['id']} | {row['n_subjects']} | "
-                f"{f1['bootstrap']['mean_delta']:+.4f} [{f1['bootstrap']['ci_low']:+.4f}, {f1['bootstrap']['ci_high']:+.4f}] | "
-                f"{f1['permutation']['p_value']:.4f} | {f1['permutation']['p_value_holm']:.4f} | "
-                f"{uar['bootstrap']['mean_delta']:+.4f} [{uar['bootstrap']['ci_low']:+.4f}, {uar['bootstrap']['ci_high']:+.4f}] | "
-                f"{uar['permutation']['p_value']:.4f} | {uar['permutation']['p_value_holm']:.4f} | "
-                f"{row['mcnemar']['baseline_only_correct']}/{row['mcnemar']['comparison_only_correct']} | "
-                f"{row['mcnemar']['p_value']:.4f} | {row['mcnemar']['p_value_holm']:.4f} |"
-            )
+            mc = row["mcnemar"]
+            mc_pair = (f"{mc['baseline_only_correct']}/{mc['comparison_only_correct']}"
+                       if mc["status"] == "tested" else "not identifiable")
+            mc_p = f"{mc['p_value']:.6g}" if mc["status"] == "tested" else "—"
+            mc_holm = f"{mc['p_value_holm_block']:.6g}" if mc["status"] == "tested" else "—"
+            for metric in payload["metrics"]:
+                result = row["metrics"][metric]
+                perm, boot = result["permutation"], result["bootstrap"]
+                lines.append(
+                    f"| {row['id']} | {row['n_subjects']} | {METRIC_LABELS[metric]} | "
+                    f"{perm['observed_delta']:+.4f} [{boot['ci_low']:+.4f}, {boot['ci_high']:+.4f}] | "
+                    f"{perm['p_value']:.6g} | {perm['p_value_holm_joint_block']:.6g} | "
+                    f"{perm['p_value_holm_global']:.6g} | {mc_pair} | {mc_p} | {mc_holm} |"
+                )
         lines.append("")
     return "\n".join(lines) + "\n"
+
+
+def flat_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """One display row represents one comparison × metric result."""
+    rows: list[dict[str, Any]] = []
+    alpha = float(payload["alpha"])
+    for block in payload["results"]["blocks"]:
+        for comparison in block["comparisons"]:
+            mc = comparison["mcnemar"]
+            for metric in payload["metrics"]:
+                result = comparison["metrics"][metric]
+                perm, boot = result["permutation"], result["bootstrap"]
+                rows.append({
+                    "block": block["id"],
+                    "comparison_id": comparison["id"],
+                    "dataset": comparison.get("dataset"),
+                    "subjects": comparison["n_subjects"],
+                    "seeds": comparison["n_seeds"],
+                    "metric": metric,
+                    "observed_delta": perm["observed_delta"],
+                    "bootstrap_ci_low_unadjusted": boot["ci_low"],
+                    "bootstrap_ci_high_unadjusted": boot["ci_high"],
+                    "permutation_method": perm["method"],
+                    "permutation_p": perm["p_value"],
+                    "permutation_holm_joint_block": perm["p_value_holm_joint_block"],
+                    "permutation_holm_metric_block": perm["p_value_holm_metric_block"],
+                    "permutation_holm_global": perm["p_value_holm_global"],
+                    "metric_primary_significant": perm["p_value_holm_joint_block"] <= alpha,
+                    "mcnemar_status": mc["status"],
+                    "mcnemar_baseline_only_correct": mc.get("baseline_only_correct"),
+                    "mcnemar_comparison_only_correct": mc.get("comparison_only_correct"),
+                    "mcnemar_p": mc.get("p_value"),
+                    "mcnemar_holm_block": mc.get("p_value_holm_block"),
+                    "mcnemar_holm_global": mc.get("p_value_holm_global"),
+                    "mcnemar_primary_significant": (
+                        mc.get("p_value_holm_block", 1.0) <= alpha if mc["status"] == "tested" else None
+                    ),
+                    "baseline_files": " | ".join(comparison["baseline_files"]),
+                    "comparison_files": " | ".join(comparison["comparison_files"]),
+                })
+    return rows
+
+
+def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        raise SignificanceError("cannot write an empty significance table")
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def coverage_rows(family: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = [
+        {"block": block["id"], "comparison_id": comparison["id"], "status": "tested", "reason": ""}
+        for block in family["families"] for comparison in block["comparisons"]
+    ]
+    rows.extend(
+        {"block": "excluded", "comparison_id": f"excluded-{index + 1}", "status": "not_testable", "reason": reason}
+        for index, reason in enumerate(family.get("excluded", []))
+    )
+    ids = [row["comparison_id"] for row in rows if row["status"] == "tested"]
+    if len(ids) != len(set(ids)):
+        raise SignificanceError("comparison inventory contains duplicate tested IDs")
+    return rows
 
 
 def main() -> int:
@@ -314,8 +543,11 @@ def main() -> int:
                         help="three_route_evidence.json (presentation evidence)")
     parser.add_argument("--joint-evidence", type=Path, default=None,
                         help="joint_k4_evidence.json; required only for joint-K blocks")
+    parser.add_argument("--native-en-head-report", type=Path, default=None,
+                        help="native_en_report.json with seed/fold hidden-head prediction provenance")
     parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "outputs/significance")
     parser.add_argument("--iterations", type=int, default=10000)
+    parser.add_argument("--bootstrap-iterations", type=int, default=None)
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--dry-run", action="store_true",
                         help="resolve and validate every pair without running the tests")
@@ -328,6 +560,11 @@ def main() -> int:
         raise SignificanceError("unsupported family schema version")
     evidence = json.loads(args.evidence.read_text(encoding="utf-8"))
     joint = json.loads(args.joint_evidence.read_text(encoding="utf-8")) if args.joint_evidence else None
+    native_en_report = (json.loads(args.native_en_head_report.read_text(encoding="utf-8"))
+                        if args.native_en_head_report else None)
+    if native_en_report is not None:
+        evidence["_native_en_head_report"] = native_en_report
+    expand_generated_families(family, native_en_report)
 
     metrics = list(family.get("metrics", PRIMARY_METRICS))
     if args.dry_run:
@@ -338,40 +575,62 @@ def main() -> int:
                 right = resolve_side(comparison["comparison"], evidence, joint)
                 left_rows = normalize_subjects(pool(left), comparison.get("dataset"))
                 right_rows = normalize_subjects(pool(right), comparison.get("dataset"))
-                if {row["subject_id"] for row in left_rows} != {row["subject_id"] for row in right_rows}:
+                if {(row["subject_id"], row.get("seed", 0)) for row in left_rows} != {
+                    (row["subject_id"], row.get("seed", 0)) for row in right_rows
+                }:
                     raise SignificanceError(f"{comparison['id']}: subject sets differ")
                 checked += 1
-                print(f"ok {comparison['id']}: {len(left_rows)} subjects, {len(left)}x{len(right)} files")
+                print(f"ok {comparison['id']}: {len({row['subject_id'] for row in left_rows})} subjects, "
+                      f"{len(left)}x{len(right)} files")
         print(f"dry run: {checked} comparisons resolvable")
         return 0
 
-    results = run_family(family, evidence, joint, iterations=args.iterations, seed=args.seed, metrics=metrics)
+    bootstrap_iterations = args.bootstrap_iterations or int(family.get("bootstrap_iterations", args.iterations))
+    results = run_family(
+        family, evidence, joint, iterations=args.iterations,
+        bootstrap_iterations=bootstrap_iterations, seed=args.seed, metrics=metrics,
+    )
     payload = {
         "schema_version": "audiollm.significance_report.v1",
         "family_path": str(args.family),
         "family_sha256": sha256_file(args.family),
         "evidence_path": str(args.evidence),
         "evidence_sha256": sha256_file(args.evidence),
+        "native_en_head_report_path": str(args.native_en_head_report) if args.native_en_head_report else None,
+        "native_en_head_report_sha256": sha256_file(args.native_en_head_report) if args.native_en_head_report else None,
         "iterations": args.iterations,
+        "bootstrap_iterations": bootstrap_iterations,
         "seed": args.seed,
+        "alpha": float(family.get("alpha", 0.05)),
+        "analysis_status": "retrospective_exploratory",
         "metrics": metrics,
         "primary_metric_field": "macro_recall is UAR",
         "deltas": "permutation.observed_delta is the exact observed difference; bootstrap.mean_delta is the mean "
                   "of the resampled differences (slightly biased for nonlinear metrics) and the CI is percentile",
-        "correction": "holm within each block and metric",
+        "correction": {
+            "metric_primary": "holm across comparisons x all co-primary metrics within each block",
+            "mcnemar_primary": "holm across comparisons within each block",
+            "sensitivity": ["metric-specific Holm within block", "global Holm"],
+        },
         "results": results,
     }
     args.output_dir.mkdir(parents=True, exist_ok=True)
     json_path = args.output_dir / "significance_report.json"
     md_path = args.output_dir / "significance_report.md"
+    csv_path = args.output_dir / "significance_full.csv"
+    coverage_path = args.output_dir / "coverage_report.csv"
     json_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     md_path.write_text(format_markdown(payload, family), encoding="utf-8")
+    write_csv(csv_path, flat_rows(payload))
+    write_csv(coverage_path, coverage_rows(family))
     print(f"wrote {json_path}")
     print(f"wrote {md_path}")
+    print(f"wrote {csv_path}")
+    print(f"wrote {coverage_path}")
     for block in results["blocks"]:
         significant = [
             row["id"] for row in block["comparisons"]
-            if any(row["metrics"][metric]["permutation"]["p_value_holm"] <= family.get("alpha", 0.05)
+            if any(row["metrics"][metric]["permutation"]["p_value_holm_joint_block"] <= family.get("alpha", 0.05)
                    for metric in metrics)
         ]
         print(f"{block['id']}: {len(block['comparisons'])} comparisons, "

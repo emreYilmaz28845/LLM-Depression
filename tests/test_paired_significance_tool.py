@@ -1,4 +1,4 @@
-"""Tests for tools/paired_significance.py and the pre-declared family file."""
+"""Tests for the retrospective paired-significance analysis."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def test_normalize_subjects_strips_dataset_namespace():
     assert [row["subject_id"] for row in out] == ["01_C", "01_P"]
     # another dataset's namespace is not stripped
     assert paired_significance.normalize_subjects(rows[:1], "d3tec")[0]["subject_id"] == "androids_interview::01_C"
-    with pytest.raises(paired_significance.SignificanceError, match="duplicate subject id"):
+    with pytest.raises(paired_significance.SignificanceError, match="duplicate subject/seed"):
         paired_significance.normalize_subjects(
             [{"subject_id": "01_C", "label": 0, "prediction": 0},
              {"subject_id": "d::01_C", "label": 0, "prediction": 0}], "d")
@@ -77,8 +77,10 @@ def test_declared_family_is_frozen_and_structured():
     payload = yaml.safe_load(FAMILY_PATH.read_text(encoding="utf-8"))
     assert payload["schema_version"] == "audiollm.significance_family.v1"
     assert payload["alpha"] == 0.05
-    assert payload["iterations"] == 10000 and payload["seed"] == 1337
-    assert payload["metrics"] == ["macro_f1", "macro_recall"]
+    assert payload["analysis_status"] == "retrospective_exploratory"
+    assert payload["iterations"] == 1000000 and payload["seed"] == 1337
+    assert payload["bootstrap_iterations"] == 100000
+    assert payload["metrics"] == ["macro_f1", "positive_f1", "macro_recall"]
     blocks = {block["id"]: block for block in payload["families"]}
     assert list(blocks) == [
         "model_qwen_vs_gemma4_teacher_forced",
@@ -86,16 +88,20 @@ def test_declared_family_is_frozen_and_structured():
         "native_vs_english_transcript",
         "standalone_vs_merged_audio_text",
         "joint_k4_v1_vs_runtime",
+        "daic_official_development_backbone",
     ]
-    assert [len(blocks[key]["comparisons"]) for key in blocks] == [15, 90, 36, 16, 6]
-    known_kinds = {"record", "merged_cv", "merged_final", "joint_k4", "path"}
+    assert [len(blocks[key]["comparisons"]) for key in blocks] == [15, 90, 36, 16, 6, 1]
+    assert [item["kind"] for item in payload["generated_families"]] == [
+        "backbone_same_route", "native_en_hidden_heads"
+    ]
+    known_kinds = {"record", "merged_cv", "merged_final", "joint_k4", "path", "native_en_head"}
     ids = []
     for block in payload["families"]:
         for comparison in block["comparisons"]:
             ids.append(comparison["id"])
             for side in ("baseline", "comparison"):
                 assert comparison[side]["kind"] in known_kinds
-    assert len(ids) == len(set(ids)) == 163
+    assert len(ids) == len(set(ids)) == 164
     # Turkish standalone-vs-merged and merged XGBoost stay excluded on purpose.
     assert any("Turkish standalone-versus-merged" in note for note in payload["excluded"])
     assert any("Merged XGBoost" in note for note in payload["excluded"])

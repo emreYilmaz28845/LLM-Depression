@@ -10,9 +10,12 @@ import pytest
 
 from src.daic_statistics import (
     exact_mcnemar,
+    exact_paired_prediction_swap,
     holm_adjust,
     paired_prediction_swap_permutation,
+    paired_prediction_swap_permutation_many,
     stratified_paired_bootstrap,
+    stratified_paired_bootstrap_many,
 )
 from src.metrics import classification_metrics
 
@@ -73,6 +76,44 @@ def test_permutation_averages_seed_deltas():
     ) / 2
     assert result["observed_delta"] == pytest.approx(expected)
     assert result["keys"] == 8 and result["subjects"] == 4
+
+
+def test_multiseed_permutation_clusters_swaps_by_subject():
+    labels = [1, 0, 1, 0]
+    left = _rows([1, 0, 1, 0], labels, seed=7) + _rows([1, 0, 1, 0], labels, seed=8)
+    right = _rows([0, 1, 0, 1], labels, seed=7) + _rows([0, 1, 0, 1], labels, seed=8)
+    result = paired_prediction_swap_permutation(left, right, iterations=25, seed=3)
+    assert result["method"] == "monte_carlo_subject_clustered"
+    assert result["subjects"] == 4 and result["keys"] == 8
+
+
+def test_vectorized_multimetric_permutation_is_deterministic():
+    labels = [1, 0, 1, 0]
+    left = _rows([1, 0, 1, 0], labels, seed=7) + _rows([1, 0, 1, 0], labels, seed=8)
+    right = _rows([0, 0, 1, 1], labels, seed=7) + _rows([1, 1, 0, 0], labels, seed=8)
+    first = paired_prediction_swap_permutation_many(left, right, iterations=500, seed=11, chunk_size=73)
+    second = paired_prediction_swap_permutation_many(left, right, iterations=500, seed=11, chunk_size=73)
+    assert first == second
+    assert set(first) == {"macro_f1", "positive_f1", "macro_recall"}
+    assert all(item["subjects"] == 4 and item["keys"] == 8 for item in first.values())
+
+
+def test_exact_prediction_swap_matches_bruteforce_small_case():
+    labels = [0, 0, 1, 1]
+    left = _rows([0, 1, 0, 1], labels)
+    right = _rows([1, 0, 1, 0], labels)
+    exact = exact_paired_prediction_swap(left, right)
+    brute = paired_prediction_swap_permutation(left, right, metric="macro_f1", iterations=20000, seed=9)
+    assert exact["macro_f1"]["method"] == "exact_subject_paired"
+    assert exact["macro_f1"]["observed_delta"] == pytest.approx(brute["observed_delta"])
+    assert exact["macro_f1"]["p_value"] == pytest.approx(brute["p_value"], abs=0.02)
+    assert set(exact) == {"macro_f1", "positive_f1", "macro_recall"}
+
+
+def test_exact_prediction_swap_rejects_multiple_seeds():
+    rows = _rows([1, 0], [1, 0], seed=7) + _rows([1, 0], [1, 0], seed=8)
+    with pytest.raises(ValueError, match="single seed"):
+        exact_paired_prediction_swap(rows, rows)
 
 
 def test_permutation_requires_matching_keys_and_labels():
@@ -152,6 +193,16 @@ def test_stratified_paired_bootstrap_treats_invalid_as_wrong():
     from_invalid = stratified_paired_bootstrap(reference, invalid, iterations=100, seed=1337)
     from_mapped = stratified_paired_bootstrap(reference, mapped, iterations=100, seed=1337)
     assert from_invalid == pytest.approx(from_mapped)
+
+
+def test_vectorized_bootstrap_clusters_subjects_and_returns_all_metrics():
+    labels = [1, 0, 1, 0]
+    left = _rows([1, 0, 1, 0], labels, seed=7) + _rows([1, 0, 1, 0], labels, seed=8)
+    right = _rows([1, 1, 0, 0], labels, seed=7) + _rows([0, 0, 1, 1], labels, seed=8)
+    result = stratified_paired_bootstrap_many(left, right, iterations=250, seed=5, chunk_size=31)
+    assert set(result) == {"macro_f1", "positive_f1", "macro_recall"}
+    assert all(item["iterations"] == 250 for item in result.values())
+    assert all(item["ci_low"] <= item["mean_delta"] <= item["ci_high"] for item in result.values())
 
 
 def test_holm_adjust_steps_down_and_validates():
