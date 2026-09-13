@@ -66,6 +66,7 @@ _HEADLINE_METRIC_NAMES = (
     "positive_f1",
     "macro_f1",
     "weighted_f1",
+    "uar",
 )
 
 

@@ -131,6 +131,9 @@ EVALUATION_METRIC_NAMES = (
     "positive_f1",
     "negative_f1",
     "macro_f1",
+    # UAR (unweighted average recall / balanced accuracy), strict view; new
+    # metrics files carry it as binary_strict_uar, older ones only as macro_recall.
+    "binary_strict_uar",
 )
 
 
@@ -1243,6 +1246,10 @@ def verify_local(attempt_dir: str | Path) -> dict[str, Any]:
         for name in EVALUATION_METRIC_NAMES:
             recomputed_value = recomputed["metrics"].get(name)
             saved_value = saved_metrics.get(name)
+            if saved_value is None and name == "binary_strict_uar":
+                # UAR was added after this campaign's first metrics.json files;
+                # it is compared whenever the file records it.
+                continue
             if recomputed_value is None or saved_value is None:
                 raise CampaignError(
                     f"{variant} metrics.json missing {name}"

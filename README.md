@@ -25,6 +25,7 @@ The active harmonized configurations live in `configs/main/`, named `<dataset>[_
 
 - teacher-forced label decoding (`original_teacher_forced`) as the current historical headline backend;
 - `headline/binary_strict_*` metrics, where invalid decoded labels count as wrong (`valid_only_*` is ignored);
+- macro-F1 and positive-F1 alongside UAR (`binary_strict_uar`: the unweighted average recall, i.e. balanced accuracy, recomputed from the same subject predictions; existing artifacts already carry it as `macro_recall`);
 - validation macro-F1 (`inner_val_macro_f1`, mode max) for checkpoint selection and early stopping;
 - a frozen audio encoder by default (`DepAdapter` and projector training are opt-in);
 - English prompts and external labels `Depressed` / `Non-depressed`; transcripts stay in their original language;

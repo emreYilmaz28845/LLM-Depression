@@ -299,6 +299,7 @@ def _metrics_from_prediction_rows(
         "binary_strict_recall": strict_metrics["recall"],
         "binary_strict_positive_f1": strict_metrics["positive_f1"],
         "binary_strict_macro_f1": strict_metrics["macro_f1"],
+        "binary_strict_uar": strict_metrics["macro_recall"],
         "binary_strict_weighted_f1": strict_metrics["weighted_f1"],
         "binary_strict_confusion_matrix": strict_metrics["confusion_matrix"],
         "prediction_backend": backend_name,
@@ -379,6 +380,7 @@ def aggregate_likelihood_predictions(sample_rows: list[dict[str, Any]]) -> tuple
         "binary_strict_recall": binary_metrics["recall"],
         "binary_strict_positive_f1": binary_metrics["positive_f1"],
         "binary_strict_macro_f1": binary_metrics["macro_f1"],
+        "binary_strict_uar": binary_metrics["macro_recall"],
         "binary_strict_weighted_f1": binary_metrics["weighted_f1"],
         "binary_strict_confusion_matrix": binary_metrics["confusion_matrix"],
         "prediction_backend": PREDICTION_MODE_LIKELIHOOD,
@@ -431,6 +433,7 @@ def aggregate_mean_probability_predictions(
     metrics = classification_metrics(y_true, y_pred)
     metrics.update(
         {
+            "binary_strict_uar": metrics["macro_recall"],
             "auroc": binary_auroc(
                 y_true, [float(row["probability"]) for row in subject_rows]
             ),

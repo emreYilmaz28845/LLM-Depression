@@ -66,6 +66,9 @@ EVALUATION_METRIC_NAMES = (
     "positive_f1",
     "negative_f1",
     "macro_f1",
+    # UAR (unweighted average recall / balanced accuracy), strict view; new
+    # metrics files carry it as binary_strict_uar, older ones only as macro_recall.
+    "binary_strict_uar",
 )
 
 STUDY_ARTIFACT_FILES = (
@@ -832,6 +835,10 @@ def verify_local(attempt_dir: str | Path) -> dict[str, Any]:
     for name in EVALUATION_METRIC_NAMES:
         expected = recomputed["metrics"].get(name)
         actual = stored.get(name)
+        if actual is None and name == "binary_strict_uar":
+            # UAR was added after this campaign's first metrics.json files;
+            # it is compared whenever the file records it.
+            continue
         if expected is None or actual is None or abs(float(expected) - float(actual)) > 1e-9:
             raise PosthocError(
                 f"recomputed metric {name} ({expected}) does not match metrics.json ({actual})"

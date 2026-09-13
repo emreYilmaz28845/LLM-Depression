@@ -1311,7 +1311,8 @@ def _record_evaluation_sidecars(
                 "value": headline.get(name),
                 "support": support,
             }
-            for name in ("accuracy", "precision", "recall", "positive_f1", "macro_f1", "weighted_f1")
+            for name in ("accuracy", "precision", "recall", "positive_f1", "macro_f1", "weighted_f1",
+                         "binary_strict_uar")
         ],
         "locally_verified": False,
         "reportable": False,

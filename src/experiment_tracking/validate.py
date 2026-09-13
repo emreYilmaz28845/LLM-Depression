@@ -64,10 +64,16 @@ def recompute_strict_headline(subject_predictions_csv: Path) -> dict[str, float]
     )
     macro_f1 = (positive_f1 + f1_neg) / 2
     accuracy = (tp + tn) / n
+    positive_recall = tp / (tp + fn) if (tp + fn) else 0.0
+    negative_recall = tn / (tn + fp) if (tn + fp) else 0.0
+    # UAR (unweighted average recall / balanced accuracy); an invalid output is
+    # already mapped to the wrong class above, so it lowers the true class recall.
+    uar = (positive_recall + negative_recall) / 2
     return {
         "binary_strict_macro_f1": macro_f1,
         "binary_strict_positive_f1": positive_f1,
         "binary_strict_accuracy": accuracy,
+        "binary_strict_uar": uar,
         "support": float(n),
     }
 
