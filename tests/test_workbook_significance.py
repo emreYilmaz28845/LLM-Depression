@@ -22,6 +22,7 @@ def _report() -> dict:
             "method": "exact_subject_paired",
             "p_value": 0.01,
             "p_value_holm_joint_block": 0.03,
+            "p_value_holm_family": 0.03,
             "p_value_holm_primary_family": 0.03,
             "primary_significant": True,
             "p_value_holm_metric_block": 0.01,

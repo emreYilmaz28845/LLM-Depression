@@ -3660,8 +3660,7 @@ def build_significance_sheets(wb: Workbook, report_path: Path) -> None:
             significant = False
             for metric in metric_order:
                 result = comparison["metrics"][metric]["permutation"]
-                adjusted = (result.get("p_value_holm_primary_family") if metric == "macro_f1"
-                            else result["p_value_holm_metric_block"])
+                adjusted = result["p_value_holm_family"]
                 significant = significant or (metric == "macro_f1" and adjusted <= alpha)
                 values.extend([result["observed_delta"], adjusted])
             mc = comparison["mcnemar"]
@@ -3695,7 +3694,7 @@ def build_significance_sheets(wb: Workbook, report_path: Path) -> None:
     )
     headers = [
         "Block", "Comparison", "Dataset", "n", "Seeds", "Metric", "Observed Δ", "CI low", "CI high",
-        "Test", "Raw p", "Primary-family Holm", "Metric-block sensitivity", "Global Holm", "McNemar status",
+        "Test", "Raw p", "Within-metric family Holm", "Metric-block sensitivity", "Global Holm", "McNemar status",
         "McNemar b", "McNemar c", "McNemar raw p",
     ]
     _header_row(ws, 4, headers)
@@ -3709,7 +3708,7 @@ def build_significance_sheets(wb: Workbook, report_path: Path) -> None:
                 values = [
                     block["id"], comparison["id"], comparison.get("dataset"), comparison["n_subjects"],
                     comparison["n_seeds"], metric, perm["observed_delta"], boot["ci_low"], boot["ci_high"],
-                    perm["method"], perm["p_value"], perm.get("p_value_holm_primary_family"),
+                    perm["method"], perm["p_value"], perm["p_value_holm_family"],
                     perm["p_value_holm_metric_block"], perm["p_value_holm_global"], mc["status"],
                     mc.get("baseline_only_correct"), mc.get("comparison_only_correct"), mc.get("p_value"),
                 ]

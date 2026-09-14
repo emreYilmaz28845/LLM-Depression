@@ -105,3 +105,19 @@ def test_declared_family_is_frozen_and_structured():
     # Turkish standalone-vs-merged and merged XGBoost stay excluded on purpose.
     assert any("Turkish standalone-versus-merged" in note for note in payload["excluded"])
     assert any("Merged XGBoost" in note for note in payload["excluded"])
+
+
+@pytest.mark.parametrize(("block", "comparison", "expected"), [
+    ("model_qwen_vs_gemma4_teacher_forced", "CMDC|A+T|Qwen vs Gemma 4",
+     "F1|backbone|dataset=CMDC|condition=native|route=teacher-forced"),
+    ("native_vs_english_transcript", "CMDC|T|Qwen|teacher-forced|native vs English",
+     "F2|translation|dataset=CMDC|backbone=Qwen|route=teacher-forced"),
+    ("route_pairs_native", "Turkish|T|Qwen|teacher-forced vs XGB-100",
+     "F3|route|dataset=Turkish|modality=T|backbone=Qwen|condition=native"),
+    ("standalone_vs_merged_audio_text", "CMDC|Gemma 4|LogReg|standalone vs merged",
+     "F4|training-regime|dataset=CMDC|modality=A+T|backbone=Gemma 4|route=LogReg"),
+    ("joint_k4_v1_vs_runtime", "DAIC|A|LogReg|packed30 v1 vs joint-K4",
+     "F5|recipe|dataset=DAIC|modality=A|backbone=Qwen|method=LogReg"),
+])
+def test_correction_family_contract(block, comparison, expected):
+    assert paired_significance.correction_family_id(block, comparison) == expected

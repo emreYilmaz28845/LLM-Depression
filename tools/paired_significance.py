@@ -333,25 +333,33 @@ def normalize_subjects(rows: list[dict[str, Any]], dataset: str | None) -> list[
     return list(out.values())
 
 
+def correction_family_id(block_id: str, comparison_id: str) -> str:
+    """Map one comparison to the user-defined local scientific question."""
+    parts = comparison_id.split("|")
+    if block_id == "model_qwen_vs_gemma4_teacher_forced":
+        return f"F1|backbone|dataset={parts[0]}|condition=native|route=teacher-forced"
+    if block_id == "daic_official_development_backbone":
+        return "F1|backbone|dataset=DAIC-official-development|condition=native|route=teacher-forced"
+    if block_id == "model_qwen_vs_gemma4_hidden_routes":
+        return f"F1|backbone|dataset={parts[0]}|condition=native|route={parts[2]}"
+    if block_id == "route_pairs_native":
+        return f"F3|route|dataset={parts[0]}|modality={parts[1]}|backbone={parts[2]}|condition=native"
+    if block_id == "native_vs_english_transcript":
+        return f"F2|translation|dataset={parts[0]}|backbone={parts[2]}|route={parts[3]}"
+    if block_id == "standalone_vs_merged_audio_text":
+        return f"F4|training-regime|dataset={parts[0]}|modality=A+T|backbone={parts[1]}|route={parts[2]}"
+    if block_id == "joint_k4_v1_vs_runtime":
+        return f"F5|recipe|dataset=DAIC|modality={parts[1]}|backbone=Qwen|method={parts[2]}"
+    if block_id == "native_vs_english_hidden_heads_three_seed":
+        return (f"F2|translation|dataset={parts[1]}|backbone={parts[2]}|route={parts[3]}"
+                f"|endpoint={parts[0]}|modality=T")
+    return block_id
+
+
 def run_family(family: dict[str, Any], evidence: dict[str, Any], joint: dict[str, Any] | None,
                *, iterations: int, bootstrap_iterations: int, seed: int,
                metrics: list[str]) -> dict[str, Any]:
     blocks_out: list[dict[str, Any]] = []
-
-    def correction_family_id(block_id: str, comparison_id: str) -> str:
-        """Return the smallest pre-specified family matching one scientific contrast."""
-        parts = comparison_id.split("|")
-        if block_id == "route_pairs_native":
-            return f"{block_id}|{parts[-1]}"
-        if block_id == "native_vs_english_transcript":
-            return f"{block_id}|{parts[-2]}"
-        if block_id == "standalone_vs_merged_audio_text":
-            return f"{block_id}|{parts[-2]}"
-        if block_id == "model_qwen_vs_gemma4_hidden_routes":
-            return f"{block_id}|{parts[-1]}"
-        if block_id == "native_vs_english_hidden_heads_three_seed":
-            return f"{block_id}|{parts[0]}|{parts[2]}|{parts[3]}"
-        return block_id
 
     for block in family["families"]:
         rows_out: list[dict[str, Any]] = []
@@ -431,18 +439,22 @@ def run_family(family: dict[str, Any], evidence: dict[str, Any], joint: dict[str
         for row, value in zip(mcnemar_rows, holm_adjust(mcnemar_p)):
             row["mcnemar"]["p_value_holm_block"] = value
 
-    # Primary decision: Macro-F1 only, corrected inside the pre-specified
-    # scientific contrast family. Positive-F1 and UAR remain supporting
-    # effect-size metrics; their metric-wise Holm values are sensitivity views.
+    # Each metric has its own Holm correction inside the same local scientific
+    # family. Macro-F1 alone drives the primary decision; the other two metrics
+    # are secondary and never share its correction.
     family_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for block in blocks_out:
         for row in block["comparisons"]:
             family_groups[row["correction_family"]].append(row)
     for family_id, rows in family_groups.items():
-        adjusted = holm_adjust([row["metrics"]["macro_f1"]["permutation"]["p_value"] for row in rows])
-        for row, value in zip(rows, adjusted):
-            row["metrics"]["macro_f1"]["permutation"]["p_value_holm_primary_family"] = value
-            row["metrics"]["macro_f1"]["permutation"]["primary_significant"] = value <= family.get("alpha", 0.05)
+        for metric in metrics:
+            adjusted = holm_adjust([row["metrics"][metric]["permutation"]["p_value"] for row in rows])
+            for row, value in zip(rows, adjusted):
+                permutation = row["metrics"][metric]["permutation"]
+                permutation["p_value_holm_family"] = value
+                if metric == "macro_f1":
+                    permutation["p_value_holm_primary_family"] = value
+                    permutation["primary_significant"] = value <= family.get("alpha", 0.05)
         tested = [row for row in rows if row["mcnemar"]["status"] == "tested"]
         adjusted_mc = holm_adjust([row["mcnemar"]["p_value"] for row in tested])
         for row, value in zip(tested, adjusted_mc):
@@ -477,7 +489,8 @@ def format_markdown(payload: dict[str, Any], family: dict[str, Any]) -> str:
         f"{payload['iterations']} subject-clustered permutations, seed {payload['seed']}.",
         f"Bootstrap: {payload['bootstrap_iterations']} subject-clustered, label-stratified resamples.",
         "Primary decision: Macro-F1 with Holm correction inside each pre-specified scientific contrast family.",
-        "Positive-F1 and UAR are supporting effect-size metrics; broad joint-block Holm remains a sensitivity view.",
+        "Positive-F1 and UAR are supporting effect-size metrics, each corrected separately with the same family membership.",
+        "Broad joint-block Holm remains a conservative sensitivity view.",
         "McNemar is a separate correctness view corrected inside the same contrast families.",
         "Displayed deltas are exact observed differences; intervals are unadjusted bootstrap 95% CIs.",
         "Pooled out-of-fold subject predictions; the decks' headline cells are unweighted fold means.",
@@ -531,6 +544,7 @@ def flat_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
                     "bootstrap_ci_high_unadjusted": boot["ci_high"],
                     "permutation_method": perm["method"],
                     "permutation_p": perm["p_value"],
+                    "permutation_holm_family": perm["p_value_holm_family"],
                     "permutation_holm_primary_family": perm.get("p_value_holm_primary_family"),
                     "permutation_holm_joint_block": perm["p_value_holm_joint_block"],
                     "permutation_holm_metric_block": perm["p_value_holm_metric_block"],
@@ -552,6 +566,43 @@ def flat_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
                     "comparison_files": " | ".join(comparison["comparison_files"]),
                 })
     return rows
+
+
+def family_audit_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """One row represents one family member × metric/test correction."""
+    rows: list[dict[str, Any]] = []
+    for block in payload["results"]["blocks"]:
+        for comparison in block["comparisons"]:
+            family_id = comparison["correction_family"]
+            family_size = sum(
+                other["correction_family"] == family_id
+                for candidate_block in payload["results"]["blocks"]
+                for other in candidate_block["comparisons"]
+            )
+            for metric in payload["metrics"]:
+                permutation = comparison["metrics"][metric]["permutation"]
+                rows.append({
+                    "family_id": family_id,
+                    "family_size": family_size,
+                    "member": comparison["id"],
+                    "test": "paired_prediction_swap",
+                    "metric": metric,
+                    "role": "primary" if metric == "macro_f1" else "secondary",
+                    "raw_p": permutation["p_value"],
+                    "holm_p": permutation["p_value_holm_family"],
+                })
+            mcnemar = comparison["mcnemar"]
+            rows.append({
+                "family_id": family_id,
+                "family_size": family_size,
+                "member": comparison["id"],
+                "test": "exact_mcnemar",
+                "metric": "correctness",
+                "role": "separate",
+                "raw_p": mcnemar.get("p_value"),
+                "holm_p": mcnemar.get("p_value_holm_primary_family"),
+            })
+    return sorted(rows, key=lambda row: (row["family_id"], row["test"], row["metric"], row["member"]))
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -653,6 +704,7 @@ def main() -> int:
                   "of the resampled differences (slightly biased for nonlinear metrics) and the CI is percentile",
         "correction": {
             "metric_primary": "Macro-F1 Holm within each pre-specified scientific contrast family",
+            "metric_secondary": "separate Positive-F1 and UAR Holm corrections using the same family membership",
             "mcnemar_primary": "McNemar Holm within each pre-specified scientific contrast family",
             "sensitivity": ["joint comparison x metric Holm within broad block", "metric-specific Holm within broad block", "global Holm"],
         },
@@ -662,14 +714,18 @@ def main() -> int:
     json_path = args.output_dir / "significance_report.json"
     md_path = args.output_dir / "significance_report.md"
     csv_path = args.output_dir / "significance_full.csv"
+    family_audit_path = args.output_dir / "family_audit.csv"
     coverage_path = args.output_dir / "coverage_report.csv"
     json_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     md_path.write_text(format_markdown(payload, family), encoding="utf-8")
     write_csv(csv_path, flat_rows(payload))
+    audit_rows = family_audit_rows(payload)
+    write_csv(family_audit_path, audit_rows)
     write_csv(coverage_path, coverage_rows(family))
     print(f"wrote {json_path}")
     print(f"wrote {md_path}")
     print(f"wrote {csv_path}")
+    print(f"wrote {family_audit_path}")
     print(f"wrote {coverage_path}")
     for block in results["blocks"]:
         significant = [

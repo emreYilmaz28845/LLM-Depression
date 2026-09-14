@@ -19,6 +19,14 @@ tests:
   effect_size: observed comparison-minus-baseline delta with unadjusted subject-cluster bootstrap 95% CI
   mcnemar_primary: exact_mcnemar correctness view
   correction: Macro-F1 Holm within pre-specified scientific contrast families; McNemar corrected separately within the same families; broad joint-block and global Holm retained as conservative sensitivity views
+family_contract:
+  F1_backbone: dataset x fixed prediction route x fixed transcript condition; available modalities are members
+  F2_translation: dataset x backbone x prediction route; Text and Audio+Text are members when available
+  F3_route: dataset x modality x backbone x transcript condition; available route pairs are members
+  F4_training_regime: dataset x modality x backbone x prediction route; one standalone-vs-merged comparison is normally a singleton
+  F5_recipe: modality x backbone x prediction method; available DAIC recipe pairs are members
+  metric_rule: Macro-F1, Positive-F1, and UAR are corrected separately using identical family membership
+  test_rule: paired prediction-swap and McNemar corrections are separate
 pairing: subject (subject_id); identical subject sets and labels required on both sides
 aggregation: pooled out-of-fold subject predictions; the deck headline cells are unweighted fold means
 excluded:
