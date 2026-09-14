@@ -30,6 +30,7 @@ import csv
 import hashlib
 import json
 import sys
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -336,6 +337,22 @@ def run_family(family: dict[str, Any], evidence: dict[str, Any], joint: dict[str
                *, iterations: int, bootstrap_iterations: int, seed: int,
                metrics: list[str]) -> dict[str, Any]:
     blocks_out: list[dict[str, Any]] = []
+
+    def correction_family_id(block_id: str, comparison_id: str) -> str:
+        """Return the smallest pre-specified family matching one scientific contrast."""
+        parts = comparison_id.split("|")
+        if block_id == "route_pairs_native":
+            return f"{block_id}|{parts[-1]}"
+        if block_id == "native_vs_english_transcript":
+            return f"{block_id}|{parts[-2]}"
+        if block_id == "standalone_vs_merged_audio_text":
+            return f"{block_id}|{parts[-2]}"
+        if block_id == "model_qwen_vs_gemma4_hidden_routes":
+            return f"{block_id}|{parts[-1]}"
+        if block_id == "native_vs_english_hidden_heads_three_seed":
+            return f"{block_id}|{parts[0]}|{parts[2]}|{parts[3]}"
+        return block_id
+
     for block in family["families"]:
         rows_out: list[dict[str, Any]] = []
         for comparison in block["comparisons"]:
@@ -355,10 +372,11 @@ def run_family(family: dict[str, Any], evidence: dict[str, Any], joint: dict[str
                 "dataset": comparison.get("dataset"),
                 "n_subjects": len({key[0] for key in left_keys}),
                 "n_seeds": len({key[1] for key in left_keys}),
-                "baseline_files": [str(entry[0]) for entry in left_files],
-                "comparison_files": [str(entry[0]) for entry in right_files],
-                "baseline_file_sha256": {str(entry[0]): sha256_file(entry[0]) for entry in left_files},
-                "comparison_file_sha256": {str(entry[0]): sha256_file(entry[0]) for entry in right_files},
+                "correction_family": correction_family_id(block["id"], comparison["id"]),
+                "baseline_files": [str(item[0].resolve()) for item in left_files],
+                "comparison_files": [str(item[0].resolve()) for item in right_files],
+                "baseline_file_sha256": {str(item[0].resolve()): sha256_file(item[0]) for item in left_files},
+                "comparison_file_sha256": {str(item[0].resolve()): sha256_file(item[0]) for item in right_files},
                 "baseline_provenance": side_provenance(comparison["baseline"], evidence, joint),
                 "comparison_provenance": side_provenance(comparison["comparison"], evidence, joint),
                 "metrics": {},
@@ -389,8 +407,8 @@ def run_family(family: dict[str, Any], evidence: dict[str, Any], joint: dict[str
             "comparisons": rows_out,
         })
 
-    # Primary metric view: all comparison x co-primary metric p-values share
-    # one Holm family inside each scientific block.
+    # Conservative sensitivity: all comparison x metric p-values share one
+    # Holm family inside each broad block.
     for block in blocks_out:
         joint_refs = [
             (row, metric)
@@ -412,6 +430,24 @@ def run_family(family: dict[str, Any], evidence: dict[str, Any], joint: dict[str
         mcnemar_p = [row["mcnemar"]["p_value"] for row in mcnemar_rows]
         for row, value in zip(mcnemar_rows, holm_adjust(mcnemar_p)):
             row["mcnemar"]["p_value_holm_block"] = value
+
+    # Primary decision: Macro-F1 only, corrected inside the pre-specified
+    # scientific contrast family. Positive-F1 and UAR remain supporting
+    # effect-size metrics; their metric-wise Holm values are sensitivity views.
+    family_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for block in blocks_out:
+        for row in block["comparisons"]:
+            family_groups[row["correction_family"]].append(row)
+    for family_id, rows in family_groups.items():
+        adjusted = holm_adjust([row["metrics"]["macro_f1"]["permutation"]["p_value"] for row in rows])
+        for row, value in zip(rows, adjusted):
+            row["metrics"]["macro_f1"]["permutation"]["p_value_holm_primary_family"] = value
+            row["metrics"]["macro_f1"]["permutation"]["primary_significant"] = value <= family.get("alpha", 0.05)
+        tested = [row for row in rows if row["mcnemar"]["status"] == "tested"]
+        adjusted_mc = holm_adjust([row["mcnemar"]["p_value"] for row in tested])
+        for row, value in zip(tested, adjusted_mc):
+            row["mcnemar"]["p_value_holm_primary_family"] = value
+            row["mcnemar"]["primary_significant"] = value <= family.get("alpha", 0.05)
 
     metric_refs = [
         (row, metric)
@@ -440,8 +476,9 @@ def format_markdown(payload: dict[str, Any], family: dict[str, Any]) -> str:
         f"Single-seed comparisons use exact paired swaps. Multi-seed comparisons use up to "
         f"{payload['iterations']} subject-clustered permutations, seed {payload['seed']}.",
         f"Bootstrap: {payload['bootstrap_iterations']} subject-clustered, label-stratified resamples.",
-        "Primary metric correction: Holm over every comparison × Macro-F1 × Positive-F1 × UAR inside each block.",
-        "McNemar is a separate correctness-based view with its own block-wise Holm correction.",
+        "Primary decision: Macro-F1 with Holm correction inside each pre-specified scientific contrast family.",
+        "Positive-F1 and UAR are supporting effect-size metrics; broad joint-block Holm remains a sensitivity view.",
+        "McNemar is a separate correctness view corrected inside the same contrast families.",
         "Displayed deltas are exact observed differences; intervals are unadjusted bootstrap 95% CIs.",
         "Pooled out-of-fold subject predictions; the decks' headline cells are unweighted fold means.",
         "",
@@ -450,22 +487,22 @@ def format_markdown(payload: dict[str, Any], family: dict[str, Any]) -> str:
         lines.append(f"## {block['id']}")
         if block.get("description"):
             lines.append(block["description"])
-        lines += ["", "| Comparison | n | Metric | Observed Δ [unadjusted 95% CI] | p | joint-block Holm | global Holm | McNemar b/c | McNemar p | McNemar block Holm |",
-                  "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|"]
+        lines += ["", "| Comparison | Family | n | Metric | Observed Δ [unadjusted 95% CI] | p | primary Holm | joint-block sensitivity | McNemar b/c | McNemar p | McNemar family Holm |",
+                  "|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|"]
         for row in block["comparisons"]:
             mc = row["mcnemar"]
             mc_pair = (f"{mc['baseline_only_correct']}/{mc['comparison_only_correct']}"
                        if mc["status"] == "tested" else "not identifiable")
             mc_p = f"{mc['p_value']:.6g}" if mc["status"] == "tested" else "—"
-            mc_holm = f"{mc['p_value_holm_block']:.6g}" if mc["status"] == "tested" else "—"
+            mc_holm = f"{mc['p_value_holm_primary_family']:.6g}" if mc["status"] == "tested" else "—"
             for metric in payload["metrics"]:
                 result = row["metrics"][metric]
                 perm, boot = result["permutation"], result["bootstrap"]
                 lines.append(
-                    f"| {row['id']} | {row['n_subjects']} | {METRIC_LABELS[metric]} | "
+                    f"| {row['id']} | {row['correction_family']} | {row['n_subjects']} | {METRIC_LABELS[metric]} | "
                     f"{perm['observed_delta']:+.4f} [{boot['ci_low']:+.4f}, {boot['ci_high']:+.4f}] | "
-                    f"{perm['p_value']:.6g} | {perm['p_value_holm_joint_block']:.6g} | "
-                    f"{perm['p_value_holm_global']:.6g} | {mc_pair} | {mc_p} | {mc_holm} |"
+                    f"{perm['p_value']:.6g} | {perm.get('p_value_holm_primary_family', '—')} | "
+                    f"{perm['p_value_holm_joint_block']:.6g} | {mc_pair} | {mc_p} | {mc_holm} |"
                 )
         lines.append("")
     return "\n".join(lines) + "\n"
@@ -484,6 +521,7 @@ def flat_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 rows.append({
                     "block": block["id"],
                     "comparison_id": comparison["id"],
+                    "correction_family": comparison["correction_family"],
                     "dataset": comparison.get("dataset"),
                     "subjects": comparison["n_subjects"],
                     "seeds": comparison["n_seeds"],
@@ -493,18 +531,22 @@ def flat_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
                     "bootstrap_ci_high_unadjusted": boot["ci_high"],
                     "permutation_method": perm["method"],
                     "permutation_p": perm["p_value"],
+                    "permutation_holm_primary_family": perm.get("p_value_holm_primary_family"),
                     "permutation_holm_joint_block": perm["p_value_holm_joint_block"],
                     "permutation_holm_metric_block": perm["p_value_holm_metric_block"],
                     "permutation_holm_global": perm["p_value_holm_global"],
-                    "metric_primary_significant": perm["p_value_holm_joint_block"] <= alpha,
+                    "metric_primary_significant": (
+                        perm.get("primary_significant") if metric == "macro_f1" else None
+                    ),
                     "mcnemar_status": mc["status"],
                     "mcnemar_baseline_only_correct": mc.get("baseline_only_correct"),
                     "mcnemar_comparison_only_correct": mc.get("comparison_only_correct"),
                     "mcnemar_p": mc.get("p_value"),
                     "mcnemar_holm_block": mc.get("p_value_holm_block"),
+                    "mcnemar_holm_primary_family": mc.get("p_value_holm_primary_family"),
                     "mcnemar_holm_global": mc.get("p_value_holm_global"),
                     "mcnemar_primary_significant": (
-                        mc.get("p_value_holm_block", 1.0) <= alpha if mc["status"] == "tested" else None
+                        mc.get("primary_significant") if mc["status"] == "tested" else None
                     ),
                     "baseline_files": " | ".join(comparison["baseline_files"]),
                     "comparison_files": " | ".join(comparison["comparison_files"]),
@@ -604,13 +646,15 @@ def main() -> int:
         "alpha": float(family.get("alpha", 0.05)),
         "analysis_status": "retrospective_exploratory",
         "metrics": metrics,
+        "primary_metric": "macro_f1",
+        "supporting_metrics": ["positive_f1", "macro_recall"],
         "primary_metric_field": "macro_recall is UAR",
         "deltas": "permutation.observed_delta is the exact observed difference; bootstrap.mean_delta is the mean "
                   "of the resampled differences (slightly biased for nonlinear metrics) and the CI is percentile",
         "correction": {
-            "metric_primary": "holm across comparisons x all co-primary metrics within each block",
-            "mcnemar_primary": "holm across comparisons within each block",
-            "sensitivity": ["metric-specific Holm within block", "global Holm"],
+            "metric_primary": "Macro-F1 Holm within each pre-specified scientific contrast family",
+            "mcnemar_primary": "McNemar Holm within each pre-specified scientific contrast family",
+            "sensitivity": ["joint comparison x metric Holm within broad block", "metric-specific Holm within broad block", "global Holm"],
         },
         "results": results,
     }
@@ -630,8 +674,7 @@ def main() -> int:
     for block in results["blocks"]:
         significant = [
             row["id"] for row in block["comparisons"]
-            if any(row["metrics"][metric]["permutation"]["p_value_holm_joint_block"] <= family.get("alpha", 0.05)
-                   for metric in metrics)
+            if row["metrics"]["macro_f1"]["permutation"].get("primary_significant", False)
         ]
         print(f"{block['id']}: {len(block['comparisons'])} comparisons, "
               f"{len(significant)} significant after Holm")

@@ -11,14 +11,14 @@ metrics:
 - positive_f1
 - macro_recall
 metric_notes:
-  macro_f1: co-primary metric
-  positive_f1: co-primary metric; Depressed is positive
-  macro_recall: co-primary UAR (unweighted average recall = balanced accuracy)
+  macro_f1: single primary metric
+  positive_f1: supporting effect-size metric; Depressed is positive
+  macro_recall: supporting UAR effect-size metric (unweighted average recall = balanced accuracy)
 tests:
   metric_primary: paired_prediction_swap_permutation (two-sided; exact for single-seed binary predictions)
   effect_size: observed comparison-minus-baseline delta with unadjusted subject-cluster bootstrap 95% CI
   mcnemar_primary: exact_mcnemar correctness view
-  correction: joint Holm over comparisons x all three co-primary metrics within each block; separate block Holm for McNemar
+  correction: Macro-F1 Holm within pre-specified scientific contrast families; McNemar corrected separately within the same families; broad joint-block and global Holm retained as conservative sensitivity views
 pairing: subject (subject_id); identical subject sets and labels required on both sides
 aggregation: pooled out-of-fold subject predictions; the deck headline cells are unweighted fold means
 excluded:

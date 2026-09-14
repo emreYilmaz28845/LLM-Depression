@@ -22,6 +22,8 @@ def _report() -> dict:
             "method": "exact_subject_paired",
             "p_value": 0.01,
             "p_value_holm_joint_block": 0.03,
+            "p_value_holm_primary_family": 0.03,
+            "primary_significant": True,
             "p_value_holm_metric_block": 0.01,
             "p_value_holm_global": 0.06,
         },
@@ -32,14 +34,17 @@ def _report() -> dict:
         "analysis_status": "retrospective_exploratory",
         "alpha": 0.05,
         "metrics": ["macro_f1", "positive_f1", "macro_recall"],
+        "primary_metric": "macro_f1",
         "results": {"blocks": [{
             "id": "route",
             "comparisons": [{
                 "id": "D|TF vs LR", "dataset": "d", "n_subjects": 10, "n_seeds": 1,
+                "correction_family": "route|TF vs LR",
                 "metrics": {name: metric for name in ("macro_f1", "positive_f1", "macro_recall")},
                 "mcnemar": {
                     "status": "tested", "baseline_only_correct": 1, "comparison_only_correct": 5,
                     "p_value": 0.03, "p_value_holm_block": 0.03,
+                    "p_value_holm_primary_family": 0.03, "primary_significant": True,
                 },
             }],
         }]},

@@ -3626,8 +3626,8 @@ def _load_significance_report(path: Path) -> tuple[dict[str, Any], str]:
     if payload.get("analysis_status") != "retrospective_exploratory":
         raise ValueError("significance report must identify the analysis as retrospective_exploratory")
     expected = ["macro_f1", "positive_f1", "macro_recall"]
-    if payload.get("metrics") != expected:
-        raise ValueError(f"significance report must contain the three co-primary metrics: {expected}")
+    if payload.get("metrics") != expected or payload.get("primary_metric") != "macro_f1":
+        raise ValueError(f"significance report must use Macro-F1 as primary and contain: {expected}")
     return payload, hashlib.sha256(raw).hexdigest()
 
 
@@ -3640,14 +3640,14 @@ def build_significance_sheets(wb: Workbook, report_path: Path) -> None:
     _title(ws, "Retrospective significance summary", 12)
     _note(
         ws, 2,
-        "One row represents one paired comparison. Metric decisions use joint Holm over all comparisons × "
-        "Macro-F1 × Positive-F1 × UAR within the block. McNemar tests correctness and uses its own block Holm. "
+        "One row represents one paired comparison. Macro-F1 is primary with Holm correction inside each "
+        "scientific contrast family. Positive-F1 and UAR are supporting. McNemar is corrected separately. "
         "Bootstrap intervals are unadjusted. This is retrospective exploratory analysis.",
         12, height=48,
     )
     headers = [
-        "Block", "Comparison", "Dataset", "n", "Δ Macro-F1", "p Holm", "Δ Positive-F1", "p Holm",
-        "Δ UAR", "p Holm", "McNemar b/c", "McNemar p Holm",
+        "Block", "Comparison", "Dataset", "n", "Δ Macro-F1", "Primary Holm", "Δ Positive-F1", "Support Holm",
+        "Δ UAR", "Support Holm", "McNemar b/c", "McNemar family Holm",
     ]
     _header_row(ws, 4, headers)
     row_index = 5
@@ -3660,16 +3660,17 @@ def build_significance_sheets(wb: Workbook, report_path: Path) -> None:
             significant = False
             for metric in metric_order:
                 result = comparison["metrics"][metric]["permutation"]
-                adjusted = result["p_value_holm_joint_block"]
-                significant = significant or adjusted <= alpha
+                adjusted = (result.get("p_value_holm_primary_family") if metric == "macro_f1"
+                            else result["p_value_holm_metric_block"])
+                significant = significant or (metric == "macro_f1" and adjusted <= alpha)
                 values.extend([result["observed_delta"], adjusted])
             mc = comparison["mcnemar"]
             if mc["status"] == "tested":
                 values.extend([
                     f"{mc['baseline_only_correct']}/{mc['comparison_only_correct']}",
-                    mc["p_value_holm_block"],
+                    mc["p_value_holm_primary_family"],
                 ])
-                significant = significant or mc["p_value_holm_block"] <= alpha
+                significant = significant or mc["p_value_holm_primary_family"] <= alpha
             else:
                 values.extend([mc.get("reason", "not identifiable"), None])
             for column, value in enumerate(values, start=1):
@@ -3694,7 +3695,7 @@ def build_significance_sheets(wb: Workbook, report_path: Path) -> None:
     )
     headers = [
         "Block", "Comparison", "Dataset", "n", "Seeds", "Metric", "Observed Δ", "CI low", "CI high",
-        "Test", "Raw p", "Joint-block Holm", "Metric-block Holm", "Global Holm", "McNemar status",
+        "Test", "Raw p", "Primary-family Holm", "Metric-block sensitivity", "Global Holm", "McNemar status",
         "McNemar b", "McNemar c", "McNemar raw p",
     ]
     _header_row(ws, 4, headers)
@@ -3708,13 +3709,13 @@ def build_significance_sheets(wb: Workbook, report_path: Path) -> None:
                 values = [
                     block["id"], comparison["id"], comparison.get("dataset"), comparison["n_subjects"],
                     comparison["n_seeds"], metric, perm["observed_delta"], boot["ci_low"], boot["ci_high"],
-                    perm["method"], perm["p_value"], perm["p_value_holm_joint_block"],
+                    perm["method"], perm["p_value"], perm.get("p_value_holm_primary_family"),
                     perm["p_value_holm_metric_block"], perm["p_value_holm_global"], mc["status"],
                     mc.get("baseline_only_correct"), mc.get("comparison_only_correct"), mc.get("p_value"),
                 ]
                 for column, value in enumerate(values, start=1):
                     _body_cell(ws, row_index, column, value, fmt="0.000000" if isinstance(value, float) else None)
-                if perm["p_value_holm_joint_block"] <= alpha:
+                if metric == "macro_f1" and perm.get("primary_significant", False):
                     for column in range(1, len(headers) + 1):
                         ws.cell(row_index, column).fill = POS_FILL
                 row_index += 1
