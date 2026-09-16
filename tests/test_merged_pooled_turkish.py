@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -369,3 +372,112 @@ def test_pooled_text_only_examples_keep_one_pair_per_subject() -> None:
     for example in examples:
         sentence = QUESTION_CONTEXT_SENTENCES[str(example["question_condition"])]
         assert sentence in str(example["prompt_user_text"])
+
+
+def _launcher_argv(tmp_path: Path, extra_env: dict[str, str]) -> list[str]:
+    """Run the merged launcher against a stub submitter and return the argv it passes on."""
+    stub_root = tmp_path / "root"
+    (stub_root / "scripts").mkdir(parents=True, exist_ok=True)
+    recorded = tmp_path / "argv.json"
+    (stub_root / "scripts" / "submit_symmetric_merged.py").write_text(
+        "import json, pathlib, sys\n"
+        f"pathlib.Path({str(recorded)!r}).write_text(json.dumps(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/submit_harmonized_merged.sh")],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PROJECT_ROOT": str(stub_root),
+            "RUN_ID": "familycheck",
+            "DRY_RUN": "1",
+            "STAGE": "smoke",
+            "GITHUB_ISSUE": "12",
+            "GITHUB_PR": "10",
+            **extra_env,
+        },
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(recorded.read_text(encoding="utf-8"))
+
+
+def _configs_in(argv: list[str]) -> list[str]:
+    return [
+        Path(argv[index + 1]).name
+        for index, value in enumerate(argv)
+        if value == "--config"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("extra_env", "expected"),
+    (
+        (
+            {},
+            [
+                "symmetric_merged_harmonized_audio_only.yaml",
+                "symmetric_merged_harmonized_audio_text.yaml",
+                "symmetric_merged_harmonized_text_only.yaml",
+            ],
+        ),
+        (
+            {"GEMMA": "1"},
+            [
+                "symmetric_merged_harmonized_gemma4_audio_only.yaml",
+                "symmetric_merged_harmonized_gemma4_audio_text.yaml",
+                "symmetric_merged_harmonized_gemma4_text_only.yaml",
+            ],
+        ),
+        (
+            {"MERGED_FAMILY": "pooled_t17"},
+            [
+                "symmetric_merged_harmonized_pooled_t17_audio_only.yaml",
+                "symmetric_merged_harmonized_pooled_t17_audio_text.yaml",
+                "symmetric_merged_harmonized_pooled_t17_text_only.yaml",
+            ],
+        ),
+        (
+            {"GEMMA": "1", "MERGED_FAMILY": "pooled_t17"},
+            [
+                "symmetric_merged_harmonized_gemma4_pooled_t17_audio_only.yaml",
+                "symmetric_merged_harmonized_gemma4_pooled_t17_audio_text.yaml",
+                "symmetric_merged_harmonized_gemma4_pooled_t17_text_only.yaml",
+            ],
+        ),
+    ),
+)
+def test_merged_launcher_selects_the_requested_family(
+    tmp_path: Path, extra_env: dict[str, str], expected: list[str]
+) -> None:
+    argv = _launcher_argv(tmp_path, extra_env)
+    assert sorted(_configs_in(argv)) == sorted(expected)
+    for name in expected:
+        assert (MERGED / name).is_file()
+    assert "--smoke-trials" in argv
+    assert argv[argv.index("--smoke-trials") + 1] == "0"
+
+
+def test_merged_launcher_refuses_an_unknown_family(tmp_path: Path) -> None:
+    stub_root = tmp_path / "root"
+    (stub_root / "scripts").mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/submit_harmonized_merged.sh")],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PROJECT_ROOT": str(stub_root),
+            "RUN_ID": "familycheck",
+            "DRY_RUN": "1",
+            "STAGE": "smoke",
+            "GITHUB_ISSUE": "12",
+            "GITHUB_PR": "10",
+            "MERGED_FAMILY": "bogus",
+        },
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 2
+    assert "MERGED_FAMILY" in result.stderr

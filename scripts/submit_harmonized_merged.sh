@@ -17,6 +17,14 @@ case "$DRY_RUN" in 0|1) ;; *) echo "DRY_RUN must be 0 or 1" >&2; exit 2;; esac
 case "$STAGE" in smoke|cv|final) ;; *) echo "STAGE must be smoke, cv, or final" >&2; exit 2;; esac
 case "$GITHUB_ISSUE" in ''|*[!0-9]*|0) echo "GITHUB_ISSUE must be a positive integer." >&2; exit 2;; esac
 case "$GITHUB_PR" in ''|*[!0-9]*|0) echo "GITHUB_PR must be a positive integer." >&2; exit 2;; esac
+# Opt-in merged family. Empty keeps the harmonized_v1 family, which is what every
+# existing campaign submits. pooled_t17 swaps in the pooled question-conditioned
+# Turkish component (harmonized_v2_pooled_t17) and changes nothing else.
+case "${MERGED_FAMILY:-}" in
+    "") FAMILY_SUFFIX="" ;;
+    pooled_t17) FAMILY_SUFFIX="_pooled_t17" ;;
+    *) echo "MERGED_FAMILY must be empty or pooled_t17" >&2; exit 2 ;;
+esac
 if [ "$DRY_RUN" = 0 ]; then
     python - "$PREFLIGHT_AUDIT" "$RUN_ID" <<'PY'
 import json, sys
@@ -32,9 +40,9 @@ args=(
     python "$PROJECT_ROOT/scripts/submit_symmetric_merged.py"
     --stage "$STAGE"
     --run-id "$RUN_ID"
-    --config "$PROJECT_ROOT/configs/experiments/merged/symmetric_merged_harmonized_audio_text.yaml"
-    --config "$PROJECT_ROOT/configs/experiments/merged/symmetric_merged_harmonized_audio_only.yaml"
-    --config "$PROJECT_ROOT/configs/experiments/merged/symmetric_merged_harmonized_text_only.yaml"
+    --config "$PROJECT_ROOT/configs/experiments/merged/symmetric_merged_harmonized${FAMILY_SUFFIX}_audio_text.yaml"
+    --config "$PROJECT_ROOT/configs/experiments/merged/symmetric_merged_harmonized${FAMILY_SUFFIX}_audio_only.yaml"
+    --config "$PROJECT_ROOT/configs/experiments/merged/symmetric_merged_harmonized${FAMILY_SUFFIX}_text_only.yaml"
     --smoke-trials 0
     --max-concurrent-trains "$MAX_CONCURRENT_TRAINS"
     --max-concurrent-postprocess "$MAX_CONCURRENT_POSTPROCESS"
@@ -48,9 +56,9 @@ if [ "${GEMMA:-0}" = "1" ]; then
         python "$PROJECT_ROOT/scripts/submit_symmetric_merged.py"
         --stage "$STAGE"
         --run-id "$RUN_ID"
-        --config "$PROJECT_ROOT/configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_text.yaml"
-        --config "$PROJECT_ROOT/configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_only.yaml"
-        --config "$PROJECT_ROOT/configs/experiments/merged/symmetric_merged_harmonized_gemma4_text_only.yaml"
+        --config "$PROJECT_ROOT/configs/experiments/merged/symmetric_merged_harmonized_gemma4${FAMILY_SUFFIX}_audio_text.yaml"
+        --config "$PROJECT_ROOT/configs/experiments/merged/symmetric_merged_harmonized_gemma4${FAMILY_SUFFIX}_audio_only.yaml"
+        --config "$PROJECT_ROOT/configs/experiments/merged/symmetric_merged_harmonized_gemma4${FAMILY_SUFFIX}_text_only.yaml"
         --smoke-trials 0
         --max-concurrent-trains "$MAX_CONCURRENT_TRAINS"
         --max-concurrent-postprocess "$MAX_CONCURRENT_POSTPROCESS"
