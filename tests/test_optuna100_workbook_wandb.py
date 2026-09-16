@@ -87,6 +87,8 @@ def test_workbook_regeneration_keeps_compact_sheet_set_with_qwen_vs_gemma() -> N
         "Turkish Pooled QCond",
         "DAIC Packed30 Family",
         "Provenance",
+        "Significance Summary",
+        "Significance Full",
     ]
     sheet = workbook["Qwen vs Gemma"]
     value_cells = []

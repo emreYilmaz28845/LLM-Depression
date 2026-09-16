@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: feat-significance-tests-v2-20260913
+slug: significance-tests-v2
+tier: 2
+branch: agent/feat-significance-tests-v2
+worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-feat-significance-tests-v2
+parent_branch: agent/feat-significance-tests
+parent_sha: 957b346cd4d28f4763ae978da46567be1cdb9e88
+created_at_utc: "2026-09-13T15:47:28Z"
+experiment_group_path: null
+type: complementary

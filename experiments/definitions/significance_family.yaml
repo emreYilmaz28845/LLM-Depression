@@ -1,0 +1,2809 @@
+schema_version: audiollm.significance_family.v1
+analysis_status: retrospective_exploratory
+frozen_for_final_rerun: '2026-09-13'
+alpha: 0.05
+iterations: 1000000
+max_iterations: 10000000
+bootstrap_iterations: 100000
+seed: 1337
+metrics:
+- macro_f1
+- positive_f1
+- macro_recall
+metric_notes:
+  macro_f1: single primary metric
+  positive_f1: supporting effect-size metric; Depressed is positive
+  macro_recall: supporting UAR effect-size metric (unweighted average recall = balanced accuracy)
+tests:
+  metric_primary: paired_prediction_swap_permutation (two-sided; exact for single-seed binary predictions)
+  effect_size: observed comparison-minus-baseline delta with unadjusted subject-cluster bootstrap 95% CI
+  mcnemar_primary: exact_mcnemar correctness view
+  correction: Macro-F1 Holm within pre-specified scientific contrast families; McNemar corrected separately within the same families; broad joint-block and global Holm retained as conservative sensitivity views
+family_contract:
+  F1_backbone: dataset x fixed prediction route x fixed transcript condition; available modalities are members
+  F2_translation: dataset x backbone x prediction route; Text and Audio+Text are members when available
+  F3_route: dataset x modality x backbone x transcript condition; available route pairs are members
+  F4_training_regime: dataset x modality x backbone x prediction route; one standalone-vs-merged comparison is normally a singleton
+  F5_recipe: modality x backbone x prediction method; available DAIC recipe pairs are members
+  metric_rule: Macro-F1, Positive-F1, and UAR are corrected separately using identical family membership
+  test_rule: paired prediction-swap and McNemar corrections are separate
+pairing: subject (subject_id); identical subject sets and labels required on both sides
+aggregation: pooled out-of-fold subject predictions; the deck headline cells are unweighted fold means
+excluded:
+- 'Turkish standalone-versus-merged: standalone uses the pooled positive+negative-question input while the merged model used
+  the positive-question-only input'
+- 'Merged XGBoost: the merged optuna100 artifacts carry per-dataset metrics but no per-subject predictions'
+- 'Literature rows: the compared papers publish no per-subject predictions'
+- 'Cross-corpus comparisons: different subjects'
+generated_families:
+- id: model_qwen_vs_gemma4_hidden_routes
+  kind: backbone_same_route
+  description: Same native corpus, input, and hidden-head route; backbone changes.
+  datasets: [d3tec, androids_interview, cmdc, turkish, daic]
+  modalities: [audio_text, audio_only, text_only]
+  routes: [logreg, xgb_optuna100]
+  condition: native
+- id: native_vs_english_hidden_heads_three_seed
+  kind: native_en_hidden_heads
+  description: Standalone, merged-CV, and final-test three-seed hidden-head comparisons shown in the deck.
+families:
+- id: model_qwen_vs_gemma4_teacher_forced
+  description: 'Headline route, native transcript: does one backbone beat the other on the same subjects?'
+  comparisons:
+  - id: D3TEC|A+T|Qwen vs Gemma 4
+    dataset: d3tec
+    description: 'D3TEC A+T: Qwen vs Gemma 4, teacher-forced, native transcript'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+  - id: D3TEC|A|Qwen vs Gemma 4
+    dataset: d3tec
+    description: 'D3TEC A: Qwen vs Gemma 4, teacher-forced, native transcript'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+  - id: D3TEC|T|Qwen vs Gemma 4
+    dataset: d3tec
+    description: 'D3TEC T: Qwen vs Gemma 4, teacher-forced, native transcript'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+  - id: Androids|A+T|Qwen vs Gemma 4
+    dataset: androids_interview
+    description: 'Androids A+T: Qwen vs Gemma 4, teacher-forced, native transcript'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+  - id: Androids|A|Qwen vs Gemma 4
+    dataset: androids_interview
+    description: 'Androids A: Qwen vs Gemma 4, teacher-forced, native transcript'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+  - id: Androids|T|Qwen vs Gemma 4
+    dataset: androids_interview
+    description: 'Androids T: Qwen vs Gemma 4, teacher-forced, native transcript'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+  - id: CMDC|A+T|Qwen vs Gemma 4
+    dataset: cmdc
+    description: 'CMDC A+T: Qwen vs Gemma 4, teacher-forced, native transcript'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+  - id: CMDC|A|Qwen vs Gemma 4
+    dataset: cmdc
+    description: 'CMDC A: Qwen vs Gemma 4, teacher-forced, native transcript'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+  - id: CMDC|T|Qwen vs Gemma 4
+    dataset: cmdc
+    description: 'CMDC T: Qwen vs Gemma 4, teacher-forced, native transcript'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: text_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+  - id: Turkish|A+T|Qwen vs Gemma 4
+    dataset: turkish
+    description: 'Turkish A+T: Qwen vs Gemma 4, teacher-forced, native transcript'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+  - id: Turkish|A|Qwen vs Gemma 4
+    dataset: turkish
+    description: 'Turkish A: Qwen vs Gemma 4, teacher-forced, native transcript'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+  - id: Turkish|T|Qwen vs Gemma 4
+    dataset: turkish
+    description: 'Turkish T: Qwen vs Gemma 4, teacher-forced, native transcript'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+  - id: DAIC|A+T|Qwen vs Gemma 4
+    dataset: daic
+    description: 'DAIC A+T: Qwen vs Gemma 4, teacher-forced, native transcript'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: daic
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+  - id: DAIC|A|Qwen vs Gemma 4
+    dataset: daic
+    description: 'DAIC A: Qwen vs Gemma 4, teacher-forced, native transcript'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: daic
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+  - id: DAIC|T|Qwen vs Gemma 4
+    dataset: daic
+    description: 'DAIC T: Qwen vs Gemma 4, teacher-forced, native transcript'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: text_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: daic
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+- id: route_pairs_native
+  description: 'Same backbone and subjects: does the prediction route change the subject decisions? All pairs are within one
+    corpus, modality, model and transcript condition.'
+  comparisons:
+  - id: D3TEC|A+T|Qwen|teacher-forced vs LogReg
+    dataset: d3tec
+    description: 'D3TEC A+T Qwen: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: logreg
+  - id: D3TEC|A+T|Qwen|LogReg vs XGB-100
+    dataset: d3tec
+    description: 'D3TEC A+T Qwen: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: D3TEC|A+T|Qwen|teacher-forced vs XGB-100
+    dataset: d3tec
+    description: 'D3TEC A+T Qwen: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: D3TEC|A+T|Gemma 4|teacher-forced vs LogReg
+    dataset: d3tec
+    description: 'D3TEC A+T Gemma 4: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: logreg
+  - id: D3TEC|A+T|Gemma 4|LogReg vs XGB-100
+    dataset: d3tec
+    description: 'D3TEC A+T Gemma 4: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: D3TEC|A+T|Gemma 4|teacher-forced vs XGB-100
+    dataset: d3tec
+    description: 'D3TEC A+T Gemma 4: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: D3TEC|A|Qwen|teacher-forced vs LogReg
+    dataset: d3tec
+    description: 'D3TEC A Qwen: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: logreg
+  - id: D3TEC|A|Qwen|LogReg vs XGB-100
+    dataset: d3tec
+    description: 'D3TEC A Qwen: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: D3TEC|A|Qwen|teacher-forced vs XGB-100
+    dataset: d3tec
+    description: 'D3TEC A Qwen: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: D3TEC|A|Gemma 4|teacher-forced vs LogReg
+    dataset: d3tec
+    description: 'D3TEC A Gemma 4: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: logreg
+  - id: D3TEC|A|Gemma 4|LogReg vs XGB-100
+    dataset: d3tec
+    description: 'D3TEC A Gemma 4: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: D3TEC|A|Gemma 4|teacher-forced vs XGB-100
+    dataset: d3tec
+    description: 'D3TEC A Gemma 4: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: D3TEC|T|Qwen|teacher-forced vs LogReg
+    dataset: d3tec
+    description: 'D3TEC T Qwen: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: qwen
+      route: logreg
+  - id: D3TEC|T|Qwen|LogReg vs XGB-100
+    dataset: d3tec
+    description: 'D3TEC T Qwen: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: D3TEC|T|Qwen|teacher-forced vs XGB-100
+    dataset: d3tec
+    description: 'D3TEC T Qwen: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: D3TEC|T|Gemma 4|teacher-forced vs LogReg
+    dataset: d3tec
+    description: 'D3TEC T Gemma 4: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: logreg
+  - id: D3TEC|T|Gemma 4|LogReg vs XGB-100
+    dataset: d3tec
+    description: 'D3TEC T Gemma 4: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: D3TEC|T|Gemma 4|teacher-forced vs XGB-100
+    dataset: d3tec
+    description: 'D3TEC T Gemma 4: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: Androids|A+T|Qwen|teacher-forced vs LogReg
+    dataset: androids_interview
+    description: 'Androids A+T Qwen: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: logreg
+  - id: Androids|A+T|Qwen|LogReg vs XGB-100
+    dataset: androids_interview
+    description: 'Androids A+T Qwen: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: Androids|A+T|Qwen|teacher-forced vs XGB-100
+    dataset: androids_interview
+    description: 'Androids A+T Qwen: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: Androids|A+T|Gemma 4|teacher-forced vs LogReg
+    dataset: androids_interview
+    description: 'Androids A+T Gemma 4: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: logreg
+  - id: Androids|A+T|Gemma 4|LogReg vs XGB-100
+    dataset: androids_interview
+    description: 'Androids A+T Gemma 4: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: Androids|A+T|Gemma 4|teacher-forced vs XGB-100
+    dataset: androids_interview
+    description: 'Androids A+T Gemma 4: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: Androids|A|Qwen|teacher-forced vs LogReg
+    dataset: androids_interview
+    description: 'Androids A Qwen: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: logreg
+  - id: Androids|A|Qwen|LogReg vs XGB-100
+    dataset: androids_interview
+    description: 'Androids A Qwen: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: Androids|A|Qwen|teacher-forced vs XGB-100
+    dataset: androids_interview
+    description: 'Androids A Qwen: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: Androids|A|Gemma 4|teacher-forced vs LogReg
+    dataset: androids_interview
+    description: 'Androids A Gemma 4: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: logreg
+  - id: Androids|A|Gemma 4|LogReg vs XGB-100
+    dataset: androids_interview
+    description: 'Androids A Gemma 4: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: Androids|A|Gemma 4|teacher-forced vs XGB-100
+    dataset: androids_interview
+    description: 'Androids A Gemma 4: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: Androids|T|Qwen|teacher-forced vs LogReg
+    dataset: androids_interview
+    description: 'Androids T Qwen: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: qwen
+      route: logreg
+  - id: Androids|T|Qwen|LogReg vs XGB-100
+    dataset: androids_interview
+    description: 'Androids T Qwen: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: Androids|T|Qwen|teacher-forced vs XGB-100
+    dataset: androids_interview
+    description: 'Androids T Qwen: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: Androids|T|Gemma 4|teacher-forced vs LogReg
+    dataset: androids_interview
+    description: 'Androids T Gemma 4: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: logreg
+  - id: Androids|T|Gemma 4|LogReg vs XGB-100
+    dataset: androids_interview
+    description: 'Androids T Gemma 4: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: Androids|T|Gemma 4|teacher-forced vs XGB-100
+    dataset: androids_interview
+    description: 'Androids T Gemma 4: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: CMDC|A+T|Qwen|teacher-forced vs LogReg
+    dataset: cmdc
+    description: 'CMDC A+T Qwen: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: logreg
+  - id: CMDC|A+T|Qwen|LogReg vs XGB-100
+    dataset: cmdc
+    description: 'CMDC A+T Qwen: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: CMDC|A+T|Qwen|teacher-forced vs XGB-100
+    dataset: cmdc
+    description: 'CMDC A+T Qwen: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: CMDC|A+T|Gemma 4|teacher-forced vs LogReg
+    dataset: cmdc
+    description: 'CMDC A+T Gemma 4: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: logreg
+  - id: CMDC|A+T|Gemma 4|LogReg vs XGB-100
+    dataset: cmdc
+    description: 'CMDC A+T Gemma 4: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: CMDC|A+T|Gemma 4|teacher-forced vs XGB-100
+    dataset: cmdc
+    description: 'CMDC A+T Gemma 4: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: CMDC|A|Qwen|teacher-forced vs LogReg
+    dataset: cmdc
+    description: 'CMDC A Qwen: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: logreg
+  - id: CMDC|A|Qwen|LogReg vs XGB-100
+    dataset: cmdc
+    description: 'CMDC A Qwen: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: CMDC|A|Qwen|teacher-forced vs XGB-100
+    dataset: cmdc
+    description: 'CMDC A Qwen: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: CMDC|A|Gemma 4|teacher-forced vs LogReg
+    dataset: cmdc
+    description: 'CMDC A Gemma 4: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: logreg
+  - id: CMDC|A|Gemma 4|LogReg vs XGB-100
+    dataset: cmdc
+    description: 'CMDC A Gemma 4: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: CMDC|A|Gemma 4|teacher-forced vs XGB-100
+    dataset: cmdc
+    description: 'CMDC A Gemma 4: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: CMDC|T|Qwen|teacher-forced vs LogReg
+    dataset: cmdc
+    description: 'CMDC T Qwen: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: text_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: text_only
+      condition: native
+      model: qwen
+      route: logreg
+  - id: CMDC|T|Qwen|LogReg vs XGB-100
+    dataset: cmdc
+    description: 'CMDC T Qwen: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: text_only
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: text_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: CMDC|T|Qwen|teacher-forced vs XGB-100
+    dataset: cmdc
+    description: 'CMDC T Qwen: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: text_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: text_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: CMDC|T|Gemma 4|teacher-forced vs LogReg
+    dataset: cmdc
+    description: 'CMDC T Gemma 4: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: logreg
+  - id: CMDC|T|Gemma 4|LogReg vs XGB-100
+    dataset: cmdc
+    description: 'CMDC T Gemma 4: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: CMDC|T|Gemma 4|teacher-forced vs XGB-100
+    dataset: cmdc
+    description: 'CMDC T Gemma 4: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: cmdc
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: Turkish|A+T|Qwen|teacher-forced vs LogReg
+    dataset: turkish
+    description: 'Turkish A+T Qwen: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: logreg
+  - id: Turkish|A+T|Qwen|LogReg vs XGB-100
+    dataset: turkish
+    description: 'Turkish A+T Qwen: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: Turkish|A+T|Qwen|teacher-forced vs XGB-100
+    dataset: turkish
+    description: 'Turkish A+T Qwen: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: Turkish|A+T|Gemma 4|teacher-forced vs LogReg
+    dataset: turkish
+    description: 'Turkish A+T Gemma 4: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: logreg
+  - id: Turkish|A+T|Gemma 4|LogReg vs XGB-100
+    dataset: turkish
+    description: 'Turkish A+T Gemma 4: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: Turkish|A+T|Gemma 4|teacher-forced vs XGB-100
+    dataset: turkish
+    description: 'Turkish A+T Gemma 4: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: Turkish|A|Qwen|teacher-forced vs LogReg
+    dataset: turkish
+    description: 'Turkish A Qwen: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: logreg
+  - id: Turkish|A|Qwen|LogReg vs XGB-100
+    dataset: turkish
+    description: 'Turkish A Qwen: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: Turkish|A|Qwen|teacher-forced vs XGB-100
+    dataset: turkish
+    description: 'Turkish A Qwen: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: Turkish|A|Gemma 4|teacher-forced vs LogReg
+    dataset: turkish
+    description: 'Turkish A Gemma 4: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: logreg
+  - id: Turkish|A|Gemma 4|LogReg vs XGB-100
+    dataset: turkish
+    description: 'Turkish A Gemma 4: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: Turkish|A|Gemma 4|teacher-forced vs XGB-100
+    dataset: turkish
+    description: 'Turkish A Gemma 4: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: Turkish|T|Qwen|teacher-forced vs LogReg
+    dataset: turkish
+    description: 'Turkish T Qwen: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: qwen
+      route: logreg
+  - id: Turkish|T|Qwen|LogReg vs XGB-100
+    dataset: turkish
+    description: 'Turkish T Qwen: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: Turkish|T|Qwen|teacher-forced vs XGB-100
+    dataset: turkish
+    description: 'Turkish T Qwen: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: Turkish|T|Gemma 4|teacher-forced vs LogReg
+    dataset: turkish
+    description: 'Turkish T Gemma 4: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: logreg
+  - id: Turkish|T|Gemma 4|LogReg vs XGB-100
+    dataset: turkish
+    description: 'Turkish T Gemma 4: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: Turkish|T|Gemma 4|teacher-forced vs XGB-100
+    dataset: turkish
+    description: 'Turkish T Gemma 4: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: DAIC|A+T|Qwen|teacher-forced vs LogReg
+    dataset: daic
+    description: 'DAIC A+T Qwen: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: daic
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: logreg
+  - id: DAIC|A+T|Qwen|LogReg vs XGB-100
+    dataset: daic
+    description: 'DAIC A+T Qwen: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: daic
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: DAIC|A+T|Qwen|teacher-forced vs XGB-100
+    dataset: daic
+    description: 'DAIC A+T Qwen: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: daic
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: DAIC|A+T|Gemma 4|teacher-forced vs LogReg
+    dataset: daic
+    description: 'DAIC A+T Gemma 4: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: daic
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: logreg
+  - id: DAIC|A+T|Gemma 4|LogReg vs XGB-100
+    dataset: daic
+    description: 'DAIC A+T Gemma 4: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: daic
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: DAIC|A+T|Gemma 4|teacher-forced vs XGB-100
+    dataset: daic
+    description: 'DAIC A+T Gemma 4: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: daic
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: DAIC|A|Qwen|teacher-forced vs LogReg
+    dataset: daic
+    description: 'DAIC A Qwen: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: daic
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: logreg
+  - id: DAIC|A|Qwen|LogReg vs XGB-100
+    dataset: daic
+    description: 'DAIC A Qwen: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: daic
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: DAIC|A|Qwen|teacher-forced vs XGB-100
+    dataset: daic
+    description: 'DAIC A Qwen: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: daic
+      modality: audio_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: DAIC|A|Gemma 4|teacher-forced vs LogReg
+    dataset: daic
+    description: 'DAIC A Gemma 4: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: daic
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: logreg
+  - id: DAIC|A|Gemma 4|LogReg vs XGB-100
+    dataset: daic
+    description: 'DAIC A Gemma 4: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: daic
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: DAIC|A|Gemma 4|teacher-forced vs XGB-100
+    dataset: daic
+    description: 'DAIC A Gemma 4: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: daic
+      modality: audio_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: DAIC|T|Qwen|teacher-forced vs LogReg
+    dataset: daic
+    description: 'DAIC T Qwen: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: text_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: daic
+      modality: text_only
+      condition: native
+      model: qwen
+      route: logreg
+  - id: DAIC|T|Qwen|LogReg vs XGB-100
+    dataset: daic
+    description: 'DAIC T Qwen: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: text_only
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: daic
+      modality: text_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: DAIC|T|Qwen|teacher-forced vs XGB-100
+    dataset: daic
+    description: 'DAIC T Qwen: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: text_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: daic
+      modality: text_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+  - id: DAIC|T|Gemma 4|teacher-forced vs LogReg
+    dataset: daic
+    description: 'DAIC T Gemma 4: teacher-forced vs LogReg'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: daic
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: logreg
+  - id: DAIC|T|Gemma 4|LogReg vs XGB-100
+    dataset: daic
+    description: 'DAIC T Gemma 4: LogReg vs XGB-100'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: daic
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+  - id: DAIC|T|Gemma 4|teacher-forced vs XGB-100
+    dataset: daic
+    description: 'DAIC T Gemma 4: teacher-forced vs XGB-100'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: daic
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+- id: native_vs_english_transcript
+  description: Same subjects and audio, transcript language changed; audio-only cells are excluded because they share the
+    native control.
+  comparisons:
+  - id: D3TEC|A+T|Qwen|teacher-forced|native vs English
+    dataset: d3tec
+    description: 'D3TEC A+T Qwen teacher-forced: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: english
+      model: qwen
+      route: teacher_forced
+  - id: D3TEC|A+T|Qwen|LogReg|native vs English
+    dataset: d3tec
+    description: 'D3TEC A+T Qwen LogReg: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: english
+      model: qwen
+      route: logreg
+  - id: D3TEC|A+T|Qwen|XGB-100|native vs English
+    dataset: d3tec
+    description: 'D3TEC A+T Qwen XGB-100: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: english
+      model: qwen
+      route: xgb_optuna100
+  - id: D3TEC|A+T|Gemma 4|teacher-forced|native vs English
+    dataset: d3tec
+    description: 'D3TEC A+T Gemma 4 teacher-forced: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: english
+      model: gemma4
+      route: teacher_forced
+  - id: D3TEC|A+T|Gemma 4|LogReg|native vs English
+    dataset: d3tec
+    description: 'D3TEC A+T Gemma 4 LogReg: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: english
+      model: gemma4
+      route: logreg
+  - id: D3TEC|A+T|Gemma 4|XGB-100|native vs English
+    dataset: d3tec
+    description: 'D3TEC A+T Gemma 4 XGB-100: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: english
+      model: gemma4
+      route: xgb_optuna100
+  - id: D3TEC|T|Qwen|teacher-forced|native vs English
+    dataset: d3tec
+    description: 'D3TEC T Qwen teacher-forced: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: english
+      model: qwen
+      route: teacher_forced
+  - id: D3TEC|T|Qwen|LogReg|native vs English
+    dataset: d3tec
+    description: 'D3TEC T Qwen LogReg: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: english
+      model: qwen
+      route: logreg
+  - id: D3TEC|T|Qwen|XGB-100|native vs English
+    dataset: d3tec
+    description: 'D3TEC T Qwen XGB-100: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: english
+      model: qwen
+      route: xgb_optuna100
+  - id: D3TEC|T|Gemma 4|teacher-forced|native vs English
+    dataset: d3tec
+    description: 'D3TEC T Gemma 4 teacher-forced: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: english
+      model: gemma4
+      route: teacher_forced
+  - id: D3TEC|T|Gemma 4|LogReg|native vs English
+    dataset: d3tec
+    description: 'D3TEC T Gemma 4 LogReg: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: english
+      model: gemma4
+      route: logreg
+  - id: D3TEC|T|Gemma 4|XGB-100|native vs English
+    dataset: d3tec
+    description: 'D3TEC T Gemma 4 XGB-100: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+    comparison:
+      kind: record
+      dataset: d3tec
+      modality: text_only
+      condition: english
+      model: gemma4
+      route: xgb_optuna100
+  - id: Androids|A+T|Qwen|teacher-forced|native vs English
+    dataset: androids_interview
+    description: 'Androids A+T Qwen teacher-forced: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: english
+      model: qwen
+      route: teacher_forced
+  - id: Androids|A+T|Qwen|LogReg|native vs English
+    dataset: androids_interview
+    description: 'Androids A+T Qwen LogReg: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: english
+      model: qwen
+      route: logreg
+  - id: Androids|A+T|Qwen|XGB-100|native vs English
+    dataset: androids_interview
+    description: 'Androids A+T Qwen XGB-100: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: english
+      model: qwen
+      route: xgb_optuna100
+  - id: Androids|A+T|Gemma 4|teacher-forced|native vs English
+    dataset: androids_interview
+    description: 'Androids A+T Gemma 4 teacher-forced: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: english
+      model: gemma4
+      route: teacher_forced
+  - id: Androids|A+T|Gemma 4|LogReg|native vs English
+    dataset: androids_interview
+    description: 'Androids A+T Gemma 4 LogReg: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: english
+      model: gemma4
+      route: logreg
+  - id: Androids|A+T|Gemma 4|XGB-100|native vs English
+    dataset: androids_interview
+    description: 'Androids A+T Gemma 4 XGB-100: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: english
+      model: gemma4
+      route: xgb_optuna100
+  - id: Androids|T|Qwen|teacher-forced|native vs English
+    dataset: androids_interview
+    description: 'Androids T Qwen teacher-forced: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: english
+      model: qwen
+      route: teacher_forced
+  - id: Androids|T|Qwen|LogReg|native vs English
+    dataset: androids_interview
+    description: 'Androids T Qwen LogReg: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: english
+      model: qwen
+      route: logreg
+  - id: Androids|T|Qwen|XGB-100|native vs English
+    dataset: androids_interview
+    description: 'Androids T Qwen XGB-100: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: english
+      model: qwen
+      route: xgb_optuna100
+  - id: Androids|T|Gemma 4|teacher-forced|native vs English
+    dataset: androids_interview
+    description: 'Androids T Gemma 4 teacher-forced: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: english
+      model: gemma4
+      route: teacher_forced
+  - id: Androids|T|Gemma 4|LogReg|native vs English
+    dataset: androids_interview
+    description: 'Androids T Gemma 4 LogReg: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: english
+      model: gemma4
+      route: logreg
+  - id: Androids|T|Gemma 4|XGB-100|native vs English
+    dataset: androids_interview
+    description: 'Androids T Gemma 4 XGB-100: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+    comparison:
+      kind: record
+      dataset: androids_interview
+      modality: text_only
+      condition: english
+      model: gemma4
+      route: xgb_optuna100
+  - id: Turkish|A+T|Qwen|teacher-forced|native vs English
+    dataset: turkish
+    description: 'Turkish A+T Qwen teacher-forced: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: english
+      model: qwen
+      route: teacher_forced
+  - id: Turkish|A+T|Qwen|LogReg|native vs English
+    dataset: turkish
+    description: 'Turkish A+T Qwen LogReg: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: english
+      model: qwen
+      route: logreg
+  - id: Turkish|A+T|Qwen|XGB-100|native vs English
+    dataset: turkish
+    description: 'Turkish A+T Qwen XGB-100: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: english
+      model: qwen
+      route: xgb_optuna100
+  - id: Turkish|A+T|Gemma 4|teacher-forced|native vs English
+    dataset: turkish
+    description: 'Turkish A+T Gemma 4 teacher-forced: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: english
+      model: gemma4
+      route: teacher_forced
+  - id: Turkish|A+T|Gemma 4|LogReg|native vs English
+    dataset: turkish
+    description: 'Turkish A+T Gemma 4 LogReg: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: english
+      model: gemma4
+      route: logreg
+  - id: Turkish|A+T|Gemma 4|XGB-100|native vs English
+    dataset: turkish
+    description: 'Turkish A+T Gemma 4 XGB-100: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: audio_text
+      condition: english
+      model: gemma4
+      route: xgb_optuna100
+  - id: Turkish|T|Qwen|teacher-forced|native vs English
+    dataset: turkish
+    description: 'Turkish T Qwen teacher-forced: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: english
+      model: qwen
+      route: teacher_forced
+  - id: Turkish|T|Qwen|LogReg|native vs English
+    dataset: turkish
+    description: 'Turkish T Qwen LogReg: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: english
+      model: qwen
+      route: logreg
+  - id: Turkish|T|Qwen|XGB-100|native vs English
+    dataset: turkish
+    description: 'Turkish T Qwen XGB-100: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: qwen
+      route: xgb_optuna100
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: english
+      model: qwen
+      route: xgb_optuna100
+  - id: Turkish|T|Gemma 4|teacher-forced|native vs English
+    dataset: turkish
+    description: 'Turkish T Gemma 4 teacher-forced: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: english
+      model: gemma4
+      route: teacher_forced
+  - id: Turkish|T|Gemma 4|LogReg|native vs English
+    dataset: turkish
+    description: 'Turkish T Gemma 4 LogReg: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: english
+      model: gemma4
+      route: logreg
+  - id: Turkish|T|Gemma 4|XGB-100|native vs English
+    dataset: turkish
+    description: 'Turkish T Gemma 4 XGB-100: native versus English-translated transcript'
+    baseline:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: native
+      model: gemma4
+      route: xgb_optuna100
+    comparison:
+      kind: record
+      dataset: turkish
+      modality: text_only
+      condition: english
+      model: gemma4
+      route: xgb_optuna100
+- id: standalone_vs_merged_audio_text
+  description: 'Per-corpus A+T: standalone versus merged. DAIC uses the official test on both sides; CV datasets pool out-of-fold
+    subject predictions.'
+  comparisons:
+  - id: Androids|Qwen|teacher-forced|standalone vs merged
+    dataset: androids_interview
+    description: 'Androids A+T Qwen teacher-forced: standalone model versus the five-dataset merged model'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: merged_cv
+      model: qwen
+      route: teacher_forced
+      modality: audio_text
+      dataset: androids_interview
+  - id: Androids|Qwen|LogReg|standalone vs merged
+    dataset: androids_interview
+    description: 'Androids A+T Qwen LogReg: standalone model versus the five-dataset merged model'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: merged_cv
+      model: qwen
+      route: logreg
+      modality: audio_text
+      dataset: androids_interview
+  - id: Androids|Gemma 4|teacher-forced|standalone vs merged
+    dataset: androids_interview
+    description: 'Androids A+T Gemma 4 teacher-forced: standalone model versus the five-dataset merged model'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: merged_cv
+      model: gemma4
+      route: teacher_forced
+      modality: audio_text
+      dataset: androids_interview
+  - id: Androids|Gemma 4|LogReg|standalone vs merged
+    dataset: androids_interview
+    description: 'Androids A+T Gemma 4 LogReg: standalone model versus the five-dataset merged model'
+    baseline:
+      kind: record
+      dataset: androids_interview
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: merged_cv
+      model: gemma4
+      route: logreg
+      modality: audio_text
+      dataset: androids_interview
+  - id: CMDC|Qwen|teacher-forced|standalone vs merged
+    dataset: cmdc
+    description: 'CMDC A+T Qwen teacher-forced: standalone model versus the five-dataset merged model'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: merged_cv
+      model: qwen
+      route: teacher_forced
+      modality: audio_text
+      dataset: cmdc
+  - id: CMDC|Qwen|LogReg|standalone vs merged
+    dataset: cmdc
+    description: 'CMDC A+T Qwen LogReg: standalone model versus the five-dataset merged model'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: merged_cv
+      model: qwen
+      route: logreg
+      modality: audio_text
+      dataset: cmdc
+  - id: CMDC|Gemma 4|teacher-forced|standalone vs merged
+    dataset: cmdc
+    description: 'CMDC A+T Gemma 4 teacher-forced: standalone model versus the five-dataset merged model'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: merged_cv
+      model: gemma4
+      route: teacher_forced
+      modality: audio_text
+      dataset: cmdc
+  - id: CMDC|Gemma 4|LogReg|standalone vs merged
+    dataset: cmdc
+    description: 'CMDC A+T Gemma 4 LogReg: standalone model versus the five-dataset merged model'
+    baseline:
+      kind: record
+      dataset: cmdc
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: merged_cv
+      model: gemma4
+      route: logreg
+      modality: audio_text
+      dataset: cmdc
+  - id: D3TEC|Qwen|teacher-forced|standalone vs merged
+    dataset: d3tec
+    description: 'D3TEC A+T Qwen teacher-forced: standalone model versus the five-dataset merged model'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: merged_cv
+      model: qwen
+      route: teacher_forced
+      modality: audio_text
+      dataset: d3tec
+  - id: D3TEC|Qwen|LogReg|standalone vs merged
+    dataset: d3tec
+    description: 'D3TEC A+T Qwen LogReg: standalone model versus the five-dataset merged model'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: merged_cv
+      model: qwen
+      route: logreg
+      modality: audio_text
+      dataset: d3tec
+  - id: D3TEC|Gemma 4|teacher-forced|standalone vs merged
+    dataset: d3tec
+    description: 'D3TEC A+T Gemma 4 teacher-forced: standalone model versus the five-dataset merged model'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: merged_cv
+      model: gemma4
+      route: teacher_forced
+      modality: audio_text
+      dataset: d3tec
+  - id: D3TEC|Gemma 4|LogReg|standalone vs merged
+    dataset: d3tec
+    description: 'D3TEC A+T Gemma 4 LogReg: standalone model versus the five-dataset merged model'
+    baseline:
+      kind: record
+      dataset: d3tec
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: merged_cv
+      model: gemma4
+      route: logreg
+      modality: audio_text
+      dataset: d3tec
+  - id: DAIC|Qwen|teacher-forced|standalone vs merged
+    dataset: daic
+    description: 'DAIC A+T Qwen teacher-forced: standalone model versus the five-dataset merged model'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: teacher_forced
+    comparison:
+      kind: merged_final
+      model: qwen
+      route: teacher_forced
+      modality: audio_text
+  - id: DAIC|Qwen|LogReg|standalone vs merged
+    dataset: daic
+    description: 'DAIC A+T Qwen LogReg: standalone model versus the five-dataset merged model'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: audio_text
+      condition: native
+      model: qwen
+      route: logreg
+    comparison:
+      kind: merged_final
+      model: qwen
+      route: logreg
+      modality: audio_text
+  - id: DAIC|Gemma 4|teacher-forced|standalone vs merged
+    dataset: daic
+    description: 'DAIC A+T Gemma 4 teacher-forced: standalone model versus the five-dataset merged model'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: teacher_forced
+    comparison:
+      kind: merged_final
+      model: gemma4
+      route: teacher_forced
+      modality: audio_text
+  - id: DAIC|Gemma 4|LogReg|standalone vs merged
+    dataset: daic
+    description: 'DAIC A+T Gemma 4 LogReg: standalone model versus the five-dataset merged model'
+    baseline:
+      kind: record
+      dataset: daic
+      modality: audio_text
+      condition: native
+      model: gemma4
+      route: logreg
+    comparison:
+      kind: merged_final
+      model: gemma4
+      route: logreg
+      modality: audio_text
+- id: joint_k4_v1_vs_runtime
+  description: 'Historical packed30 family: does the joint-K4 construction change the official-test decisions? Recipes differ
+    beyond K, so this is not a K-only ablation.'
+  comparisons:
+  - id: DAIC|A+T|TF|packed30 v1 vs joint-K4
+    dataset: daic
+    description: 'DAIC A+T TF: packed30 v1 versus runtime joint-K4'
+    baseline:
+      kind: joint_k4
+      key: v1
+      modality: audio_text
+      route: TF
+    comparison:
+      kind: joint_k4
+      key: runtime_joint
+      modality: audio_text
+      route: TF
+  - id: DAIC|A+T|LogReg|packed30 v1 vs joint-K4
+    dataset: daic
+    description: 'DAIC A+T LogReg: packed30 v1 versus runtime joint-K4'
+    baseline:
+      kind: joint_k4
+      key: v1
+      modality: audio_text
+      route: LogReg
+    comparison:
+      kind: joint_k4
+      key: runtime_joint
+      modality: audio_text
+      route: LogReg
+  - id: DAIC|A+T|XGB-raw|packed30 v1 vs joint-K4
+    dataset: daic
+    description: 'DAIC A+T XGB-raw: packed30 v1 versus runtime joint-K4'
+    baseline:
+      kind: joint_k4
+      key: v1
+      modality: audio_text
+      route: XGB-raw
+    comparison:
+      kind: joint_k4
+      key: runtime_joint
+      modality: audio_text
+      route: XGB-raw
+  - id: DAIC|A|TF|packed30 v1 vs joint-K4
+    dataset: daic
+    description: 'DAIC A TF: packed30 v1 versus runtime joint-K4'
+    baseline:
+      kind: joint_k4
+      key: v1
+      modality: audio_only
+      route: TF
+    comparison:
+      kind: joint_k4
+      key: runtime_joint
+      modality: audio_only
+      route: TF
+  - id: DAIC|A|LogReg|packed30 v1 vs joint-K4
+    dataset: daic
+    description: 'DAIC A LogReg: packed30 v1 versus runtime joint-K4'
+    baseline:
+      kind: joint_k4
+      key: v1
+      modality: audio_only
+      route: LogReg
+    comparison:
+      kind: joint_k4
+      key: runtime_joint
+      modality: audio_only
+      route: LogReg
+  - id: DAIC|A|XGB-raw|packed30 v1 vs joint-K4
+    dataset: daic
+    description: 'DAIC A XGB-raw: packed30 v1 versus runtime joint-K4'
+    baseline:
+      kind: joint_k4
+      key: v1
+      modality: audio_only
+      route: XGB-raw
+    comparison:
+      kind: joint_k4
+      key: runtime_joint
+      modality: audio_only
+      route: XGB-raw
+- id: daic_official_development_backbone
+  description: DAIC official-development A+T teacher-forced comparison shown in the literature lane.
+  comparisons:
+  - id: DAIC official development|A+T|Qwen vs Gemma 4
+    dataset: daic
+    description: Same 35-subject official-development endpoint and subject-level contract.
+    baseline:
+      kind: path
+      dataset: daic
+      path: /home/emre/Projects/AudioLLM/LLM-Depression/output_model/harmonized_v1_officialdev/audio_text/daic/daic_officialdev_qwen_audio_text_seed1337_prod_20260813T150000Z_22f85e6e_22f85e6e/fold_0/best_model/standalone_eval/predictions_subject_level.csv
+    comparison:
+      kind: path
+      dataset: daic
+      path: /home/emre/Projects/AudioLLM/LLM-Depression/output_model/harmonized_v1_gemma4_officialdev/audio_text/daic/daic_officialdev_gemma4_audio_text_seed1337_prod_20260813T150000Z_22f85e6e_22f85e6e/fold_0/best_model/standalone_eval/predictions_subject_level.csv

@@ -17,12 +17,13 @@ Modes:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
 from typing import Any
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
@@ -3617,6 +3618,114 @@ def validate_selected_results(selected_results: Path, cell_values: dict[tuple[st
     return (not mismatches, report)
 
 
+def _load_significance_report(path: Path) -> tuple[dict[str, Any], str]:
+    raw = path.read_bytes()
+    payload = json.loads(raw)
+    if payload.get("schema_version") != "audiollm.significance_report.v1":
+        raise ValueError(f"unsupported significance report schema in {path}")
+    if payload.get("analysis_status") != "retrospective_exploratory":
+        raise ValueError("significance report must identify the analysis as retrospective_exploratory")
+    expected = ["macro_f1", "positive_f1", "macro_recall"]
+    if payload.get("metrics") != expected or payload.get("primary_metric") != "macro_f1":
+        raise ValueError(f"significance report must use Macro-F1 as primary and contain: {expected}")
+    return payload, hashlib.sha256(raw).hexdigest()
+
+
+def build_significance_sheets(wb: Workbook, report_path: Path) -> None:
+    """Add reader-facing and audit-grain significance tables from one report."""
+    payload, report_sha = _load_significance_report(report_path)
+    alpha = float(payload["alpha"])
+
+    ws = wb.create_sheet("Significance Summary")
+    _title(ws, "Retrospective significance summary", 12)
+    _note(
+        ws, 2,
+        "One row represents one paired comparison. Macro-F1 is primary with Holm correction inside each "
+        "scientific contrast family. Positive-F1 and UAR are supporting. McNemar is corrected separately. "
+        "Bootstrap intervals are unadjusted. This is retrospective exploratory analysis.",
+        12, height=48,
+    )
+    headers = [
+        "Block", "Comparison", "Dataset", "n", "Δ Macro-F1", "Primary Holm", "Δ Positive-F1", "Support Holm",
+        "Δ UAR", "Support Holm", "McNemar b/c", "McNemar family Holm",
+    ]
+    _header_row(ws, 4, headers)
+    row_index = 5
+    metric_order = ["macro_f1", "positive_f1", "macro_recall"]
+    for block in payload["results"]["blocks"]:
+        for comparison in block["comparisons"]:
+            values: list[Any] = [
+                block["id"], comparison["id"], comparison.get("dataset"), comparison["n_subjects"]
+            ]
+            significant = False
+            for metric in metric_order:
+                result = comparison["metrics"][metric]["permutation"]
+                adjusted = result["p_value_holm_family"]
+                significant = significant or (metric == "macro_f1" and adjusted <= alpha)
+                values.extend([result["observed_delta"], adjusted])
+            mc = comparison["mcnemar"]
+            if mc["status"] == "tested":
+                values.extend([
+                    f"{mc['baseline_only_correct']}/{mc['comparison_only_correct']}",
+                    mc["p_value_holm_primary_family"],
+                ])
+                significant = significant or mc["p_value_holm_primary_family"] <= alpha
+            else:
+                values.extend([mc.get("reason", "not identifiable"), None])
+            for column, value in enumerate(values, start=1):
+                _body_cell(ws, row_index, column, value, fmt="0.000000" if isinstance(value, float) else None)
+            if significant:
+                for column in range(1, len(headers) + 1):
+                    ws.cell(row_index, column).fill = POS_FILL
+            row_index += 1
+    _note(ws, row_index + 1, f"Report: {report_path}; sha256={report_sha}", 12, height=32)
+    _widths(ws, {"A": 30, "B": 54, "C": 18, "D": 8, "E": 15, "F": 13, "G": 17, "H": 13,
+                 "I": 13, "J": 13, "K": 18, "L": 18})
+    ws.freeze_panes = "A5"
+    ws.auto_filter.ref = f"A4:L{row_index - 1}"
+
+    ws = wb.create_sheet("Significance Full")
+    _title(ws, "Significance audit table", 18)
+    _note(
+        ws, 2,
+        "One row represents one comparison × metric result. Exact observed deltas are shown with unadjusted "
+        "subject-cluster bootstrap intervals. File paths and hashes remain authoritative in the JSON report.",
+        18, height=40,
+    )
+    headers = [
+        "Block", "Comparison", "Dataset", "n", "Seeds", "Metric", "Observed Δ", "CI low", "CI high",
+        "Test", "Raw p", "Within-metric family Holm", "Metric-block sensitivity", "Global Holm", "McNemar status",
+        "McNemar b", "McNemar c", "McNemar raw p",
+    ]
+    _header_row(ws, 4, headers)
+    row_index = 5
+    for block in payload["results"]["blocks"]:
+        for comparison in block["comparisons"]:
+            mc = comparison["mcnemar"]
+            for metric in metric_order:
+                result = comparison["metrics"][metric]
+                perm, boot = result["permutation"], result["bootstrap"]
+                values = [
+                    block["id"], comparison["id"], comparison.get("dataset"), comparison["n_subjects"],
+                    comparison["n_seeds"], metric, perm["observed_delta"], boot["ci_low"], boot["ci_high"],
+                    perm["method"], perm["p_value"], perm["p_value_holm_family"],
+                    perm["p_value_holm_metric_block"], perm["p_value_holm_global"], mc["status"],
+                    mc.get("baseline_only_correct"), mc.get("comparison_only_correct"), mc.get("p_value"),
+                ]
+                for column, value in enumerate(values, start=1):
+                    _body_cell(ws, row_index, column, value, fmt="0.000000" if isinstance(value, float) else None)
+                if metric == "macro_f1" and perm.get("primary_significant", False):
+                    for column in range(1, len(headers) + 1):
+                        ws.cell(row_index, column).fill = POS_FILL
+                row_index += 1
+    _note(ws, row_index + 1, f"Report: {report_path}; sha256={report_sha}", 18, height=32)
+    _widths(ws, {"A": 30, "B": 54, "C": 18, "D": 8, "E": 8, "F": 18, "G": 14, "H": 14,
+                 "I": 14, "J": 26, "K": 13, "L": 17, "M": 17, "N": 14, "O": 18,
+                 "P": 12, "Q": 12, "R": 16})
+    ws.freeze_panes = "A5"
+    ws.auto_filter.ref = f"A4:R{row_index - 1}"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=None,
@@ -3639,6 +3748,17 @@ def main() -> None:
         "--turkish-pooled-qcond-report",
         default=None,
         help="validated Turkish pooled question-conditioned report JSON used for its new workbook sheet",
+    )
+    parser.add_argument(
+        "--significance-report",
+        default=None,
+        help="validated retrospective significance report; adds summary and full audit sheets",
+    )
+    parser.add_argument(
+        "--significance-base-workbook",
+        default=None,
+        help=("preserve every existing sheet in this workbook and replace only its significance sheets; "
+              "requires --significance-report"),
     )
     args = parser.parse_args()
     detailed = args.detailed
@@ -3706,6 +3826,20 @@ def main() -> None:
               f"legacy_unmigrated={sum(1 for line in report if line.startswith('legacy-unmigrated:'))}")
         return 0 if ok else 1
 
+    if args.significance_base_workbook is not None:
+        if args.significance_report is None:
+            parser.error("--significance-base-workbook requires --significance-report")
+        wb = load_workbook(Path(args.significance_base_workbook))
+        for sheet_name in ("Significance Summary", "Significance Full"):
+            if sheet_name in wb.sheetnames:
+                del wb[sheet_name]
+        build_significance_sheets(wb, Path(args.significance_report))
+        out = args.output or OUT
+        out.parent.mkdir(parents=True, exist_ok=True)
+        wb.save(out)
+        print(f"wrote {out}")
+        return 0
+
     wb = Workbook()
     wb.remove(wb.active)
     _load_merged_per_dataset_foldmeans()
@@ -3729,6 +3863,8 @@ def main() -> None:
         turkish_question_condition_report_path=turkish_question_condition_report_path,
         turkish_pooled_qcond_report_path=turkish_pooled_qcond_report_path,
     )
+    if args.significance_report is not None:
+        build_significance_sheets(wb, Path(args.significance_report))
     out = args.output or (OUT_DETAILED if detailed else OUT)
     out.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out)
