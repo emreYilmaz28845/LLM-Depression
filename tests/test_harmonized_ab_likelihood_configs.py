@@ -51,8 +51,12 @@ def test_core_ab_family_preserves_harmonized_data_and_training_recipe() -> None:
         expected = deepcopy(baselines[key])
         expected["recipe_id"] = RECIPE
         expected["labels"] = LABELS
-        expected["output_dirs"]["run_root"] = expected["output_dirs"]["run_root"].replace(
-            "/output_model/harmonized_v1/", "/output_model/likelihood_ab_v1/"
+        # Managed runs write to <campaign>/<modality>/<dataset>, where dataset is
+        # the config's dataset value (androids_interview, turkish).
+        baseline_run_root = Path(expected["output_dirs"]["run_root"])
+        output_model_root = baseline_run_root.parents[2]
+        expected["output_dirs"]["run_root"] = str(
+            output_model_root / "likelihood_ab_v1" / baseline_run_root.parent.name / candidate["dataset"]
         )
         expected["evaluation"]["sample_prediction_mode"] = "likelihood"
         expected["evaluation"]["headline_mode"] = "likelihood"
