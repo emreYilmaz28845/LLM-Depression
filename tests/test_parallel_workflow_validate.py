@@ -51,6 +51,7 @@ def _build_attempt(tmp_path: Path) -> Path:
         "binary_strict_macro_f1": recomputed["binary_strict_macro_f1"],
         "binary_strict_positive_f1": recomputed["binary_strict_positive_f1"],
         "binary_strict_accuracy": recomputed["binary_strict_accuracy"],
+        "binary_strict_uar": recomputed["binary_strict_uar"],
         "accuracy": recomputed["binary_strict_accuracy"],
     }
     metrics_path.write_text(json.dumps(metrics), encoding="utf-8")
@@ -175,6 +176,33 @@ def test_happy_path_reaches_reportable_stepwise(tmp_path):
     assert ("LOCALLY_VALIDATED", "REPORTABLE") in transitions
     assert state == "REPORTABLE"
     assert "SUPERSEDED" not in [t[1] for t in transitions]
+
+
+def test_likelihood_standalone_metrics_are_validated(tmp_path):
+    fold = _build_attempt(tmp_path)
+    old = fold / "best_model/standalone_eval/metrics_original_teacher_forced.json"
+    new = old.with_name("metrics_likelihood.json")
+    old.rename(new)
+    config_path = fold / "run_config.yaml"
+    config_path.write_text(
+        config_path.read_text().replace("original_teacher_forced", "likelihood"),
+        encoding="utf-8",
+    )
+    artifacts_path = fold / "artifacts.json"
+    artifacts = json.loads(artifacts_path.read_text())
+    for artifact in artifacts["artifacts"]:
+        if artifact["path"].endswith("metrics_original_teacher_forced.json"):
+            artifact["path"] = "best_model/standalone_eval/metrics_likelihood.json"
+    artifacts_path.write_text(json.dumps(artifacts), encoding="utf-8")
+    evaluations_path = fold / "evaluations.json"
+    evaluations = json.loads(evaluations_path.read_text())
+    evaluation = evaluations["evaluations"][0]
+    evaluation["backend"] = "likelihood"
+    evaluation["metrics_artifact_path"] = "best_model/standalone_eval/metrics_likelihood.json"
+    evaluations_path.write_text(json.dumps(evaluations), encoding="utf-8")
+    result = validate_attempt(fold, **dict(KW, expected_backend="likelihood"))
+    assert result["ok"] is True, result["issues"]
+    assert result["recomputed"]["binary_strict_uar"] == pytest.approx(0.5)
 
 
 def test_tampered_hash_fails_validation(tmp_path):

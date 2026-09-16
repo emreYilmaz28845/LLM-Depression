@@ -1394,7 +1394,7 @@ def _cmd_validate(args) -> int:
     if err:
         print(f"ERROR: {err}", file=sys.stderr)
         return 1
-    if contract and contract.get("kind") != "standalone_backbone":
+    if contract and contract.get("kind", "standalone_backbone") != "standalone_backbone":
         from src.native_en_text_heads_tracking import (
             HeadTrackingError,
             validate_head_attempt,
@@ -1469,7 +1469,7 @@ def _cmd_finish(args) -> int:
     if _err:
         print(f"ERROR: {_err}", file=sys.stderr)
         return 1
-    if contract and contract.get("kind") != "standalone_backbone":
+    if contract and contract.get("kind", "standalone_backbone") != "standalone_backbone":
         from src.native_en_text_heads_tracking import (
             HeadTrackingError,
             finish_head_attempt,
