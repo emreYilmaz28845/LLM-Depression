@@ -409,8 +409,30 @@ def prepare(
     required_path_prefix: Path | None,
     english: bool,
     model_path: str,
+    pooled_turkish: bool = False,
+    pooled_source_root: Path | None = None,
 ) -> dict[str, Any]:
-    from scripts.prepare_harmonized_mn5 import COMPONENT_CONFIGS, MERGED_CONFIGS
+    from scripts.prepare_harmonized_mn5 import (
+        COMPONENT_CONFIGS,
+        MERGED_CONFIGS,
+        POOLED_GEMMA_MERGED_CONFIGS,
+        POOLED_MERGED_CONFIGS,
+        POOLED_TURKISH_COMPONENT_CONFIG,
+        build_pooled_turkish,
+        pooled_component_configs,
+        verify_pooled_turkish_outputs,
+    )
+
+    if pooled_turkish and english:
+        raise ValueError("--pooled-turkish is only defined for the native merged family")
+
+    component_configs = (
+        pooled_component_configs() if pooled_turkish else COMPONENT_CONFIGS
+    )
+    merged_configs = POOLED_MERGED_CONFIGS if pooled_turkish else MERGED_CONFIGS
+    gemma_merged_configs = (
+        POOLED_GEMMA_MERGED_CONFIGS if pooled_turkish else GEMMA_MERGED_CONFIGS
+    )
 
     failures: list[str] = []
     matrix_path = resolve_project_path(EN_MATRIX if english else NATIVE_MATRIX)
@@ -423,24 +445,34 @@ def prepare(
         build_paths = [resolve_project_path(path) for path in config_names]
     else:
         config_names = [item["config"] for item in matrix["experiments"]]
-        build_paths = [resolve_project_path(path) for path in COMPONENT_CONFIGS]
+        build_paths = [resolve_project_path(path) for path in component_configs]
 
+    if pooled_turkish and build:
+        if pooled_source_root is None:
+            raise ValueError("pooled_turkish builds require a pooled source root")
+        print(f"Rebuilding pooled Turkish manifest from {pooled_source_root}", flush=True)
+        build_pooled_turkish(pooled_source_root)
     if build:
+        pooled_component_path = resolve_project_path(POOLED_TURKISH_COMPONENT_CONFIG)
         for config_path in build_paths:
+            if pooled_turkish and config_path == pooled_component_path:
+                continue
             print(f"Building MN5 Gemma harmonized component: {config_path}", flush=True)
             from src.data.build_manifest import build_for_config
 
             build_for_config(config_path, [])
+    elif pooled_turkish:
+        verify_pooled_turkish_outputs()
 
     components = [
         validate_manifest(path, required_path_prefix=required_path_prefix)
-        for path in COMPONENT_CONFIGS
+        for path in component_configs
     ]
 
     merged: list[dict[str, Any]] = []
     gemma_merged: list[dict[str, Any]] = []
     if not english:
-        for raw_path in MERGED_CONFIGS:
+        for raw_path in merged_configs:
             config_path = resolve_project_path(raw_path)
             config = load_yaml_with_overrides(config_path, [])
             from src.merged.protocol import (
@@ -472,7 +504,7 @@ def prepare(
         # the components and protocol are identical (shared manifests), only
         # the output root differs. They are recorded separately so the
         # standalone launcher's three-record merged audit check is unchanged.
-        for raw_path in GEMMA_MERGED_CONFIGS:
+        for raw_path in gemma_merged_configs:
             config_path = resolve_project_path(raw_path)
             config = load_yaml_with_overrides(config_path, [])
             from src.merged.protocol import (
@@ -602,6 +634,7 @@ def prepare(
         "merged": merged,
         "gemma_merged": gemma_merged,
         "gemma_checks": gemma_checks,
+        "pooled_turkish": pooled_turkish,
         "job_scope": job_scope,
         "optuna_enabled": False,
         "failures": failures,
@@ -615,6 +648,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--english", action="store_true")
     parser.add_argument("--required-path-prefix", type=Path)
     parser.add_argument("--audit-path", type=Path)
+    parser.add_argument(
+        "--pooled-turkish",
+        action="store_true",
+        help="use the pooled question-conditioned Turkish input and the pooled merged family",
+    )
+    parser.add_argument(
+        "--pooled-source-root",
+        type=Path,
+        help="directory holding manifests/{pos,neg}_{native,english} and splits/ for the pooled rebuild",
+    )
     parser.add_argument(
         "--model-path",
         type=str,
@@ -631,6 +674,8 @@ def main() -> None:
         required_path_prefix=args.required_path_prefix,
         english=args.english,
         model_path=args.model_path,
+        pooled_turkish=args.pooled_turkish,
+        pooled_source_root=args.pooled_source_root,
     )
     audit_path = resolve_project_path(
         args.audit_path
