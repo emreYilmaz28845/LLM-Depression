@@ -60,6 +60,38 @@ The nine superseded DAIC, CMDC, and Turkish positive-F1 main configs were moved 
 configs/archive/pre_harmonized_posf1_20260809/
 ```
 
+## Prepared A/B likelihood family
+
+The 15 core Qwen harmonized cells also have configs named
+`*_likelihood_ab_v1.yaml` under `configs/main/`. They cover D3TEC, Turkish
+positive-only BDI≥17, Androids, DAIC, and CMDC in audio-only, text-only, and
+audio+text modes. They have not been trained as a family. The earlier
+teacher-forced configs remain available for their historical runs.
+
+Each new config records `short_internal_ab_labels` with explicit
+`A = Depressed` and `B = Non-depressed` mapping. Its prompt prints the same
+legend; training and evaluation both use those internal labels. Checkpoint
+selection and the headline use `likelihood` with `inner_val_macro_f1` in max
+mode. Every config records `evaluation_view: harmonized_all_windows_full_coverage` and writes to an isolated
+`output_model/likelihood_ab_v1/<modality>/<dataset>/` root. Manifest and split
+paths, dataset settings, windowing, weights, and LoRA settings match the
+corresponding teacher-forced config. Report Macro-F1, Positive-F1, and UAR
+from strict subject-level metrics; UAR is `binary_strict_uar`.
+
+Before using a model, check that A and B are each one token at the rendered
+prompt boundary with its actual processor. The weight-free audit for the two
+Qwen backbones is:
+
+```bash
+python tools/verify_ab_label_tokens.py \
+  --text-model-dir /path/to/Qwen2-7B-Instruct \
+  --audio-model-dir /path/to/Qwen2-Audio-7B-Instruct \
+  --output outputs/tokenizer_probes/ab_family_audit.json
+```
+
+The existing launchers and merged-training configs still select the historical
+teacher-forced family. No training job is implied by adding these YAML files.
+
 ## Gemma 4 DAIC family
 
 The Gemma 4 backbone comparison is scoped to DAIC only and uses three configs:

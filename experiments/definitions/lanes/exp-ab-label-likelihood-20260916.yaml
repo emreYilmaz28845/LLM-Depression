@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: exp-ab-label-likelihood-20260916
+slug: ab-label-likelihood
+tier: 1
+branch: agent/exp-ab-label-likelihood
+worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-exp-ab-label-likelihood
+parent_branch: main
+parent_sha: 7b843517dd18f31e3c519b88fc6fb37881318231
+created_at_utc: "2026-09-16T10:29:06Z"
+experiment_group_path: experiments/definitions/likelihood-ab-v1-20260916.yaml
+type: competing

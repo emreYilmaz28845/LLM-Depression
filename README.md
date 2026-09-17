@@ -31,6 +31,13 @@ The active harmonized configurations live in `configs/main/`, named `<dataset>[_
 - English prompts and external labels `Depressed` / `Non-depressed`; transcripts stay in their original language;
 - no AUROC — teacher-forced decoding emits a hard label, so there is no ranking to compute AUROC over.
 
+A separate 15-config Qwen A/B likelihood family is prepared in `configs/main/`
+with the `*_likelihood_ab_v1.yaml` suffix. It has explicit A/B mappings,
+likelihood checkpoint selection and evaluation, and isolated output roots.
+These configs have not been trained as a family; existing launchers still point
+to the historical teacher-forced configs. See `configs/README.md` for the exact
+scope and processor-boundary token audit.
+
 ### Evaluation warning
 
 `original_teacher_forced` is the repository's current historical headline protocol, but it is not a clean deployable classifier decision. It reconstructs label tokens under a gold-conditioned continuation. Some audio paths later aggregate gold-independent candidate-label score margins, while text-only paths generally retain the reconstructed-label decision. Results carrying the same backend name can therefore have different effective decision semantics across modalities.

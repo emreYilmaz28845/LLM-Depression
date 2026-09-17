@@ -1,0 +1,74 @@
+schema_version: audiollm.experiment_group.v1
+group_id: likelihood-ab-v1-20260916
+title: Qwen A/B likelihood family across five corpora
+research_question: >-
+  How do single-token A/B labels with candidate-likelihood prediction compare
+  against the historical teacher-forced harmonized recipe on the 15 core Qwen
+  cells (DAIC, D3TEC, Androids, CMDC, and Turkish positive-only t17 in
+  audio-only, text-only, and audio+text modes)?
+dataset: daic; d3tec; androids_interview; cmdc; turkish
+baseline: >-
+  Historical teacher-forced harmonized_v1 Qwen runs (15 cells), compared only
+  where local per-fold subject-level predictions exist and subject sets match.
+treatment: >-
+  configs/main/*_likelihood_ab_v1.yaml (15 configs) trained and evaluated with
+  likelihood prediction and inner_val_macro_f1 checkpoint selection.
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+github_issue: null
+github_pr: 252
+scope:
+  campaign: likelihood_ab_v1
+  checkpoint_role: best_model
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
+  daic_fold_exception: >-
+    DAIC uses the fixed train/val/test split (split.mode: fixed); only fold 0
+    (the official test partition) is trained and evaluated. The other four
+    datasets use five-fold cross-validation.
+  aggregation_note: >-
+    Recorded evaluation aggregation is subject for text-only cells and
+    response_subject (hierarchical mean over windows) for audio-only and
+    audio+text cells; report each run's recorded value. Fold-mean headlines
+    and pooled subject-level significance views stay separate.
+  comparison_caveat: >-
+    Baseline and treatment differ in label vocabulary and prediction backend;
+    report both explicitly and do not attribute a difference to the A/B tokens
+    alone. Historical baselines do not record evaluation_view.
+  cells:
+    - {id: daic_audio_only, dataset: daic, modality: audio_only, config: configs/main/daic_audio_only_harmonized_selmacrof1_likelihood_ab_v1.yaml, run_root: output_model/likelihood_ab_v1/audio_only/daic}
+    - {id: daic_text_only, dataset: daic, modality: text_only, config: configs/main/daic_text_only_harmonized_selmacrof1_likelihood_ab_v1.yaml, run_root: output_model/likelihood_ab_v1/text_only/daic}
+    - {id: daic_audio_text, dataset: daic, modality: audio_text, config: configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_ab_v1.yaml, run_root: output_model/likelihood_ab_v1/audio_text/daic}
+    - {id: d3tec_audio_only, dataset: d3tec, modality: audio_only, config: configs/main/d3tec_audio_only_harmonized_selmacrof1_likelihood_ab_v1.yaml, run_root: output_model/likelihood_ab_v1/audio_only/d3tec}
+    - {id: d3tec_text_only, dataset: d3tec, modality: text_only, config: configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_ab_v1.yaml, run_root: output_model/likelihood_ab_v1/text_only/d3tec}
+    - {id: d3tec_audio_text, dataset: d3tec, modality: audio_text, config: configs/main/d3tec_audio_text_harmonized_selmacrof1_likelihood_ab_v1.yaml, run_root: output_model/likelihood_ab_v1/audio_text/d3tec}
+    - {id: androids_audio_only, dataset: androids_interview, modality: audio_only, config: configs/main/androids_audio_only_harmonized_selmacrof1_likelihood_ab_v1.yaml, run_root: output_model/likelihood_ab_v1/audio_only/androids_interview}
+    - {id: androids_text_only, dataset: androids_interview, modality: text_only, config: configs/main/androids_text_only_harmonized_selmacrof1_likelihood_ab_v1.yaml, run_root: output_model/likelihood_ab_v1/text_only/androids_interview}
+    - {id: androids_audio_text, dataset: androids_interview, modality: audio_text, config: configs/main/androids_audio_text_harmonized_selmacrof1_likelihood_ab_v1.yaml, run_root: output_model/likelihood_ab_v1/audio_text/androids_interview}
+    - {id: cmdc_audio_only, dataset: cmdc, modality: audio_only, config: configs/main/cmdc_audio_only_harmonized_selmacrof1_likelihood_ab_v1.yaml, run_root: output_model/likelihood_ab_v1/audio_only/cmdc}
+    - {id: cmdc_text_only, dataset: cmdc, modality: text_only, config: configs/main/cmdc_text_only_harmonized_selmacrof1_likelihood_ab_v1.yaml, run_root: output_model/likelihood_ab_v1/text_only/cmdc}
+    - {id: cmdc_audio_text, dataset: cmdc, modality: audio_text, config: configs/main/cmdc_audio_text_harmonized_selmacrof1_likelihood_ab_v1.yaml, run_root: output_model/likelihood_ab_v1/audio_text/cmdc}
+    - {id: turkish_audio_only, dataset: turkish, modality: audio_only, config: configs/main/turkish_pos_only_t17_audio_only_harmonized_selmacrof1_qwen3asr_likelihood_ab_v1.yaml, run_root: output_model/likelihood_ab_v1/audio_only/turkish}
+    - {id: turkish_text_only, dataset: turkish, modality: text_only, config: configs/main/turkish_pos_only_t17_text_only_harmonized_selmacrof1_qwen3asr_likelihood_ab_v1.yaml, run_root: output_model/likelihood_ab_v1/text_only/turkish}
+    - {id: turkish_audio_text, dataset: turkish, modality: audio_text, config: configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_qwen3asr_likelihood_ab_v1.yaml, run_root: output_model/likelihood_ab_v1/audio_text/turkish}
+exclusions:
+  - teacher_forced_retraining
+  - gemma4_cells
+  - english_translation_cells
+  - daic_officialdev_cells
+  - official_test_retuning
+  - workbook_cell_rewrite

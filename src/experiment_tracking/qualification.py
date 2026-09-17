@@ -44,6 +44,7 @@ RECIPE_VIEW_FALLBACK = {
 RECIPE_EVAL_PRECEDENCE = {
     "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1": ("best_model/standalone_eval",),
     "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_en_v1": ("best_model/standalone_eval",),
+    "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_ab_v1": ("best_model/standalone_eval",),
 }
 
 # Recipes whose documented protocol is cv train_val: the outer fold is both the
@@ -52,6 +53,7 @@ RECIPE_EVAL_PRECEDENCE = {
 RECIPE_ALLOWED_TRAIN_VAL = {
     "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1",
     "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_en_v1",
+    "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_ab_v1",
 }
 
 

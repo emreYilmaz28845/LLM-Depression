@@ -1,0 +1,27 @@
+schema_version: audiollm.experiment_group.v1
+group_id: daic-ab-likelihood-20260916
+title: DAIC text-only A/B likelihood comparison
+research_question: >-
+  How does training with single-token A/B labels and selecting predictions by
+  candidate likelihood perform against the existing DAIC text-only harmonized
+  teacher-forced recipe?
+dataset: daic
+baseline: configs/main/daic_text_only_harmonized_selmacrof1_tf.yaml
+treatment: configs/main/daic_text_only_harmonized_selmacrof1_likelihood_ab.yaml
+expected_seeds: [1337]
+expected_folds: [0]
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+github_issue: null
+github_pr: 252
+scope:
+  modality: text_only
+  checkpoint_role: best_model
+  report_metrics: [macro_f1, positive_f1, uar]
+  comparison_caveat: >-
+    The baseline and treatment differ in label vocabulary and prediction
+    backend. Report both backends and evaluation views explicitly.

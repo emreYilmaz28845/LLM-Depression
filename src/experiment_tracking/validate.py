@@ -154,7 +154,10 @@ def validate_attempt(
 
     # Standalone evaluation requirement: train-time-only evidence cannot pass.
     standalone_dir = fold / "best_model" / "standalone_eval"
-    standalone_metrics = standalone_dir / "metrics_original_teacher_forced.json"
+    backend = evaluation_cfg.get("sample_prediction_mode")
+    if backend not in {"original_teacher_forced", "likelihood", "generation"}:
+        issues.append(f"unsupported standalone evaluation backend {backend!r}")
+    standalone_metrics = standalone_dir / f"metrics_{backend}.json"
     standalone_preds = standalone_dir / "predictions_subject_level.csv"
     if require_standalone_eval:
         if not standalone_metrics.is_file() or not standalone_preds.is_file():
@@ -180,7 +183,7 @@ def validate_attempt(
                     f"recomputed {key}={value:.6f} differs from recorded {recorded!r} "
                     f"in {standalone_metrics.name}"
                 )
-        for key in ("binary_strict_macro_f1", "binary_strict_positive_f1", "binary_strict_accuracy"):
+        for key in ("binary_strict_macro_f1", "binary_strict_positive_f1", "binary_strict_accuracy", "binary_strict_uar"):
             if key not in metrics_record:
                 issues.append(f"standalone metrics file missing required key {key}")
         result["recomputed"] = recomputed

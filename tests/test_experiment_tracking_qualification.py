@@ -183,6 +183,25 @@ def test_ambiguous_duplicate_eval_directories_are_quarantined(tmp_path: Path) ->
     assert result.evaluations == ()
 
 
+def test_likelihood_recipe_prefers_standalone_eval_over_in_train_copy(tmp_path: Path) -> None:
+    fold_dir = build_standard_run(tmp_path)
+    write_run_config(
+        fold_dir,
+        recipe_id="harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_ab_v1",
+    )
+    write_standalone_eval(
+        fold_dir,
+        metrics_files=["metrics_likelihood.json"],
+        contents=[metrics_content(view="full_coverage_k4")],
+        location="eval/best_checkpoint",
+    )
+    result = _qualify(tmp_path)
+    assert result.status == STATUS_QUALIFIED
+    assert len(result.evaluations) == 1
+    assert result.evaluations[0].metrics_artifact_path.startswith("best_model/standalone_eval/")
+    assert any("ignoring duplicate evaluation evidence" in warning for warning in result.warnings)
+
+
 def test_ambiguous_duplicate_metrics_with_same_identity_are_quarantined(tmp_path: Path) -> None:
     fold_dir = build_standard_run(tmp_path)
     target = fold_dir / "best_model" / "standalone_eval"
