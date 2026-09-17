@@ -126,15 +126,11 @@ def _widths(ws, widths: dict[str, float]) -> None:
 
 
 # --------------------------------------------------------------------------- data
-# Standalone fine-tuned Qwen macro-F1. All values recomputed 2026-08-06 from the
-# local artifacts listed in PROVENANCE_QWEN. (dataset, modality) -> macro-F1.
-STANDALONE_QWEN: dict[tuple[str, str], float] = {
-    # Harmonized campaign harmonized_v1_prod_20260809T171705Z_d1e8130b (recipe
-    # harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1; Issue #12 /
-    # PR #10; teacher-forced, binary-strict, best_model, macro-F1 selection,
-    # audio encoder frozen; first-wave failures replaced by _r1 retries).
-    # Aggregations: DAIC fixed official test; CMDC/Turkish 5-fold mean;
-    # D3TEC/Androids unweighted 5-fold mean. Recomputed 2026-09-07.
+# Legacy teacher-forced canonical values (superseded 2026-09-17 by the canonical
+# likelihood switch; preserved for the "Legacy TF" sheet). These are the values
+# that STANDALONE_QWEN/_POSF1/_UAR carried before the switch, recomputed
+# 2026-08-06..09-13 from the local artifacts listed in STANDALONE_QWEN_SOURCE.
+STANDALONE_QWEN_TF_LEGACY: dict[tuple[str, str], float] = {
     ("DAIC", "Audio + Text"): 0.7353,
     ("DAIC", "Audio only"): 0.5392,
     ("DAIC", "Text only"): 0.7353,
@@ -152,17 +148,48 @@ STANDALONE_QWEN: dict[tuple[str, str], float] = {
     ("Androids Interview", "Text only"): 0.7239571023627448,
 }
 
-# Positive-F1 paired with each STANDALONE_QWEN macro cell, same artifact and
-# aggregation (recomputed 2026-09-06 from the local evidence below).
-# DAIC: fold_0/best_model/standalone_eval/metrics_original_teacher_forced.json
-# CMDC/Turkish: fold_0-4/eval/best_validation metrics fold-mean
-# D3TEC/Androids: unweighted mean of fold_0-4 strict subject-level metrics.
-STANDALONE_QWEN_POSF1: dict[tuple[str, str], float] = {
+# Canonical likelihood values (2026-09-17): derived from the saved per-subject
+# candidate scores of the teacher-forced runs with argmax(mean dep_score,
+# mean non_score) per subject; CV cells are unweighted fold means, DAIC is its
+# fixed test fold. Artifact: outputs/experiment_reports/
+# likelihood_canonical_values/derived_values.json (reproduce with
+# `python tools/derive_likelihood_values.py`). Turkish rows are the pooled
+# question-condition campaign (Qwen, seed 1337, native transcript).
+STANDALONE_QWEN: dict[tuple[str, str], float] = {
+    ("DAIC", "Audio + Text"): 0.735279057859703,
+    ("DAIC", "Audio only"): 0.5392156862745098,
+    ("DAIC", "Text only"): 0.735279057859703,
+    ("CMDC", "Audio + Text"): 0.97,
+    ("CMDC", "Audio only"): 0.9515550239234448,
+    ("CMDC", "Text only"): 0.971291866028708,
+    ("Turkish", "Audio + Text"): 0.6877173425008738,
+    ("Turkish", "Audio only"): 0.40893415527561866,
+    ("Turkish", "Text only"): 0.5118701307268071,
+    ("D3TEC", "Audio + Text"): 0.5401981351981352,
+    ("D3TEC", "Audio only"): 0.6180564043799338,
+    ("D3TEC", "Text only"): 0.5220071010860485,
+    ("Androids Interview", "Audio + Text"): 0.8569653018080151,
+    ("Androids Interview", "Audio only"): 0.8627999740731138,
+    ("Androids Interview", "Text only"): 0.7454972289028714,
+}
+
+# Legacy positive-F1 companions of STANDALONE_QWEN_TF_LEGACY.
+STANDALONE_QWEN_TF_LEGACY_POSF1: dict[tuple[str, str], float] = {
     ("DAIC", "Audio + Text"): 0.645161, ("DAIC", "Audio only"): 0.411765, ("DAIC", "Text only"): 0.645161,
     ("CMDC", "Audio + Text"): 0.960000, ("CMDC", "Audio only"): 0.931818, ("CMDC", "Text only"): 0.963636,
     ("Turkish", "Audio + Text"): 0.782190, ("Turkish", "Audio only"): 0.771921, ("Turkish", "Text only"): 0.781656,
     ("D3TEC", "Audio + Text"): 0.4912587412587412, ("D3TEC", "Audio only"): 0.553073593073593, ("D3TEC", "Text only"): 0.550125313283208,
     ("Androids Interview", "Audio + Text"): 0.8781349123418088, ("Androids Interview", "Audio only"): 0.8833743842364532, ("Androids Interview", "Text only"): 0.7853243541399464,
+}
+
+# Positive-F1 paired with each STANDALONE_QWEN macro cell, same artifact and
+# aggregation (likelihood derivation, 2026-09-17; see STANDALONE_QWEN).
+STANDALONE_QWEN_POSF1: dict[tuple[str, str], float] = {
+    ("DAIC", "Audio + Text"): 0.6451612903225806, ("DAIC", "Audio only"): 0.4117647058823529, ("DAIC", "Text only"): 0.6451612903225806,
+    ("CMDC", "Audio + Text"): 0.9600000000000002, ("CMDC", "Audio only"): 0.9318181818181819, ("CMDC", "Text only"): 0.9636363636363636,
+    ("Turkish", "Audio + Text"): 0.8130036949391787, ("Turkish", "Audio only"): 0.8178683105512373, ("Turkish", "Text only"): 0.8060932026300849,
+    ("D3TEC", "Audio + Text"): 0.49125874125874125, ("D3TEC", "Audio only"): 0.553073593073593, ("D3TEC", "Text only"): 0.4967919799498747,
+    ("Androids Interview", "Audio + Text"): 0.8781349123418088, ("Androids Interview", "Audio only"): 0.8833743842364532, ("Androids Interview", "Text only"): 0.7960236548392471,
 }
 
 # Standalone hidden-state heads: (dataset, modality) -> (logreg, xgb_fixed, xgb_optuna, subject_os)
@@ -208,15 +235,12 @@ STANDALONE_HEADS_POSF1: dict[tuple[str, str], tuple[float | None, float | None, 
     ("Androids Interview", "Text only"): (0.863468, 0.858706, None, None),
 }
 
-# UAR (unweighted average recall = balanced accuracy) for the same standalone
-# cells, recomputed 2026-09-13 from the same local artifacts: the saved
-# macro_recall of each strict subject-level metrics file, cross-checked against
-# (tp/(tp+fn+invalid) + tn/(tn+fp+invalid)) / 2 from the strict confusion matrix.
-# Turkish rows stay None on purpose: the current Turkish headlines come from the
-# pooled mixed question-condition report, whose UAR is computed at build time
-# (TURKISH_POOLED_MIXED_LOOKUP); these tables carry the pre-pooled fallback
-# values, for which no local UAR evidence is claimed.
-STANDALONE_QWEN_UAR: dict[tuple[str, str], float | None] = {
+# Legacy UAR companions of STANDALONE_QWEN_TF_LEGACY (recomputed 2026-09-13 from
+# the saved macro_recall of each strict subject-level metrics file). The legacy
+# Turkish rows stay None on purpose: the pre-switch Turkish headlines came from
+# the pooled question-condition report, for which no local UAR evidence was
+# claimed in this table.
+STANDALONE_QWEN_TF_LEGACY_UAR: dict[tuple[str, str], float | None] = {
     ("DAIC", "Audio + Text"): 0.751082,
     ("DAIC", "Audio only"): 0.55303,
     ("DAIC", "Text only"): 0.751082,
@@ -232,6 +256,25 @@ STANDALONE_QWEN_UAR: dict[tuple[str, str], float | None] = {
     ("Androids Interview", "Audio + Text"): 0.885726,
     ("Androids Interview", "Audio only"): 0.884211,
     ("Androids Interview", "Text only"): 0.769083,
+}
+# UAR for the canonical likelihood cells, derived from the same per-subject
+# decisions as STANDALONE_QWEN (strict: INVALID/ties count as wrong).
+STANDALONE_QWEN_UAR: dict[tuple[str, str], float | None] = {
+    ("DAIC", "Audio + Text"): 0.751082251082251,
+    ("DAIC", "Audio only"): 0.553030303030303,
+    ("DAIC", "Text only"): 0.751082251082251,
+    ("CMDC", "Audio + Text"): 0.97,
+    ("CMDC", "Audio only"): 0.95,
+    ("CMDC", "Text only"): 0.9800000000000001,
+    ("Turkish", "Audio + Text"): 0.6854516806722689,
+    ("Turkish", "Audio only"): 0.5,
+    ("Turkish", "Text only"): 0.5705357142857144,
+    ("D3TEC", "Audio + Text"): 0.5519047619047619,
+    ("D3TEC", "Audio only"): 0.6657142857142857,
+    ("D3TEC", "Text only"): 0.5747619047619047,
+    ("Androids Interview", "Audio + Text"): 0.8857264957264958,
+    ("Androids Interview", "Audio only"): 0.8842113442113442,
+    ("Androids Interview", "Text only"): 0.78510878010878,
 }
 STANDALONE_HEADS_UAR: dict[tuple[str, str], tuple[float | None, float | None, float | None, float | None]] = {
     ("DAIC", "Audio + Text"): (0.771645, None, None, None),
@@ -532,18 +575,18 @@ HARMONIZED_EN_CAMPAIGN = {
 
 # (dataset, modality) -> (native_macro, native_posf1, en_macro, en_posf1, aggregation, shared)
 HARMONIZED_EN_QWEN: dict[tuple[str, str], tuple[float, float, float, float, str, bool]] = {
-    ("D3TEC", "Audio + Text"): (0.5401981351981351, 0.4912587412587412, 0.6064935064935064, 0.5943722943722943, "5-fold mean", False),
+    ("D3TEC", "Audio + Text"): (0.5401981351981352, 0.49125874125874125, 0.6064935064935064, 0.5943722943722943, "5-fold mean", False),
     ("D3TEC", "Audio only"): (0.6180564043799338, 0.553073593073593, 0.6180564043799338, 0.553073593073593, "5-fold mean", True),
-    ("D3TEC", "Text only"): (0.5576023391812865, 0.550125313283208, 0.4356905744754042, 0.4924922600619195, "5-fold mean", False),
+    ("D3TEC", "Text only"): (0.5220071010860485, 0.4967919799498747, 0.4356905744754042, 0.4924922600619195, "5-fold mean", False),
     ("Androids Interview", "Audio + Text"): (0.8569653018080151, 0.8781349123418088, 0.8812623541333219, 0.8993378950798305, "5-fold mean", False),
     ("Androids Interview", "Audio only"): (0.8627999740731138, 0.8833743842364532, 0.8627999740731138, 0.8833743842364532, "5-fold mean", True),
-    ("Androids Interview", "Text only"): (0.7239571023627448, 0.7853243541399464, 0.7884739704739705, 0.8091601731601732, "5-fold mean", False),
-    ("CMDC", "Audio + Text"): (0.9700, 0.9600, 0.9856, 0.9818, "5-fold mean", False),
-    ("CMDC", "Audio only"): (0.9516, 0.9318, 0.9516, 0.9318, "5-fold mean", True),
-    ("CMDC", "Text only"): (0.9713, 0.9636, 0.9713, 0.9636, "5-fold mean", False),
-    ("Turkish", "Audio + Text"): (0.6666, 0.7822, 0.6295, 0.7925, "5-fold mean", False),
-    ("Turkish", "Audio only"): (0.5137, 0.7719, 0.5137, 0.7719, "5-fold mean", True),
-    ("Turkish", "Text only"): (0.6502, 0.7817, 0.6641, 0.7957, "5-fold mean", False),
+    ("Androids Interview", "Text only"): (0.7454972289028714, 0.7960236548392471, 0.7884739704739705, 0.8091601731601732, "5-fold mean", False),
+    ("CMDC", "Audio + Text"): (0.97, 0.9600000000000002, 0.9856, 0.9818, "5-fold mean", False),
+    ("CMDC", "Audio only"): (0.9515550239234448, 0.9318181818181819, 0.9515550239234448, 0.9318181818181819, "5-fold mean", True),
+    ("CMDC", "Text only"): (0.971291866028708, 0.9636363636363636, 0.971291866028708, 0.9636363636363636, "5-fold mean", False),
+    ("Turkish", "Audio + Text"): (0.6877173425008738, 0.8130036949391787, 0.6295, 0.7925, "5-fold mean", False),
+    ("Turkish", "Audio only"): (0.40893415527561866, 0.8178683105512373, 0.40893415527561866, 0.8178683105512373, "5-fold mean", True),
+    ("Turkish", "Text only"): (0.5118701307268071, 0.8060932026300849, 0.6641, 0.7957, "5-fold mean", False),
 }
 
 # (dataset, modality) -> (native_logreg, native_xgb, en_logreg, en_xgb) — 5-fold mean
@@ -575,28 +618,34 @@ STANDALONE_QWEN_SOURCE = {
     "DAIC": (
         "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_daic_{audio_text,audio_only,text_only}_r1"
         " (campaign harmonized_v1_prod_20260809T171705Z_d1e8130b; retry registry retry_r1_jobs.tsv)",
-        "Official test, 47 subjects, teacher-forced, binary-strict, harmonized_all_windows_full_coverage",
-        "output_model/harmonized_v1/*/daic/*/fold_0/best_model/standalone_eval(_r1)/metrics_original_teacher_forced.json",
+        "Official test, 47 subjects, likelihood (derived from the teacher-forced "
+        "checkpoints' saved candidate scores), binary-strict, harmonized_all_windows_full_coverage",
+        "output_model/harmonized_v1/*/daic/*/fold_0/best_model/standalone_eval(_r1)/predictions_subject_level.csv",
     ),
     "CMDC": (
         "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_cmdc_{audio_text,audio_only,text_only}_r1",
-        "5-fold mean, teacher-forced, binary-strict, train_val protocol",
-        "output_model/harmonized_v1/*/cmdc/*/fold_<n>/eval/best_validation/metrics_original_teacher_forced.json",
+        "5-fold mean, likelihood (derived from the saved teacher-forced candidate "
+        "scores), binary-strict, train_val protocol",
+        "output_model/harmonized_v1/*/cmdc/*/fold_<n>/eval/best_validation/predictions_subject_level.csv",
     ),
     "Turkish": (
-        "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_turkish_{audio_text,audio_only,text_only}_r1",
-        "5-fold mean, teacher-forced, binary-strict, train_val protocol",
-        "output_model/harmonized_v1/*/turkish_t17_qwen3asr/*/fold_<n>/eval/best_validation/metrics_original_teacher_forced.json",
+        "turkish_pooled_qcond_clean_v1 Qwen cells Q01-Q04 seed 1337 native transcript "
+        "(campaign exp-turkish-pooled-qcond-clean-v1-20260903)",
+        "5-fold mean, likelihood (derived from the pooled teacher-forced campaign's "
+        "saved candidate scores), binary-strict",
+        "outputs/experiment_reports/likelihood_canonical_values/derived_values.json",
     ),
     "D3TEC": (
         "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_d3tec_{audio_text,audio_only,text_only}[_r1]",
-        "Unweighted 5-fold mean (62 subjects across folds), teacher-forced, binary-strict",
-        "output_model/harmonized_v1/*/d3tec/*/fold_<n>/best_model/standalone_eval(_r1)/metrics_original_teacher_forced.json",
+        "Unweighted 5-fold mean (62 subjects across folds), likelihood (derived from "
+        "the saved teacher-forced candidate scores), binary-strict",
+        "output_model/harmonized_v1/*/d3tec/*/fold_<n>/best_model/standalone_eval(_r1)/predictions_subject_level.csv",
     ),
     "Androids Interview": (
         "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_androids_interview_{audio_text,audio_only,text_only}[_r1]",
-        "Unweighted 5-fold mean (116 subjects across folds), teacher-forced, binary-strict",
-        "output_model/harmonized_v1/*/androids/*/fold_<n>/best_model/standalone_eval(_r1)/metrics_original_teacher_forced.json",
+        "Unweighted 5-fold mean (116 subjects across folds), likelihood (derived from "
+        "the saved teacher-forced candidate scores), binary-strict",
+        "output_model/harmonized_v1/*/androids/*/fold_<n>/best_model/standalone_eval(_r1)/predictions_subject_level.csv",
     ),
 }
 
@@ -950,8 +999,8 @@ EN_TF = {
     ("Androids Interview", "Text only"): (0.7884739704739705, 0.744654),
     ("CMDC", "Audio + Text"): (0.9856, 0.955419),
     ("CMDC", "Text only"): (0.9713, 0.957439),
-    ("Turkish", "Audio + Text"): (0.6295, 0.669119),
-    ("Turkish", "Text only"): (0.6641, 0.677400),
+    ("Turkish", "Audio + Text"): (0.7403979353979353, 0.8463636363636363),
+    ("Turkish", "Text only"): (0.4858114446529081, 0.8287657464486733),
 }
 EN_LR = {
     ("D3TEC", "Audio + Text"): (0.5464, 0.532292),
@@ -985,8 +1034,8 @@ EN_TF_UAR: dict[tuple[str, str], tuple[float | None, float | None]] = {
     ("Androids Interview", "Text only"): (0.824285, 0.767288),
     ("CMDC", "Audio + Text"): (0.99, 0.96),
     ("CMDC", "Text only"): (0.98, 0.970909),
-    ("Turkish", "Audio + Text"): (None, None),
-    ("Turkish", "Text only"): (None, None),
+    ("Turkish", "Audio + Text"): (0.7390231092436975, None),
+    ("Turkish", "Text only"): (0.5589285714285714, None),
 }
 EN_LR_UAR: dict[tuple[str, str], tuple[float | None, float | None]] = {
     ("D3TEC", "Audio + Text"): (0.554286, 0.557619),
@@ -1590,7 +1639,7 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
         for mod_label in mod_keys:
             qwen_tf = STANDALONE_QWEN[(dataset, mod_label)]
             gemma_tf = GEMMA_NATIVE_TF[(dataset, mod_label)]
-            cells = [("Teacher-forced", qwen_tf, gemma_tf,
+            cells = [("Likelihood", qwen_tf, gemma_tf,
                       STANDALONE_QWEN_POSF1[(dataset, mod_label)],
                       GEMMA_NATIVE_TF_POSF1[(dataset, mod_label)],
                       STANDALONE_QWEN_UAR.get((dataset, mod_label)),
@@ -1610,13 +1659,16 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
             if dataset == "Turkish":
                 transcript = _turkish_transcript_for_modality(mod_label)
                 for method, q, g, qp, gp, qy, gy in cells:
-                    route = {"Teacher-forced": "teacher_forced", "LogReg head": "logreg", "XGBoost": "xgb_optuna100"}[method]
-                    q = _turkish_mixed_value("Qwen", mod_label, transcript, route) or q
+                    route = {"Likelihood": "teacher_forced", "LogReg head": "logreg", "XGBoost": "xgb_optuna100"}[method]
+                    # The canonical Qwen likelihood values live in the tables; only
+                    # the pooled head routes still come from the report lookup.
                     g = _turkish_mixed_value("Gemma 4", mod_label, transcript, route) or g
-                    qp = _turkish_mixed_pos_value("Qwen", mod_label, transcript, route) or qp
                     gp = _turkish_mixed_pos_value("Gemma 4", mod_label, transcript, route) or gp
-                    qy = _turkish_mixed_uar_value("Qwen", mod_label, transcript, route) or qy
                     gy = _turkish_mixed_uar_value("Gemma 4", mod_label, transcript, route) or gy
+                    if method != "Likelihood":
+                        q = _turkish_mixed_value("Qwen", mod_label, transcript, route) or q
+                        qp = _turkish_mixed_pos_value("Qwen", mod_label, transcript, route) or qp
+                        qy = _turkish_mixed_uar_value("Qwen", mod_label, transcript, route) or qy
                     _fill_cell(ws, row, "Standalone", dataset, mod_label, method, q, g, qp, gp, qy, gy)
                     row += 1
             else:
@@ -1683,19 +1735,23 @@ def build_gemma_vs_qwen(wb: Workbook) -> None:
                 qy, gy = uar_table.get((dataset, mod_label), (None, None))
                 if dataset == "Turkish":
                     route = {"Teacher-forced": "teacher_forced", "LogReg head": "logreg", "XGBoost": "xgb_optuna100"}[method]
-                    q = _turkish_mixed_value("Qwen", mod_label, "english", route) or q
                     g = _turkish_mixed_value("Gemma 4", mod_label, "english", route) or g
-                    qp = _turkish_mixed_pos_value("Qwen", mod_label, "english", route) or qp
                     gp = _turkish_mixed_pos_value("Gemma 4", mod_label, "english", route) or gp
-                    qy = _turkish_mixed_uar_value("Qwen", mod_label, "english", route) or qy
                     gy = _turkish_mixed_uar_value("Gemma 4", mod_label, "english", route) or gy
+                    if method != "Teacher-forced":
+                        q = _turkish_mixed_value("Qwen", mod_label, "english", route) or q
+                        qp = _turkish_mixed_pos_value("Qwen", mod_label, "english", route) or qp
+                        qy = _turkish_mixed_uar_value("Qwen", mod_label, "english", route) or qy
                 _fill_cell(ws, row, "English", dataset, mod_label, method, q, g, qp, gp, qy, gy)
                 row += 1
 
-    _note(ws, row, "Teacher-forced = backbone classification without hidden-state heads. Hidden heads "
-                   "classify the final prompt-token hidden state with the locked LogReg or the standardized "
-                   "XGBoost implementation. See the Provenance sheet for every value's run, aggregation, and "
-                   "local artifact.", 9, height=60)
+    _note(ws, row, "Likelihood = the canonical decision rule: per-subject argmax(mean dep_score, mean "
+                   "non_score) derived from the teacher-forced checkpoints' saved candidate scores "
+                   "(2026-09-17); the previous teacher-forced canonical values are in the Legacy TF sheet. "
+                   "The Gemma 4, English-translation, merged, and hidden-head columns keep their own "
+                   "campaigns' teacher-forced values. Hidden heads classify the final prompt-token hidden "
+                   "state with the locked LogReg or the standardized XGBoost implementation. See the "
+                   "Provenance sheet for every value's run, aggregation, and local artifact.", 9, height=90)
     row += 1
     if _turkish_pooled_active():
         _note(
@@ -2461,10 +2517,11 @@ def build_summary(wb: Workbook, *, detailed: bool) -> None:
             qp = STANDALONE_QWEN_POSF1[(dataset, mod_label)]
             gp = GEMMA_NATIVE_TF_POSF1[(dataset, mod_label)]
             if dataset == "Turkish":
-                q = _turkish_mixed_value("Qwen", mod_label, _turkish_transcript_for_modality(mod_label), "teacher_forced") or q
-                g = _turkish_mixed_value("Gemma 4", mod_label, _turkish_transcript_for_modality(mod_label), "teacher_forced") or g
-                qp = _turkish_mixed_pos_value("Qwen", mod_label, _turkish_transcript_for_modality(mod_label), "teacher_forced") or qp
-                gp = _turkish_mixed_pos_value("Gemma 4", mod_label, _turkish_transcript_for_modality(mod_label), "teacher_forced") or gp
+                transcript = _turkish_transcript_for_modality(mod_label)
+                # Qwen canonical values are the likelihood-derived table values;
+                # the Gemma column keeps the pooled campaign lookup.
+                g = _turkish_mixed_value("Gemma 4", mod_label, transcript, "teacher_forced") or g
+                gp = _turkish_mixed_pos_value("Gemma 4", mod_label, transcript, "teacher_forced") or gp
             _summary_row(ws, row, "Standalone", f"{dataset} — {mod_label}", q, g, qp, gp)
             row += 1
     for stage, stage_label in (("cv", "CV (5-fold)"), ("final", "Final (DAIC test)")):
@@ -2478,9 +2535,7 @@ def build_summary(wb: Workbook, *, detailed: bool) -> None:
             q, g = EN_TF[(dataset, mod_label)]
             qp, gp = EN_TF_POSF1[(dataset, mod_label)]
             if dataset == "Turkish":
-                q = _turkish_mixed_value("Qwen", mod_label, "english", "teacher_forced") or q
                 g = _turkish_mixed_value("Gemma 4", mod_label, "english", "teacher_forced") or g
-                qp = _turkish_mixed_pos_value("Qwen", mod_label, "english", "teacher_forced") or qp
                 gp = _turkish_mixed_pos_value("Gemma 4", mod_label, "english", "teacher_forced") or gp
             _summary_row(ws, row, "English", f"{dataset} — {mod_label}", q, g, qp, gp)
             row += 1
@@ -3007,8 +3062,13 @@ def build_provenance(
 
     def put(exp, dataset, modality, method, value, source, agg, artifact, verified):
         nonlocal row
-        if dataset in {"D3TEC", "Androids Interview"} and exp in {"Standalone", "EN Translation"}:
+        if dataset in {"D3TEC", "Androids Interview"} and exp == "EN Translation":
             artifact += "; outputs/fold_mean_reporting/tf_recalculation.json (exact fold/config hashes)"
+        if exp == "Standalone":
+            artifact += (
+                "; likelihood derivation: outputs/experiment_reports/"
+                "likelihood_canonical_values/derived_values.json"
+            )
         values = [exp, dataset, modality, method, value, source, agg, artifact, verified]
         for col, v in enumerate(values, start=1):
             cell = ws.cell(row, col, v)
@@ -3025,7 +3085,7 @@ def build_provenance(
         for modality in MODALITIES:
             put("Standalone", dataset, modality, "Fine-tuned Qwen",
                 STANDALONE_QWEN[(dataset, modality)], run, agg, artifact,
-                "recomputed from local artifact")
+                "likelihood derivation from the saved teacher-forced candidate scores")
 
     campaign = HARMONIZED_EN_CAMPAIGN
     en_ds_key = {"D3TEC": "d3tec", "Androids Interview": "androids_interview", "CMDC": "cmdc", "Turkish": "turkish"}
@@ -3521,6 +3581,37 @@ PACKED30_SOURCE = {
                             "output_model/experiments/daic_participant_packed30_jointk4/audio_only/"),
 }
 
+def build_legacy_tf(wb: Workbook) -> None:
+    """Preserve the pre-switch canonical teacher-forced values."""
+    ws = wb.create_sheet("Legacy TF")
+    _widths(ws, {"A": 26, "B": 20, "C": 16, "D": 12, "E": 12, "F": 12})
+    _title(ws, "Legacy teacher-forced canonical values (superseded 2026-09-17)", 6)
+    _note(
+        ws, 2,
+        "These are the standalone Qwen canonical values the workbook carried before the canonical "
+        "likelihood switch; they are still reproducible from the same saved teacher-forced artifacts "
+        "(see STANDALONE_QWEN_SOURCE in the generator). The canonical likelihood values live in the "
+        "Summary, Qwen vs Gemma, and Provenance sheets. CV cells are unweighted fold means; DAIC is "
+        "its single fixed test fold. Turkish rows come from the pooled question-condition campaign.",
+        6, height=64,
+    )
+    _header_row(ws, 4, ["Experiment", "Dataset", "Modality", "Macro-F1", "Positive-F1", "UAR"])
+    row = 5
+    for dataset in DATASETS:
+        for modality in MODALITIES:
+            ws.cell(row, 1, "Standalone").font = BODY_FONT
+            ws.cell(row, 1).fill = BODY
+            ws.cell(row, 1).alignment = LEFT
+            ws.cell(row, 1).border = BORDER
+            _body_cell(ws, row, 2, dataset)
+            _body_cell(ws, row, 3, modality)
+            _body_cell(ws, row, 4, STANDALONE_QWEN_TF_LEGACY[(dataset, modality)], fmt="0.0000")
+            _body_cell(ws, row, 5, STANDALONE_QWEN_TF_LEGACY_POSF1[(dataset, modality)], fmt="0.0000")
+            _body_cell(ws, row, 6, STANDALONE_QWEN_TF_LEGACY_UAR[(dataset, modality)], fmt="0.0000")
+            row += 1
+    ws.freeze_panes = "A5"
+
+
 def build_packed30(wb: Workbook) -> None:
     ws = wb.create_sheet("DAIC Packed30 Family")
     _widths(ws, {"A": 34, "B": 12, "C": 14, "D": 14, "E": 12, "F": 52, "G": 46})
@@ -3850,6 +3941,7 @@ def main() -> None:
         _build_turkish_pooled_lookup(turkish_pooled_qcond_report_path)
     build_summary(wb, detailed=detailed)
     build_gemma_vs_qwen(wb)
+    build_legacy_tf(wb)
     build_native_vs_english(wb, report_path=native_en_report_path)
     if turkish_question_condition_report_path is not None:
         build_turkish_question_condition(wb, report_path=turkish_question_condition_report_path)
