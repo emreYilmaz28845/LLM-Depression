@@ -11,23 +11,23 @@ model_name_or_path: ${GEMMA4_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/
 model_revision: 707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7
 components:
   - name: daic
-    config: configs/main/daic_text_only_harmonized_selmacrof1_tf_gemma4_12b.yaml
+    config: configs/main/daic_text_only_harmonized_selmacrof1_likelihood_v1_gemma4_12b.yaml
     manifest_path: outputs/manifests_harmonized/daic/daic_manifest.jsonl
     metadata_path: outputs/splits_harmonized/daic/daic_manifest_metadata.json
   - name: cmdc
-    config: configs/main/cmdc_text_only_harmonized_selmacrof1_tf_en_gemma4_12b.yaml
+    config: configs/main/cmdc_text_only_harmonized_selmacrof1_likelihood_v1_en_gemma4_12b.yaml
     manifest_path: outputs/manifests_harmonized_en/cmdc/cmdc_manifest.jsonl
     metadata_path: outputs/splits_harmonized_en/cmdc/cmdc_manifest_metadata.json
   - name: turkish
-    config: configs/main/turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml
+    config: configs/main/turkish_pos_only_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_en_gemma4_12b.yaml
     manifest_path: outputs/manifests_harmonized_en/turkish_pos_only_t17_qwen3asr/turkish_manifest.jsonl
     metadata_path: outputs/splits_harmonized_en/turkish_pos_only_t17_qwen3asr/turkish_manifest_metadata.json
   - name: d3tec
-    config: configs/main/d3tec_text_only_harmonized_selmacrof1_tf_en_gemma4_12b.yaml
+    config: configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v1_en_gemma4_12b.yaml
     manifest_path: outputs/manifests_harmonized_en/d3tec/d3tec_manifest.jsonl
     metadata_path: outputs/splits_harmonized_en/d3tec/d3tec_manifest_metadata.json
   - name: androids_interview
-    config: configs/main/androids_text_only_harmonized_selmacrof1_tf_en_gemma4_12b.yaml
+    config: configs/main/androids_text_only_harmonized_selmacrof1_likelihood_v1_en_gemma4_12b.yaml
     manifest_path: outputs/manifests_harmonized_en/androids/androids_interview_manifest.jsonl
     metadata_path: outputs/splits_harmonized_en/androids/androids_interview_manifest_metadata.json
 output_dirs:

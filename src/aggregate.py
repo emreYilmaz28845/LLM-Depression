@@ -845,6 +845,85 @@ def aggregate_turkish_pooled_text_teacher_forced_predictions(
     return subject_rows, metrics
 
 
+def aggregate_turkish_pooled_text_likelihood_predictions(
+    sample_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Apply the locked two-condition pair rule to likelihood score margins.
+
+    Mirrors aggregate_turkish_pooled_text_teacher_forced_predictions: the pair
+    margin is the mean of the two condition margins (dep_score - non_score) and
+    the decision is strict, so an exact zero margin stays INVALID and counts as
+    wrong. Likelihood rows carry no decoded validity.
+    """
+    grouped = _require_pooled_pair_rows(sample_rows)
+    subject_rows: list[dict[str, Any]] = []
+    for subject_id, rows_by_condition in sorted(grouped.items()):
+        margins: dict[str, float] = {}
+        for condition in TURKISH_POOLED_TEXT_CONDITIONS:
+            row = rows_by_condition[condition]
+            dep_score = float(row["dep_score"])
+            non_score = float(row["non_score"])
+            if not (math.isfinite(dep_score) and math.isfinite(non_score)):
+                raise ValueError(
+                    f"Non-finite Turkish pooled likelihood score for subject {subject_id!r} "
+                    f"condition {condition!r}."
+                )
+            margins[condition] = dep_score - non_score
+        positive = margins["pos_only_t17"]
+        negative = margins["negative_only_t17"]
+        pair_margin = (positive + negative) / 2.0
+        if not math.isfinite(pair_margin):
+            raise ValueError(f"Non-finite Turkish pooled pair margin for subject {subject_id!r}.")
+        gold = int(rows_by_condition["pos_only_t17"]["label"])
+        prediction = _pair_prediction(pair_margin)
+        subject_rows.append(
+            {
+                "subject_id": subject_id,
+                "label": gold,
+                "label_text": label_text_from_int(gold),
+                "prediction_backend": PREDICTION_MODE_LIKELIHOOD,
+                "evaluation_protocol_name": evaluation_protocol_name(PREDICTION_MODE_LIKELIHOOD),
+                "prediction": prediction,
+                "prediction_text": label_text_from_int(prediction) if prediction in (0, 1) else "INVALID",
+                "positive_condition": "pos_only_t17",
+                "negative_condition": "negative_only_t17",
+                "question_conditions": list(TURKISH_POOLED_TEXT_CONDITIONS),
+                "positive_margin": positive,
+                "negative_margin": negative,
+                "positive_condition_margin": positive,
+                "negative_condition_margin": negative,
+                "pair_margin": pair_margin,
+                "score_margin": pair_margin,
+                "positive_sample_id": str(rows_by_condition["pos_only_t17"].get("sample_id", "")),
+                "negative_sample_id": str(rows_by_condition["negative_only_t17"].get("sample_id", "")),
+                "num_samples": 2,
+                "invalid_component_predictions": 0,
+                "aggregation_policy": TURKISH_POOLED_TEXT_PAIR_POLICY,
+                "aggregation_method": TURKISH_POOLED_TEXT_PAIR_POLICY,
+            }
+        )
+    metrics = _metrics_from_prediction_rows(
+        subject_rows,
+        backend_name=PREDICTION_MODE_LIKELIHOOD,
+        aggregation_level=AGGREGATION_LEVEL_SUBJECT,
+        invalid_metric_name="invalid_paired_subject_predictions",
+        invalid_prediction_count=sum(
+            int(row["prediction"]) not in (0, 1) for row in subject_rows
+        ),
+    )
+    metrics.update(
+        {
+            "aggregation_policy": TURKISH_POOLED_TEXT_PAIR_POLICY,
+            "aggregation_method": TURKISH_POOLED_TEXT_PAIR_POLICY,
+            "invalid_component_predictions": 0,
+            "invalid_paired_subject_predictions": sum(
+                int(row["prediction"]) not in (0, 1) for row in subject_rows
+            ),
+        }
+    )
+    return subject_rows, metrics
+
+
 def aggregate_turkish_pooled_text_condition_predictions(
     sample_rows: list[dict[str, Any]],
     condition: str,
@@ -909,6 +988,72 @@ def aggregate_turkish_pooled_text_condition_predictions(
             "question_condition": condition,
             "aggregation_policy": TURKISH_POOLED_TEXT_PAIR_POLICY,
             "aggregation_method": "condition_specific_decoded_prediction",
+        }
+    )
+    return rows, metrics
+
+
+def aggregate_turkish_pooled_text_condition_likelihood_predictions(
+    sample_rows: list[dict[str, Any]],
+    condition: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Score one pooled text condition from likelihood margins.
+
+    Mirrors aggregate_turkish_pooled_text_condition_predictions on likelihood
+    scores: the condition margin is dep_score - non_score and the decision is
+    strict, so an exact zero margin stays INVALID and counts as wrong.
+    """
+    if condition not in TURKISH_POOLED_TEXT_CONDITIONS:
+        raise ValueError(f"Unsupported Turkish pooled question condition: {condition!r}")
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in sample_rows:
+        if _declared_pair_policy(row) != TURKISH_POOLED_TEXT_PAIR_POLICY:
+            raise ValueError("Pooled condition rows must declare the pooled pair policy.")
+        if str(row.get("question_condition", "")).strip() != condition:
+            raise ValueError("Condition breakdown received a row for another condition.")
+        grouped[str(row["subject_id"])].append(row)
+    rows: list[dict[str, Any]] = []
+    for subject_id, components in sorted(grouped.items()):
+        if len(components) != 1:
+            raise ValueError(f"Condition {condition!r} has duplicate rows for subject {subject_id!r}.")
+        source = components[0]
+        label = int(source["label"])
+        dep_score = float(source["dep_score"])
+        non_score = float(source["non_score"])
+        if not (math.isfinite(dep_score) and math.isfinite(non_score)):
+            raise ValueError(f"Non-finite condition score for subject {subject_id!r}.")
+        margin = dep_score - non_score
+        prediction = _pair_prediction(margin)
+        rows.append(
+            {
+                "subject_id": subject_id,
+                "label": label,
+                "label_text": label_text_from_int(label),
+                "prediction_backend": PREDICTION_MODE_LIKELIHOOD,
+                "evaluation_protocol_name": evaluation_protocol_name(PREDICTION_MODE_LIKELIHOOD),
+                "prediction": prediction,
+                "prediction_text": label_text_from_int(prediction) if prediction in (0, 1) else "INVALID",
+                "question_condition": condition,
+                "dep_score": dep_score,
+                "non_score": non_score,
+                "score_margin": margin,
+                "aggregation_policy": TURKISH_POOLED_TEXT_PAIR_POLICY,
+                "aggregation_method": "condition_specific_likelihood_margin",
+                "num_samples": 1,
+            }
+        )
+    metrics = _metrics_from_prediction_rows(
+        rows,
+        backend_name=PREDICTION_MODE_LIKELIHOOD,
+        aggregation_level=AGGREGATION_LEVEL_SUBJECT,
+        invalid_metric_name="invalid_condition_predictions",
+        invalid_prediction_count=sum(int(row["prediction"]) not in (0, 1) for row in rows),
+    )
+    metrics.update(
+        {
+            "question_condition": condition,
+            "aggregation_policy": TURKISH_POOLED_TEXT_PAIR_POLICY,
+            "aggregation_method": "condition_specific_likelihood_margin",
         }
     )
     return rows, metrics
@@ -1411,11 +1556,23 @@ def aggregate_predictions(
         return subject_rows, subject_metrics, subject_rows, subject_metrics
 
     if mode == PREDICTION_MODE_LIKELIHOOD:
-        subject_rows, subject_metrics = aggregate_likelihood_predictions(sample_rows)
-        if aggregation_level == AGGREGATION_LEVEL_SEGMENT:
-            headline_rows, headline_metrics = aggregate_likelihood_predictions_segment_level(sample_rows)
-        else:
+        declared_policies = {_declared_pair_policy(row) for row in sample_rows}
+        if TURKISH_POOLED_TEXT_PAIR_POLICY in declared_policies:
+            if declared_policies != {TURKISH_POOLED_TEXT_PAIR_POLICY}:
+                raise ValueError(
+                    "Pooled text likelihood rows may not be mixed with another "
+                    f"aggregation policy: {sorted(declared_policies)}."
+                )
+            subject_rows, subject_metrics = aggregate_turkish_pooled_text_likelihood_predictions(
+                sample_rows
+            )
             headline_rows, headline_metrics = subject_rows, subject_metrics
+        else:
+            subject_rows, subject_metrics = aggregate_likelihood_predictions(sample_rows)
+            if aggregation_level == AGGREGATION_LEVEL_SEGMENT:
+                headline_rows, headline_metrics = aggregate_likelihood_predictions_segment_level(sample_rows)
+            else:
+                headline_rows, headline_metrics = subject_rows, subject_metrics
     elif mode == PREDICTION_MODE_GENERATION:
         subject_rows, subject_metrics = aggregate_generation_predictions(sample_rows)
         if aggregation_level == AGGREGATION_LEVEL_SEGMENT:

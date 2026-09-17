@@ -60,26 +60,26 @@ scope:
     xgb_threshold: 0.5
     xgb_sampling_mode: none
   backbone_cells:
-    - {id: M01, recording_condition: mixed, transcript_condition: not_applicable, modality: audio_only, backbone: qwen, config: configs/main/turkish_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml}
-    - {id: M02, recording_condition: mixed, transcript_condition: native, modality: text_only, backbone: qwen, config: configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml}
-    - {id: M03, recording_condition: mixed, transcript_condition: english, modality: text_only, backbone: qwen, config: configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml}
-    - {id: M04, recording_condition: mixed, transcript_condition: native, modality: audio_text, backbone: qwen, config: configs/main/turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml}
-    - {id: M05, recording_condition: mixed, transcript_condition: english, modality: audio_text, backbone: qwen, config: configs/main/turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml}
-    - {id: M06, recording_condition: mixed, transcript_condition: not_applicable, modality: audio_only, backbone: gemma4, config: configs/main/turkish_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
-    - {id: M07, recording_condition: mixed, transcript_condition: native, modality: text_only, backbone: gemma4, config: configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
-    - {id: M08, recording_condition: mixed, transcript_condition: english, modality: text_only, backbone: gemma4, config: configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml}
-    - {id: M09, recording_condition: mixed, transcript_condition: native, modality: audio_text, backbone: gemma4, config: configs/main/turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
-    - {id: M10, recording_condition: mixed, transcript_condition: english, modality: audio_text, backbone: gemma4, config: configs/main/turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml}
-    - {id: N01, recording_condition: negative_only, transcript_condition: not_applicable, modality: audio_only, backbone: qwen, config: configs/main/turkish_negative_only_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml}
-    - {id: N02, recording_condition: negative_only, transcript_condition: native, modality: text_only, backbone: qwen, config: configs/main/turkish_negative_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml}
-    - {id: N03, recording_condition: negative_only, transcript_condition: english, modality: text_only, backbone: qwen, config: configs/main/turkish_negative_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml}
-    - {id: N04, recording_condition: negative_only, transcript_condition: native, modality: audio_text, backbone: qwen, config: configs/main/turkish_negative_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml}
-    - {id: N05, recording_condition: negative_only, transcript_condition: english, modality: audio_text, backbone: qwen, config: configs/main/turkish_negative_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml}
-    - {id: N06, recording_condition: negative_only, transcript_condition: not_applicable, modality: audio_only, backbone: gemma4, config: configs/main/turkish_negative_only_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
-    - {id: N07, recording_condition: negative_only, transcript_condition: native, modality: text_only, backbone: gemma4, config: configs/main/turkish_negative_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
-    - {id: N08, recording_condition: negative_only, transcript_condition: english, modality: text_only, backbone: gemma4, config: configs/main/turkish_negative_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml}
-    - {id: N09, recording_condition: negative_only, transcript_condition: native, modality: audio_text, backbone: gemma4, config: configs/main/turkish_negative_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
-    - {id: N10, recording_condition: negative_only, transcript_condition: english, modality: audio_text, backbone: gemma4, config: configs/main/turkish_negative_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml}
+    - {id: M01, recording_condition: mixed, transcript_condition: not_applicable, modality: audio_only, backbone: qwen, config: configs/main/turkish_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml}
+    - {id: M02, recording_condition: mixed, transcript_condition: native, modality: text_only, backbone: qwen, config: configs/main/turkish_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml}
+    - {id: M03, recording_condition: mixed, transcript_condition: english, modality: text_only, backbone: qwen, config: configs/main/turkish_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml}
+    - {id: M04, recording_condition: mixed, transcript_condition: native, modality: audio_text, backbone: qwen, config: configs/main/turkish_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml}
+    - {id: M05, recording_condition: mixed, transcript_condition: english, modality: audio_text, backbone: qwen, config: configs/main/turkish_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml}
+    - {id: M06, recording_condition: mixed, transcript_condition: not_applicable, modality: audio_only, backbone: gemma4, config: configs/main/turkish_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_gemma4_12b.yaml}
+    - {id: M07, recording_condition: mixed, transcript_condition: native, modality: text_only, backbone: gemma4, config: configs/main/turkish_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_gemma4_12b.yaml}
+    - {id: M08, recording_condition: mixed, transcript_condition: english, modality: text_only, backbone: gemma4, config: configs/main/turkish_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_en_gemma4_12b.yaml}
+    - {id: M09, recording_condition: mixed, transcript_condition: native, modality: audio_text, backbone: gemma4, config: configs/main/turkish_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_gemma4_12b.yaml}
+    - {id: M10, recording_condition: mixed, transcript_condition: english, modality: audio_text, backbone: gemma4, config: configs/main/turkish_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_en_gemma4_12b.yaml}
+    - {id: N01, recording_condition: negative_only, transcript_condition: not_applicable, modality: audio_only, backbone: qwen, config: configs/main/turkish_negative_only_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml}
+    - {id: N02, recording_condition: negative_only, transcript_condition: native, modality: text_only, backbone: qwen, config: configs/main/turkish_negative_only_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml}
+    - {id: N03, recording_condition: negative_only, transcript_condition: english, modality: text_only, backbone: qwen, config: configs/main/turkish_negative_only_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml}
+    - {id: N04, recording_condition: negative_only, transcript_condition: native, modality: audio_text, backbone: qwen, config: configs/main/turkish_negative_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml}
+    - {id: N05, recording_condition: negative_only, transcript_condition: english, modality: audio_text, backbone: qwen, config: configs/main/turkish_negative_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml}
+    - {id: N06, recording_condition: negative_only, transcript_condition: not_applicable, modality: audio_only, backbone: gemma4, config: configs/main/turkish_negative_only_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_gemma4_12b.yaml}
+    - {id: N07, recording_condition: negative_only, transcript_condition: native, modality: text_only, backbone: gemma4, config: configs/main/turkish_negative_only_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_gemma4_12b.yaml}
+    - {id: N08, recording_condition: negative_only, transcript_condition: english, modality: text_only, backbone: gemma4, config: configs/main/turkish_negative_only_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_en_gemma4_12b.yaml}
+    - {id: N09, recording_condition: negative_only, transcript_condition: native, modality: audio_text, backbone: gemma4, config: configs/main/turkish_negative_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_gemma4_12b.yaml}
+    - {id: N10, recording_condition: negative_only, transcript_condition: english, modality: audio_text, backbone: gemma4, config: configs/main/turkish_negative_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_en_gemma4_12b.yaml}
 exclusions:
   - english_audio_only
   - pooled_mixed_and_negative_training

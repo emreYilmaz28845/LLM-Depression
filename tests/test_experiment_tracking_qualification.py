@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from src.experiment_tracking import qualification, schemas
@@ -375,6 +376,37 @@ def test_harmonized_en_recipe_uses_same_qualifiers_as_native(tmp_path: Path) -> 
     evaluation = result.evaluations[0]
     assert evaluation.evaluation_view == "harmonized_all_windows_full_coverage"
     assert evaluation.backend == "original_teacher_forced"
+    assert evaluation.metrics_artifact_path.startswith("best_model/standalone_eval/")
+
+
+LIKELIHOOD_RECIPES = (
+    "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1",
+    "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_en_v1",
+    "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_officialdev_v1",
+    "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_qcond_v1",
+    "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_en_qcond_v1",
+)
+
+
+@pytest.mark.parametrize("recipe", LIKELIHOOD_RECIPES)
+def test_likelihood_recipes_register_the_same_qualifiers(tmp_path: Path, recipe: str) -> None:
+    fold_dir = _harmonized_run(tmp_path)
+    run_config = yaml.safe_load((fold_dir / "run_config.yaml").read_text(encoding="utf-8"))
+    run_config["config"]["recipe_id"] = recipe
+    (fold_dir / "run_config.yaml").write_text(yaml.safe_dump(run_config), encoding="utf-8")
+    for stale in (fold_dir / "best_model" / "standalone_eval").glob("metrics_*.json"):
+        stale.unlink()
+    write_standalone_eval(
+        fold_dir,
+        metrics_files=["metrics_likelihood.json"],
+        contents=[metrics_content(backend="likelihood", view=None)],
+    )
+    result = _qualify(tmp_path)
+    assert result.status == STATUS_QUALIFIED
+    assert result.reasons == ()
+    evaluation = result.evaluations[0]
+    assert evaluation.evaluation_view == "harmonized_all_windows_full_coverage"
+    assert evaluation.backend == "likelihood"
     assert evaluation.metrics_artifact_path.startswith("best_model/standalone_eval/")
 
 

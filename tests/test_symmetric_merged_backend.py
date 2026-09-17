@@ -18,11 +18,11 @@ from src.merged.optuna100 import run_merged_optuna100
 ROOT = Path(__file__).resolve().parents[1]
 MERGED_DIR = ROOT / "configs/experiments/merged"
 QWEN_MERGED = {
-    modality: MERGED_DIR / f"symmetric_merged_harmonized_{modality}.yaml"
+    modality: MERGED_DIR / f"symmetric_merged_harmonized_{modality}_likelihood_v1.yaml"
     for modality in ("audio_text", "audio_only", "text_only")
 }
 GEMMA_MERGED = {
-    modality: MERGED_DIR / f"symmetric_merged_harmonized_gemma4_{modality}.yaml"
+    modality: MERGED_DIR / f"symmetric_merged_harmonized_gemma4_{modality}_likelihood_v1.yaml"
     for modality in ("audio_text", "audio_only", "text_only")
 }
 COMPONENT_NAMES = ("daic", "cmdc", "turkish", "d3tec", "androids_interview")
@@ -70,6 +70,21 @@ class TestMergedConfiguration:
         merged = load(QWEN_MERGED["text_only"])
         resolved = configuration.model_config(merged, fake_records("qwen"))
         assert "model_backend" not in resolved or resolved["model_backend"] is None
+
+    def test_model_config_preserves_real_likelihood_components(self) -> None:
+        merged = load(QWEN_MERGED["audio_text"])
+        records = [
+            {"config": load(ROOT / component["config"])} for component in merged["components"]
+        ]
+        resolved = configuration.model_config(merged, records)
+        assert resolved["evaluation"]["sample_prediction_mode"] == "likelihood"
+        assert resolved["evaluation"]["headline_mode"] == "likelihood"
+
+    def test_model_config_defaults_missing_evaluation_to_teacher_forced(self) -> None:
+        merged = load(QWEN_MERGED["audio_text"])
+        resolved = configuration.model_config(merged, fake_records("qwen"))
+        assert resolved["evaluation"]["sample_prediction_mode"] == "original_teacher_forced"
+        assert resolved["evaluation"]["headline_mode"] == "original_teacher_forced"
 
 
 class TestGemmaMergedConfigs:
@@ -400,9 +415,9 @@ class TestMergedLauncherBackend:
         from scripts.submit_symmetric_merged import build_job_specs
 
         configs = [
-            ROOT / "configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_text.yaml",
-            ROOT / "configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_only.yaml",
-            ROOT / "configs/experiments/merged/symmetric_merged_harmonized_gemma4_text_only.yaml",
+            ROOT / "configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_text_likelihood_v1.yaml",
+            ROOT / "configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_only_likelihood_v1.yaml",
+            ROOT / "configs/experiments/merged/symmetric_merged_harmonized_gemma4_text_only_likelihood_v1.yaml",
         ]
         registry = build_job_specs(
             configs,
@@ -429,9 +444,9 @@ class TestMergedLauncherBackend:
         from scripts.submit_symmetric_merged import build_job_specs
 
         configs = [
-            ROOT / "configs/experiments/merged/symmetric_merged_harmonized_audio_text.yaml",
-            ROOT / "configs/experiments/merged/symmetric_merged_harmonized_audio_only.yaml",
-            ROOT / "configs/experiments/merged/symmetric_merged_harmonized_text_only.yaml",
+            ROOT / "configs/experiments/merged/symmetric_merged_harmonized_audio_text_likelihood_v1.yaml",
+            ROOT / "configs/experiments/merged/symmetric_merged_harmonized_audio_only_likelihood_v1.yaml",
+            ROOT / "configs/experiments/merged/symmetric_merged_harmonized_text_only_likelihood_v1.yaml",
         ]
         registry = build_job_specs(
             configs,

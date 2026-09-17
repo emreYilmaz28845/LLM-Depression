@@ -10,7 +10,7 @@ DRY_RUN="${DRY_RUN:-1}"
 RESUME="${RESUME:-0}"
 PRODUCTION_RUN_ROOT="${PRODUCTION_RUN_ROOT:-$TRANSLATION_ROOT/harmonized_en_complete_v1/turkish_negative_only_t17}"
 WORKER="${WORKER:-$PROJECT_ROOT/scripts/run_translation_slurm.sh}"
-MANIFEST_CONFIG="${MANIFEST_CONFIG:-$PROJECT_ROOT/configs/main/turkish_negative_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml}"
+MANIFEST_CONFIG="${MANIFEST_CONFIG:-$PROJECT_ROOT/configs/main/turkish_negative_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml}"
 
 if [ "$DRY_RUN" != "0" ] && [ "$DRY_RUN" != "1" ]; then
   echo "DRY_RUN must be 0 or 1." >&2

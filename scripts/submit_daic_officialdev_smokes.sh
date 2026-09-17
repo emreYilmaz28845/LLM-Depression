@@ -114,12 +114,12 @@ for backbone in qwen gemma4; do
         fi
         case "$backbone" in
             qwen)
-                CONFIG="$PROJECT_ROOT/configs/main/daic_${modality}_harmonized_selmacrof1_tf_officialdev.yaml"
+                CONFIG="$PROJECT_ROOT/configs/main/daic_${modality}_harmonized_selmacrof1_likelihood_v1_officialdev.yaml"
                 ENV="$QWEN_ENV_ACTIVATE"; MODEL="$MODEL_PATH_QWEN"
                 [ "$modality" = "text_only" ] && MODEL="$MODEL_PATH_QWEN_TEXT"
                 ;;
             gemma4)
-                CONFIG="$PROJECT_ROOT/configs/main/daic_${modality}_harmonized_selmacrof1_tf_gemma4_12b_officialdev.yaml"
+                CONFIG="$PROJECT_ROOT/configs/main/daic_${modality}_harmonized_selmacrof1_likelihood_v1_gemma4_12b_officialdev.yaml"
                 ENV="$GEMMA_ENV_ACTIVATE"; MODEL="$MODEL_PATH_GEMMA4"
                 ;;
         esac

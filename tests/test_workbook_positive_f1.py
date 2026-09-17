@@ -65,6 +65,17 @@ def _f1s_from_preds(rows):
     return (f1(prec_n, rec_n) + f1(prec_p, rec_p)) / 2, f1(prec_p, rec_p), cm
 
 
+def _f1s_from_likelihood(rows):
+    """Run the same rows through the canonical likelihood rule (argmax of the
+    per-subject mean dep/non scores; pooled text rows carry the pair margin)."""
+    def prediction(row):
+        if row.get("dep_score"):
+            return 1 if float(row["dep_score"]) > float(row["non_score"]) else 0
+        return 1 if float(row["pair_margin"]) > 0 else 0
+
+    return _f1s_from_preds([{**row, "prediction": prediction(row)} for row in rows])
+
+
 def _pick_run(base: Path, pattern: str) -> Path:
     runs = sorted(base.glob(pattern))
     assert runs, f"no run for {base}/{pattern}"
@@ -120,6 +131,8 @@ MOD_DIR = {"Audio + Text": "audio_text", "Audio only": "audio_only", "Text only"
     + [("Turkish", m) for m in MOD_DIR],
 )
 def test_standalone_qwen_posf1_daic_cmdc_turkish(dataset, modality):
+    if dataset == "Turkish":
+        pytest.skip("Turkish canonical cells are pooled-driven; see the likelihood derivation test")
     m = MOD_DIR[modality]
     expected = build_clean_workbook.STANDALONE_QWEN_POSF1[(dataset, modality)]
     if dataset == "DAIC":
@@ -144,7 +157,10 @@ def test_standalone_qwen_posf1_daic_cmdc_turkish(dataset, modality):
 @pytest.mark.parametrize("modality", list(MOD_DIR))
 def test_standalone_qwen_posf1_d3tec_androids_fold_mean(dataset, ds_dir, run_ds, modality):
     m = MOD_DIR[modality]
-    expected = build_clean_workbook.STANDALONE_QWEN_POSF1[(dataset, modality)]
+    legacy_macro = build_clean_workbook.STANDALONE_QWEN_TF_LEGACY[(dataset, modality)]
+    legacy_pos = build_clean_workbook.STANDALONE_QWEN_TF_LEGACY_POSF1[(dataset, modality)]
+    expected_macro = build_clean_workbook.STANDALONE_QWEN[(dataset, modality)]
+    expected_pos = build_clean_workbook.STANDALONE_QWEN_POSF1[(dataset, modality)]
     found: dict[int, Path] = {}
     pat = (f"output_model/harmonized_v1/{m}/{ds_dir}/harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_{run_ds}_{m}*/"
            f"fold_*/best_model/standalone_eval*/predictions_subject_level.csv")
@@ -154,11 +170,50 @@ def test_standalone_qwen_posf1_d3tec_androids_fold_mean(dataset, ds_dir, run_ds,
         fold = int(parts[fold_idx].split("_")[1])
         found.setdefault(fold, Path(p))
     assert len(found) == 5, f"expected 5 folds, found {sorted(found)}"
-    fold_values = [_f1s_from_preds(_read_csv(found[fold])) for fold in range(5)]
-    macro = _mean(v[0] for v in fold_values)
-    pos = _mean(v[1] for v in fold_values)
-    assert macro == pytest.approx(build_clean_workbook.STANDALONE_QWEN[(dataset, modality)], abs=1e-8)
-    assert pos == pytest.approx(expected, abs=1e-6)
+    rows = [_read_csv(found[fold]) for fold in range(5)]
+    tf_values = [_f1s_from_preds(fold_rows) for fold_rows in rows]
+    lh_values = [_f1s_from_likelihood(fold_rows) for fold_rows in rows]
+    assert _mean(v[0] for v in tf_values) == pytest.approx(legacy_macro, abs=1e-6)
+    assert _mean(v[1] for v in tf_values) == pytest.approx(legacy_pos, abs=1e-6)
+    assert _mean(v[0] for v in lh_values) == pytest.approx(expected_macro, abs=1e-9)
+    assert _mean(v[1] for v in lh_values) == pytest.approx(expected_pos, abs=1e-9)
+
+
+def test_standalone_qwen_likelihood_tables_match_the_derivation():
+    """The canonical likelihood tables must equal a fresh derivation from the
+    saved per-subject candidate scores (tools/derive_likelihood_values.py)."""
+    from tools import derive_likelihood_values as derive
+
+    index = json.loads((derive.POOLED_REPORT.parent / "provenance_index.json").read_text(encoding="utf-8"))
+    report = json.loads(derive.POOLED_REPORT.read_text(encoding="utf-8"))
+    modal = {"audio_text": "Audio + Text", "audio_only": "Audio only", "text_only": "Text only"}
+    cells = [derive.derive_native_cell(*cell) for cell in derive.NATIVE_CELLS]
+    cells.extend(derive.derive_pooled_cell(cell_id, index, report) for cell_id in derive.POOLED_TF_ANCHORS)
+    pooled_map = {
+        "Q01": ("Turkish", "Audio only"),
+        "Q02": ("Turkish", "Text only"),
+        "Q04": ("Turkish", "Audio + Text"),
+    }
+    checked = set()
+    for cell in cells:
+        if cell["pooled_cell"]:
+            key = pooled_map.get(cell["pooled_cell"])
+            if key is None:
+                continue  # the English-transcript cells live in the EN_TF tables below
+        else:
+            key = (cell["dataset"], modal[cell["modality"]])
+        checked.add(key)
+        assert cell["likelihood"]["macro_f1"] == pytest.approx(build_clean_workbook.STANDALONE_QWEN[key], abs=1e-9)
+        assert cell["likelihood"]["positive_f1"] == pytest.approx(build_clean_workbook.STANDALONE_QWEN_POSF1[key], abs=1e-9)
+        assert cell["likelihood"]["uar"] == pytest.approx(build_clean_workbook.STANDALONE_QWEN_UAR[key], abs=1e-9)
+    assert checked == set(build_clean_workbook.STANDALONE_QWEN)
+
+    by_cell = {cell["pooled_cell"]: cell for cell in cells if cell["pooled_cell"]}
+    for cell_id, key in (("Q05", ("Turkish", "Audio + Text")), ("Q03", ("Turkish", "Text only"))):
+        likelihood = by_cell[cell_id]["likelihood"]
+        assert likelihood["macro_f1"] == pytest.approx(build_clean_workbook.EN_TF[key][0], abs=1e-9)
+        assert likelihood["positive_f1"] == pytest.approx(build_clean_workbook.EN_TF[key][1], abs=1e-9)
+        assert likelihood["uar"] == pytest.approx(build_clean_workbook.EN_TF_UAR[key][0], abs=1e-9)
 
 
 @pytest.mark.parametrize(

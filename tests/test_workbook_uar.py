@@ -165,6 +165,7 @@ def _single_fold_uar(base: Path, contains: str, pattern: str) -> float:
 @pytest.mark.parametrize("dataset", DATASETS)
 @pytest.mark.parametrize("modality", list(MOD_DIR))
 def test_standalone_qwen_tf_uar(dataset, modality):
+    """The legacy teacher-forced UAR anchors stay reproducible from the artifacts."""
     _skip_turkish(dataset)
     m = MOD_DIR[modality]
     folder = "eval/best_validation" if dataset in ("CMDC", "Turkish") else "best_model/standalone_eval"
@@ -174,7 +175,7 @@ def test_standalone_qwen_tf_uar(dataset, modality):
         got = _single_fold_uar(base, f"{RUN_DS[dataset]}_{m}", f"fold_0/{folder}/metrics_original_teacher_forced.json")
     else:
         got = _family_fold_mean(base, f"{RUN_DS[dataset]}_{m}", rel)
-    assert got == pytest.approx(build_clean_workbook.STANDALONE_QWEN_UAR[(dataset, modality)], abs=1e-5)
+    assert got == pytest.approx(build_clean_workbook.STANDALONE_QWEN_TF_LEGACY_UAR[(dataset, modality)], abs=1e-5)
 
 
 @pytest.mark.parametrize("dataset", DATASETS)

@@ -20,6 +20,7 @@ from src.aggregate import (
     aggregate_margin_predictions,
     aggregate_predictions,
     aggregate_response_subject_predictions,
+    aggregate_turkish_pooled_text_condition_likelihood_predictions,
     aggregate_turkish_pooled_text_condition_predictions,
 )
 from src.data.build_manifest import build_for_config, manifest_build_signature
@@ -776,7 +777,7 @@ def evaluate_examples(
     if (
         str(config.get("dataset", "")).lower() == "turkish"
         and str(config.get("dataset_variant", "")).strip() == "pooled_t17"
-        and mode == PREDICTION_MODE_ORIGINAL_TEACHER_FORCED
+        and mode in (PREDICTION_MODE_ORIGINAL_TEACHER_FORCED, PREDICTION_MODE_LIKELIHOOD)
     ):
         condition_values = {str(row.get("question_condition", "")).strip() for row in sample_rows}
         expected_conditions = {"pos_only_t17", "negative_only_t17"}
@@ -785,7 +786,10 @@ def evaluate_examples(
                 "Pooled evaluation must emit exactly the two question conditions; "
                 f"found {sorted(condition_values)}."
             )
-        prediction_field = "teacher_forced_prediction"
+        prediction_field = {
+            PREDICTION_MODE_ORIGINAL_TEACHER_FORCED: "teacher_forced_prediction",
+            PREDICTION_MODE_LIKELIHOOD: "likelihood_prediction",
+        }[mode]
         for condition in ("pos_only_t17", "negative_only_t17"):
             condition_samples = [
                 row for row in sample_rows
@@ -796,11 +800,16 @@ def evaluate_examples(
                     condition_samples,
                     prediction_field=prediction_field,
                     backend_name=mode,
-                    invalid_as_wrong=True,
+                    invalid_as_wrong=mode == PREDICTION_MODE_ORIGINAL_TEACHER_FORCED,
                     score_average=(
                         str(config.get("evaluation", {}).get("hierarchical_score_aggregation", "")).lower()
                         == "mean"
                     ),
+                )
+            elif mode == PREDICTION_MODE_LIKELIHOOD:
+                condition_subject_rows, condition_metrics = aggregate_turkish_pooled_text_condition_likelihood_predictions(
+                    condition_samples,
+                    condition,
                 )
             else:
                 condition_subject_rows, condition_metrics = aggregate_turkish_pooled_text_condition_predictions(

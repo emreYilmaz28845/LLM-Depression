@@ -19,6 +19,7 @@ PLAN_SCHEMA_VERSION = "audiollm.turkish_pooled_qcond_plan.v1"
 PLAN_HASH_SCHEMA_VERSION = "audiollm.turkish_pooled_qcond_plan_hash.v1"
 EVALUATION_VIEW = "harmonized_all_windows_full_coverage"
 EVALUATION_BACKEND = "original_teacher_forced"
+EVALUATION_BACKENDS = ("original_teacher_forced", "likelihood")
 METRIC_NAMESPACE = "headline/binary_strict"
 PRIMARY_METRIC = "macro_f1"
 SECONDARY_METRIC = "positive_f1"
@@ -197,7 +198,7 @@ def _config_summary(root: Path, cell: BackboneCell) -> dict[str, Any]:
         raise MatrixError(f"pooled config has the wrong dataset identity: {cell.config}")
     if not str(config.get("recipe_id", "")).endswith("_qcond_v1"):
         raise MatrixError(f"pooled config recipe does not end in _qcond_v1: {cell.config}")
-    if evaluation.get("evaluation_view") != EVALUATION_VIEW or evaluation.get("sample_prediction_mode") != EVALUATION_BACKEND:
+    if evaluation.get("evaluation_view") != EVALUATION_VIEW or evaluation.get("sample_prediction_mode") not in EVALUATION_BACKENDS:
         raise MatrixError(f"pooled config lacks locked evaluation qualifiers: {cell.config}")
     if int(split.get("outer_folds", -1)) != 5 or split.get("cv_protocol") != "train_val":
         raise MatrixError(f"pooled config lacks locked five-fold train_val split: {cell.config}")

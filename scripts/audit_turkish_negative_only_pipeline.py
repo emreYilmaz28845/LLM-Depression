@@ -357,11 +357,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--native-config",
-        default="configs/main/turkish_negative_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml",
+        default="configs/main/turkish_negative_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml",
     )
     parser.add_argument(
         "--english-config",
-        default="configs/main/turkish_negative_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml",
+        default="configs/main/turkish_negative_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml",
     )
     parser.add_argument("--build-native", action="store_true")
     parser.add_argument("--build-english", action="store_true")

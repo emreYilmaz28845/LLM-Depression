@@ -69,9 +69,9 @@ GEMMA_MODEL_PATH = (
     "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7"
 )
 GEMMA_MERGED_CONFIGS = (
-    "configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_text.yaml",
-    "configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_only.yaml",
-    "configs/experiments/merged/symmetric_merged_harmonized_gemma4_text_only.yaml",
+    "configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_text_likelihood_v1.yaml",
+    "configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_only_likelihood_v1.yaml",
+    "configs/experiments/merged/symmetric_merged_harmonized_gemma4_text_only_likelihood_v1.yaml",
 )
 AUDIO_SAMPLING_RATE = 16000
 TOKENIZE_EXAMPLES_PER_CONFIG = 32

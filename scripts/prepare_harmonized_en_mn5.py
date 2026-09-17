@@ -36,26 +36,26 @@ from src.utils import (
     sha256_file,
 )
 
-EN_RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_en_v1"
+EN_RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_en_v1"
 
 # One audio_text config per dataset builds the shared manifest.
 BUILD_CONFIGS = (
-    "configs/main/d3tec_audio_text_harmonized_selmacrof1_tf_en.yaml",
-    "configs/main/androids_audio_text_harmonized_selmacrof1_tf_en.yaml",
-    "configs/main/cmdc_audio_text_harmonized_selmacrof1_tf_en.yaml",
-    "configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml",
+    "configs/main/d3tec_audio_text_harmonized_selmacrof1_likelihood_v1_en.yaml",
+    "configs/main/androids_audio_text_harmonized_selmacrof1_likelihood_v1_en.yaml",
+    "configs/main/cmdc_audio_text_harmonized_selmacrof1_likelihood_v1_en.yaml",
+    "configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml",
 )
 NATIVE_CONFIGS = (
-    "configs/main/d3tec_audio_text_harmonized_selmacrof1_tf.yaml",
-    "configs/main/androids_audio_text_harmonized_selmacrof1_tf.yaml",
-    "configs/main/cmdc_audio_text_harmonized_selmacrof1_tf.yaml",
-    "configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml",
+    "configs/main/d3tec_audio_text_harmonized_selmacrof1_likelihood_v1.yaml",
+    "configs/main/androids_audio_text_harmonized_selmacrof1_likelihood_v1.yaml",
+    "configs/main/cmdc_audio_text_harmonized_selmacrof1_likelihood_v1.yaml",
+    "configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml",
 )
 ALL_EN_CONFIGS = BUILD_CONFIGS + (
-    "configs/main/d3tec_text_only_harmonized_selmacrof1_tf_en.yaml",
-    "configs/main/androids_text_only_harmonized_selmacrof1_tf_en.yaml",
-    "configs/main/cmdc_text_only_harmonized_selmacrof1_tf_en.yaml",
-    "configs/main/turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml",
+    "configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v1_en.yaml",
+    "configs/main/androids_text_only_harmonized_selmacrof1_likelihood_v1_en.yaml",
+    "configs/main/cmdc_text_only_harmonized_selmacrof1_likelihood_v1_en.yaml",
+    "configs/main/turkish_pos_only_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml",
 )
 MATRIX = "configs/experiments/harmonized/english_translation_matrix.yaml"
 
@@ -406,8 +406,8 @@ def recipe_and_scope_audit() -> dict[str, Any]:
             failures.append(f"expected macro-F1 max selection: {config_path}")
         if config["training"]["early_stopping"]["patience"] != 3:
             failures.append(f"expected patience 3: {config_path}")
-        if config["evaluation"]["sample_prediction_mode"] != "original_teacher_forced" or config["evaluation"]["headline_mode"] != "original_teacher_forced":
-            failures.append(f"expected teacher-forced evaluation: {config_path}")
+        if config["evaluation"]["sample_prediction_mode"] != "likelihood" or config["evaluation"]["headline_mode"] != "likelihood":
+            failures.append(f"expected likelihood evaluation: {config_path}")
         audio_adapter = config.get("audio_adapter") or {}
         if audio_adapter.get("enabled") or audio_adapter.get("train_projector"):
             failures.append(f"audio encoder not frozen: {config_path}")

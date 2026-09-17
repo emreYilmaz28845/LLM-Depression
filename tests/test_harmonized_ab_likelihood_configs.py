@@ -6,6 +6,7 @@ from src.utils import load_yaml, prompt_label_instruction
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "configs/main"
+ARCHIVE_MAIN = ROOT / "configs/archive/pre_likelihood_20260917/main"
 LABELS_DIR = ROOT / "configs/labels"
 RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_ab_v1"
 LABELS = {
@@ -27,7 +28,7 @@ def _key(config: dict) -> tuple:
 
 def test_core_ab_family_preserves_harmonized_data_and_training_recipe() -> None:
     baselines = {}
-    for path in MAIN.glob("*harmonized_selmacrof1_tf*.yaml"):
+    for path in ARCHIVE_MAIN.glob("*harmonized_selmacrof1_tf*.yaml"):
         name = path.name
         if (
             name.endswith("_en.yaml") or "_gemma4_12b" in name

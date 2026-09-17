@@ -83,6 +83,7 @@ def test_workbook_regeneration_keeps_compact_sheet_set_with_qwen_vs_gemma() -> N
     assert workbook.sheetnames == [
         "Summary",
         "Qwen vs Gemma",
+        "Legacy TF",
         "Native vs EN",
         "Turkish Pooled QCond",
         "DAIC Packed30 Family",

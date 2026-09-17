@@ -6,7 +6,7 @@ research_question: >-
   candidate likelihood perform against the existing DAIC text-only harmonized
   teacher-forced recipe?
 dataset: daic
-baseline: configs/main/daic_text_only_harmonized_selmacrof1_tf.yaml
+baseline: configs/archive/pre_likelihood_20260917/main/daic_text_only_harmonized_selmacrof1_tf.yaml
 treatment: configs/labels/daic_text_only_harmonized_selmacrof1_likelihood_ab.yaml
 expected_seeds: [1337]
 expected_folds: [0]

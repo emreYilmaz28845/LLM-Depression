@@ -56,7 +56,7 @@ ENGLISH_BASES = {
 def qwen_config_name(dataset: str, modality: str, english: bool) -> str:
     suffix = "_en" if english else ""
     tail = "qwen3asr" if dataset == "turkish_pos_only_t17" else None
-    name = f"{dataset}_{modality}_harmonized_selmacrof1_tf"
+    name = f"{dataset}_{modality}_harmonized_selmacrof1_likelihood_v1"
     if tail:
         name += f"_{tail}"
     return f"{name}{suffix}.yaml"
@@ -65,7 +65,7 @@ def qwen_config_name(dataset: str, modality: str, english: bool) -> str:
 def gemma_config_name(dataset: str, modality: str, english: bool) -> str:
     suffix = "_en" if english else ""
     tail = "qwen3asr" if dataset == "turkish_pos_only_t17" else None
-    name = f"{dataset}_{modality}_harmonized_selmacrof1_tf"
+    name = f"{dataset}_{modality}_harmonized_selmacrof1_likelihood_v1"
     if tail:
         name += f"_{tail}"
     return f"{name}{suffix}_gemma4_12b.yaml"
@@ -77,8 +77,16 @@ def derive_gemma_config(source: dict[str, object], english: bool) -> dict[str, o
     config["model_name_or_path"] = "${GEMMA4_MODEL_PATH:-" + GEMMA4_MODEL_PATH + "}"
     config["model_revision"] = GEMMA4_REVISION
     run_root = str(config["output_dirs"]["run_root"])
-    old_root = "output_model/harmonized_v1_en" if english else "output_model/harmonized_v1"
-    new_root = "output_model/harmonized_v1_en_gemma4" if english else "output_model/harmonized_v1_gemma4"
+    old_root = (
+        "output_model/harmonized_v1_en_likelihood"
+        if english
+        else "output_model/harmonized_v1_likelihood"
+    )
+    new_root = (
+        "output_model/harmonized_v1_en_gemma4_likelihood"
+        if english
+        else "output_model/harmonized_v1_gemma4_likelihood"
+    )
     if old_root not in run_root:
         raise ValueError(f"Cannot derive Gemma run root from {run_root!r}.")
     config["output_dirs"]["run_root"] = run_root.replace(old_root, new_root, 1)

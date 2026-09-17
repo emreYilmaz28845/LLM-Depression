@@ -26,8 +26,8 @@ from src.translation.units import unit_rows_for_dataset
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "configs/main"
 PREFIX = "turkish_negative_only_t17_"
-NATIVE_RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1"
-EN_RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_en_v1"
+NATIVE_RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1"
+EN_RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_en_v1"
 
 
 def _write_fixture(root: Path, *, wrong_label: bool = False) -> None:
@@ -314,10 +314,10 @@ def test_validation_retry_prompt_explicitly_removes_turkish_lexical_content() ->
 def _variant_configs() -> tuple[list[Path], list[Path]]:
     native = sorted(
         path
-        for path in MAIN.glob(f"{PREFIX}*harmonized_selmacrof1_tf_qwen3asr.yaml")
+        for path in MAIN.glob(f"{PREFIX}*harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml")
         if not path.name.endswith("_en.yaml")
     )
-    english = sorted(MAIN.glob(f"{PREFIX}*harmonized_selmacrof1_tf_qwen3asr_en.yaml"))
+    english = sorted(MAIN.glob(f"{PREFIX}*harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml"))
     return native, english
 
 

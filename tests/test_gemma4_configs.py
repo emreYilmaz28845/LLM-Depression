@@ -14,11 +14,11 @@ ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "configs/main"
 
 GEMMA_CONFIGS = {
-    modality: f"daic_{modality}_harmonized_selmacrof1_tf_gemma4_12b.yaml"
+    modality: f"daic_{modality}_harmonized_selmacrof1_likelihood_v1_gemma4_12b.yaml"
     for modality in ("text_only", "audio_only", "audio_text")
 }
 QWEN_CONFIGS = {
-    modality: f"daic_{modality}_harmonized_selmacrof1_tf.yaml"
+    modality: f"daic_{modality}_harmonized_selmacrof1_likelihood_v1.yaml"
     for modality in ("text_only", "audio_only", "audio_text")
 }
 
@@ -178,6 +178,10 @@ def test_gemma_lora_regex_matches_six_modules_per_layer_across_48_layers() -> No
     assert len(matched) == 288
 
 
-def test_archived_gemma_configs_do_not_exist() -> None:
+def test_archived_gemma_configs_are_only_the_likelihood_archive() -> None:
     archive = ROOT / "configs/archive"
-    assert not list(archive.rglob("*gemma4*"))
+    archived = [
+        path for path in archive.rglob("*gemma4*") if "pre_likelihood_20260917" not in path.parts
+    ]
+    assert not archived
+    assert len(list((archive / "pre_likelihood_20260917/main").glob("*gemma4*.yaml"))) == 41

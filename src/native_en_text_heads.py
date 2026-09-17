@@ -28,22 +28,22 @@ MERGED_DATASETS = ("daic", "d3tec", "androids_interview", "cmdc", "turkish")
 HEADS = ("logreg", "xgb_optuna100")
 
 STANDALONE_CONFIGS = {
-    ("native", "qwen", "d3tec"): "configs/main/d3tec_text_only_harmonized_selmacrof1_tf.yaml",
-    ("native", "qwen", "androids_interview"): "configs/main/androids_text_only_harmonized_selmacrof1_tf.yaml",
-    ("native", "qwen", "cmdc"): "configs/main/cmdc_text_only_harmonized_selmacrof1_tf.yaml",
-    ("native", "qwen", "turkish"): "configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml",
-    ("english", "qwen", "d3tec"): "configs/main/d3tec_text_only_harmonized_selmacrof1_tf_en.yaml",
-    ("english", "qwen", "androids_interview"): "configs/main/androids_text_only_harmonized_selmacrof1_tf_en.yaml",
-    ("english", "qwen", "cmdc"): "configs/main/cmdc_text_only_harmonized_selmacrof1_tf_en.yaml",
-    ("english", "qwen", "turkish"): "configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml",
-    ("native", "gemma4", "d3tec"): "configs/main/d3tec_text_only_harmonized_selmacrof1_tf_gemma4_12b.yaml",
-    ("native", "gemma4", "androids_interview"): "configs/main/androids_text_only_harmonized_selmacrof1_tf_gemma4_12b.yaml",
-    ("native", "gemma4", "cmdc"): "configs/main/cmdc_text_only_harmonized_selmacrof1_tf_gemma4_12b.yaml",
-    ("native", "gemma4", "turkish"): "configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml",
-    ("english", "gemma4", "d3tec"): "configs/main/d3tec_text_only_harmonized_selmacrof1_tf_en_gemma4_12b.yaml",
-    ("english", "gemma4", "androids_interview"): "configs/main/androids_text_only_harmonized_selmacrof1_tf_en_gemma4_12b.yaml",
-    ("english", "gemma4", "cmdc"): "configs/main/cmdc_text_only_harmonized_selmacrof1_tf_en_gemma4_12b.yaml",
-    ("english", "gemma4", "turkish"): "configs/main/turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml",
+    ("native", "qwen", "d3tec"): "configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v1.yaml",
+    ("native", "qwen", "androids_interview"): "configs/main/androids_text_only_harmonized_selmacrof1_likelihood_v1.yaml",
+    ("native", "qwen", "cmdc"): "configs/main/cmdc_text_only_harmonized_selmacrof1_likelihood_v1.yaml",
+    ("native", "qwen", "turkish"): "configs/main/turkish_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml",
+    ("english", "qwen", "d3tec"): "configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v1_en.yaml",
+    ("english", "qwen", "androids_interview"): "configs/main/androids_text_only_harmonized_selmacrof1_likelihood_v1_en.yaml",
+    ("english", "qwen", "cmdc"): "configs/main/cmdc_text_only_harmonized_selmacrof1_likelihood_v1_en.yaml",
+    ("english", "qwen", "turkish"): "configs/main/turkish_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml",
+    ("native", "gemma4", "d3tec"): "configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v1_gemma4_12b.yaml",
+    ("native", "gemma4", "androids_interview"): "configs/main/androids_text_only_harmonized_selmacrof1_likelihood_v1_gemma4_12b.yaml",
+    ("native", "gemma4", "cmdc"): "configs/main/cmdc_text_only_harmonized_selmacrof1_likelihood_v1_gemma4_12b.yaml",
+    ("native", "gemma4", "turkish"): "configs/main/turkish_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_gemma4_12b.yaml",
+    ("english", "gemma4", "d3tec"): "configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v1_en_gemma4_12b.yaml",
+    ("english", "gemma4", "androids_interview"): "configs/main/androids_text_only_harmonized_selmacrof1_likelihood_v1_en_gemma4_12b.yaml",
+    ("english", "gemma4", "cmdc"): "configs/main/cmdc_text_only_harmonized_selmacrof1_likelihood_v1_en_gemma4_12b.yaml",
+    ("english", "gemma4", "turkish"): "configs/main/turkish_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_en_gemma4_12b.yaml",
 }
 
 MERGED_CONFIGS = {
