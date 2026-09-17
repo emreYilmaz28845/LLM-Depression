@@ -26,6 +26,7 @@ PLAN_SCHEMA_VERSION = "audiollm.turkish_question_condition_plan.v1"
 PLAN_HASH_SCHEMA_VERSION = "audiollm.turkish_question_condition_plan_hash.v1"
 EVALUATION_VIEW = "harmonized_all_windows_full_coverage"
 EVALUATION_BACKEND = "original_teacher_forced"
+EVALUATION_BACKENDS = ("original_teacher_forced", "likelihood")
 METRIC_NAMESPACE = "headline/binary_strict"
 PRIMARY_METRIC = "macro_f1"
 SECONDARY_METRIC = "positive_f1"
@@ -252,8 +253,8 @@ def _config_summary(repo_root: Path, cell: BackboneCell) -> dict[str, Any]:
     split = config.get("split") or {}
     if evaluation.get("evaluation_view") != EVALUATION_VIEW:
         raise MatrixError(f"config lacks the locked evaluation view: {cell.config}")
-    if evaluation.get("sample_prediction_mode") != EVALUATION_BACKEND:
-        raise MatrixError(f"config lacks teacher-forced evaluation: {cell.config}")
+    if evaluation.get("sample_prediction_mode") not in EVALUATION_BACKENDS:
+        raise MatrixError(f"config lacks an allowed evaluation backend: {cell.config}")
     if int(split.get("outer_folds", -1)) != len(FOLDS) or int(split.get("seed", -1)) != 1337:
         raise MatrixError(f"config has an unlocked split contract: {cell.config}")
     return {

@@ -36,7 +36,7 @@ from src.utils import (
     sha256_file,
 )
 
-EN_RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_en_v1"
+EN_RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_en_v1"
 
 # One audio_text config per dataset builds the shared manifest.
 BUILD_CONFIGS = (
@@ -406,8 +406,8 @@ def recipe_and_scope_audit() -> dict[str, Any]:
             failures.append(f"expected macro-F1 max selection: {config_path}")
         if config["training"]["early_stopping"]["patience"] != 3:
             failures.append(f"expected patience 3: {config_path}")
-        if config["evaluation"]["sample_prediction_mode"] != "original_teacher_forced" or config["evaluation"]["headline_mode"] != "original_teacher_forced":
-            failures.append(f"expected teacher-forced evaluation: {config_path}")
+        if config["evaluation"]["sample_prediction_mode"] != "likelihood" or config["evaluation"]["headline_mode"] != "likelihood":
+            failures.append(f"expected likelihood evaluation: {config_path}")
         audio_adapter = config.get("audio_adapter") or {}
         if audio_adapter.get("enabled") or audio_adapter.get("train_projector"):
             failures.append(f"audio encoder not frozen: {config_path}")

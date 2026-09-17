@@ -11,32 +11,32 @@ GROUP = ROOT / "experiments" / "definitions" / "turkish-pos_only-vs-negonly-nati
 
 GROUP_ID = "turkish-pos_only-vs-negonly-native-en-multimodal-heads-v1-20260903"
 VIEW = "harmonized_all_windows_full_coverage"
-NATIVE_RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1"
-EN_RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_en_v1"
+NATIVE_RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1"
+EN_RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_en_v1"
 GEMMA_TARGET = r"^model\.language_model\.layers\.\d+\.(?:self_attn\.(?:q_proj|k_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))$"
 
 
 CELLS = {
-    "P01": ("pos_only", "not_applicable", "audio_only", "qwen", "turkish_pos_only_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml"),
-    "P02": ("pos_only", "native", "text_only", "qwen", "turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml"),
-    "P03": ("pos_only", "english", "text_only", "qwen", "turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml"),
-    "P04": ("pos_only", "native", "audio_text", "qwen", "turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml"),
-    "P05": ("pos_only", "english", "audio_text", "qwen", "turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml"),
-    "P06": ("pos_only", "not_applicable", "audio_only", "gemma4", "turkish_pos_only_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml"),
-    "P07": ("pos_only", "native", "text_only", "gemma4", "turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml"),
-    "P08": ("pos_only", "english", "text_only", "gemma4", "turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml"),
-    "P09": ("pos_only", "native", "audio_text", "gemma4", "turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml"),
-    "P10": ("pos_only", "english", "audio_text", "gemma4", "turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml"),
-    "N01": ("negative_only", "not_applicable", "audio_only", "qwen", "turkish_negative_only_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml"),
-    "N02": ("negative_only", "native", "text_only", "qwen", "turkish_negative_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml"),
-    "N03": ("negative_only", "english", "text_only", "qwen", "turkish_negative_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml"),
-    "N04": ("negative_only", "native", "audio_text", "qwen", "turkish_negative_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml"),
-    "N05": ("negative_only", "english", "audio_text", "qwen", "turkish_negative_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml"),
-    "N06": ("negative_only", "not_applicable", "audio_only", "gemma4", "turkish_negative_only_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml"),
-    "N07": ("negative_only", "native", "text_only", "gemma4", "turkish_negative_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml"),
-    "N08": ("negative_only", "english", "text_only", "gemma4", "turkish_negative_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml"),
-    "N09": ("negative_only", "native", "audio_text", "gemma4", "turkish_negative_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml"),
-    "N10": ("negative_only", "english", "audio_text", "gemma4", "turkish_negative_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml"),
+    "P01": ("pos_only", "not_applicable", "audio_only", "qwen", "turkish_pos_only_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml"),
+    "P02": ("pos_only", "native", "text_only", "qwen", "turkish_pos_only_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml"),
+    "P03": ("pos_only", "english", "text_only", "qwen", "turkish_pos_only_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml"),
+    "P04": ("pos_only", "native", "audio_text", "qwen", "turkish_pos_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml"),
+    "P05": ("pos_only", "english", "audio_text", "qwen", "turkish_pos_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml"),
+    "P06": ("pos_only", "not_applicable", "audio_only", "gemma4", "turkish_pos_only_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_gemma4_12b.yaml"),
+    "P07": ("pos_only", "native", "text_only", "gemma4", "turkish_pos_only_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_gemma4_12b.yaml"),
+    "P08": ("pos_only", "english", "text_only", "gemma4", "turkish_pos_only_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_en_gemma4_12b.yaml"),
+    "P09": ("pos_only", "native", "audio_text", "gemma4", "turkish_pos_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_gemma4_12b.yaml"),
+    "P10": ("pos_only", "english", "audio_text", "gemma4", "turkish_pos_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_en_gemma4_12b.yaml"),
+    "N01": ("negative_only", "not_applicable", "audio_only", "qwen", "turkish_negative_only_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml"),
+    "N02": ("negative_only", "native", "text_only", "qwen", "turkish_negative_only_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml"),
+    "N03": ("negative_only", "english", "text_only", "qwen", "turkish_negative_only_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml"),
+    "N04": ("negative_only", "native", "audio_text", "qwen", "turkish_negative_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml"),
+    "N05": ("negative_only", "english", "audio_text", "qwen", "turkish_negative_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml"),
+    "N06": ("negative_only", "not_applicable", "audio_only", "gemma4", "turkish_negative_only_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_gemma4_12b.yaml"),
+    "N07": ("negative_only", "native", "text_only", "gemma4", "turkish_negative_only_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_gemma4_12b.yaml"),
+    "N08": ("negative_only", "english", "text_only", "gemma4", "turkish_negative_only_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_en_gemma4_12b.yaml"),
+    "N09": ("negative_only", "native", "audio_text", "gemma4", "turkish_negative_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_gemma4_12b.yaml"),
+    "N10": ("negative_only", "english", "audio_text", "gemma4", "turkish_negative_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_en_gemma4_12b.yaml"),
 }
 
 
@@ -78,8 +78,8 @@ def test_all_cells_use_locked_harmonized_recipe() -> None:
         assert config["training"]["selection_metric"] == "inner_val_macro_f1"
         assert config["training"]["selection_metric_mode"] == "max"
         assert config["training"]["class_balance"] == "none"
-        assert config["evaluation"]["sample_prediction_mode"] == "original_teacher_forced"
-        assert config["evaluation"]["headline_mode"] == "original_teacher_forced"
+        assert config["evaluation"]["sample_prediction_mode"] == "likelihood"
+        assert config["evaluation"]["headline_mode"] == "likelihood"
         assert config["evaluation"]["evaluation_view"] == VIEW
         if config["data"]["use_audio"]:
             assert config["audio_adapter"]["enabled"] is False
@@ -124,5 +124,5 @@ def test_negative_gemma_configs_are_qwen_derived_with_only_approved_backend_diff
 def test_no_english_audio_only_config_exists() -> None:
     assert not any(
         "audio_only" in name and "_en" in name
-        for name in (path.name for path in MAIN.glob("turkish*_harmonized_selmacrof1_tf*.yaml"))
+        for name in (path.name for path in MAIN.glob("turkish*_harmonized_selmacrof1_likelihood_v1*.yaml"))
     )

@@ -25,7 +25,7 @@ def test_every_pooled_config_has_the_tag_and_locked_recipe() -> None:
         assert config["dataset"] == "turkish"
         assert config["dataset_variant"] == "pooled_t17"
         assert config["recipe_id"].endswith("_qcond_v1")
-        assert config["evaluation"]["sample_prediction_mode"] == "original_teacher_forced"
+        assert config["evaluation"]["sample_prediction_mode"] == "likelihood"
         assert config["evaluation"]["evaluation_view"] == "harmonized_all_windows_full_coverage"
         assert config["training"]["selection_metric"] == "inner_val_macro_f1"
         assert config["training"]["selection_metric_mode"] == "max"

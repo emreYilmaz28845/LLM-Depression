@@ -5,14 +5,14 @@ from src.utils import load_yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "configs/main"
-RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1"
+RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1"
 DATASETS = {"d3tec", "turkish", "androids_interview", "daic", "cmdc"}
 
 
 def harmonized_configs():
     return sorted(
         path
-        for path in MAIN.glob("*harmonized_selmacrof1_tf*.yaml")
+        for path in MAIN.glob("*harmonized_selmacrof1_likelihood_v1*.yaml")
         if not path.name.endswith("_en.yaml")
         and "_gemma4_12b" not in path.name
         and "_officialdev" not in path.name
@@ -25,16 +25,19 @@ def harmonized_configs():
 
 
 def test_legacy_turkish_configs_remain_as_history() -> None:
-    legacy = sorted(
+    archived = sorted(
         path.name
-        for path in MAIN.glob("turkish_t17_*harmonized_selmacrof1_tf*.yaml")
+        for path in (ROOT / "configs/archive/pre_likelihood_20260917/main").glob(
+            "turkish_t17_*harmonized_selmacrof1_tf*.yaml"
+        )
         if not path.name.endswith("_en.yaml") and "_gemma4_12b" not in path.name
     )
-    assert legacy == [
+    assert archived == [
         "turkish_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml",
         "turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml",
         "turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml",
     ]
+    assert len(sorted(MAIN.glob("turkish_t17_*harmonized_selmacrof1_likelihood_v1*.yaml"))) == 10
 
 
 def test_harmonized_main_has_five_datasets_by_three_modalities() -> None:
@@ -52,7 +55,7 @@ def test_harmonized_main_has_five_datasets_by_three_modalities() -> None:
 
 def test_gemma4_variants_cover_daic_and_the_harmonized_non_daic_family() -> None:
     gemma = sorted(
-        path for path in MAIN.glob("*harmonized_selmacrof1_tf*gemma4_12b.yaml")
+        path for path in MAIN.glob("*harmonized_selmacrof1_likelihood_v1*gemma4_12b.yaml")
         if "turkish_pooled" not in path.name
     )
     daic = [path for path in gemma if path.name.startswith("daic_")]
@@ -69,7 +72,7 @@ def test_gemma4_variants_cover_daic_and_the_harmonized_non_daic_family() -> None
     assert len(gemma) == 33
 
 
-def test_harmonized_selection_and_teacher_forced_recipe_is_locked() -> None:
+def test_harmonized_selection_and_likelihood_recipe_is_locked() -> None:
     for path in harmonized_configs():
         config = load_yaml(path)
         assert config["recipe_id"] == RECIPE
@@ -79,8 +82,8 @@ def test_harmonized_selection_and_teacher_forced_recipe_is_locked() -> None:
         assert config["training"]["early_stopping"]["metric"] == "inner_val_macro_f1"
         assert config["training"]["early_stopping"]["mode"] == "max"
         assert config["training"]["class_balance"] == "none"
-        assert config["evaluation"]["sample_prediction_mode"] == "original_teacher_forced"
-        assert config["evaluation"]["headline_mode"] == "original_teacher_forced"
+        assert config["evaluation"]["sample_prediction_mode"] == "likelihood"
+        assert config["evaluation"]["headline_mode"] == "likelihood"
 
 
 def test_audio_configs_are_single_window_all_coverage() -> None:
@@ -108,6 +111,9 @@ def test_audio_configs_are_single_window_all_coverage() -> None:
 def test_superseded_main_configs_are_archived_and_edaic_is_untouched() -> None:
     archive = ROOT / "configs/archive/pre_harmonized_posf1_20260809"
     assert len(list(archive.glob("*/*.yaml"))) == 9
+    likelihood_archive = ROOT / "configs/archive/pre_likelihood_20260917"
+    assert len(list((likelihood_archive / "main").glob("*.yaml"))) == 82
+    assert len(list((likelihood_archive / "merged").glob("*.yaml"))) == 6
     assert len(list(MAIN.glob("edaic_*_selposf1_tf.yaml"))) == 3
     assert not [
         path

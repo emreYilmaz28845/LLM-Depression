@@ -28,7 +28,7 @@ from src.data.split_utils import deterministic_inner_split
 from src.utils import load_yaml, read_jsonl, sha256_file
 
 
-OFFICIALDEV_RECIPE_ID = "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_officialdev_v1"
+OFFICIALDEV_RECIPE_ID = "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_officialdev_v1"
 SEED = 1337
 INNER_VAL_RATIO = 0.2
 SPLIT_ALGORITHM = "deterministic_inner_split"
@@ -51,11 +51,11 @@ EXPECTED_ROW_COUNTS = {
 
 BACKBONE_CONFIG_NAMES = {
     "qwen": {
-        modality: f"daic_{modality}_harmonized_selmacrof1_tf_officialdev.yaml"
+        modality: f"daic_{modality}_harmonized_selmacrof1_likelihood_v1_officialdev.yaml"
         for modality in ("audio_only", "audio_text", "text_only")
     },
     "gemma4": {
-        modality: f"daic_{modality}_harmonized_selmacrof1_tf_gemma4_12b_officialdev.yaml"
+        modality: f"daic_{modality}_harmonized_selmacrof1_likelihood_v1_gemma4_12b_officialdev.yaml"
         for modality in ("audio_only", "audio_text", "text_only")
     },
 }

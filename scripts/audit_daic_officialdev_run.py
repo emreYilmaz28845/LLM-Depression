@@ -308,7 +308,7 @@ def _load_cell_config(backbone: str, modality: str) -> dict[str, Any]:
     from src.utils import load_yaml
 
     suffix = "_gemma4_12b" if backbone == "gemma4" else ""
-    path = PROJECT_ROOT / "configs/main" / f"daic_{modality}_harmonized_selmacrof1_tf{suffix}_officialdev.yaml"
+    path = PROJECT_ROOT / "configs/main" / f"daic_{modality}_harmonized_selmacrof1_likelihood_v1{suffix}_officialdev.yaml"
     return load_yaml(path)
 
 

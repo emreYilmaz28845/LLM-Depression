@@ -17,7 +17,7 @@ MATRIX = ROOT / "configs/experiments/harmonized/standalone_matrix.yaml"
 MERGED = {
     modality: ROOT
     / "configs/experiments/merged"
-    / f"symmetric_merged_harmonized_{modality}.yaml"
+    / f"symmetric_merged_harmonized_{modality}_likelihood_v1.yaml"
     for modality in ("audio_text", "audio_only", "text_only")
 }
 
@@ -42,7 +42,7 @@ def test_harmonized_merged_configs_use_only_harmonized_components() -> None:
     for modality, path in MERGED.items():
         config = load_merged_config(path)
         assert config["modality"] == modality
-        assert config["recipe_id"] == "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1"
+        assert config["recipe_id"] == "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1"
         assert config["training"]["num_train_epochs"] == 20
         assert config["training"]["final_epoch_policy"] == "rounded_median_selected_epoch"
         assert config["protocol_settings"]["selection_metric"] == "mean_dataset_macro_f1"

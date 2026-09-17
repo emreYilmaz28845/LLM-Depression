@@ -4,7 +4,7 @@
 # 35-subject official development partition. Official test is excluded.
 # This matrix is standalone; it is not part of the 63-task harmonized matrix.
 name: daic_officialdev_qwen_gemma_v1
-recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_tf_officialdev_v1
+recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_officialdev_v1
 seed: 1337
 folds: [0]
 max_epochs: 20

@@ -14,7 +14,7 @@ from src.utils import load_yaml
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "configs/main"
 
-OFFICIALDEV_RECIPE_ID = "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_officialdev_v1"
+OFFICIALDEV_RECIPE_ID = "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_officialdev_v1"
 OFFICIALDEV_VIEW = "harmonized_all_windows_full_coverage"
 
 BACKBONES = ("qwen", "gemma4")
@@ -22,7 +22,7 @@ BACKBONES = ("qwen", "gemma4")
 OFFICIALDEV_CONFIGS = {
     backbone: {
         modality: (
-            f"daic_{modality}_harmonized_selmacrof1_tf"
+            f"daic_{modality}_harmonized_selmacrof1_likelihood_v1"
             + ("_gemma4_12b" if backbone == "gemma4" else "")
             + "_officialdev.yaml"
         )
@@ -33,7 +33,7 @@ OFFICIALDEV_CONFIGS = {
 PARENT_CONFIGS = {
     backbone: {
         modality: (
-            f"daic_{modality}_harmonized_selmacrof1_tf"
+            f"daic_{modality}_harmonized_selmacrof1_likelihood_v1"
             + ("_gemma4_12b" if backbone == "gemma4" else "")
             + ".yaml"
         )
@@ -89,9 +89,9 @@ def test_six_officialdev_configs_exist_and_validate() -> None:
             assert config["evaluation"]["evaluation_view"] == OFFICIALDEV_VIEW
             assert config["training"]["run_final_eval_in_train"] is False
             expected_root = (
-                "harmonized_v1_gemma4_officialdev"
+                "harmonized_v1_gemma4_officialdev_likelihood"
                 if backbone == "gemma4"
-                else "harmonized_v1_officialdev"
+                else "harmonized_v1_officialdev_likelihood"
             )
             assert f"/{expected_root}/" in config["output_dirs"]["run_root"]
             assert config["output_dirs"]["run_root"].endswith(f"/{modality}/daic")
@@ -144,8 +144,8 @@ def test_officialdev_recipe_invariants_preserved() -> None:
                 assert child["training"][key] == parent["training"][key], f"{name}: training.{key} changed"
             assert child["training"]["selection_metric"] == "inner_val_macro_f1"
             assert child["training"]["selection_metric_mode"] == "max"
-            assert child["evaluation"]["sample_prediction_mode"] == "original_teacher_forced"
-            assert child["evaluation"]["headline_mode"] == "original_teacher_forced"
+            assert child["evaluation"]["sample_prediction_mode"] == "likelihood"
+            assert child["evaluation"]["headline_mode"] == "likelihood"
             assert child["evaluation"]["aggregation_level"] == "subject"
 
 
