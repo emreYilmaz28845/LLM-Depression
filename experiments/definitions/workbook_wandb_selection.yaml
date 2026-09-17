@@ -1,9 +1,9 @@
 schema_version: audiollm.workbook_wandb_selection.v1
 workbook:
   path: depression_results_clean.xlsx
-  sha256: 37600fdd292d30dc6d6aa7d572dcc131cd8347df27ffab390f530a2047988a91
+  sha256: b3cecfb48076b54a21b975a4fd4fac27035ce0a63ae84132d3f8f0f560b3ad81
   builder_path: scripts/build_clean_workbook.py
-  builder_sha256: 092a9fbc2880e49d800610acd38441460f24a3dec84a6426143414766f08e84f
+  builder_sha256: 435be3508ddcec9239fc92c80905892c0ee3d460b6fc68131a4033c98de49d52
   provenance_sheet: Provenance
 entries:
 - selection_id: Standalone|DAIC|Audio + Text|Fine-tuned Qwen
