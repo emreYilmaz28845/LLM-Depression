@@ -19,7 +19,26 @@ LABEL_TEXT_BY_INT = {0: LABEL_NON_DEPRESSED, 1: LABEL_DEPRESSED}
 LABEL_INT_BY_TEXT = {value: key for key, value in LABEL_TEXT_BY_INT.items()}
 LABEL_VOCAB_VERSION_LEGACY = "legacy_english_labels"
 LABEL_VOCAB_VERSION_SHORT_AB = "short_internal_ab_labels"
-SUPPORTED_LABEL_VOCAB_VERSIONS = (LABEL_VOCAB_VERSION_LEGACY, LABEL_VOCAB_VERSION_SHORT_AB)
+LABEL_VOCAB_VERSION_BINARY_01 = "binary_01_labels"
+LABEL_VOCAB_VERSION_TRUEFALSE = "truefalse_labels"
+LABEL_VOCAB_VERSION_YESNO = "yesno_labels"
+SUPPORTED_LABEL_VOCAB_VERSIONS = (
+    LABEL_VOCAB_VERSION_LEGACY,
+    LABEL_VOCAB_VERSION_SHORT_AB,
+    LABEL_VOCAB_VERSION_BINARY_01,
+    LABEL_VOCAB_VERSION_TRUEFALSE,
+    LABEL_VOCAB_VERSION_YESNO,
+)
+# Legend-style vocabularies render an explicit "X = Depressed / Y = Non-depressed"
+# legend in the prompt instruction; the legacy English vocabulary has no legend
+# line because the labels are already the external class names.
+LEGEND_STYLE_LABEL_TOKENS: dict[str, tuple[str, str]] = {
+    LABEL_VOCAB_VERSION_SHORT_AB: ("A", "B"),
+    LABEL_VOCAB_VERSION_BINARY_01: ("1", "0"),
+    LABEL_VOCAB_VERSION_TRUEFALSE: ("True", "False"),
+    LABEL_VOCAB_VERSION_YESNO: ("Yes", "No"),
+}
+LEGEND_STYLE_LABEL_VOCAB_VERSIONS = tuple(LEGEND_STYLE_LABEL_TOKENS)
 INPUT_MODALITY_AUDIO_TEXT = "audio_text"
 INPUT_MODALITY_AUDIO_ONLY = "audio_only"
 INPUT_MODALITY_TEXT_ONLY = "text_only"
@@ -136,11 +155,12 @@ def load_yaml(path: str | Path) -> dict[str, Any]:
 
 
 def _default_label_config_for_version(version: str) -> dict[str, str]:
-    if version == LABEL_VOCAB_VERSION_SHORT_AB:
+    if version in LEGEND_STYLE_LABEL_TOKENS:
+        internal_positive_label, internal_negative_label = LEGEND_STYLE_LABEL_TOKENS[version]
         return {
-            "label_vocab_version": LABEL_VOCAB_VERSION_SHORT_AB,
-            "internal_positive_label": "A",
-            "internal_negative_label": "B",
+            "label_vocab_version": version,
+            "internal_positive_label": internal_positive_label,
+            "internal_negative_label": internal_negative_label,
             "external_positive_label": LABEL_DEPRESSED,
             "external_negative_label": LABEL_NON_DEPRESSED,
         }
@@ -614,7 +634,7 @@ def prompt_label_descriptor(config: dict[str, Any]) -> str:
 def prompt_label_instruction(config: dict[str, Any]) -> str:
     labels_cfg = resolve_label_config(config)
     version = labels_cfg["label_vocab_version"]
-    if version == LABEL_VOCAB_VERSION_SHORT_AB:
+    if version in LEGEND_STYLE_LABEL_VOCAB_VERSIONS:
         return (
             f"Use this label legend:\n"
             f"{labels_cfg['internal_positive_label']} = {labels_cfg['external_positive_label']}\n"
