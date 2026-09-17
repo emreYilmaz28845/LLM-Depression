@@ -23,9 +23,9 @@ expected_counts:
   text: {fit_rows: 86, fit_subjects: 86, dev_rows: 35, dev_subjects: 35}
 group_id_prefix: daic-officialdev-qwen-gemma-v1
 experiments:
-  - {backbone: qwen, modality: audio_only, config: configs/main/daic_audio_only_harmonized_selmacrof1_tf_officialdev.yaml, env: qwen_mn5_rebuilt}
-  - {backbone: qwen, modality: audio_text, config: configs/main/daic_audio_text_harmonized_selmacrof1_tf_officialdev.yaml, env: qwen_mn5_rebuilt}
-  - {backbone: qwen, modality: text_only, config: configs/main/daic_text_only_harmonized_selmacrof1_tf_officialdev.yaml, env: qwen_mn5_rebuilt}
-  - {backbone: gemma4, modality: audio_only, config: configs/main/daic_audio_only_harmonized_selmacrof1_tf_gemma4_12b_officialdev.yaml, env: gemma4_12b_tf5_14_1}
-  - {backbone: gemma4, modality: audio_text, config: configs/main/daic_audio_text_harmonized_selmacrof1_tf_gemma4_12b_officialdev.yaml, env: gemma4_12b_tf5_14_1}
-  - {backbone: gemma4, modality: text_only, config: configs/main/daic_text_only_harmonized_selmacrof1_tf_gemma4_12b_officialdev.yaml, env: gemma4_12b_tf5_14_1}
+  - {backbone: qwen, modality: audio_only, config: configs/main/daic_audio_only_harmonized_selmacrof1_likelihood_v1_officialdev.yaml, env: qwen_mn5_rebuilt}
+  - {backbone: qwen, modality: audio_text, config: configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_v1_officialdev.yaml, env: qwen_mn5_rebuilt}
+  - {backbone: qwen, modality: text_only, config: configs/main/daic_text_only_harmonized_selmacrof1_likelihood_v1_officialdev.yaml, env: qwen_mn5_rebuilt}
+  - {backbone: gemma4, modality: audio_only, config: configs/main/daic_audio_only_harmonized_selmacrof1_likelihood_v1_gemma4_12b_officialdev.yaml, env: gemma4_12b_tf5_14_1}
+  - {backbone: gemma4, modality: audio_text, config: configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_v1_gemma4_12b_officialdev.yaml, env: gemma4_12b_tf5_14_1}
+  - {backbone: gemma4, modality: text_only, config: configs/main/daic_text_only_harmonized_selmacrof1_likelihood_v1_gemma4_12b_officialdev.yaml, env: gemma4_12b_tf5_14_1}

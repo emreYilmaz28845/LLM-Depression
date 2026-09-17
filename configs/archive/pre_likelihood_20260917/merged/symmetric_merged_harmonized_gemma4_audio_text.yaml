@@ -1,33 +1,35 @@
-name: symmetric_merged_harmonized_audio_only
+name: symmetric_merged_harmonized_gemma4_audio_text
 protocol: symmetric_merged
 recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1
-modality: audio_only
+modality: audio_text
 seed: 1337
-model_name_or_path: ${AUDIO_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instruct}
+model_backend: gemma4
+model_name_or_path: ${GEMMA4_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/gemma-4-12B-it/707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7}
+model_revision: 707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7
 components:
   - name: daic
-    config: configs/main/daic_audio_only_harmonized_selmacrof1_tf.yaml
+    config: configs/archive/pre_likelihood_20260917/main/daic_audio_text_harmonized_selmacrof1_tf_gemma4_12b.yaml
     manifest_path: outputs/manifests_harmonized/daic/daic_manifest.jsonl
     metadata_path: outputs/splits_harmonized/daic/daic_manifest_metadata.json
   - name: cmdc
-    config: configs/main/cmdc_audio_only_harmonized_selmacrof1_tf.yaml
+    config: configs/archive/pre_likelihood_20260917/main/cmdc_audio_text_harmonized_selmacrof1_tf_gemma4_12b.yaml
     manifest_path: outputs/manifests_harmonized/cmdc/cmdc_manifest.jsonl
     metadata_path: outputs/splits_harmonized/cmdc/cmdc_manifest_metadata.json
   - name: turkish
-    config: configs/main/turkish_pos_only_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml
+    config: configs/archive/pre_likelihood_20260917/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml
     manifest_path: outputs/manifests_harmonized/turkish_pos_only_t17_qwen3asr/turkish_manifest.jsonl
     metadata_path: outputs/splits_harmonized/turkish_pos_only_t17_qwen3asr/turkish_manifest_metadata.json
   - name: d3tec
-    config: configs/main/d3tec_audio_only_harmonized_selmacrof1_tf.yaml
+    config: configs/archive/pre_likelihood_20260917/main/d3tec_audio_text_harmonized_selmacrof1_tf_gemma4_12b.yaml
     manifest_path: outputs/manifests_harmonized/d3tec/d3tec_manifest.jsonl
     metadata_path: outputs/splits_harmonized/d3tec/d3tec_manifest_metadata.json
   - name: androids_interview
-    config: configs/main/androids_audio_only_harmonized_selmacrof1_tf.yaml
+    config: configs/archive/pre_likelihood_20260917/main/androids_audio_text_harmonized_selmacrof1_tf_gemma4_12b.yaml
     manifest_path: outputs/manifests_harmonized/androids/androids_interview_manifest.jsonl
     metadata_path: outputs/splits_harmonized/androids/androids_interview_manifest_metadata.json
 output_dirs:
-  merged_root: ${PROJECT_ROOT}/outputs/symmetric_merged/harmonized_v1/audio_only
-  run_root: ${PROJECT_ROOT}/output_model/symmetric_merged/harmonized_v1/audio_only
+  merged_root: ${PROJECT_ROOT}/outputs/symmetric_merged/gemma4/harmonized_v1/audio_text
+  run_root: ${PROJECT_ROOT}/output_model/symmetric_merged/gemma4/harmonized_v1/audio_text
 protocol_settings:
   outer_folds: 5
   inner_val_ratio: 0.2
@@ -53,7 +55,14 @@ training:
   early_stopping: {enabled: true, patience: 3, min_delta: 0.0}
 heads:
   fixed_xgb: {n_estimators: 300, learning_rate: 0.03, max_depth: 2, min_child_weight: 5, subsample: 0.8, colsample_bytree: 0.25, reg_alpha: 1.0, reg_lambda: 10.0}
-  optuna: {enabled: false, target_trials: 0, inner_folds: 3, seed: 1337, xgb_threads: 20, study_name: disabled}
+  optuna:
+    enabled: false
+    target_trials: 0
+    protocol_profile: harmonized_optuna100_v1
+    inner_folds: 3
+    seed: 1337
+    xgb_threads: 20
+    study_name: disabled
 execution:
   smoke_subjects_per_class: 2
   smoke_head_inner_folds: 2

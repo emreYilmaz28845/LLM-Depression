@@ -48,8 +48,8 @@ def _builder_args(args: argparse.Namespace, output_root: Path, audit_path: Path)
         "--native-split-output-dir", str(output_root / "splits" / "native"),
         "--english-split-output-dir", str(output_root / "splits" / "english"),
         "--audit-output", str(output_root / "preflight" / "manifest_audit.json"),
-        "--native-config", str(PROJECT_ROOT / "configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml"),
-        "--english-config", str(PROJECT_ROOT / "configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml"),
+        "--native-config", str(PROJECT_ROOT / "configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml"),
+        "--english-config", str(PROJECT_ROOT / "configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml"),
     ]
     return values
 

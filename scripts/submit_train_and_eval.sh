@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
-CONFIG="${CONFIG:-$PROJECT_ROOT/configs/main/daic_audio_text_harmonized_selmacrof1_tf.yaml}"
+CONFIG="${CONFIG:-$PROJECT_ROOT/configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_v1.yaml}"
 FOLD="${FOLD:-0}"
 RUN_NAME="${RUN_NAME:-mn5_reproduction}"
 EXTRA_TRAIN_ARGS="${EXTRA_TRAIN_ARGS:-}"

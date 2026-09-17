@@ -6,23 +6,23 @@ seed: 1337
 model_name_or_path: ${AUDIO_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen2-Audio-7B-Instruct}
 components:
   - name: daic
-    config: configs/main/daic_audio_text_harmonized_selmacrof1_tf.yaml
+    config: configs/archive/pre_likelihood_20260917/main/daic_audio_text_harmonized_selmacrof1_tf.yaml
     manifest_path: outputs/manifests_harmonized/daic/daic_manifest.jsonl
     metadata_path: outputs/splits_harmonized/daic/daic_manifest_metadata.json
   - name: cmdc
-    config: configs/main/cmdc_audio_text_harmonized_selmacrof1_tf.yaml
+    config: configs/archive/pre_likelihood_20260917/main/cmdc_audio_text_harmonized_selmacrof1_tf.yaml
     manifest_path: outputs/manifests_harmonized/cmdc/cmdc_manifest.jsonl
     metadata_path: outputs/splits_harmonized/cmdc/cmdc_manifest_metadata.json
   - name: turkish
-    config: configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml
+    config: configs/archive/pre_likelihood_20260917/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml
     manifest_path: outputs/manifests_harmonized/turkish_pos_only_t17_qwen3asr/turkish_manifest.jsonl
     metadata_path: outputs/splits_harmonized/turkish_pos_only_t17_qwen3asr/turkish_manifest_metadata.json
   - name: d3tec
-    config: configs/main/d3tec_audio_text_harmonized_selmacrof1_tf.yaml
+    config: configs/archive/pre_likelihood_20260917/main/d3tec_audio_text_harmonized_selmacrof1_tf.yaml
     manifest_path: outputs/manifests_harmonized/d3tec/d3tec_manifest.jsonl
     metadata_path: outputs/splits_harmonized/d3tec/d3tec_manifest_metadata.json
   - name: androids_interview
-    config: configs/main/androids_audio_text_harmonized_selmacrof1_tf.yaml
+    config: configs/archive/pre_likelihood_20260917/main/androids_audio_text_harmonized_selmacrof1_tf.yaml
     manifest_path: outputs/manifests_harmonized/androids/androids_interview_manifest.jsonl
     metadata_path: outputs/splits_harmonized/androids/androids_interview_manifest_metadata.json
 output_dirs:

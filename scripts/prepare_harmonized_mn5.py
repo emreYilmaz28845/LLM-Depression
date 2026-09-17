@@ -28,16 +28,16 @@ from src.utils import (
 
 
 COMPONENT_CONFIGS = (
-    "configs/main/d3tec_audio_text_harmonized_selmacrof1_tf.yaml",
-    "configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml",
-    "configs/main/androids_audio_text_harmonized_selmacrof1_tf.yaml",
-    "configs/main/daic_audio_text_harmonized_selmacrof1_tf.yaml",
-    "configs/main/cmdc_audio_text_harmonized_selmacrof1_tf.yaml",
+    "configs/main/d3tec_audio_text_harmonized_selmacrof1_likelihood_v1.yaml",
+    "configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml",
+    "configs/main/androids_audio_text_harmonized_selmacrof1_likelihood_v1.yaml",
+    "configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_v1.yaml",
+    "configs/main/cmdc_audio_text_harmonized_selmacrof1_likelihood_v1.yaml",
 )
 MERGED_CONFIGS = (
-    "configs/experiments/merged/symmetric_merged_harmonized_audio_text.yaml",
-    "configs/experiments/merged/symmetric_merged_harmonized_audio_only.yaml",
-    "configs/experiments/merged/symmetric_merged_harmonized_text_only.yaml",
+    "configs/experiments/merged/symmetric_merged_harmonized_audio_text_likelihood_v1.yaml",
+    "configs/experiments/merged/symmetric_merged_harmonized_audio_only_likelihood_v1.yaml",
+    "configs/experiments/merged/symmetric_merged_harmonized_text_only_likelihood_v1.yaml",
 )
 
 

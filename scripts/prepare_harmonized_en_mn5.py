@@ -40,22 +40,22 @@ EN_RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_tf_en_v1"
 
 # One audio_text config per dataset builds the shared manifest.
 BUILD_CONFIGS = (
-    "configs/main/d3tec_audio_text_harmonized_selmacrof1_tf_en.yaml",
-    "configs/main/androids_audio_text_harmonized_selmacrof1_tf_en.yaml",
-    "configs/main/cmdc_audio_text_harmonized_selmacrof1_tf_en.yaml",
-    "configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml",
+    "configs/main/d3tec_audio_text_harmonized_selmacrof1_likelihood_v1_en.yaml",
+    "configs/main/androids_audio_text_harmonized_selmacrof1_likelihood_v1_en.yaml",
+    "configs/main/cmdc_audio_text_harmonized_selmacrof1_likelihood_v1_en.yaml",
+    "configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml",
 )
 NATIVE_CONFIGS = (
-    "configs/main/d3tec_audio_text_harmonized_selmacrof1_tf.yaml",
-    "configs/main/androids_audio_text_harmonized_selmacrof1_tf.yaml",
-    "configs/main/cmdc_audio_text_harmonized_selmacrof1_tf.yaml",
-    "configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml",
+    "configs/main/d3tec_audio_text_harmonized_selmacrof1_likelihood_v1.yaml",
+    "configs/main/androids_audio_text_harmonized_selmacrof1_likelihood_v1.yaml",
+    "configs/main/cmdc_audio_text_harmonized_selmacrof1_likelihood_v1.yaml",
+    "configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml",
 )
 ALL_EN_CONFIGS = BUILD_CONFIGS + (
-    "configs/main/d3tec_text_only_harmonized_selmacrof1_tf_en.yaml",
-    "configs/main/androids_text_only_harmonized_selmacrof1_tf_en.yaml",
-    "configs/main/cmdc_text_only_harmonized_selmacrof1_tf_en.yaml",
-    "configs/main/turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml",
+    "configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v1_en.yaml",
+    "configs/main/androids_text_only_harmonized_selmacrof1_likelihood_v1_en.yaml",
+    "configs/main/cmdc_text_only_harmonized_selmacrof1_likelihood_v1_en.yaml",
+    "configs/main/turkish_pos_only_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml",
 )
 MATRIX = "configs/experiments/harmonized/english_translation_matrix.yaml"
 

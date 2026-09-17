@@ -58,16 +58,16 @@ scope:
     xgb_threshold: 0.5
     xgb_sampling_mode: none
   backbone_cells:
-    - {id: Q01, modality: audio_only, transcript_condition: not_applicable, backbone: qwen, config: configs/main/turkish_pooled_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr.yaml}
-    - {id: Q02, modality: text_only, transcript_condition: native, backbone: qwen, config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml}
-    - {id: Q03, modality: text_only, transcript_condition: english, backbone: qwen, config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml}
-    - {id: Q04, modality: audio_text, transcript_condition: native, backbone: qwen, config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml}
-    - {id: Q05, modality: audio_text, transcript_condition: english, backbone: qwen, config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml}
-    - {id: G01, modality: audio_only, transcript_condition: not_applicable, backbone: gemma4, config: configs/main/turkish_pooled_t17_audio_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
-    - {id: G02, modality: text_only, transcript_condition: native, backbone: gemma4, config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
-    - {id: G03, modality: text_only, transcript_condition: english, backbone: gemma4, config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml}
-    - {id: G04, modality: audio_text, transcript_condition: native, backbone: gemma4, config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml}
-    - {id: G05, modality: audio_text, transcript_condition: english, backbone: gemma4, config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml}
+    - {id: Q01, modality: audio_only, transcript_condition: not_applicable, backbone: qwen, config: configs/main/turkish_pooled_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml}
+    - {id: Q02, modality: text_only, transcript_condition: native, backbone: qwen, config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml}
+    - {id: Q03, modality: text_only, transcript_condition: english, backbone: qwen, config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml}
+    - {id: Q04, modality: audio_text, transcript_condition: native, backbone: qwen, config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml}
+    - {id: Q05, modality: audio_text, transcript_condition: english, backbone: qwen, config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml}
+    - {id: G01, modality: audio_only, transcript_condition: not_applicable, backbone: gemma4, config: configs/main/turkish_pooled_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_gemma4_12b.yaml}
+    - {id: G02, modality: text_only, transcript_condition: native, backbone: gemma4, config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_gemma4_12b.yaml}
+    - {id: G03, modality: text_only, transcript_condition: english, backbone: gemma4, config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_en_gemma4_12b.yaml}
+    - {id: G04, modality: audio_text, transcript_condition: native, backbone: gemma4, config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_gemma4_12b.yaml}
+    - {id: G05, modality: audio_text, transcript_condition: english, backbone: gemma4, config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_en_gemma4_12b.yaml}
 exclusions:
   - tag_ablation
   - additional_model_cells

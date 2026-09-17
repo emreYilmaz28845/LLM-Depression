@@ -8,7 +8,7 @@ from src.utils import load_yaml
 
 CONFIG = load_yaml(
     __import__("pathlib").Path(__file__).parents[1]
-    / "configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_tf_qwen3asr.yaml"
+    / "configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml"
 )
 
 
