@@ -34,7 +34,7 @@ configs/
 
 The active harmonized family is:
 
-`harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1`
+`harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1`
 
 It covers D3TEC, Turkish BDI≥17 with Qwen3-ASR, Androids, DAIC-WOZ, and CMDC in audio-only, text-only, and audio+text modes.
 
@@ -46,16 +46,22 @@ It covers D3TEC, Turkish BDI≥17 with Qwen3-ASR, Androids, DAIC-WOZ, and CMDC i
 - D3TEC, Turkish, Androids, and CMDC use subject → source unit → window loss weighting and response-subject evaluation.
 - DAIC uses participant-only speech packed from raw timestamp intervals into consecutive 30-second chunks, subject-normalized loss weighting, and all-chunk subject aggregation.
 - Validation checkpoint selection and early stopping use `inner_val_macro_f1`, mode `max`.
-- Evaluation uses `original_teacher_forced` and reports strict subject-level metrics.
+- Evaluation uses candidate-label **likelihood** (`sample_prediction_mode: likelihood`) as the canonical decision rule; the per-subject decision is the argmax of the mean dep/non candidate scores. Teacher forcing (`original_teacher_forced`) is a labelled legacy view: its configs are archived under `configs/archive/pre_likelihood_20260917/` and its former canonical workbook values live in the workbook's "Legacy TF" sheet.
 - The audio encoder remains frozen because `audio_adapter.enabled` and `train_projector` are false.
 
 Naming:
 
 ```text
-<dataset>[_t<threshold>]_<modality>_harmonized_selmacrof1_tf[_variant].yaml
+<dataset>[_t<threshold>]_<modality>_harmonized_selmacrof1_likelihood_v1[_variant].yaml
 ```
 
-The nine superseded DAIC, CMDC, and Turkish positive-F1 main configs were moved to:
+The superseded teacher-forced configs were moved to:
+
+```text
+configs/archive/pre_likelihood_20260917/
+```
+
+The nine earlier superseded DAIC, CMDC, and Turkish positive-F1 main configs live in:
 
 ```text
 configs/archive/pre_harmonized_posf1_20260809/
@@ -67,7 +73,8 @@ The 15 core Qwen harmonized cells also have configs named
 `*_likelihood_ab_v1.yaml` under `configs/labels/`. They cover D3TEC, Turkish
 positive-only BDI≥17, Androids, DAIC, and CMDC in audio-only, text-only, and
 audio+text modes. They have not been trained as a family. The earlier
-teacher-forced configs remain available for their historical runs. The earlier DAIC
+teacher-forced configs are archived for their historical runs
+(`configs/archive/pre_likelihood_20260917/`). The earlier DAIC
 pilot config (`daic_text_only_harmonized_selmacrof1_likelihood_ab.yaml`) sits
 beside them and is superseded by the v1 family.
 
@@ -78,7 +85,8 @@ selection and the headline use `likelihood` with `inner_val_macro_f1` in max
 mode. Every config records `evaluation_view: harmonized_all_windows_full_coverage` and writes to an isolated
 `output_model/likelihood_ab_v1/<modality>/<dataset>/` root. Manifest and split
 paths, dataset settings, windowing, weights, and LoRA settings match the
-corresponding teacher-forced config. Report Macro-F1, Positive-F1, and UAR
+corresponding canonical likelihood config (and its archived teacher-forced
+source). Report Macro-F1, Positive-F1, and UAR
 from strict subject-level metrics; UAR is `binary_strict_uar`.
 
 Before using a model, check that A and B are each one token at the rendered
@@ -92,15 +100,15 @@ python tools/verify_ab_label_tokens.py \
   --output outputs/tokenizer_probes/ab_family_audit.json
 ```
 
-The existing launchers and merged-training configs still select the historical
-teacher-forced family. No training job is implied by adding these YAML files.
+The existing launchers and merged-training configs run the canonical
+`*_likelihood_v1` family. No training job is implied by adding these YAML files.
 
 ## Gemma 4 DAIC family
 
 The Gemma 4 backbone comparison is scoped to DAIC only and uses three configs:
 
 ```text
-daic_<modality>_harmonized_selmacrof1_tf_gemma4_12b.yaml   (text_only | audio_only | audio_text)
+daic_<modality>_harmonized_selmacrof1_likelihood_v1_gemma4_12b.yaml   (text_only | audio_only | audio_text)
 ```
 
 - Backend: `model_backend: gemma4` on `google/gemma-4-12B-it` revision
@@ -108,9 +116,9 @@ daic_<modality>_harmonized_selmacrof1_tf_gemma4_12b.yaml   (text_only | audio_on
   `docs/GEMMA4_DAIC_IMPLEMENTATION_RUNBOOK.md`).
 - They preserve every scientific invariant of their Qwen counterparts
   (dataset, seed, sample mode, packed30 chunking, subject-normalized weights,
-  inner-validation macro-F1 selection, teacher-forced evaluation) and change
+  inner-validation macro-F1 selection, likelihood evaluation) and change
   only: backbone, model path/revision, isolated output roots
-  (`output_model/harmonized_v1_gemma4/`), the LoRA target regex (six modules
+  (`output_model/harmonized_v1_gemma4_likelihood/`), the LoRA target regex (six modules
   per layer across all 48 decoder layers, exactly 288), and
   `evaluation.evaluation_view: harmonized_all_windows_full_coverage`.
 - Manifests and splits are shared with the Qwen DAIC harmonized campaign;
@@ -170,9 +178,9 @@ The standalone execution matrix is `configs/experiments/harmonized/standalone_ma
 
 The matching merged configs are:
 
-- `configs/experiments/merged/symmetric_merged_harmonized_audio_text.yaml`
-- `configs/experiments/merged/symmetric_merged_harmonized_audio_only.yaml`
-- `configs/experiments/merged/symmetric_merged_harmonized_text_only.yaml`
+- `configs/experiments/merged/symmetric_merged_harmonized_audio_text_likelihood_v1.yaml`
+- `configs/experiments/merged/symmetric_merged_harmonized_audio_only_likelihood_v1.yaml`
+- `configs/experiments/merged/symmetric_merged_harmonized_text_only_likelihood_v1.yaml`
 
 They use only the 15 harmonized component configs. Each component and merged fit has a maximum of 20 epochs, validation macro-F1 checkpoint selection, patience 3, and no XGBoost Optuna. Merged cross-validation selects by mean dataset macro-F1; the final training epoch is the rounded median selected cross-validation epoch.
 
@@ -188,11 +196,11 @@ All launchers default to dry-run. Their default lane counts run the whole matrix
 
 ## Harmonized English-translation family
 
-Issue #20 tracks the English-transcript comparison. The eight canonical English configs in `main/` are named `<dataset>_<modality>_harmonized_selmacrof1_tf[_qwen3asr]_en.yaml` and are derived only from the native harmonized counterparts, never from `configs/experiments/translation_en/` (historical recipe, do not reuse).
+Issue #20 tracks the English-transcript comparison. The eight canonical English configs in `main/` are named `<dataset>_<modality>_harmonized_selmacrof1_likelihood_v1[_qwen3asr]_en.yaml` and are derived only from the native harmonized counterparts, never from `configs/experiments/translation_en/` (historical recipe, do not reuse).
 
-- Recipe ID: `harmonized_full_transcript_single30_allwindows_selmacrof1_tf_en_v1`.
+- Recipe ID: `harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_en_v1`.
 - Each config adds a `transcripts:` block: `variant: english`, `cache_path: ${TRANSLATION_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/translations}/harmonized_en_complete_v1/<dataset>/accepted.jsonl`, `minimum_status: automatic_low`, `require_complete: true`, `include_failed: false`.
-- Outputs are English-specific: `outputs/manifests_harmonized_en/`, `outputs/splits_harmonized_en/`, `output_model/harmonized_v1_en/`.
+- Outputs are English-specific: `outputs/manifests_harmonized_en/`, `outputs/splits_harmonized_en/`, `output_model/harmonized_v1_en_likelihood/`.
 - Only audio+text and text-only exist for D3TEC, Androids, CMDC, and Turkish t17. No English audio-only, DAIC, or E-DAIC configs.
 - The fixed English matrix is `configs/experiments/harmonized/english_translation_matrix.yaml`: 8 experiments, 40 training folds, 20 separate evaluation folds (D3TEC, Androids), 40 hidden-extraction/fixed-head folds, exactly 100 jobs, no Optuna, no merged training, no audio-only cells.
 

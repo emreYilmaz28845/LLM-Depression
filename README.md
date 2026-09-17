@@ -21,28 +21,27 @@ Do not infer a current protocol from an archived config or historical result doc
 
 ## Canonical recipe
 
-The active harmonized configurations live in `configs/main/`, named `<dataset>[_t<threshold>]_<modality>_harmonized_selmacrof1_tf[_variant].yaml`. They use:
+The active harmonized configurations live in `configs/main/`, named `<dataset>[_t<threshold>]_<modality>_harmonized_selmacrof1_likelihood_v1[_variant].yaml`. They use:
 
-- teacher-forced label decoding (`original_teacher_forced`) as the current historical headline backend;
+- candidate-label **likelihood** (`sample_prediction_mode: likelihood`) as the canonical decision rule: per subject, the mean dep/non candidate score over the windows, decided by their margin (`argmax(mean dep_score, mean non_score)`);
+- teacher-forced decoding (`original_teacher_forced`) as a clearly labelled legacy view; its configs live in `configs/archive/pre_likelihood_20260917/` and its former canonical workbook values in the "Legacy TF" sheet;
 - `headline/binary_strict_*` metrics, where invalid decoded labels count as wrong (`valid_only_*` is ignored);
 - macro-F1 and positive-F1 alongside UAR (`binary_strict_uar`: the unweighted average recall, i.e. balanced accuracy, recomputed from the same subject predictions; existing artifacts already carry it as `macro_recall`);
 - validation macro-F1 (`inner_val_macro_f1`, mode max) for checkpoint selection and early stopping;
 - a frozen audio encoder by default (`DepAdapter` and projector training are opt-in);
 - English prompts and external labels `Depressed` / `Non-depressed`; transcripts stay in their original language;
-- no AUROC — teacher-forced decoding emits a hard label, so there is no ranking to compute AUROC over.
+- no AUROC headline — teacher-forced decoding emits a hard label, and AUROC stays out of the headline metric set under the likelihood rule as well.
 
 A separate 15-config Qwen A/B likelihood family is prepared in `configs/labels/`
 with the `*_likelihood_ab_v1.yaml` suffix. It has explicit A/B mappings,
 likelihood checkpoint selection and evaluation, and isolated output roots.
-These configs have not been trained as a family; existing launchers still point
-to the historical teacher-forced configs. See `configs/README.md` for the exact
+These configs have not been trained as a family; the existing launchers run the
+canonical `*_likelihood_v1` configs. See `configs/README.md` for the exact
 scope and processor-boundary token audit.
 
 ### Evaluation warning
 
-`original_teacher_forced` is the repository's current historical headline protocol, but it is not a clean deployable classifier decision. It reconstructs label tokens under a gold-conditioned continuation. Some audio paths later aggregate gold-independent candidate-label score margins, while text-only paths generally retain the reconstructed-label decision. Results carrying the same backend name can therefore have different effective decision semantics across modalities.
-
-Do not use the current teacher-forced view as final evidence that one modality outperforms another. Paper-primary comparisons must first use one gold-independent rule for every modality, such as normalized candidate-label likelihood or constrained two-label decoding, with the same subject-level aggregation. Keep teacher-forced results as a clearly labelled legacy or diagnostic view. See `docs/LLM_CLASSIFICATION_INFERENCE_INVESTIGATION.md`.
+Candidate likelihood is now the canonical decision rule; `original_teacher_forced` is the legacy view. Teacher forcing reconstructs label tokens under a gold-conditioned continuation, so it is not a clean deployable classifier decision, and some audio paths already aggregated gold-independent candidate-label score margins under the same backend name. The canonical likelihood rule removes that inconsistency: one gold-independent rule — the per-subject argmax of the mean dep/non candidate scores — applies to every modality and backbone cell. Teacher-forced results remain a clearly labelled diagnostic view: their configs are in `configs/archive/pre_likelihood_20260917/` and their former canonical workbook values are in the "Legacy TF" sheet. See `docs/LLM_CLASSIFICATION_INFERENCE_INVESTIGATION.md`.
 
 Current canonical coverage:
 
@@ -99,11 +98,11 @@ Manifests and splits are shared across modalities — build them once per datase
 
 ```bash
 for config in \
-  configs/main/d3tec_audio_text_harmonized_selmacrof1_tf.yaml \
-  configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr.yaml \
-  configs/main/androids_audio_text_harmonized_selmacrof1_tf.yaml \
-  configs/main/daic_audio_text_harmonized_selmacrof1_tf.yaml \
-  configs/main/cmdc_audio_text_harmonized_selmacrof1_tf.yaml; do
+  configs/main/d3tec_audio_text_harmonized_selmacrof1_likelihood_v1.yaml \
+  configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml \
+  configs/main/androids_audio_text_harmonized_selmacrof1_likelihood_v1.yaml \
+  configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_v1.yaml \
+  configs/main/cmdc_audio_text_harmonized_selmacrof1_likelihood_v1.yaml; do
   python src/data/build_manifest.py --config "$config"
 done
 ```
@@ -116,14 +115,14 @@ The commands below are the training and evaluation interface:
 
 ```bash
 torchrun --nproc_per_node=4 src/train.py \
-  --config configs/main/daic_audio_text_harmonized_selmacrof1_tf.yaml \
+  --config configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_v1.yaml \
   --fold 0 \
   --run_name <unique-run-name>
 
 python src/evaluate.py \
-  --config configs/main/daic_audio_text_harmonized_selmacrof1_tf.yaml \
+  --config configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_v1.yaml \
   --fold 0 \
-  --checkpoint_dir output_model/audio_text/daic/<run-name>/fold_0/best_model
+  --checkpoint_dir output_model/harmonized_v1_likelihood/audio_text/daic/<run-name>/fold_0/best_model
 ```
 
 `best_model` is the evaluated checkpoint (validation macro-F1 selection for harmonized runs) — never substitute `last_model` silently. Evaluation bypasses `AudioTextDataset` (deterministic, no augmentation).
