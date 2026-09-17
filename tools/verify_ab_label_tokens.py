@@ -1,4 +1,4 @@
-"""Verify A/B labels at the rendered prompt boundary without model weights."""
+"""Verify single-token label continuations at the rendered prompt boundary without model weights."""
 
 from __future__ import annotations
 
@@ -40,8 +40,8 @@ def _ids(processor, text: str, audio: list[np.ndarray] | None) -> list[int]:
 def verify_config(config_path: Path, processor) -> dict[str, object]:
     config = load_yaml(config_path)
     labels = resolve_label_config(config)
-    if labels["internal_positive_label"] != "A" or labels["internal_negative_label"] != "B":
-        raise ValueError(f"{config_path}: expected internal A/B labels")
+    positive_label = str(labels["internal_positive_label"])
+    negative_label = str(labels["internal_negative_label"])
     use_audio = bool(config["data"]["use_audio"])
     user_text = render_user_prompt_text(config, "A short sample transcript.")
     prompt = build_prompt_text(
@@ -54,7 +54,7 @@ def verify_config(config_path: Path, processor) -> dict[str, object]:
         audio = [np.zeros(sampling_rate, dtype=np.float32)]
     prompt_ids = _ids(processor, prompt, audio)
     label_ids: dict[str, int] = {}
-    for label in ("A", "B"):
+    for label in (positive_label, negative_label):
         candidate_ids = _ids(processor, prompt + label, audio)
         training_ids = _ids(processor, build_training_text(prompt, label), audio)
         if candidate_ids[:len(prompt_ids)] != prompt_ids:
@@ -65,10 +65,11 @@ def verify_config(config_path: Path, processor) -> dict[str, object]:
         if training_ids[:len(prompt_ids)] != prompt_ids or training_ids[len(prompt_ids)] != continuation[0]:
             raise ValueError(f"{config_path}: training and likelihood label tokens differ for {label}")
         label_ids[label] = continuation[0]
-    if label_ids["A"] == label_ids["B"]:
-        raise ValueError(f"{config_path}: A and B have the same token ID")
+    if label_ids[positive_label] == label_ids[negative_label]:
+        raise ValueError(f"{config_path}: the two internal labels share a token ID")
     return {
         "config": str(config_path.relative_to(PROJECT_ROOT)),
+        "label_vocab_version": labels["label_vocab_version"],
         "model_backend": "qwen2audio" if use_audio else "qwen2_text",
         "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         "prompt_tokens": len(prompt_ids),
@@ -80,11 +81,19 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--text-model-dir", required=True, type=Path)
     parser.add_argument("--audio-model-dir", required=True, type=Path)
+    parser.add_argument(
+        "--config-glob",
+        default="configs/labels/*likelihood_ab_v1.yaml",
+        help="config glob relative to the repository root (default: the 15 core A/B configs)",
+    )
+    parser.add_argument("--expected-count", type=int, default=15)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    paths = sorted((PROJECT_ROOT / "configs/labels").glob("*likelihood_ab_v1.yaml"))
-    if len(paths) != 15:
-        parser.error(f"expected 15 core A/B configs, found {len(paths)}")
+    paths = sorted(PROJECT_ROOT.glob(args.config_glob))
+    if len(paths) != args.expected_count:
+        parser.error(
+            f"expected {args.expected_count} configs for {args.config_glob!r}, found {len(paths)}"
+        )
     text_processor = AutoTokenizer.from_pretrained(args.text_model_dir, local_files_only=True)
     audio_processor = AutoProcessor.from_pretrained(args.audio_model_dir, local_files_only=True)
     results = []

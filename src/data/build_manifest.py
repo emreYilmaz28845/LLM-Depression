@@ -27,6 +27,7 @@ from src.data.validation import (
 )
 from src.translation.overlay import apply_overlay
 from src.utils import (
+    atomic_write_path,
     configure_logging,
     ensure_dir,
     get_logger,
@@ -96,14 +97,16 @@ def manifest_build_signature(config: dict[str, Any]) -> dict[str, Any]:
 
 def _write_csv(rows: list[dict[str, Any]], path: Path) -> None:
     ensure_dir(path.parent)
+    tmp_path = atomic_write_path(path)
     if not rows:
-        path.write_text("", encoding="utf-8")
-        return
-    fieldnames = list(rows[0].keys())
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
+        tmp_path.write_text("", encoding="utf-8")
+    else:
+        fieldnames = list(rows[0].keys())
+        with tmp_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+    tmp_path.replace(path)
 
 
 def _save_common_outputs(config: dict[str, Any], manifest_rows: list[dict[str, Any]], dataset_name: str) -> dict[str, Path]:
