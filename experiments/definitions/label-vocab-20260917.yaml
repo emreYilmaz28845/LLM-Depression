@@ -1,0 +1,75 @@
+schema_version: audiollm.experiment_group.v1
+group_id: label-vocab-20260917
+title: DAIC label-vocabulary comparison under candidate likelihood
+research_question: >-
+  Under one fixed candidate-likelihood backend on DAIC (fold 0, the single
+  official test fold), how do three new legend vocabularies (1/0, True/False,
+  Yes/No) compare with the trained A/B reference and with the canonical
+  Depressed/Non-depressed instruction?
+dataset: daic
+baseline: >-
+  The trained A/B likelihood reference (campaign likelihood_ab_v1, no
+  retraining); per-fold prediction CSVs, metrics, and hashes are copied
+  read-only into this lane's outputs for the paired statistics.
+treatment: >-
+  configs/labels/daic_<modality>_harmonized_selmacrof1_likelihood_<tag>_v1.yaml
+  for tag in {01, truefalse, yesno}: nine training cells (three modalities),
+  likelihood prediction and headline, inner_val_macro_f1 checkpoint selection.
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+github_issue: null
+github_pr: null
+scope:
+  campaign: label_vocab_v1
+  checkpoint_role: best_model
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
+  statistics_family: >-
+    One declared Holm family on DAIC: every arm versus the A/B reference
+    (4 contrasts x 3 modalities = 12). Macro-F1 primary; Positive-F1 and UAR
+    are corrected separately with identical family membership. Pooled
+    out-of-fold subject-level paired tests: exact paired prediction swap,
+    exact McNemar (correctness view), and subject-clustered bootstrap CI,
+    seed 1337. The fold-view table is descriptive and does not replace the
+    pooled tests.
+  expansion_trigger: >-
+    Expand a vocabulary to the other datasets only if a contrast is
+    Holm-significant, or |delta Macro-F1| >= 0.05 in the same direction in at
+    least two modalities. Authorization is required before expanding.
+  en_caveat: >-
+    The Depressed/Non-depressed arm has no legend line: the contrast bundles
+    vocabulary and instruction style and must be reported as such.
+  reference_arms:
+    ab: >-
+      output_model/likelihood_ab_v1/<modality>/daic in the campaign lane
+      (read-only source; evidence copied with sha256 hashes)
+    en: >-
+      Main-checkout DAIC teacher-forced artifacts
+      (output_model/harmonized_v1/<modality>/daic) re-scored with the same
+      argmax(dep_score, non_score) mean-score rule; no training.
+  cells:
+    - {id: daic_audio_only_01, dataset: daic, modality: audio_only, config: configs/labels/daic_audio_only_harmonized_selmacrof1_likelihood_01_v1.yaml, run_root: output_model/label_vocab_v1/audio_only/daic}
+    - {id: daic_audio_only_truefalse, dataset: daic, modality: audio_only, config: configs/labels/daic_audio_only_harmonized_selmacrof1_likelihood_truefalse_v1.yaml, run_root: output_model/label_vocab_v1/audio_only/daic}
+    - {id: daic_audio_only_yesno, dataset: daic, modality: audio_only, config: configs/labels/daic_audio_only_harmonized_selmacrof1_likelihood_yesno_v1.yaml, run_root: output_model/label_vocab_v1/audio_only/daic}
+    - {id: daic_text_only_01, dataset: daic, modality: text_only, config: configs/labels/daic_text_only_harmonized_selmacrof1_likelihood_01_v1.yaml, run_root: output_model/label_vocab_v1/text_only/daic}
+    - {id: daic_text_only_truefalse, dataset: daic, modality: text_only, config: configs/labels/daic_text_only_harmonized_selmacrof1_likelihood_truefalse_v1.yaml, run_root: output_model/label_vocab_v1/text_only/daic}
+    - {id: daic_text_only_yesno, dataset: daic, modality: text_only, config: configs/labels/daic_text_only_harmonized_selmacrof1_likelihood_yesno_v1.yaml, run_root: output_model/label_vocab_v1/text_only/daic}
+    - {id: daic_audio_text_01, dataset: daic, modality: audio_text, config: configs/labels/daic_audio_text_harmonized_selmacrof1_likelihood_01_v1.yaml, run_root: output_model/label_vocab_v1/audio_text/daic}
+    - {id: daic_audio_text_truefalse, dataset: daic, modality: audio_text, config: configs/labels/daic_audio_text_harmonized_selmacrof1_likelihood_truefalse_v1.yaml, run_root: output_model/label_vocab_v1/audio_text/daic}
+    - {id: daic_audio_text_yesno, dataset: daic, modality: audio_text, config: configs/labels/daic_audio_text_harmonized_selmacrof1_likelihood_yesno_v1.yaml, run_root: output_model/label_vocab_v1/audio_text/daic}
+exclusions:
+  - teacher_forced_backend
+  - ab_arm_retraining
+  - non_daic_datasets
+  - hidden_head_work
+  - workbook_cell_rewrite
