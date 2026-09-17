@@ -24,7 +24,8 @@ fold evidence. Old pooled-CV reports are historical, not current headlines.
 ```text
 configs/
   quarantines.yaml   # subject quarantine list; every config references it
-  main/              # active configs
+  main/              # active canonical configs
+  labels/            # single-token A/B likelihood experiment configs (not canonical)
   experiments/       # active non-headline research
   archive/           # superseded recipes retained for reproducibility
 ```
@@ -63,10 +64,12 @@ configs/archive/pre_harmonized_posf1_20260809/
 ## Prepared A/B likelihood family
 
 The 15 core Qwen harmonized cells also have configs named
-`*_likelihood_ab_v1.yaml` under `configs/main/`. They cover D3TEC, Turkish
+`*_likelihood_ab_v1.yaml` under `configs/labels/`. They cover D3TEC, Turkish
 positive-only BDI≥17, Androids, DAIC, and CMDC in audio-only, text-only, and
 audio+text modes. They have not been trained as a family. The earlier
-teacher-forced configs remain available for their historical runs.
+teacher-forced configs remain available for their historical runs. The earlier DAIC
+pilot config (`daic_text_only_harmonized_selmacrof1_likelihood_ab.yaml`) sits
+beside them and is superseded by the v1 family.
 
 Each new config records `short_internal_ab_labels` with explicit
 `A = Depressed` and `B = Non-depressed` mapping. Its prompt prints the same

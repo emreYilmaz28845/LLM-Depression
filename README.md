@@ -31,7 +31,7 @@ The active harmonized configurations live in `configs/main/`, named `<dataset>[_
 - English prompts and external labels `Depressed` / `Non-depressed`; transcripts stay in their original language;
 - no AUROC — teacher-forced decoding emits a hard label, so there is no ranking to compute AUROC over.
 
-A separate 15-config Qwen A/B likelihood family is prepared in `configs/main/`
+A separate 15-config Qwen A/B likelihood family is prepared in `configs/labels/`
 with the `*_likelihood_ab_v1.yaml` suffix. It has explicit A/B mappings,
 likelihood checkpoint selection and evaluation, and isolated output roots.
 These configs have not been trained as a family; existing launchers still point

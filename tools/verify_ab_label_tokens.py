@@ -82,7 +82,7 @@ def main() -> int:
     parser.add_argument("--audio-model-dir", required=True, type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    paths = sorted((PROJECT_ROOT / "configs/main").glob("*likelihood_ab_v1.yaml"))
+    paths = sorted((PROJECT_ROOT / "configs/labels").glob("*likelihood_ab_v1.yaml"))
     if len(paths) != 15:
         parser.error(f"expected 15 core A/B configs, found {len(paths)}")
     text_processor = AutoTokenizer.from_pretrained(args.text_model_dir, local_files_only=True)
