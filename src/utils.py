@@ -6,6 +6,7 @@ import logging
 import os
 import random
 import re
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -382,22 +383,29 @@ def read_json(path: str | Path) -> Any:
         return json.load(handle)
 
 
+def atomic_write_path(path: str | Path) -> Path:
+    """Unique sibling temp path for an atomic replace.
+
+    The unique suffix matters when several worker processes write the same
+    shared path (for example concurrent manifest builds into the experiment
+    runtime); a fixed temp name would let the writers corrupt each other.
+    """
+    path = Path(path)
+    return path.with_name(f".{path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex[:8]}")
+
+
 def save_json(data: Any, path: str | Path, indent: int = 2) -> None:
     path = Path(path)
     ensure_dir(path.parent)
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=indent, ensure_ascii=False)
-        handle.write("\n")
-
-
-def save_json_atomic(data: Any, path: str | Path, indent: int = 2) -> None:
-    path = Path(path)
-    ensure_dir(path.parent)
-    tmp_path = path.with_name(f"{path.name}.tmp")
+    tmp_path = atomic_write_path(path)
     with tmp_path.open("w", encoding="utf-8") as handle:
         json.dump(data, handle, indent=indent, ensure_ascii=False)
         handle.write("\n")
     tmp_path.replace(path)
+
+
+def save_json_atomic(data: Any, path: str | Path, indent: int = 2) -> None:
+    save_json(data, path, indent=indent)
 
 
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
@@ -414,9 +422,11 @@ def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
 def write_jsonl(rows: list[dict[str, Any]], path: str | Path) -> None:
     path = Path(path)
     ensure_dir(path.parent)
-    with path.open("w", encoding="utf-8") as handle:
+    tmp_path = atomic_write_path(path)
+    with tmp_path.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    tmp_path.replace(path)
 
 
 def sha256_text(text: str) -> str:
