@@ -29,6 +29,7 @@ GEMMA4_LORA_TARGET_REGEX = (
 )
 GEMMA4_EXPECTED_LORA_MODULES = 288
 GEMMA4_EVALUATION_VIEW = "harmonized_all_windows_full_coverage"
+GEMMA4_ALLOWED_EVALUATION_MODES = ("original_teacher_forced", "likelihood")
 GEMMA4_TURN_TERMINATOR = "<turn|>\n"
 GEMMA4_SUPPORTED_DATASETS = {"daic", "d3tec", "turkish", "androids_interview", "cmdc"}
 GEMMA4_DAIC_SAMPLE_MODE = "participant_speech_packed30"
@@ -438,12 +439,12 @@ def validate_gemma4_config(config: dict[str, Any]) -> None:
         )
     evaluation_cfg = config.get("evaluation", {})
     _require(
-        str(evaluation_cfg.get("sample_prediction_mode", "")) == "original_teacher_forced",
-        "evaluation.sample_prediction_mode must be original_teacher_forced",
+        str(evaluation_cfg.get("sample_prediction_mode", "")) in GEMMA4_ALLOWED_EVALUATION_MODES,
+        "evaluation.sample_prediction_mode must be original_teacher_forced or likelihood",
     )
     _require(
-        str(evaluation_cfg.get("headline_mode", "")) == "original_teacher_forced",
-        "evaluation.headline_mode must be original_teacher_forced",
+        str(evaluation_cfg.get("headline_mode", "")) in GEMMA4_ALLOWED_EVALUATION_MODES,
+        "evaluation.headline_mode must be original_teacher_forced or likelihood",
     )
     _require(
         evaluation_cfg.get("evaluation_view") == GEMMA4_EVALUATION_VIEW,

@@ -66,7 +66,10 @@ def model_config(merged_config: dict[str, Any], records: list[dict[str, Any]]) -
     # standalone selection-metric checks do not apply to a merged mix).
     config["merged"] = True
     config["evaluation"] = copy.deepcopy(records[0]["config"].get("evaluation", {}))
-    config["evaluation"]["sample_prediction_mode"] = "original_teacher_forced"
-    config["evaluation"]["headline_mode"] = "original_teacher_forced"
+    # Preserve the component's declared decision backend. The canonical
+    # likelihood components must not silently revert to teacher forcing here;
+    # components without a declared mode keep the historical default.
+    config["evaluation"].setdefault("sample_prediction_mode", "original_teacher_forced")
+    config["evaluation"].setdefault("headline_mode", "original_teacher_forced")
     config["output_dirs"] = copy.deepcopy(records[0]["config"].get("output_dirs", {}))
     return config
