@@ -6,6 +6,7 @@ from src.utils import load_yaml, prompt_label_instruction
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "configs/main"
+LABELS_DIR = ROOT / "configs/labels"
 RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_ab_v1"
 LABELS = {
     "label_vocab_version": "short_internal_ab_labels",
@@ -39,7 +40,7 @@ def test_core_ab_family_preserves_harmonized_data_and_training_recipe() -> None:
         baselines[_key(config)] = config
     assert len(baselines) == 15
 
-    paths = sorted(MAIN.glob("*likelihood_ab_v1.yaml"))
+    paths = sorted(LABELS_DIR.glob("*likelihood_ab_v1.yaml"))
     assert len(paths) == 15
     seen = set()
     run_roots = set()

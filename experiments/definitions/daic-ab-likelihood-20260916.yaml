@@ -7,7 +7,7 @@ research_question: >-
   teacher-forced recipe?
 dataset: daic
 baseline: configs/main/daic_text_only_harmonized_selmacrof1_tf.yaml
-treatment: configs/main/daic_text_only_harmonized_selmacrof1_likelihood_ab.yaml
+treatment: configs/labels/daic_text_only_harmonized_selmacrof1_likelihood_ab.yaml
 expected_seeds: [1337]
 expected_folds: [0]
 primary_metric:
