@@ -7,5 +7,5 @@ worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-feat-label-vocab
 parent_branch: main
 parent_sha: 1bc3a55e010036685bd5c5c1ba16218cfc329ef8
 created_at_utc: "2026-09-17T13:29:57Z"
-experiment_group_path: null
+experiment_group_path: experiments/definitions/label-vocab-20260917.yaml
 type: complementary
