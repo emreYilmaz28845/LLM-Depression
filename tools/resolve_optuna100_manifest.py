@@ -83,14 +83,14 @@ MERGED_FEATURES_ROOTS = {
     "gemma4": PROJECT_ROOT / "outputs/symmetric_merged/gemma4/harmonized_v1",
 }
 MERGED_CONFIGS = {
-    "audio_text": "configs/experiments/merged/symmetric_merged_harmonized_audio_text.yaml",
-    "audio_only": "configs/experiments/merged/symmetric_merged_harmonized_audio_only.yaml",
-    "text_only": "configs/experiments/merged/symmetric_merged_harmonized_text_only.yaml",
+    "audio_text": "configs/experiments/merged/symmetric_merged_harmonized_audio_text_likelihood_v1.yaml",
+    "audio_only": "configs/experiments/merged/symmetric_merged_harmonized_audio_only_likelihood_v1.yaml",
+    "text_only": "configs/experiments/merged/symmetric_merged_harmonized_text_only_likelihood_v1.yaml",
 }
 MERGED_GEMMA_CONFIGS = {
-    "audio_text": "configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_text.yaml",
-    "audio_only": "configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_only.yaml",
-    "text_only": "configs/experiments/merged/symmetric_merged_harmonized_gemma4_text_only.yaml",
+    "audio_text": "configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_text_likelihood_v1.yaml",
+    "audio_only": "configs/experiments/merged/symmetric_merged_harmonized_gemma4_audio_only_likelihood_v1.yaml",
+    "text_only": "configs/experiments/merged/symmetric_merged_harmonized_gemma4_text_only_likelihood_v1.yaml",
 }
 
 

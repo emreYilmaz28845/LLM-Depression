@@ -7,7 +7,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_daic_ab_likelihood_changes_only_label_and_scoring_protocol() -> None:
-    baseline = load_yaml(ROOT / "configs/main/daic_text_only_harmonized_selmacrof1_tf.yaml")
+    baseline = load_yaml(
+        ROOT / "configs/archive/pre_likelihood_20260917/main/daic_text_only_harmonized_selmacrof1_tf.yaml"
+    )
     candidate = load_yaml(ROOT / "configs/labels/daic_text_only_harmonized_selmacrof1_likelihood_ab.yaml")
 
     labels = resolve_label_config(candidate)

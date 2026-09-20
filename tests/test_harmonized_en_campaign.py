@@ -22,20 +22,20 @@ MATRIX = ROOT / "configs/experiments/harmonized/english_translation_matrix.yaml"
 
 EN_CONFIGS = {
     "d3tec": {
-        "audio_text": "d3tec_audio_text_harmonized_selmacrof1_tf_en.yaml",
-        "text_only": "d3tec_text_only_harmonized_selmacrof1_tf_en.yaml",
+        "audio_text": "d3tec_audio_text_harmonized_selmacrof1_likelihood_v1_en.yaml",
+        "text_only": "d3tec_text_only_harmonized_selmacrof1_likelihood_v1_en.yaml",
     },
     "androids_interview": {
-        "audio_text": "androids_audio_text_harmonized_selmacrof1_tf_en.yaml",
-        "text_only": "androids_text_only_harmonized_selmacrof1_tf_en.yaml",
+        "audio_text": "androids_audio_text_harmonized_selmacrof1_likelihood_v1_en.yaml",
+        "text_only": "androids_text_only_harmonized_selmacrof1_likelihood_v1_en.yaml",
     },
     "cmdc": {
-        "audio_text": "cmdc_audio_text_harmonized_selmacrof1_tf_en.yaml",
-        "text_only": "cmdc_text_only_harmonized_selmacrof1_tf_en.yaml",
+        "audio_text": "cmdc_audio_text_harmonized_selmacrof1_likelihood_v1_en.yaml",
+        "text_only": "cmdc_text_only_harmonized_selmacrof1_likelihood_v1_en.yaml",
     },
     "turkish": {
-        "audio_text": "turkish_pos_only_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml",
-        "text_only": "turkish_pos_only_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml",
+        "audio_text": "turkish_pos_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml",
+        "text_only": "turkish_pos_only_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml",
     },
 }
 
@@ -43,7 +43,7 @@ EN_CONFIGS = {
 def en_config_paths() -> list[Path]:
     return sorted(
         path
-        for path in MAIN.glob("*harmonized_selmacrof1_tf*_en.yaml")
+        for path in MAIN.glob("*harmonized_selmacrof1_likelihood_v1*_en.yaml")
         if "turkish_negative_only" not in path.name
         and not path.name.startswith("turkish_t17_")
         and not path.name.startswith("turkish_pooled_t17_")
@@ -51,12 +51,17 @@ def en_config_paths() -> list[Path]:
 
 
 def test_legacy_turkish_en_configs_remain_as_history() -> None:
-    # Pre-rename canonical Turkish EN files stay untouched; see the rename map.
-    legacy = sorted(path.name for path in MAIN.glob("turkish_t17_*_en.yaml"))
-    assert legacy == [
+    # Pre-rename canonical Turkish EN files stay untouched in the likelihood archive.
+    archived = sorted(
+        path.name
+        for path in (ROOT / "configs/archive/pre_likelihood_20260917/main").glob("turkish_t17_*_en.yaml")
+        if "_gemma4_12b" not in path.name
+    )
+    assert archived == [
         "turkish_t17_audio_text_harmonized_selmacrof1_tf_qwen3asr_en.yaml",
         "turkish_t17_text_only_harmonized_selmacrof1_tf_qwen3asr_en.yaml",
     ]
+    assert len(sorted(MAIN.glob("turkish_t17_*harmonized_selmacrof1_likelihood_v1*_en.yaml"))) == 2
 
 
 def test_exactly_eight_english_configs_exist() -> None:
@@ -105,8 +110,8 @@ def test_english_recipe_invariants_and_transcripts_policy() -> None:
         assert config["training"]["selection_metric"] == "inner_val_macro_f1"
         assert config["training"]["selection_metric_mode"] == "max"
         assert config["training"]["early_stopping"]["patience"] == 3
-        assert config["evaluation"]["sample_prediction_mode"] == "original_teacher_forced"
-        assert config["evaluation"]["headline_mode"] == "original_teacher_forced"
+        assert config["evaluation"]["sample_prediction_mode"] == "likelihood"
+        assert config["evaluation"]["headline_mode"] == "likelihood"
         audio_adapter = config.get("audio_adapter") or {}
         assert not audio_adapter.get("enabled")
         assert not audio_adapter.get("train_projector")
@@ -126,7 +131,7 @@ def test_english_output_locations_cannot_collide() -> None:
     for path in en_config_paths():
         config = yaml.safe_load(path.read_text(encoding="utf-8"))
         run_root = config["output_dirs"]["run_root"]
-        assert "/output_model/harmonized_v1_en/" in run_root
+        assert "/output_model/harmonized_v1_en_likelihood/" in run_root
         assert "output_model_en" not in run_root
         assert "/harmonized_v1/" not in run_root
         assert "/manifests_harmonized_en/" in config["output_dirs"]["manifest_dir"]

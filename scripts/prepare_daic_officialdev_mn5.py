@@ -36,15 +36,15 @@ from scripts.audit_daic_officialdev_split import audit_split, AuditFailure
 # One config is enough to rebuild the shared manifest; the audit command
 # verifies identity across all six configs.
 MANIFEST_BUILD_CONFIG = (
-    "configs/main/daic_audio_text_harmonized_selmacrof1_tf_officialdev.yaml"
+    "configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_v1_officialdev.yaml"
 )
 ALL_SIX_CONFIGS = (
-    "configs/main/daic_audio_only_harmonized_selmacrof1_tf_officialdev.yaml",
-    "configs/main/daic_audio_text_harmonized_selmacrof1_tf_officialdev.yaml",
-    "configs/main/daic_text_only_harmonized_selmacrof1_tf_officialdev.yaml",
-    "configs/main/daic_audio_only_harmonized_selmacrof1_tf_gemma4_12b_officialdev.yaml",
-    "configs/main/daic_audio_text_harmonized_selmacrof1_tf_gemma4_12b_officialdev.yaml",
-    "configs/main/daic_text_only_harmonized_selmacrof1_tf_gemma4_12b_officialdev.yaml",
+    "configs/main/daic_audio_only_harmonized_selmacrof1_likelihood_v1_officialdev.yaml",
+    "configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_v1_officialdev.yaml",
+    "configs/main/daic_text_only_harmonized_selmacrof1_likelihood_v1_officialdev.yaml",
+    "configs/main/daic_audio_only_harmonized_selmacrof1_likelihood_v1_gemma4_12b_officialdev.yaml",
+    "configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_v1_gemma4_12b_officialdev.yaml",
+    "configs/main/daic_text_only_harmonized_selmacrof1_likelihood_v1_gemma4_12b_officialdev.yaml",
 )
 JOB_SCOPE = {
     "train_folds": 6,

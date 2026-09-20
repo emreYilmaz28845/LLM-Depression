@@ -4,7 +4,7 @@
 # studies = 126. The resolver discovers and qualifies the exact caches;
 # counts from directory globbing alone are never proof.
 name: optuna100_native_matrix
-recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_tf_v1
+recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1
 protocol_profile: harmonized_optuna100_v1
 objective: macro_f1
 target_trials: 100

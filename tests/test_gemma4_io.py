@@ -470,10 +470,17 @@ class TestValidateGemma4Config:
         with pytest.raises(ValueError, match="selection_metric"):
             validate_gemma4_config(config)
 
-    def test_rejects_wrong_headline_mode(self) -> None:
+    def test_accepts_likelihood_evaluation_modes(self) -> None:
         config = gemma_config()
+        config["evaluation"]["sample_prediction_mode"] = "likelihood"
         config["evaluation"]["headline_mode"] = "likelihood"
-        with pytest.raises(ValueError, match="headline_mode"):
+        validate_gemma4_config(config)
+
+    @pytest.mark.parametrize("key", ["sample_prediction_mode", "headline_mode"])
+    def test_rejects_unsupported_evaluation_modes(self, key) -> None:
+        config = gemma_config()
+        config["evaluation"][key] = "generation"
+        with pytest.raises(ValueError, match=key):
             validate_gemma4_config(config)
 
     def test_rejects_wrong_evaluation_view(self) -> None:

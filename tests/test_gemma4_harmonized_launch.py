@@ -25,27 +25,27 @@ QWEN_MATRIX = HARMONIZED / "standalone_matrix.yaml"
 QWEN_EN_MATRIX = HARMONIZED / "english_translation_matrix.yaml"
 
 GEMMA_NATIVE_CONFIGS = [
-    f"{dataset}_{modality}_harmonized_selmacrof1_tf_gemma4_12b.yaml"
+    f"{dataset}_{modality}_harmonized_selmacrof1_likelihood_v1_gemma4_12b.yaml"
     for dataset in ("d3tec", "androids", "cmdc")
     for modality in ("audio_text", "audio_only", "text_only")
 ] + [
-    f"turkish_pos_only_t17_{modality}_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml"
+    f"turkish_pos_only_t17_{modality}_harmonized_selmacrof1_likelihood_v1_qwen3asr_gemma4_12b.yaml"
     for modality in ("audio_text", "audio_only", "text_only")
 ]
 GEMMA_EN_CONFIGS = [
-    f"{dataset}_{modality}_harmonized_selmacrof1_tf_en_gemma4_12b.yaml"
+    f"{dataset}_{modality}_harmonized_selmacrof1_likelihood_v1_en_gemma4_12b.yaml"
     for dataset in ("d3tec", "androids", "cmdc")
     for modality in ("audio_text", "text_only")
 ] + [
-    f"turkish_pos_only_t17_{modality}_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml"
+    f"turkish_pos_only_t17_{modality}_harmonized_selmacrof1_likelihood_v1_qwen3asr_en_gemma4_12b.yaml"
     for modality in ("audio_text", "text_only")
 ]
 GEMMA_NEGATIVE_ONLY_NATIVE_CONFIGS = [
-    f"turkish_negative_only_t17_{modality}_harmonized_selmacrof1_tf_qwen3asr_gemma4_12b.yaml"
+    f"turkish_negative_only_t17_{modality}_harmonized_selmacrof1_likelihood_v1_qwen3asr_gemma4_12b.yaml"
     for modality in ("audio_text", "audio_only", "text_only")
 ]
 GEMMA_NEGATIVE_ONLY_EN_CONFIGS = [
-    f"turkish_negative_only_t17_{modality}_harmonized_selmacrof1_tf_qwen3asr_en_gemma4_12b.yaml"
+    f"turkish_negative_only_t17_{modality}_harmonized_selmacrof1_likelihood_v1_qwen3asr_en_gemma4_12b.yaml"
     for modality in ("audio_text", "text_only")
 ]
 GEMMA_CAMPAIGN_CONFIGS = (
@@ -95,7 +95,7 @@ def test_exact_gemma_config_sets_exist() -> None:
     legacy = sorted(name for name in all_names if name.startswith("turkish_t17_"))
     # Legacy pre-rename canonical Turkish files stay as history; see the rename map.
     assert legacy == sorted(
-        f"turkish_t17_{modality}_harmonized_selmacrof1_tf_qwen3asr{variant}_gemma4_12b.yaml"
+        f"turkish_t17_{modality}_harmonized_selmacrof1_likelihood_v1_qwen3asr{variant}_gemma4_12b.yaml"
         for modality, variant in (
             ("audio_text", ""),
             ("audio_only", ""),
@@ -313,7 +313,7 @@ def test_qwen_launchers_keep_their_behavior() -> None:
 
 
 def test_backend_env_helper_routing() -> None:
-    gemma_config = MAIN / "d3tec_audio_text_harmonized_selmacrof1_tf_gemma4_12b.yaml"
+    gemma_config = MAIN / "d3tec_audio_text_harmonized_selmacrof1_likelihood_v1_gemma4_12b.yaml"
     result = subprocess.run(
         ["bash", str(ROOT / "scripts/harmonized_backend_env.sh"), str(gemma_config), str(ROOT)],
         capture_output=True,
@@ -324,7 +324,7 @@ def test_backend_env_helper_routing() -> None:
     assert "gemma4_12b_tf5_14_1" in result.stdout
     assert "gemma-4-12B-it" in result.stdout
     assert "CLASSIFIER_VARIANTS=logreg_raw" in result.stdout
-    qwen_config = MAIN / "d3tec_audio_text_harmonized_selmacrof1_tf.yaml"
+    qwen_config = MAIN / "d3tec_audio_text_harmonized_selmacrof1_likelihood_v1.yaml"
     result = subprocess.run(
         ["bash", str(ROOT / "scripts/harmonized_backend_env.sh"), str(qwen_config), str(ROOT)],
         capture_output=True,

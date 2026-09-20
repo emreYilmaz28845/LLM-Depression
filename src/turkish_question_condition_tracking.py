@@ -19,7 +19,7 @@ from src.native_en_text_heads_tracking import (
     validate_job_attempt,
 )
 from src.turkish_question_condition import (
-    EVALUATION_BACKEND,
+    EVALUATION_BACKENDS,
     EVALUATION_VIEW,
     GROUP_ID,
     METRIC_NAMESPACE,
@@ -50,8 +50,8 @@ def _guard_context(context: dict[str, Any]) -> None:
     qualifiers = context.get("qualifiers") or {}
     if qualifiers.get("evaluation_view") != EVALUATION_VIEW:
         raise HeadTrackingError("head context is missing the locked evaluation view")
-    if qualifiers.get("evaluation_backend") != EVALUATION_BACKEND:
-        raise HeadTrackingError("head context is missing the locked teacher-forced backend")
+    if qualifiers.get("evaluation_backend") not in EVALUATION_BACKENDS:
+        raise HeadTrackingError("head context is missing an allowed evaluation backend")
     if qualifiers.get("metric_namespace") != METRIC_NAMESPACE:
         raise HeadTrackingError("head context is missing the locked metric namespace")
 
