@@ -66,6 +66,7 @@ CONFIG="${CONFIG:-$PROJECT_ROOT/configs/main/daic_audio_text_harmonized_selmacro
 FOLD="${FOLD:-0}"
 RUN_NAME="${RUN_NAME:-mn5_reproduction}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
+NNODES="${NNODES:-1}"
 MODEL_PATH="${MODEL_PATH:-}"
 EXTRA_TRAIN_ARGS="${EXTRA_TRAIN_ARGS:-}"
 OVERRIDES_JSON_B64="${OVERRIDES_JSON_B64:-}"
@@ -236,6 +237,24 @@ echo "Determinism env | CUBLAS_WORKSPACE_CONFIG=$CUBLAS_WORKSPACE_CONFIG PYTHONH
 CMD=(
     torchrun
     --nproc_per_node="$NPROC_PER_NODE"
+)
+
+# Multi-node shape: one 4-GPU lane per node (2 nodes x 4 GPUs = 8 GPUs). Slurm
+# starts one task set per node; the node rank comes from $SLURM_NODEID and the
+# rendezvous address from the first host of the allocation.
+if [ "${NNODES:-1}" -gt 1 ]; then
+    MASTER_ADDR="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)"
+    MASTER_PORT="${MASTER_PORT:-29517}"
+    CMD+=(
+        --nnodes="$NNODES"
+        --node_rank="${SLURM_NODEID:-0}"
+        --master_addr="$MASTER_ADDR"
+        --master_port="$MASTER_PORT"
+    )
+    echo "Multi-node rendezvous | nnodes=$NNODES node_rank=${SLURM_NODEID:-0} master=$MASTER_ADDR:$MASTER_PORT" | tee -a "$RUN_LOG_FILE"
+fi
+
+CMD+=(
     "$PROJECT_ROOT/src/train.py"
     --config "$CONFIG"
     --fold "$FOLD"

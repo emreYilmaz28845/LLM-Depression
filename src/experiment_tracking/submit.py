@@ -91,12 +91,40 @@ def resolve_contract(
     github_issue: str | None = None,
     github_pr: str | None = None,
     attempt_id: str | None = None,
+    train_nodes: int = 1,
+    train_gpus_per_node: int = 4,
 ) -> dict[str, Any]:
     """Resolve the complete submission contract without touching the network."""
     if dataset != config_dict.get("dataset"):
         raise SubmissionError(
             f"dataset qualifier {dataset!r} does not match resolved config dataset {config_dict.get('dataset')!r}"
         )
+    if int(train_nodes) < 1 or int(train_gpus_per_node) < 1:
+        raise SubmissionError("train_nodes and train_gpus_per_node must be positive")
+    training_cfg = config_dict.get("training", {}) or {}
+    strategy = str(training_cfg.get("strategy", "ddp") or "ddp").strip().lower()
+    per_device_train_batch_size = int(training_cfg.get("per_device_train_batch_size", 1))
+    gradient_accumulation_steps = int(training_cfg.get("gradient_accumulation_steps", 1))
+    world_size = int(train_nodes) * int(train_gpus_per_node)
+    effective_global_batch_size = (
+        per_device_train_batch_size * gradient_accumulation_steps * world_size
+    )
+    if strategy == "fsdp" and effective_global_batch_size != 128:
+        suggested = 128 // max(1, per_device_train_batch_size * world_size)
+        raise SubmissionError(
+            "the fsdp recipe keeps an effective global batch of 128; "
+            f"{world_size} rank(s) with accumulation {gradient_accumulation_steps} give "
+            f"{effective_global_batch_size}. Pass --set training.gradient_accumulation_steps={suggested}."
+        )
+    training_shape = {
+        "strategy": strategy,
+        "nodes": int(train_nodes),
+        "gpus_per_node": int(train_gpus_per_node),
+        "world_size": world_size,
+        "per_device_train_batch_size": per_device_train_batch_size,
+        "gradient_accumulation_steps": gradient_accumulation_steps,
+        "effective_global_batch_size": effective_global_batch_size,
+    }
     runtime_root = REMOTE_RUNTIME_BASE / experiment_id
     permanent_output_base = REMOTE_PROJECT_BASE / "output_model"
     run_root = str(permanent_output_base / campaign / modality / dataset)
@@ -200,6 +228,14 @@ def resolve_contract(
         "standalone_eval_dir": standalone_eval_dir,
         "log_root_train": log_root_train,
         "log_root_eval": log_root_eval,
+        "training_shape": training_shape,
+        "launch_command": (
+            "torchrun"
+            f" --nproc_per_node={training_shape['gpus_per_node']}"
+            f" --nnodes={training_shape['nodes']}"
+            " --node_rank=$SLURM_NODEID --master_addr=<first allocated node> --master_port=29517"
+            f" src/train.py --config {config_path_remote} --fold {fold} --run_name {run_name}"
+        ),
         "overrides": overrides,
         "overrides_b64": encode_overrides(overrides),
         "qualifiers": {
@@ -213,7 +249,15 @@ def resolve_contract(
             {
                 "job_key": TRAIN_JOB_KEY,
                 "job_type": "train",
-                "shape": "1 node, 4 tasks, 4 H100, NPROC_PER_NODE=4 (DDP)",
+                "shape": (
+                    f"{training_shape['nodes']} node(s), "
+                    f"{training_shape['gpus_per_node']} task(s)/node, "
+                    f"{training_shape['gpus_per_node']} H100/node, "
+                    f"NPROC_PER_NODE={training_shape['gpus_per_node']} "
+                    f"({training_shape['strategy'].upper()}), "
+                    f"world_size={training_shape['world_size']}, "
+                    f"effective_global_batch_size={training_shape['effective_global_batch_size']}"
+                ),
                 "depends_on": [],
                 "script": "scripts/run_train_slurm.sh",
             },
@@ -260,6 +304,8 @@ def build_remote_submit_script(contract: dict[str, Any]) -> str:
         f"export OVERRIDES_JSON_B64={q(contract['overrides_b64'])}",
         f"export LOG_ROOT={q(contract['log_root_train'])}",
         f"export EXPERIMENT_CONTEXT={q(contract['context_path'])}",
+        f"export TRAIN_NODES={contract['training_shape']['nodes']}",
+        f"export TRAIN_GPUS_PER_NODE={contract['training_shape']['gpus_per_node']}",
         "bash scripts/submit_train_and_eval.sh",
     ]
     return "\n".join(lines) + "\n"

@@ -650,6 +650,8 @@ def _cmd_submit(args) -> int:
             group_id=group_identity["experiment_group_id"],
             github_issue=os.environ.get("GITHUB_ISSUE"),
             github_pr=os.environ.get("GITHUB_PR"),
+            train_nodes=args.train_nodes,
+            train_gpus_per_node=args.train_gpus_per_node,
         )
     except SubmissionError as e:
         print(f"ERROR: {e}", file=sys.stderr)
@@ -1645,6 +1647,18 @@ def main() -> int:
     submit_parser.add_argument("--scheduler-host", default=None, help="override scheduler login host")
     submit_parser.add_argument("--group-id", default=None)
     submit_parser.add_argument("--supersedes-attempt-id", default=None)
+    submit_parser.add_argument(
+        "--train-nodes",
+        type=int,
+        default=1,
+        help="training nodes: 1 (default, 4-GPU lane) or 2 (2 x 4 GPUs for the FSDP strategy)",
+    )
+    submit_parser.add_argument(
+        "--train-gpus-per-node",
+        type=int,
+        default=4,
+        help="GPUs per training node (4 by default; never 8 on one node)",
+    )
     submit_parser.add_argument("--dry-run", action="store_true", help="print the full resolved contract and exact commands without mutation")
     submit_parser.add_argument("--execute", action="store_true", help="verify deployment, transfer context, and submit through Slurm")
     submit_parser.set_defaults(func=_cmd_submit)
