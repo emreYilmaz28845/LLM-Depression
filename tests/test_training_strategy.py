@@ -142,6 +142,155 @@ def test_wrap_policy_reads_the_layers_from_a_peft_wrapped_model() -> None:
     assert fsdp_transformer_cls_names(peft_like) == ["_Layer"]
 
 
+class _MainProcessAccelerator:
+    def __init__(self, is_main: bool) -> None:
+        self.is_main_process = is_main
+        self.device = torch.device("cpu")
+
+    def unwrap_model(self, model):
+        return model
+
+
+def test_broadcast_flag_returns_the_rank_0_decision() -> None:
+    from src.training_strategy import broadcast_flag
+
+    accelerator = _MainProcessAccelerator(True)
+    assert broadcast_flag(accelerator, True) is True
+    assert broadcast_flag(accelerator, False) is False
+
+
+def test_selection_evaluation_runs_on_every_rank_and_only_main_writes(monkeypatch, tmp_path) -> None:
+    from src import train as train_module
+
+    calls: list[dict] = []
+    monkeypatch.setattr(train_module, "prepare_model_for_evaluation", lambda model, config: None)
+    monkeypatch.setattr(train_module, "_compute_dataset_loss", lambda model, loader: 0.25)
+
+    def fake_evaluate_examples(
+        model,
+        processor,
+        examples,
+        config,
+        output_dir,
+        checkpoint_name,
+        sample_prediction_mode=None,
+        write_artifacts=True,
+    ):
+        calls.append({"examples": len(examples), "write_artifacts": write_artifacts})
+        return {
+            "backend_results": {
+                "likelihood": {
+                    "headline_metrics": {
+                        "positive_f1": 0.5,
+                        "macro_f1": 0.5,
+                        "precision": 0.5,
+                        "recall": 0.5,
+                    }
+                }
+            }
+        }
+
+    monkeypatch.setattr(train_module, "evaluate_examples", fake_evaluate_examples)
+    components = [
+        {
+            "name": "daic",
+            "dataset": "daic",
+            "split_name": "val",
+            "config": {"evaluation": {}},
+            "examples": [1, 2, 3],
+            "loss_loader": [],
+            "log_dir_prefix": "selection",
+        }
+    ]
+    config = {"evaluation": {}}
+    main = train_module._evaluate_selection_components(
+        _MainProcessAccelerator(True), object(), object(), components, config, tmp_path, 1, "likelihood"
+    )
+    other = train_module._evaluate_selection_components(
+        _MainProcessAccelerator(False), object(), object(), components, config, tmp_path, 1, "likelihood"
+    )
+    # Same examples, same order, same forward count on every rank; only rank 0 writes.
+    assert [call["write_artifacts"] for call in calls] == [True, False]
+    assert [call["examples"] for call in calls] == [3, 3]
+    assert main["component_losses"] == other["component_losses"] == {"daic_loss": 0.25}
+    assert main["primary_headline_metrics"] == other["primary_headline_metrics"]
+    assert main["component_eval_dirs"] == other["component_eval_dirs"]
+
+
+def test_save_training_checkpoint_ddp_writes_only_on_main(monkeypatch, tmp_path) -> None:
+    from src import training_strategy as strategy_module
+
+    saved: list[tuple] = []
+    monkeypatch.setattr(
+        strategy_module,
+        "resolve_training_strategy",
+        lambda config: TRAINING_STRATEGY_DDP,
+    )
+    monkeypatch.setattr(
+        "src.model.runtime.save_adapter_and_processor",
+        lambda model, processor, output_dir, config=None: saved.append(str(output_dir)),
+    )
+    accelerator = _MainProcessAccelerator(True)
+    strategy_module.save_training_checkpoint(
+        accelerator, "model", "processor", tmp_path / "best", {"training": {"strategy": "ddp"}}
+    )
+    assert saved == [str(tmp_path / "best")]
+
+    strategy_module.save_training_checkpoint(
+        _MainProcessAccelerator(False), "model", "processor", tmp_path / "best", {"training": {"strategy": "ddp"}}
+    )
+    assert saved == [str(tmp_path / "best")]
+
+
+class _FsdpAccelerator:
+    def __init__(self, is_main: bool) -> None:
+        self.is_main_process = is_main
+        self.events: list[str] = []
+
+    def unwrap_model(self, model):
+        return model
+
+    def get_state_dict(self, model):
+        self.events.append("gather")
+        return {"base_model.model.language_model.layers.0.mlp.up_proj.lora_A.default.weight": 1}
+
+
+def test_save_training_checkpoint_fsdp_gathers_on_every_rank(monkeypatch, tmp_path) -> None:
+    from src import training_strategy as strategy_module
+
+    monkeypatch.setattr(
+        strategy_module,
+        "resolve_training_strategy",
+        lambda config: TRAINING_STRATEGY_FSDP,
+    )
+    written: list[str] = []
+
+    class FakeModel:
+        def save_pretrained(self, target, state_dict=None, safe_serialization=False):
+            written.append(f"adapter:{target}")
+
+    class FakeProcessor:
+        def save_pretrained(self, target):
+            written.append(f"processor:{target}")
+
+    config = {"training": {"strategy": "fsdp"}}
+    main = _FsdpAccelerator(True)
+    strategy_module.save_training_checkpoint(
+        main, FakeModel(), FakeProcessor(), tmp_path / "best", config
+    )
+    assert main.events == ["gather"]
+    assert written == [f"adapter:{tmp_path / 'best'}", f"processor:{tmp_path / 'best'}"]
+
+    written.clear()
+    other = _FsdpAccelerator(False)
+    strategy_module.save_training_checkpoint(
+        other, FakeModel(), FakeProcessor(), tmp_path / "best", config
+    )
+    # Every rank joins the gather; only rank 0 writes.
+    assert other.events == ["gather"]
+    assert written == []
+
+
 def test_qwen38_config_selects_fsdp_and_disables_in_train_eval() -> None:
     config = load_yaml(QWEN38_CONFIG)
     assert config["training"]["strategy"] == TRAINING_STRATEGY_FSDP

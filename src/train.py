@@ -71,13 +71,14 @@ from src.model.runtime import (
     prepare_model_for_evaluation,
     restore_model_for_training,
     resolve_audio_adapter_config,
-    save_adapter_and_processor,
 )
 from src.model.lora_common import resolved_lora_layer_selection
 from src.training_strategy import (
+    broadcast_flag,
     build_accelerator,
     effective_global_batch_size,
     resolve_training_strategy,
+    save_training_checkpoint,
 )
 from src.sampling import (
     SAMPLING_MODE_SUBJECT_OVERSAMPLE,
@@ -1027,6 +1028,86 @@ def _compute_dataset_loss(
     if was_training:
         model.train()
     return sum(losses) / max(1, len(losses))
+
+
+def _evaluate_selection_components(
+    accelerator,
+    model,
+    processor,
+    selection_components: list[dict[str, Any]],
+    config: dict[str, Any],
+    logs_dir: Path,
+    epoch: int,
+    sample_prediction_mode: str,
+) -> dict[str, Any]:
+    """Run the epoch-end selection evaluation on every rank.
+
+    FSDP needs every rank inside the forward collectives, so the evaluation is
+    replicated instead of rank-0-only: the same examples in the same order, with
+    the same number of forward calls on every rank. Only the main process writes
+    the evidence files and logs; the metrics agree across ranks because the
+    inputs and their order are identical.
+    """
+    unwrapped = accelerator.unwrap_model(model)
+    prepare_model_for_evaluation(unwrapped, config)
+    component_headlines: list[tuple[str, dict[str, Any]]] = []
+    component_losses: dict[str, float] = {}
+    component_eval_dirs: dict[str, str] = {}
+    primary_headline_metrics: dict[str, Any] | None = None
+    primary_selection_loss: float | None = None
+    primary_eval_dir: Path | None = None
+    for index, component in enumerate(selection_components):
+        component_eval_dir = ensure_dir(logs_dir / f"{component['log_dir_prefix']}_epoch_{epoch}")
+        component_loss = _compute_dataset_loss(unwrapped, component["loss_loader"])
+        if accelerator.is_main_process:
+            LOGGER.info(
+                "Selection evaluation dataset=%s split=%s | backend=%s | aggregation_level=%s | protocol=%s",
+                component["dataset"],
+                component["split_name"],
+                sample_prediction_mode,
+                resolve_aggregation_level(component["config"]),
+                evaluation_protocol_name(sample_prediction_mode),
+            )
+        metrics = evaluate_examples(
+            unwrapped,
+            processor,
+            component["examples"],
+            component["config"],
+            component_eval_dir,
+            checkpoint_name=f"epoch_{epoch}",
+            sample_prediction_mode=sample_prediction_mode,
+            write_artifacts=accelerator.is_main_process,
+        )
+        headline_metrics = metrics["backend_results"][sample_prediction_mode]["headline_metrics"]
+        component_headlines.append((component["name"], headline_metrics))
+        component_losses[f"{component['name']}_loss"] = float(component_loss)
+        component_eval_dirs[component["name"]] = str(component_eval_dir)
+        if index == 0:
+            primary_headline_metrics = headline_metrics
+            primary_selection_loss = float(component_loss)
+            primary_eval_dir = component_eval_dir
+        if accelerator.is_main_process:
+            LOGGER.info(
+                "Selection component epoch=%s | dataset=%s split=%s aggregation_level=%s | loss=%.6f "
+                "positive_f1=%.6f macro_f1=%.6f precision=%.6f recall=%.6f",
+                epoch,
+                component["dataset"],
+                component["split_name"],
+                resolve_aggregation_level(component["config"]),
+                component_loss,
+                float(headline_metrics["positive_f1"]),
+                float(headline_metrics["macro_f1"]),
+                float(headline_metrics["precision"]),
+                float(headline_metrics["recall"]),
+            )
+    return {
+        "component_headlines": component_headlines,
+        "component_losses": component_losses,
+        "component_eval_dirs": component_eval_dirs,
+        "primary_headline_metrics": primary_headline_metrics,
+        "primary_selection_loss": primary_selection_loss,
+        "primary_eval_dir": primary_eval_dir,
+    }
 
 
 def _save_best_checkpoint(save_strategy: str) -> bool:
@@ -2194,56 +2275,30 @@ def main() -> None:
             )
 
         accelerator.wait_for_everyone()
+        selection_eval: dict[str, Any] | None = None
+        if selection_enabled:
+            selection_eval = _evaluate_selection_components(
+                accelerator,
+                model,
+                processor,
+                selection_components,
+                config,
+                logs_dir,
+                epoch,
+                sample_prediction_mode,
+            )
+        accelerator.wait_for_everyone()
+        save_best_selected = False
         if accelerator.is_main_process:
             unwrapped = accelerator.unwrap_model(model)
             if selection_enabled:
-                component_headlines: list[tuple[str, dict[str, Any]]] = []
-                component_losses: dict[str, float] = {}
-                component_eval_dirs: dict[str, str] = {}
-                primary_headline_metrics: dict[str, Any] | None = None
-                primary_selection_loss: float | None = None
-                primary_eval_dir: Path | None = None
-                for component in selection_components:
-                    component_eval_dir = ensure_dir(logs_dir / f"{component['log_dir_prefix']}_epoch_{epoch}")
-                    component_loss = _compute_dataset_loss(unwrapped, component["loss_loader"])
-                    LOGGER.info(
-                        "Selection evaluation dataset=%s split=%s | backend=%s | aggregation_level=%s | protocol=%s",
-                        component["dataset"],
-                        component["split_name"],
-                        sample_prediction_mode,
-                        resolve_aggregation_level(component["config"]),
-                        evaluation_protocol_name(sample_prediction_mode),
-                    )
-                    metrics = evaluate_examples(
-                        unwrapped,
-                        processor,
-                        component["examples"],
-                        component["config"],
-                        component_eval_dir,
-                        checkpoint_name=f"epoch_{epoch}",
-                        sample_prediction_mode=sample_prediction_mode,
-                    )
-                    headline_metrics = metrics["backend_results"][sample_prediction_mode]["headline_metrics"]
-                    component_headlines.append((component["name"], headline_metrics))
-                    component_losses[f"{component['name']}_loss"] = float(component_loss)
-                    component_eval_dirs[component["name"]] = str(component_eval_dir)
-                    if component is selection_components[0]:
-                        primary_headline_metrics = headline_metrics
-                        primary_selection_loss = float(component_loss)
-                        primary_eval_dir = component_eval_dir
-                    LOGGER.info(
-                        "Selection component epoch=%s | dataset=%s split=%s aggregation_level=%s | loss=%.6f "
-                        "positive_f1=%.6f macro_f1=%.6f precision=%.6f recall=%.6f",
-                        epoch,
-                        component["dataset"],
-                        component["split_name"],
-                        resolve_aggregation_level(component["config"]),
-                        component_loss,
-                        float(headline_metrics["positive_f1"]),
-                        float(headline_metrics["macro_f1"]),
-                        float(headline_metrics["precision"]),
-                        float(headline_metrics["recall"]),
-                    )
+                assert selection_eval is not None
+                component_headlines = selection_eval["component_headlines"]
+                component_losses = selection_eval["component_losses"]
+                component_eval_dirs = selection_eval["component_eval_dirs"]
+                primary_headline_metrics = selection_eval["primary_headline_metrics"]
+                primary_selection_loss = selection_eval["primary_selection_loss"]
+                primary_eval_dir = selection_eval["primary_eval_dir"]
                 if primary_headline_metrics is None or primary_selection_loss is None or primary_eval_dir is None:
                     raise RuntimeError("Selection was enabled but no selection components were evaluated.")
                 metric_value = float(primary_headline_metrics["positive_f1"])
@@ -2319,7 +2374,7 @@ def main() -> None:
                     if _save_best_checkpoint(args.save_strategy):
                         if best_dir.exists():
                             shutil.rmtree(best_dir)
-                        save_adapter_and_processor(unwrapped, processor, best_dir, config=config)
+                        save_best_selected = True
                     if partition_plan["cv_protocol"] == CV_PROTOCOL_TRAIN_VAL:
                         best_validation_dir = eval_dir / "best_validation"
                         if best_validation_dir.exists():
@@ -2394,6 +2449,12 @@ def main() -> None:
                 )
                 LOGGER.info("Finished epoch=%s | selection disabled | train_loss=%.6f", epoch, sum(epoch_losses) / max(1, len(epoch_losses)))
             _log_peak_gpu_memory(LOGGER, f"epoch_{epoch}")
+        # Collective checkpoint save: the main process's decision travels to every
+        # rank first, then every rank joins the gather (FSDP) and the main process
+        # writes the adapter directory.
+        save_best_selected = broadcast_flag(accelerator, save_best_selected)
+        if save_best_selected:
+            save_training_checkpoint(accelerator, model, processor, best_dir, config=config)
         stop_training_tensor = torch.tensor(0, device=accelerator.device, dtype=torch.int32)
         if accelerator.is_main_process and early_stop_cfg["enabled"] and early_stop_bad_epochs >= early_stop_cfg["patience"]:
             stopped_early = True
@@ -2418,6 +2479,7 @@ def main() -> None:
             gc.collect()
             torch.cuda.empty_cache()
 
+    save_last_selected = False
     if accelerator.is_main_process:
         unwrapped = accelerator.unwrap_model(model)
         if objective == "subject_mean_margin_mil":
@@ -2465,11 +2527,16 @@ def main() -> None:
         if selection_enabled and _save_last_checkpoint(args.save_strategy):
             if last_dir.exists():
                 shutil.rmtree(last_dir)
-            save_adapter_and_processor(unwrapped, processor, last_dir, config=config)
+            save_last_selected = True
         if not selection_enabled:
             if last_dir.exists():
                 shutil.rmtree(last_dir)
-            save_adapter_and_processor(unwrapped, processor, last_dir, config=config)
+            save_last_selected = True
+    save_last_selected = broadcast_flag(accelerator, save_last_selected)
+    if save_last_selected:
+        save_training_checkpoint(accelerator, model, processor, last_dir, config=config)
+    if accelerator.is_main_process:
+        if not selection_enabled:
             if best_dir.exists():
                 shutil.rmtree(best_dir)
             shutil.copytree(last_dir, best_dir)

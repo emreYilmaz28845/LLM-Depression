@@ -101,6 +101,52 @@ def build_fsdp_plugin(
     return plugin
 
 
+def broadcast_flag(accelerator, flag: bool) -> bool:
+    """Broadcast a rank-0 decision so every rank agrees on collective work.
+
+    A save that gathers sharded parameters is a collective: if rank 0 skips it
+    while the other ranks enter it, the job hangs. Rank 0's decision therefore
+    travels to every rank before the collective starts.
+    """
+    import torch  # noqa: PLC0415
+
+    tensor = torch.tensor(1 if flag else 0, device=accelerator.device, dtype=torch.int32)
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        torch.distributed.broadcast(tensor, src=0)
+    return bool(int(tensor.item()))
+
+
+def save_training_checkpoint(accelerator, model, processor, output_dir, config: dict[str, Any]) -> None:
+    """Save the training model's PEFT adapter, rank-safe under DDP and FSDP.
+
+    Under FSDP every rank joins the state-dict gather and only the main process
+    writes files; under DDP the main process writes through the backend hook.
+    Either way the result is the plain adapter directory the single-GPU
+    evaluation path loads, and the 27B base model is never written out.
+    """
+    if resolve_training_strategy(config) != TRAINING_STRATEGY_FSDP:
+        if accelerator.is_main_process:
+            from src.model.runtime import save_adapter_and_processor  # noqa: PLC0415
+
+            save_adapter_and_processor(
+                accelerator.unwrap_model(model), processor, output_dir, config=config
+            )
+        return
+
+    state_dict = accelerator.get_state_dict(model)
+    if not accelerator.is_main_process:
+        return
+    from pathlib import Path  # noqa: PLC0415
+
+    target = Path(output_dir)
+    target.mkdir(parents=True, exist_ok=True)
+    accelerator.unwrap_model(model).save_pretrained(
+        target, state_dict=state_dict, safe_serialization=True
+    )
+    processor.save_pretrained(target)
+    LOGGER.info("Saved gathered LoRA adapter and tokenizer to %s", target)
+
+
 def build_accelerator(
     config: dict[str, Any],
     model=None,

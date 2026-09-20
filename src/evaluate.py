@@ -702,11 +702,31 @@ def evaluate_examples(
     output_dir: str | Path,
     checkpoint_name: str,
     sample_prediction_mode: str | None = None,
+    write_artifacts: bool = True,
 ) -> dict[str, Any]:
+    """Evaluate examples and (optionally) write the evidence files.
+
+    ``write_artifacts=False`` runs the identical computation without touching the
+    output directory. The sharded training path evaluates on every rank so the
+    FSDP collectives are satisfied, and only the main process writes the files;
+    the metrics are identical because the inputs and their order are identical.
+    """
     mode = resolve_prediction_mode(config, sample_prediction_mode)
     aggregation_level = resolve_aggregation_level(config)
     protocol_name = evaluation_protocol_name(mode)
     output_dir = ensure_dir(output_dir)
+
+    def _write_csv_if(rows: list[dict[str, Any]], path) -> None:
+        if write_artifacts:
+            _write_csv(rows, path)
+
+    def _write_jsonl_if(rows: list[dict[str, Any]], path) -> None:
+        if write_artifacts:
+            write_jsonl(rows, path)
+
+    def _save_json_if(payload: dict[str, Any], path) -> None:
+        if write_artifacts:
+            save_json(payload, path)
     prepare_model_for_evaluation(model, config)
     device = next(model.parameters()).device
     silence_audio = bool(config["data"].get("silence_audio", False))
@@ -818,15 +838,15 @@ def evaluate_examples(
                 )
             condition_metrics = dict(condition_metrics)
             condition_metrics["checkpoint_name"] = checkpoint_name
-            write_jsonl(
+            _write_jsonl_if(
                 condition_subject_rows,
                 output_dir / f"predictions_subject_level_{condition}.jsonl",
             )
-            _write_csv(
+            _write_csv_if(
                 condition_subject_rows,
                 output_dir / f"predictions_subject_level_{condition}.csv",
             )
-            save_json(
+            _save_json_if(
                 condition_metrics,
                 output_dir / f"metrics_subject_level_{condition}.json",
             )
@@ -869,11 +889,11 @@ def evaluate_examples(
             secondary_metrics = dict(secondary_metrics)
             secondary_metrics["checkpoint_name"] = checkpoint_name
             secondary_metrics["aggregation_method"] = method
-            write_jsonl(
+            _write_jsonl_if(
                 secondary_rows,
                 output_dir / f"predictions_subject_level_{method}.jsonl",
             )
-            save_json(secondary_metrics, output_dir / f"metrics_secondary_{method}.json")
+            _save_json_if(secondary_metrics, output_dir / f"metrics_secondary_{method}.json")
             secondary_aggregations[method] = {
                 "metrics": secondary_metrics,
                 "prediction_path": str(output_dir / f"predictions_subject_level_{method}.jsonl"),
@@ -881,7 +901,7 @@ def evaluate_examples(
     elif requested_secondary:
         secondary_aggregations = {"status": "not_applicable"}
     if requested_secondary:
-        save_json(
+        _save_json_if(
             {
                 "requested": [str(method) for method in requested_secondary],
                 "results": secondary_aggregations,
@@ -895,22 +915,22 @@ def evaluate_examples(
     response_csv_path = output_dir / "predictions_response_level.csv"
     sample_jsonl_path = output_dir / "predictions_sample_level.jsonl"
     invalid_jsonl_path = output_dir / "predictions_invalid_sample_level.jsonl"
-    _write_csv(sample_rows, sample_csv_path)
-    _write_csv(headline_rows, headline_csv_path)
-    _write_csv(subject_rows, subject_csv_path)
+    _write_csv_if(sample_rows, sample_csv_path)
+    _write_csv_if(headline_rows, headline_csv_path)
+    _write_csv_if(subject_rows, subject_csv_path)
     if response_rows:
-        _write_csv(response_rows, response_csv_path)
-    write_jsonl(sample_rows, sample_jsonl_path)
+        _write_csv_if(response_rows, response_csv_path)
+    _write_jsonl_if(sample_rows, sample_jsonl_path)
     if response_rows:
-        write_jsonl(response_rows, output_dir / "predictions_response_level.jsonl")
+        _write_jsonl_if(response_rows, output_dir / "predictions_response_level.jsonl")
     invalid_rows = _invalid_sample_rows(mode, sample_rows)
-    write_jsonl(invalid_rows, invalid_jsonl_path)
-    save_json(headline_metrics_payload, output_dir / _metrics_filename_for_mode(mode))
+    _write_jsonl_if(invalid_rows, invalid_jsonl_path)
+    _save_json_if(headline_metrics_payload, output_dir / _metrics_filename_for_mode(mode))
     if response_metrics is not None:
-        save_json(response_metrics, output_dir / f"metrics_response_level_{mode}.json")
+        _save_json_if(response_metrics, output_dir / f"metrics_response_level_{mode}.json")
     if aggregation_level != AGGREGATION_LEVEL_SUBJECT:
-        save_json(subject_metrics_payload, output_dir / _subject_metrics_filename_for_mode(mode))
-    save_json(
+        _save_json_if(subject_metrics_payload, output_dir / _subject_metrics_filename_for_mode(mode))
+    _save_json_if(
         {
             "prediction_backend": mode,
             "evaluation_protocol_name": protocol_name,
