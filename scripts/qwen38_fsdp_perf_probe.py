@@ -133,7 +133,9 @@ def _measure_batch_size(
         model=model,
         wrap_policy_names=lambda wrapped: fsdp_wrap_policy_names(config, wrapped),
     )
-    model, optimizer, dataloader = accelerator.prepare(model, optimizer, dataloader)
+    # The loader stays out of accelerator.prepare: the probe must feed the same
+    # long examples to every rank, not a DistributedSampler shard of them.
+    model, optimizer = accelerator.prepare(model, optimizer)
 
     torch.cuda.reset_peak_memory_stats()
     batches = []
