@@ -11,7 +11,6 @@ import torch
 from src.model import qwen38_lora, runtime
 from src.model.lora_common import build_lora_config
 from src.model.qwen38_lora import (
-    QWEN38_ASSISTANT_TURN_ANCHOR,
     QWEN38_EVALUATION_VIEW,
     QWEN38_LORA_TARGET_REGEX,
     QWEN38_MODEL_CLASS_NAME,
@@ -39,7 +38,12 @@ CLOSED_THINKING_BLOCK = "<think>\n\n</think>\n\n"
 
 
 class FakeQwen38Processor:
-    """Mirror of the pinned Qwen3.8 template for the text-only path."""
+    """Mirror of the pinned Qwen3.8 template for the text-only path.
+
+    The real template writes the closed thinking block after the assistant header
+    for assistant messages as well as for the generation prompt (verified against
+    the checkpoint's own ``chat_template.jinja``).
+    """
 
     def apply_chat_template(
         self,
@@ -50,9 +54,12 @@ class FakeQwen38Processor:
     ) -> str:
         text = ""
         for message in messages:
-            text += f"<|im_start|>{message['role']}\n{message['content']}<|im_end|>\n"
+            text += f"<|im_start|>{message['role']}\n"
+            if message["role"] == "assistant" and enable_thinking is False:
+                text += CLOSED_THINKING_BLOCK
+            text += f"{message['content']}<|im_end|>\n"
         if add_generation_prompt:
-            text += QWEN38_ASSISTANT_TURN_ANCHOR
+            text += "<|im_start|>assistant\n"
             text += CLOSED_THINKING_BLOCK if enable_thinking is False else "<think>\n"
         return text
 
@@ -250,15 +257,18 @@ def test_audit_rejects_vision_and_non_lora_trainables() -> None:
 def test_render_prompt_closes_the_thinking_block() -> None:
     prompt = render_qwen38_prompt(FakeQwen38Processor(), "SYS", "USER")
     assert prompt.startswith("<|im_start|>system\nSYS<|im_end|>\n<|im_start|>user\nUSER<|im_end|>\n")
-    assert prompt.endswith(QWEN38_ASSISTANT_TURN_ANCHOR + CLOSED_THINKING_BLOCK)
+    assert prompt.endswith("<|im_start|>assistant\n" + CLOSED_THINKING_BLOCK)
 
 
 def test_training_text_is_prompt_plus_label_plus_template_terminator() -> None:
     processor = FakeQwen38Processor()
     prompt = render_qwen38_prompt(processor, "SYS", "USER")
     training_text = render_qwen38_training_text(processor, "SYS", "USER", "Depressed")
-    assert training_text == f"{prompt}Depressed<|im_end|>\n"
+    # The training text must continue the generation prompt byte for byte: the
+    # collator masks the prompt and the likelihood backend scores the same span.
     assert training_text.startswith(prompt)
+    assert training_text[len(prompt) :] == "Depressed<|im_end|>\n"
+    assert training_text == f"{prompt}Depressed<|im_end|>\n"
 
 
 def test_prepare_examples_render_and_require_raw_fields() -> None:

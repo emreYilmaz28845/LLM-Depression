@@ -53,7 +53,6 @@ QWEN38_LORA_TARGET_REGEX = (
 QWEN38_EVALUATION_VIEW = "harmonized_all_windows_full_coverage"
 QWEN38_ALLOWED_EVALUATION_MODES = ("likelihood", "original_teacher_forced")
 QWEN38_ALLOWED_INFERENCE_DTYPES = ("bf16",)
-QWEN38_ASSISTANT_TURN_ANCHOR = "<|im_start|>assistant\n"
 QWEN38_FORBIDDEN_LORA_MARKERS = (
     "vision",
     "visual",
@@ -139,11 +138,12 @@ def render_qwen38_training_text(
     """Return ``prompt_text + label_text + assistant terminator``.
 
     The terminator is read back from the model's own template instead of being
-    hard-coded: the full conversation is rendered with the assistant answer and
-    the suffix after the label becomes the turn terminator. The training text
-    then starts with the byte-identical generation prompt, so the prompt/label
-    boundary used by the collator and by likelihood scoring is the same one the
-    model was prompted with.
+    hard-coded: the full conversation is rendered with the assistant answer, and
+    the assistant turn must continue the generation prompt byte for byte. The
+    template writes the closed thinking block for the assistant turn as well as
+    for the generation prompt, so the label starts exactly where the model would
+    have started generating. Training and likelihood scoring therefore share one
+    prompt/label boundary.
     """
     prompt_text = render_qwen38_prompt(processor, system_text, user_text)
     full_text = processor.apply_chat_template(
@@ -153,26 +153,21 @@ def render_qwen38_training_text(
         enable_thinking=False,
         tokenize=False,
     )
-    head, anchor, tail = full_text.rpartition(QWEN38_ASSISTANT_TURN_ANCHOR)
-    if not anchor:
-        raise ValueError(
-            "Qwen3.8 chat template did not render an assistant turn; cannot derive "
-            "the label terminator."
-        )
-    if not tail.startswith(label_text):
-        raise ValueError(
-            "Qwen3.8 chat template did not place the label directly after the "
-            "assistant header."
-        )
-    terminator = tail[len(label_text) :]
-    if not terminator:
-        raise ValueError(
-            "Qwen3.8 chat template produced no assistant turn terminator after the label."
-        )
-    if not prompt_text.startswith(head + anchor):
+    if not full_text.startswith(prompt_text):
         raise ValueError(
             "Qwen3.8 generation prompt and the rendered assistant turn diverge; "
             "training and scoring would use different tokenization."
+        )
+    suffix = full_text[len(prompt_text) :]
+    if not suffix.startswith(label_text):
+        raise ValueError(
+            "Qwen3.8 chat template did not place the label directly after the "
+            "generation prompt."
+        )
+    terminator = suffix[len(label_text) :]
+    if not terminator:
+        raise ValueError(
+            "Qwen3.8 chat template produced no assistant turn terminator after the label."
         )
     return f"{prompt_text}{label_text}{terminator}"
 

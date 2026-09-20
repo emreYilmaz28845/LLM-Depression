@@ -123,18 +123,8 @@ def _build_report(args) -> dict:
 
     processor = load_processor(model_name_or_path, config)
 
-    _rename(device)
-    model = qwen38_lora.load_model_for_training(model_name_or_path, config)
-    report["phases"]["load_lora_bf16"] = _memory_state(device)
-    report["trainable_params"] = int(
-        sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
-    )
-    selection = getattr(model, "_resolved_lora_layer_selection", {})
-    report["lora_layer_selection"] = {
-        "decoder_hidden_layers": selection.get("decoder_hidden_layer_count"),
-        "layers_to_transform": selection.get("layers_to_transform"),
-    }
-
+    # Render and tokenize before the 27B load: a tokenization failure must not
+    # cost GPU minutes.
     example = _example(
         processor,
         config,
@@ -151,6 +141,18 @@ def _build_report(args) -> dict:
         "prompt_tokens": prompt_len,
         "label_tokens": int(training_ids["input_ids"].shape[1]) - prompt_len,
         "total_tokens": int(training_ids["input_ids"].shape[1]),
+    }
+
+    _rename(device)
+    model = qwen38_lora.load_model_for_training(model_name_or_path, config)
+    report["phases"]["load_lora_bf16"] = _memory_state(device)
+    report["trainable_params"] = int(
+        sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
+    )
+    selection = getattr(model, "_resolved_lora_layer_selection", {})
+    report["lora_layer_selection"] = {
+        "decoder_hidden_layers": selection.get("decoder_hidden_layer_count"),
+        "layers_to_transform": selection.get("layers_to_transform"),
     }
 
     model.train()
