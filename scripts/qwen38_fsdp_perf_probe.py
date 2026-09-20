@@ -204,11 +204,24 @@ def _build_report(args) -> dict:
 
     for batch_size in report["batch_sizes"]:
         accumulation = EFFECTIVE_GLOBAL_BATCH_TARGET // max(1, batch_size * world_size)
-        report["results"].append(
-            _measure_batch_size(
-                base_config, examples, processor, batch_size, accumulation, int(args.steps), rank
+        try:
+            report["results"].append(
+                _measure_batch_size(
+                    base_config, examples, processor, batch_size, accumulation, int(args.steps), rank
+                )
             )
-        )
+        except Exception as exc:  # noqa: BLE001 - one option failing must not hide the others
+            import traceback as _traceback  # noqa: PLC0415
+
+            report["results"].append(
+                {
+                    "per_device_train_batch_size": batch_size,
+                    "gradient_accumulation_steps": accumulation,
+                    "rank": rank,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "traceback": _traceback.format_exc(),
+                }
+            )
     return report
 
 
