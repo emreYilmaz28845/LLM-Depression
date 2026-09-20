@@ -88,6 +88,21 @@ def build_fsdp_plugin(
         "use_orig_params": True,
         "sync_module_states": True,
     }
+    if bool(config.get("training", {}).get("bf16", False)):
+        # Keep the flat parameters in bfloat16. Without an explicit policy,
+        # Accelerate upcasts every FSDP flat parameter that requires grad to
+        # float32 whenever Accelerator.mixed_precision is not "no", which doubles
+        # the per-rank parameter memory (a LoRA unit requires grad even though the
+        # base weights are frozen) and OOMed the 27B run.
+        from torch.distributed.fsdp import MixedPrecision  # noqa: PLC0415
+
+        import torch  # noqa: PLC0415
+
+        plugin_kwargs["mixed_precision_policy"] = MixedPrecision(
+            param_dtype=torch.bfloat16,
+            reduce_dtype=torch.bfloat16,
+            buffer_dtype=torch.bfloat16,
+        )
     transformer_cls_names = _resolve_wrap_policy(config, model, wrap_policy_names)
     if transformer_cls_names is not None:
         # Accelerate only builds the wrap policy from the class names when
@@ -197,13 +212,17 @@ def build_accelerator(
     """Build the Accelerator for the resolved strategy.
 
     FSDP requires the model before the plugin can resolve the wrap policy, and it
-    forbids the in-train rank-0 held-out evaluation path (the plan and the FSDP
-    design both require a separate evaluation job there).
+    forbids the in-train rank-0 held-out evaluation path (a separate evaluation job
+    covers the held-out test). Under FSDP the parameters themselves are bfloat16
+    and the plugin's mixed-precision policy governs the compute and reduce dtypes,
+    so Accelerator.mixed_precision stays "no": turning it on makes Accelerate
+    upcast every flat parameter to float32 before sharding.
     """
     from accelerate import Accelerator, DistributedDataParallelKwargs  # noqa: PLC0415
 
     strategy = resolve_training_strategy(config)
     training_cfg = config.get("training", {})
+    uses_bf16 = bool(training_cfg.get("bf16", False))
     if strategy == TRAINING_STRATEGY_FSDP:
         if model is None:
             raise ValueError("The fsdp training strategy needs the model to resolve the wrap policy.")
@@ -226,14 +245,14 @@ def build_accelerator(
         # kwargs_handlers (that path asserts on the handler base class).
         accelerator = Accelerator(
             gradient_accumulation_steps=int(training_cfg.get("gradient_accumulation_steps", 1)),
-            mixed_precision="bf16" if bool(training_cfg.get("bf16", False)) else "no",
+            mixed_precision="no",
             fsdp_plugin=build_fsdp_plugin(config, model, wrap_policy_names),
         )
         return accelerator
 
     accelerator = Accelerator(
         gradient_accumulation_steps=int(training_cfg.get("gradient_accumulation_steps", 1)),
-        mixed_precision="bf16" if bool(training_cfg.get("bf16", False)) else "no",
+        mixed_precision="bf16" if uses_bf16 else "no",
         kwargs_handlers=[DistributedDataParallelKwargs(find_unused_parameters=True)],
     )
     return accelerator

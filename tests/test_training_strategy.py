@@ -134,7 +134,23 @@ def test_accelerator_builds_for_fsdp() -> None:
         config, model=_fake_decoder_model(), wrap_policy_names=fsdp_transformer_cls_names
     )
     assert accelerator.gradient_accumulation_steps == 32
-    assert accelerator.mixed_precision == "bf16"
+    # FSDP keeps the parameters in bfloat16 through the plugin policy, so
+    # Accelerator.mixed_precision stays off (otherwise Accelerate upcasts every
+    # flat parameter to float32).
+    assert accelerator.mixed_precision == "no"
+
+
+def test_fsdp_plugin_pins_bf16_parameters() -> None:
+    plugin = build_fsdp_plugin(
+        {"training": {"strategy": "fsdp", "bf16": True}},
+        _fake_decoder_model(),
+        fsdp_transformer_cls_names,
+    )
+    policy = plugin.mixed_precision_policy
+    assert policy is not None
+    assert policy.param_dtype is torch.bfloat16
+    assert policy.reduce_dtype is torch.bfloat16
+    assert policy.buffer_dtype is torch.bfloat16
 
 
 def test_runtime_hook_dispatches_to_the_backend() -> None:
