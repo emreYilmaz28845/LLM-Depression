@@ -165,19 +165,23 @@ def _build_report(args) -> dict:
             [parameter for parameter in model.parameters() if parameter.requires_grad],
             lr=float(config["training"]["learning_rate"]),
         )
-        _rename(device)
-        outputs = model(
-            input_ids=training_ids["input_ids"],
-            attention_mask=training_ids["attention_mask"],
-            labels=labels,
-        )
-        loss = outputs.loss
-        loss.backward()
-        optimizer.step()
-        optimizer.zero_grad(set_to_none=True)
-        torch.cuda.synchronize(device)
-        report["phases"]["train_step"] = _memory_state(device)
-        report["phases"]["train_step"]["loss"] = float(loss.item())
+        if not args.skip_train_step:
+            _rename(device)
+            outputs = model(
+                input_ids=training_ids["input_ids"],
+                attention_mask=training_ids["attention_mask"],
+                labels=labels,
+            )
+            loss = outputs.loss
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            torch.cuda.synchronize(device)
+            report["phases"]["train_step"] = _memory_state(device)
+            report["phases"]["train_step"]["loss"] = float(loss.item())
+
+        if args.skip_eval:
+            return report
 
         qwen38_lora.prepare_model_for_evaluation(model)
         full_text = prepared["prompt_text"] + example["internal_label_text"]
@@ -212,6 +216,16 @@ def main() -> int:
     )
     parser.add_argument("--output", required=True, help="JSON report path")
     parser.add_argument("--prompt-tokens", type=int, default=4096)
+    parser.add_argument(
+        "--skip-train-step",
+        action="store_true",
+        help="measure the load and the likelihood pass only (training lane is known to fail)",
+    )
+    parser.add_argument(
+        "--skip-eval",
+        action="store_true",
+        help="measure the load and the training step only",
+    )
     parser.add_argument("--overrides", nargs="*", default=None)
     args = parser.parse_args()
 

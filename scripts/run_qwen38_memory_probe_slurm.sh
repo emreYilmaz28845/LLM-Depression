@@ -22,7 +22,8 @@
 # Never run this on a login or transfer node: the model is 52 GB on disk.
 #
 # Required env: none.
-# Optional: PROJECT_ROOT, VENV_DIR, CONFIG, LOG_ROOT, PROMPT_TOKENS, OVERRIDES.
+# Optional: PROJECT_ROOT, VENV_DIR, CONFIG, LOG_ROOT, PROMPT_TOKENS, OUTPUT,
+#           EXTRA_PROBE_ARGS (for example "--skip-train-step"), OVERRIDES.
 
 set -euo pipefail
 
@@ -71,6 +72,7 @@ set +e
   --config "$CONFIG" \
   --output "$OUTPUT" \
   --prompt-tokens "$PROMPT_TOKENS" \
+  ${EXTRA_PROBE_ARGS:-} \
   ${OVERRIDES:-}
 STATUS=$?
 set -e
