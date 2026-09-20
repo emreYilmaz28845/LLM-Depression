@@ -127,8 +127,16 @@ def test_config_carries_the_three_mandatory_fields() -> None:
 def test_config_preserves_the_base_recipe_and_splits() -> None:
     config = qwen38_config()
     base = load_yaml(QWEN_CONFIG)
-    for key in ("dataset", "seed", "recipe_id", "protocol_id", "manifest_variant", "labels", "prompt", "split", "training"):
+    for key in ("dataset", "seed", "recipe_id", "protocol_id", "manifest_variant", "labels", "prompt", "split"):
         assert config[key] == base[key], key
+    # The training block deviates in exactly two documented ways: the FSDP
+    # strategy, and the in-train held-out evaluation that a sharded run cannot do.
+    training = dict(config["training"])
+    assert training.pop("strategy") == "fsdp"
+    assert training.pop("run_final_eval_in_train") is False
+    base_training = dict(base["training"])
+    assert base_training.pop("run_final_eval_in_train") is True
+    assert training == base_training
     assert config["data"] == base["data"]
     assert config["output_dirs"]["manifest_dir"] == base["output_dirs"]["manifest_dir"]
     assert config["output_dirs"]["split_dir"] == base["output_dirs"]["split_dir"]

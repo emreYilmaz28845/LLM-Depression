@@ -18,7 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import torch
-from accelerate import Accelerator, DistributedDataParallelKwargs
+from accelerate import Accelerator
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from transformers import get_linear_schedule_with_warmup
@@ -62,6 +62,7 @@ from src.data.split_utils import (
 from src.evaluate import _processor_inputs, evaluate_examples
 from src.model.runtime import (
     build_collator,
+    fsdp_wrap_policy_names,
     load_model_for_inference,
     load_model_for_training,
     load_processor,
@@ -73,6 +74,11 @@ from src.model.runtime import (
     save_adapter_and_processor,
 )
 from src.model.lora_common import resolved_lora_layer_selection
+from src.training_strategy import (
+    build_accelerator,
+    effective_global_batch_size,
+    resolve_training_strategy,
+)
 from src.sampling import (
     SAMPLING_MODE_SUBJECT_OVERSAMPLE,
     build_subject_oversampling,
@@ -1848,15 +1854,14 @@ def main() -> None:
     )
     warmup_steps = int(total_steps * float(config["training"]["warmup_ratio"]))
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps)
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     dist_timeout_minutes = int(config.get("training", {}).get("dist_timeout_minutes", 0) or 0)
     if dist_timeout_minutes > 0 and not torch.distributed.is_initialized():
-        # Rank-0-only per-epoch selection evaluation (e.g. 445 balanced-cover
-        # bundles) can hold the other ranks at the next collective for longer
-        # than torch's default 600s NCCL watchdog timeout. Pre-initialize the
-        # process group with a longer timeout; Accelerate reuses an already
-        # initialized group. Opt-in via training.dist_timeout_minutes so other
-        # recipes keep the default behavior.
+        # A slow collective (e.g. the epoch-end evaluation or an FSDP all-gather)
+        # can hold the other ranks at the next collective for longer than torch's
+        # default 600s NCCL watchdog timeout. Pre-initialize the process group
+        # with a longer timeout; Accelerate reuses an already initialized group.
+        # Opt-in via training.dist_timeout_minutes so other recipes keep the
+        # default behavior.
         import datetime
 
         torch.distributed.init_process_group(
@@ -1867,10 +1872,20 @@ def main() -> None:
             "(training.dist_timeout_minutes).",
             dist_timeout_minutes,
         )
-    accelerator = Accelerator(
-        gradient_accumulation_steps=int(config["training"]["gradient_accumulation_steps"]),
-        mixed_precision="bf16" if bool(config["training"].get("bf16", False)) else "no",
-        kwargs_handlers=[ddp_kwargs],
+    strategy = resolve_training_strategy(config)
+    accelerator = build_accelerator(
+        config,
+        model=model,
+        wrap_policy_names=lambda wrapped_model: fsdp_wrap_policy_names(config, wrapped_model),
+    )
+    LOGGER.info(
+        "Training strategy | strategy=%s world_size=%s per_device_train_batch_size=%s "
+        "gradient_accumulation_steps=%s effective_global_batch_size=%s",
+        strategy,
+        int(os.environ.get("WORLD_SIZE", "1")),
+        int(config["training"].get("per_device_train_batch_size", 1)),
+        int(config["training"].get("gradient_accumulation_steps", 1)),
+        effective_global_batch_size(config, int(os.environ.get("WORLD_SIZE", "1"))),
     )
     model, optimizer, train_loader, scheduler = accelerator.prepare(model, optimizer, train_loader, scheduler)
     if daic_schedule_audit is not None:
@@ -1910,6 +1925,18 @@ def main() -> None:
         "cv_protocol": partition_plan["cv_protocol"],
         "fold": int(args.fold),
         "save_strategy": args.save_strategy,
+        "training_strategy": {
+            "strategy": resolve_training_strategy(config),
+            "world_size": int(os.environ.get("WORLD_SIZE", "1")),
+            "per_device_train_batch_size": int(config["training"].get("per_device_train_batch_size", 1)),
+            "gradient_accumulation_steps": int(config["training"].get("gradient_accumulation_steps", 1)),
+            "effective_global_batch_size": effective_global_batch_size(
+                config, int(os.environ.get("WORLD_SIZE", "1"))
+            ),
+            "run_final_eval_in_train": bool(
+                config["training"].get("run_final_eval_in_train", False)
+            ),
+        },
         "sampling": {
             "mode": str(config.get("training", {}).get("class_balance", "none")).strip().lower(),
             "oversampling_ratio": config.get("training", {}).get("oversampling_ratio"),

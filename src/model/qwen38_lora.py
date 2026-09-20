@@ -387,6 +387,40 @@ def _audit_qwen38_lora_modules(model, matched_modules: set[str]) -> dict[str, An
     }
 
 
+def _qwen38_language_model(model):
+    """Locate the language-model decoder under the raw or PEFT-wrapped model."""
+    for path in (
+        # PeftModel wrapping the conditional-generation model.
+        "base_model.model.model.language_model",
+        "model.language_model",
+        "language_model",
+    ):
+        target = model
+        for part in path.split("."):
+            target = getattr(target, part, None)
+            if target is None:
+                break
+        if target is not None and hasattr(target, "layers"):
+            return target
+    raise ValueError(
+        "Could not locate the Qwen3.8 language-model decoder for the FSDP wrap "
+        "policy. Expected a module at model.language_model.layers."
+    )
+
+
+def fsdp_transformer_cls_names(model) -> list[str]:
+    """Decoder layer classes FSDP should wrap for the Qwen3.8 architecture.
+
+    The decoder is a hybrid (attention and linear-attention layers can be
+    different classes), so the names are read from the instantiated model instead
+    of being hard-coded.
+    """
+    layers = _qwen38_language_model(model).layers
+    if len(layers) == 0:
+        raise ValueError("The Qwen3.8 language-model decoder has no layers to wrap.")
+    return sorted({type(layer).__name__ for layer in layers})
+
+
 def _unwrap_base_model(model):
     if hasattr(model, "base_model") and hasattr(model.base_model, "model"):
         return model.base_model.model

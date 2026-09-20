@@ -126,6 +126,19 @@ def save_adapter_and_processor(model, processor, output_dir: str | Path, config:
     _backend(config).save_adapter_and_processor(model, processor, output_dir, config=config)
 
 
+def fsdp_wrap_policy_names(config: dict[str, Any], model) -> list[str] | None:
+    """Backend-dispatched FSDP wrap policy: the transformer classes to wrap.
+
+    Returns ``None`` when the backend does not declare one, so Accelerate keeps
+    its own default policy. Only the FSDP strategy calls this hook; the DDP path
+    never does.
+    """
+    hook = getattr(_backend(config), "fsdp_transformer_cls_names", None)
+    if hook is None:
+        return None
+    return hook(model)
+
+
 def resolve_audio_adapter_config(config: dict[str, Any] | None = None) -> dict[str, Any]:
     raw_cfg = (config or {}).get("audio_adapter") or {}
     resolved = {
