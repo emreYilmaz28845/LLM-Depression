@@ -35,11 +35,20 @@ class _LinearAttentionLayer(_Layer):
     pass
 
 
-def _fake_decoder_model(layer_types=(_Layer, _LinearAttentionLayer)) -> SimpleNamespace:
-    layers = torch.nn.ModuleList([layer_type() for layer_type in layer_types])
-    language_model = SimpleNamespace(layers=layers)
-    inner = SimpleNamespace(language_model=language_model)
-    return SimpleNamespace(model=SimpleNamespace(model=inner, language_model=language_model))
+class _FakeDecoderModel(torch.nn.Module):
+    """Minimal module tree with the Qwen3.8 decoder layout and one fp32 parameter."""
+
+    def __init__(self, layer_types=(_Layer, _LinearAttentionLayer)) -> None:
+        super().__init__()
+        inner = torch.nn.Module()
+        inner.language_model = torch.nn.Module()
+        inner.language_model.layers = torch.nn.ModuleList([layer_type() for layer_type in layer_types])
+        self.model = inner
+        self.head = torch.nn.Parameter(torch.zeros(2, dtype=torch.float32))
+
+
+def _fake_decoder_model(layer_types=(_Layer, _LinearAttentionLayer)) -> _FakeDecoderModel:
+    return _FakeDecoderModel(layer_types)
 
 
 def test_strategy_defaults_to_ddp() -> None:
@@ -289,6 +298,47 @@ def test_save_training_checkpoint_fsdp_gathers_on_every_rank(monkeypatch, tmp_pa
     # Every rank joins the gather; only rank 0 writes.
     assert other.events == ["gather"]
     assert written == []
+
+
+def test_align_fsdp_model_dtypes_makes_parameters_uniform() -> None:
+    from src.training_strategy import align_fsdp_model_dtypes
+
+    model = torch.nn.Module()
+    model.base = torch.nn.Parameter(torch.zeros(4, dtype=torch.bfloat16))
+    model.adapter = torch.nn.Parameter(torch.zeros(4, dtype=torch.float32))
+    optimizer = torch.optim.AdamW([model.base, model.adapter], lr=1e-4)
+    resolved = align_fsdp_model_dtypes(model, dtype=torch.bfloat16)
+    assert resolved == "torch.bfloat16"
+    assert model.base.dtype is torch.bfloat16
+    assert model.adapter.dtype is torch.bfloat16
+    # In-place data copies keep the optimizer bound to the same parameter objects.
+    assert {id(group["params"][0]) for group in optimizer.param_groups} == {id(model.base)}
+
+
+def test_accelerator_aligns_dtypes_for_fsdp(monkeypatch) -> None:
+    from src import training_strategy as strategy_module
+
+    seen: list[object] = []
+    original = strategy_module.align_fsdp_model_dtypes
+
+    def spy(model, dtype=None):
+        seen.append(dtype)
+        return original(model, dtype=dtype)
+
+    monkeypatch.setattr(strategy_module, "align_fsdp_model_dtypes", spy)
+    build_accelerator(
+        {
+            "training": {
+                "strategy": "fsdp",
+                "run_final_eval_in_train": False,
+                "gradient_accumulation_steps": 32,
+                "bf16": True,
+            }
+        },
+        model=_fake_decoder_model(),
+        wrap_policy_names=fsdp_transformer_cls_names,
+    )
+    assert len(seen) == 1
 
 
 def test_qwen38_config_selects_fsdp_and_disables_in_train_eval() -> None:

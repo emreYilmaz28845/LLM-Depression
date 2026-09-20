@@ -101,6 +101,35 @@ def build_fsdp_plugin(
     return plugin
 
 
+def align_fsdp_model_dtypes(model, dtype=None) -> str:
+    """Make every parameter share one dtype before FSDP shards the model.
+
+    FSDP flattens the parameters of each wrapped unit into one flat parameter and
+    refuses mixed dtypes ("Must flatten tensors with uniform dtype"). PEFT creates
+    the adapter parameters in float32 while the base model is loaded in bfloat16,
+    so a training model is routinely mixed. The alignment happens in place, which
+    keeps an already created optimizer pointing at the same parameter objects.
+    """
+    import torch  # noqa: PLC0415
+
+    parameters = list(model.parameters())
+    if not parameters:
+        raise ValueError("Cannot align dtypes of a model without parameters.")
+    target = dtype if dtype is not None else parameters[0].dtype
+    changed = 0
+    for parameter in parameters:
+        if parameter.dtype != target:
+            parameter.data = parameter.data.to(target)
+            changed += 1
+    LOGGER.info(
+        "FSDP dtype alignment | target=%s moved_parameters=%s total_parameters=%s",
+        target,
+        changed,
+        len(parameters),
+    )
+    return str(target)
+
+
 def broadcast_flag(accelerator, flag: bool) -> bool:
     """Broadcast a rank-0 decision so every rank agrees on collective work.
 
@@ -171,6 +200,14 @@ def build_accelerator(
                 "the in-train held-out evaluation reloads the best model on rank 0 into a "
                 "single GPU, which a sharded run cannot do. Use a separate evaluation job."
             )
+        import torch  # noqa: PLC0415
+
+        align_fsdp_model_dtypes(
+            model,
+            dtype=torch.bfloat16
+            if bool(training_cfg.get("bf16", False)) and torch.cuda.is_available()
+            else None,
+        )
         # Accelerate takes the FSDP plugin as its own argument: the class is a
         # plugin, not a KwargsHandler, so it must not travel through
         # kwargs_handlers (that path asserts on the handler base class).
