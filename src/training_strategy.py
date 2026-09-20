@@ -90,6 +90,19 @@ def build_fsdp_plugin(
     }
     transformer_cls_names = _resolve_wrap_policy(config, model, wrap_policy_names)
     if transformer_cls_names is not None:
+        # Accelerate only builds the wrap policy from the class names when
+        # ``auto_wrap_policy`` is the ``transformer_auto_wrap_policy`` function
+        # itself; leaving it unset silently wraps the whole model as one unit,
+        # which materialises the full model on every rank instead of sharding it.
+        try:
+            from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy  # noqa: PLC0415
+        except ImportError as exc:  # pragma: no cover - version dependent
+            raise RuntimeError(
+                "torch.distributed.fsdp.wrap.transformer_auto_wrap_policy is required for the "
+                "fsdp strategy; this torch build does not provide it."
+            ) from exc
+
+        plugin_kwargs["auto_wrap_policy"] = transformer_auto_wrap_policy
         plugin_kwargs["transformer_cls_names_to_wrap"] = transformer_cls_names
     plugin = FullyShardedDataParallelPlugin(**plugin_kwargs)
     LOGGER.info(

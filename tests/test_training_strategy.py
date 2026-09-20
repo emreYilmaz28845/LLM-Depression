@@ -79,6 +79,11 @@ def test_fsdp_plugin_uses_orig_params_and_wrap_policy() -> None:
     assert plugin.use_orig_params is True
     assert plugin.sync_module_states is True
     assert plugin.transformer_cls_names_to_wrap == ["_Layer", "_LinearAttentionLayer"]
+    # Accelerate only builds the policy from the class names when this function is
+    # the configured policy, so an unset policy would wrap the whole model.
+    from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+
+    assert plugin.auto_wrap_policy is transformer_auto_wrap_policy
 
 
 def test_fsdp_plugin_refuses_an_empty_wrap_policy() -> None:
