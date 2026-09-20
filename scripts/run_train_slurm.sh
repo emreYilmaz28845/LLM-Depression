@@ -234,27 +234,7 @@ export CUBLAS_WORKSPACE_CONFIG="${CUBLAS_WORKSPACE_CONFIG:-:4096:8}"
 export PYTHONHASHSEED="${PYTHONHASHSEED:-0}"
 echo "Determinism env | CUBLAS_WORKSPACE_CONFIG=$CUBLAS_WORKSPACE_CONFIG PYTHONHASHSEED=$PYTHONHASHSEED" | tee -a "$RUN_LOG_FILE"
 
-CMD=(
-    torchrun
-    --nproc_per_node="$NPROC_PER_NODE"
-)
-
-# Multi-node shape: one 4-GPU lane per node (2 nodes x 4 GPUs = 8 GPUs). Slurm
-# starts one task set per node; the node rank comes from $SLURM_NODEID and the
-# rendezvous address from the first host of the allocation.
-if [ "${NNODES:-1}" -gt 1 ]; then
-    MASTER_ADDR="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)"
-    MASTER_PORT="${MASTER_PORT:-29517}"
-    CMD+=(
-        --nnodes="$NNODES"
-        --node_rank="${SLURM_NODEID:-0}"
-        --master_addr="$MASTER_ADDR"
-        --master_port="$MASTER_PORT"
-    )
-    echo "Multi-node rendezvous | nnodes=$NNODES node_rank=${SLURM_NODEID:-0} master=$MASTER_ADDR:$MASTER_PORT" | tee -a "$RUN_LOG_FILE"
-fi
-
-CMD+=(
+TRAIN_ENTRY=(
     "$PROJECT_ROOT/src/train.py"
     --config "$CONFIG"
     --fold "$FOLD"
@@ -262,20 +242,51 @@ CMD+=(
 )
 
 if [ -n "$MODEL_PATH" ]; then
-    CMD+=(--model_name_or_path "$MODEL_PATH")
+    TRAIN_ENTRY+=(--model_name_or_path "$MODEL_PATH")
 fi
 
 if [ -n "$LABEL_MASK_FLAG" ]; then
-    CMD+=("$LABEL_MASK_FLAG")
+    TRAIN_ENTRY+=("$LABEL_MASK_FLAG")
 fi
 
 if [ "${#OVERRIDE_ARGS[@]}" -gt 0 ]; then
     # Lossless common override array (from OVERRIDES_JSON_B64 or legacy split).
-    CMD+=("${OVERRIDE_ARGS[@]}")
+    TRAIN_ENTRY+=("${OVERRIDE_ARGS[@]}")
 fi
 
 if [ -n "$EXPERIMENT_CONTEXT" ]; then
-    CMD+=(--experiment-context "$EXPERIMENT_CONTEXT")
+    TRAIN_ENTRY+=(--experiment-context "$EXPERIMENT_CONTEXT")
+fi
+
+# Multi-node shape: one 4-GPU lane per node (2 nodes x 4 GPUs = 8 GPUs).
+# Slurm runs the batch script on the FIRST node only, so the second node needs
+# srun to start its own torchrun; the node rank must expand inside each task,
+# which is why it is passed to bash -c rather than expanded on the batch host.
+if [ "${NNODES:-1}" -gt 1 ]; then
+    MASTER_ADDR="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)"
+    MASTER_PORT="${MASTER_PORT:-29517}"
+    SRUN_CPUS_PER_TASK=$(( ${SLURM_CPUS_PER_TASK:-20} * NPROC_PER_NODE ))
+    echo "Multi-node rendezvous | nnodes=$NNODES master=$MASTER_ADDR:$MASTER_PORT tasks_per_node=1 cpus_per_task=$SRUN_CPUS_PER_TASK" | tee -a "$RUN_LOG_FILE"
+    CMD=(
+        srun
+        --nodes="$NNODES"
+        --ntasks="$NNODES"
+        --ntasks-per-node=1
+        --cpus-per-task="$SRUN_CPUS_PER_TASK"
+        --export=ALL
+        bash -c 'exec torchrun --nproc_per_node="$1" --nnodes="$2" --node_rank="$SLURM_NODEID" --master_addr="$3" --master_port="$4" "${@:5}"' _
+        "$NPROC_PER_NODE"
+        "$NNODES"
+        "$MASTER_ADDR"
+        "$MASTER_PORT"
+        "${TRAIN_ENTRY[@]}"
+    )
+else
+    CMD=(
+        torchrun
+        --nproc_per_node="$NPROC_PER_NODE"
+        "${TRAIN_ENTRY[@]}"
+    )
 fi
 
 printf 'Launch command: ' | tee -a "$RUN_LOG_FILE"
