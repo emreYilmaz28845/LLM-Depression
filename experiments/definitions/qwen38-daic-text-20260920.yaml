@@ -1,0 +1,72 @@
+schema_version: audiollm.experiment_group.v1
+group_id: qwen38-daic-text-20260920
+title: Qwen3.8-27B text-only DAIC under the harmonized likelihood recipe
+research_question: >-
+  How does the Qwen3.8-27B text-only backbone score on the DAIC held-out test
+  split (fold 0, seed 1337) under the harmonized candidate-likelihood recipe, and
+  how does the same best_model checkpoint compare with the Qwen2-7B-Instruct and
+  Gemma 4 12B text-only runs when all three are read in the
+  original_teacher_forced backend?
+dataset: daic
+baseline: >-
+  Two verified teacher-forced reference runs that share the manifest hash
+  72e2dd20... and the split metadata hash 441333e0..., both on the DAIC test
+  partition with seed 1337: Qwen2-7B-Instruct
+  harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_daic_text_only_r1
+  fold 0 (attempt 20260809T200856Z-harmonized_v1_daic_text_only_seed1337-22f297d5-d80b9fc5,
+  macro_f1 0.7353, evaluation_view null in evaluations.json with the warning
+  "evaluation view not recorded in evidence") and Gemma 4 12B
+  gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only
+  fold 0 (attempt 20260812T020449Z-gemma4_daic_text_only_seed1337-cca3f4ae-ed58a7a3,
+  macro_f1 0.7552, evaluation_view harmonized_all_windows_full_coverage). The
+  officialdev runs are excluded because their final_eval_partition is val.
+treatment: >-
+  configs/main/daic_text_only_harmonized_selmacrof1_likelihood_v1_qwen38_27b.yaml:
+  Qwen3.8-27B (Qwen3_5ForConditionalGeneration) loaded in BF16 with no quantization,
+  LoRA rank 16 / alpha 32 on the 256 language-model decoder modules (every layer's
+  MLP plus the four full-attention projections of the 16 full-attention layers),
+  20-epoch cap with early stopping, inner_val_macro_f1 checkpoint selection in mode
+  max, likelihood as the primary evaluation, plus a second original_teacher_forced
+  view scored on the same best_model checkpoint. The config adds three fields the
+  base recipe does not carry: model_backend, evaluation.evaluation_view and
+  evaluation.inference_dtype (bf16).
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+github_issue: null
+github_pr: null
+scope:
+  campaign: harmonized_v1_qwen38_likelihood
+  checkpoint_role: best_model
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
+  comparison_rule: >-
+    One reader-facing row per model per verified DAIC text-only fold 0 evaluation
+    view. The Qwen3.8 likelihood row and the Qwen3.8 teacher-forced row stay
+    separate. All three models select their checkpoint with inner_val_macro_f1 in
+    mode max, and the table is descriptive: it carries no "which model is better"
+    verdict and no winner highlight, and rows whose evaluation view cannot be
+    confirmed from local evidence say so.
+  lora_target_set: >-
+    First experiment: 256 modules (MLP in all 64 layers plus self_attn q/k/v/o in
+    the 16 full-attention layers). The 304-module variant that also adapts
+    linear_attn.out_proj in the 48 linear-attention layers is a separate
+    comparison experiment on the same split and evaluation, not part of this group.
+  storage_note: >-
+    The checkpoint is a LoRA adapter of a 27B backbone; the base model stays at
+    /gpfs/projects/etur92/ozu647717/models/Qwen3.8-27B.
+exclusions:
+  - quantization_and_qlora
+  - data_or_split_changes
+  - officialdev_reference_runs
+  - fsdp_or_multi_gpu_evaluation_changes
+  - extra_seeds_or_folds
