@@ -27,6 +27,16 @@ MAIN = ROOT / "configs/main"
 QWEN38_CONFIG = MAIN / "daic_text_only_harmonized_selmacrof1_likelihood_v1_qwen38_27b.yaml"
 
 
+@pytest.fixture(autouse=True)
+def _reset_accelerate_state():
+    """Accelerate keeps one process-wide state; each test must start clean."""
+    yield
+    from accelerate.state import AcceleratorState, PartialState
+
+    AcceleratorState._reset_state(reset_partial_state=True)
+    PartialState._reset_state()
+
+
 class _Layer(torch.nn.Module):
     pass
 
