@@ -1,0 +1,250 @@
+#!/usr/bin/env python
+"""Measure FSDP throughput and per-rank memory for the Qwen3.8 text-only recipe.
+
+Run inside a Slurm GPU job, after the correctness gates and before the full fold.
+It uses the real DAIC examples - the longest participant transcripts - and the
+real backend, and compares ``per_device_train_batch_size`` 1, 2 and 4 with the
+accumulation that keeps the effective global batch at 128 (32, 16 and 8 on four
+ranks). Every option runs the long examples, so a setting is only accepted when
+the long examples fit.
+
+It also audits gradient accumulation: whether the accumulate context skips the
+per-microbatch gradient sync (no_sync) and what enforcing a sync on every
+microbatch costs in step time.
+
+The probe writes one JSON report and never writes checkpoints. It does not change
+the model, the LoRA targets, the text handling or any other scientific setting.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+import traceback
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+import torch  # noqa: E402
+from torch.utils.data import DataLoader  # noqa: E402
+
+from src.data.runtime import build_examples, load_manifest_rows  # noqa: E402
+from src.model.runtime import (  # noqa: E402
+    build_collator,
+    fsdp_wrap_policy_names,
+    load_model_for_training,
+    load_processor,
+)
+from src.training_strategy import build_accelerator, effective_global_batch_size, resolve_training_strategy  # noqa: E402
+from src.utils import load_yaml_with_overrides, resolve_model_name_or_path  # noqa: E402
+
+EFFECTIVE_GLOBAL_BATCH_TARGET = 128
+
+
+def _memory_state() -> dict[str, float]:
+    free_bytes, total_bytes = torch.cuda.mem_get_info()
+    return {
+        "peak_allocated_gb": round(torch.cuda.max_memory_allocated() / 1024**3, 3),
+        "peak_reserved_gb": round(torch.cuda.max_memory_reserved() / 1024**3, 3),
+        "free_gb": round(free_bytes / 1024**3, 3),
+        "total_gb": round(total_bytes / 1024**3, 3),
+    }
+
+
+def _longest_subject_rows(manifest_path: Path, limit: int) -> list[dict]:
+    rows = load_manifest_rows(manifest_path)
+    best_by_subject: dict[str, dict] = {}
+    for row in rows:
+        subject = str(row["subject_id"])
+        transcript = str(row.get("full_participant_transcript") or "")
+        current = best_by_subject.get(subject)
+        if current is None or len(transcript) > len(str(current.get("full_participant_transcript") or "")):
+            best_by_subject[subject] = row
+    ordered = sorted(
+        best_by_subject.values(),
+        key=lambda row: len(str(row.get("full_participant_transcript") or "")),
+        reverse=True,
+    )
+    return ordered[:limit]
+
+
+def _accumulation_cycle(
+    accelerator, model, optimizer, batches: list[dict], *, skip_sync: bool
+) -> dict:
+    """One optimizer update over ``batches``; returns wall time and sync mode."""
+    torch.cuda.synchronize()
+    started = time.perf_counter()
+    for batch in batches:
+        if skip_sync:
+            with accelerator.accumulate(model):
+                loss = model(**batch).loss
+                accelerator.backward(loss)
+                optimizer.step()
+                optimizer.zero_grad()
+        else:
+            loss = model(**batch).loss
+            accelerator.backward(loss)
+            optimizer.step()
+            optimizer.zero_grad()
+    torch.cuda.synchronize()
+    elapsed = time.perf_counter() - started
+    samples = sum(int(batch["input_ids"].shape[0]) for batch in batches)
+    return {
+        "batch_count": len(batches),
+        "samples": samples,
+        "seconds": round(elapsed, 3),
+        "samples_per_second": round(samples / elapsed, 4) if elapsed > 0 else None,
+        "seconds_per_microbatch": round(elapsed / max(1, len(batches)), 4),
+    }
+
+
+def _measure_batch_size(
+    base_config: dict,
+    examples: list[dict],
+    processor,
+    batch_size: int,
+    accumulation: int,
+    steps: int,
+    rank: int,
+) -> dict:
+    config = json.loads(json.dumps(base_config))
+    config["training"]["per_device_train_batch_size"] = batch_size
+    config["training"]["gradient_accumulation_steps"] = accumulation
+    model_name_or_path = resolve_model_name_or_path(None, config)
+
+    dataloader = DataLoader(
+        examples,
+        batch_size=batch_size,
+        shuffle=False,
+        collate_fn=build_collator(config, processor),
+        num_workers=0,
+    )
+    model = load_model_for_training(model_name_or_path, config)
+    optimizer = torch.optim.AdamW(
+        [parameter for parameter in model.parameters() if parameter.requires_grad],
+        lr=float(config["training"]["learning_rate"]),
+    )
+    accelerator = build_accelerator(
+        config,
+        model=model,
+        wrap_policy_names=lambda wrapped: fsdp_wrap_policy_names(config, wrapped),
+    )
+    model, optimizer, dataloader = accelerator.prepare(model, optimizer, dataloader)
+
+    torch.cuda.reset_peak_memory_stats()
+    batches = []
+    for index, batch in enumerate(dataloader):
+        batches.append(batch)
+        if index + 1 >= max(1, steps):
+            break
+
+    result: dict = {
+        "per_device_train_batch_size": batch_size,
+        "gradient_accumulation_steps": accumulation,
+        "effective_global_batch_size": effective_global_batch_size(
+            config, int(getattr(accelerator, "num_processes", 1))
+        ),
+        "rank": rank,
+        "steps": len(batches),
+        "long_example_batches": len(batches),
+    }
+
+    # Steady-state timing: accumulation with the accumulate context (skips the
+    # per-microbatch sync when the framework supports no_sync), then the same
+    # microbatches with a forced sync on each one.
+    result["accumulate_context"] = _accumulation_cycle(
+        accelerator, model, optimizer, batches, skip_sync=True
+    )
+    result["sync_every_microbatch"] = _accumulation_cycle(
+        accelerator, model, optimizer, batches, skip_sync=False
+    )
+    result["memory_after_steps"] = _memory_state()
+    result["no_sync_available"] = bool(hasattr(model, "no_sync"))
+    result["distributed_type"] = str(getattr(accelerator.state, "distributed_type", ""))
+    del model, optimizer, dataloader
+    import gc  # noqa: PLC0415
+
+    gc.collect()
+    torch.cuda.empty_cache()
+    return result
+
+
+def _build_report(args) -> dict:
+    base_config = load_yaml_with_overrides(REPO_ROOT / args.config, args.overrides or None)
+    strategy = resolve_training_strategy(base_config)
+    rank = int(getattr(torch.distributed, "get_rank", lambda: 0)()) if torch.distributed.is_initialized() else 0
+    world_size = int(getattr(torch.distributed, "get_world_size", lambda: 1)()) if torch.distributed.is_initialized() else 1
+    report: dict = {
+        "schema": "audiollm.qwen38_fsdp_perf_probe.v1",
+        "config": str(args.config),
+        "strategy": strategy,
+        "world_size": world_size,
+        "rank": rank,
+        "manifest_path": str(args.manifest),
+        "batch_sizes": [int(value) for value in args.batch_sizes],
+        "results": [],
+        "error": None,
+    }
+    processor = load_processor(resolve_model_name_or_path(None, base_config), base_config)
+    rows = _longest_subject_rows(Path(args.manifest), int(args.longest))
+    report["selected_subjects"] = [str(row["subject_id"]) for row in rows]
+    report["selected_transcript_chars"] = [
+        len(str(row.get("full_participant_transcript") or "")) for row in rows
+    ]
+    examples = build_examples(rows, base_config, partition_name="train")
+    if not examples:
+        raise RuntimeError("No examples were built from the manifest rows.")
+    report["example_count"] = len(examples)
+
+    for batch_size in report["batch_sizes"]:
+        accumulation = EFFECTIVE_GLOBAL_BATCH_TARGET // max(1, batch_size * world_size)
+        report["results"].append(
+            _measure_batch_size(
+                base_config, examples, processor, batch_size, accumulation, int(args.steps), rank
+            )
+        )
+    return report
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--config",
+        default="configs/main/daic_text_only_harmonized_selmacrof1_likelihood_v1_qwen38_27b.yaml",
+    )
+    parser.add_argument("--manifest", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--batch-sizes", nargs="+", default=["1", "2", "4"])
+    parser.add_argument("--longest", type=int, default=4)
+    parser.add_argument("--steps", type=int, default=2)
+    parser.add_argument("--overrides", nargs="*", default=None)
+    args = parser.parse_args()
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if not torch.cuda.is_available():
+            raise RuntimeError("No CUDA device visible; run this probe inside a Slurm GPU job.")
+        report = _build_report(args)
+    except Exception as exc:  # noqa: BLE001 - the report must always carry evidence
+        report = {
+            "schema": "audiollm.qwen38_fsdp_perf_probe.v1",
+            "config": str(args.config),
+            "results": [],
+            "error": f"{type(exc).__name__}: {exc}",
+            "traceback": traceback.format_exc(),
+        }
+    output_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(report, indent=2))
+    if report.get("error"):
+        print(f"FAILED: {report['error']}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
