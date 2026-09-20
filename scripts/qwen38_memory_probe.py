@@ -123,76 +123,84 @@ def _build_report(args) -> dict:
 
     processor = load_processor(model_name_or_path, config)
 
-    # Render and tokenize before the 27B load: a tokenization failure must not
-    # cost GPU minutes.
-    example = _example(
-        processor,
-        config,
-        "The transcript of the subject's speech is:\nHello, thanks for having me.",
-        int(args.prompt_tokens),
-    )
-    prepared = qwen38_lora.prepare_qwen38_examples([example], config, processor)[0]
-    prompt_ids = _tokenize(processor, prepared["prompt_text"], device)
-    prompt_len = int(prompt_ids["input_ids"].shape[1])
-    training_ids = _tokenize(processor, prepared["training_text"], device)
-    labels = training_ids["input_ids"].clone()
-    labels[:, :prompt_len] = -100
-    report["sequence"] = {
-        "prompt_tokens": prompt_len,
-        "label_tokens": int(training_ids["input_ids"].shape[1]) - prompt_len,
-        "total_tokens": int(training_ids["input_ids"].shape[1]),
-    }
-
-    _rename(device)
-    model = qwen38_lora.load_model_for_training(model_name_or_path, config)
-    report["phases"]["load_lora_bf16"] = _memory_state(device)
-    report["trainable_params"] = int(
-        sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
-    )
-    selection = getattr(model, "_resolved_lora_layer_selection", {})
-    report["lora_layer_selection"] = {
-        "decoder_hidden_layers": selection.get("decoder_hidden_layer_count"),
-        "layers_to_transform": selection.get("layers_to_transform"),
-    }
-
-    model.train()
-    optimizer = torch.optim.AdamW(
-        [parameter for parameter in model.parameters() if parameter.requires_grad],
-        lr=float(config["training"]["learning_rate"]),
-    )
-    _rename(device)
-    outputs = model(
-        input_ids=training_ids["input_ids"],
-        attention_mask=training_ids["attention_mask"],
-        labels=labels,
-    )
-    loss = outputs.loss
-    loss.backward()
-    optimizer.step()
-    optimizer.zero_grad(set_to_none=True)
-    torch.cuda.synchronize(device)
-    report["phases"]["train_step"] = _memory_state(device)
-    report["phases"]["train_step"]["loss"] = float(loss.item())
-
-    qwen38_lora.prepare_model_for_evaluation(model)
-    full_text = prepared["prompt_text"] + example["internal_label_text"]
-    _rename(device)
-    with torch.inference_mode():
-        full_ids = _tokenize(processor, full_text, device)
-        logits = model(
-            input_ids=full_ids["input_ids"], attention_mask=full_ids["attention_mask"]
-        ).logits
-        selected = logits[0, prompt_len - 1 : full_ids["input_ids"].shape[1] - 1]
-        target = full_ids["input_ids"][0, prompt_len:]
-        token_log_probs = (
-            torch.log_softmax(selected, dim=-1)
-            .gather(-1, target.unsqueeze(-1))
-            .squeeze(-1)
+    try:
+        # Render and tokenize before the 27B load: a tokenization failure must not
+        # cost GPU minutes.
+        example = _example(
+            processor,
+            config,
+            "The transcript of the subject's speech is:\nHello, thanks for having me.",
+            int(args.prompt_tokens),
         )
-        score = float(token_log_probs.mean().item())
-    torch.cuda.synchronize(device)
-    report["phases"]["eval_likelihood"] = _memory_state(device)
-    report["phases"]["eval_likelihood"]["label_log_prob"] = score
+        prepared = qwen38_lora.prepare_qwen38_examples([example], config, processor)[0]
+        prompt_ids = _tokenize(processor, prepared["prompt_text"], device)
+        prompt_len = int(prompt_ids["input_ids"].shape[1])
+        training_ids = _tokenize(processor, prepared["training_text"], device)
+        labels = training_ids["input_ids"].clone()
+        labels[:, :prompt_len] = -100
+        report["sequence"] = {
+            "prompt_tokens": prompt_len,
+            "label_tokens": int(training_ids["input_ids"].shape[1]) - prompt_len,
+            "total_tokens": int(training_ids["input_ids"].shape[1]),
+        }
+
+        _rename(device)
+        model = qwen38_lora.load_model_for_training(model_name_or_path, config)
+        # Accelerate moves the prepared model to the device in the training path;
+        # the probe does the same move explicitly.
+        model.to(device)
+        torch.cuda.synchronize(device)
+        report["phases"]["load_lora_bf16"] = _memory_state(device)
+        report["trainable_params"] = int(
+            sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
+        )
+        selection = getattr(model, "_resolved_lora_layer_selection", {})
+        report["lora_layer_selection"] = {
+            "decoder_hidden_layers": selection.get("decoder_hidden_layer_count"),
+            "layers_to_transform": selection.get("layers_to_transform"),
+        }
+
+        model.train()
+        optimizer = torch.optim.AdamW(
+            [parameter for parameter in model.parameters() if parameter.requires_grad],
+            lr=float(config["training"]["learning_rate"]),
+        )
+        _rename(device)
+        outputs = model(
+            input_ids=training_ids["input_ids"],
+            attention_mask=training_ids["attention_mask"],
+            labels=labels,
+        )
+        loss = outputs.loss
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+        torch.cuda.synchronize(device)
+        report["phases"]["train_step"] = _memory_state(device)
+        report["phases"]["train_step"]["loss"] = float(loss.item())
+
+        qwen38_lora.prepare_model_for_evaluation(model)
+        full_text = prepared["prompt_text"] + example["internal_label_text"]
+        _rename(device)
+        with torch.inference_mode():
+            full_ids = _tokenize(processor, full_text, device)
+            logits = model(
+                input_ids=full_ids["input_ids"], attention_mask=full_ids["attention_mask"]
+            ).logits
+            selected = logits[0, prompt_len - 1 : full_ids["input_ids"].shape[1] - 1]
+            target = full_ids["input_ids"][0, prompt_len:]
+            token_log_probs = (
+                torch.log_softmax(selected, dim=-1)
+                .gather(-1, target.unsqueeze(-1))
+                .squeeze(-1)
+            )
+            score = float(token_log_probs.mean().item())
+        torch.cuda.synchronize(device)
+        report["phases"]["eval_likelihood"] = _memory_state(device)
+        report["phases"]["eval_likelihood"]["label_log_prob"] = score
+    except Exception as exc:  # noqa: BLE001 - keep the phases measured so far
+        report["error"] = f"{type(exc).__name__}: {exc}"
+        report["traceback"] = traceback.format_exc()
     return report
 
 
@@ -221,12 +229,13 @@ def main() -> int:
             "error": f"{type(exc).__name__}: {exc}",
             "traceback": traceback.format_exc(),
         }
-        output_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-        print(json.dumps(report, indent=2))
-        return 1
 
     output_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))
+    if report.get("error"):
+        print(f"FAILED: {report['error']}", file=sys.stderr)
+        print(f"partial report written to {output_path}", file=sys.stderr)
+        return 1
     print(f"report written to {output_path}")
     return 0
 
