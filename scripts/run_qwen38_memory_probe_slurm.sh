@@ -6,8 +6,10 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=20
 #SBATCH --gres=gpu:1
+#SBATCH -o /dev/null
+#SBATCH -e /dev/null
 
 # Qwen3.8-27B text-only backend: per-GPU memory measurement on one H100.
 #
