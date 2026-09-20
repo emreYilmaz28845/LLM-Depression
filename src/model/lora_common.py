@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from peft import LoraConfig
@@ -7,18 +8,27 @@ from peft import LoraConfig
 from src.utils import MODEL_BACKEND_QWEN3OMNI, resolve_model_backend
 
 
+def _config_field(config, name: str):
+    """Read one sub-config field, tolerating both config objects and plain mappings."""
+    if config is None:
+        return None
+    if isinstance(config, Mapping):
+        return config.get(name)
+    return getattr(config, name, None)
+
+
 def _resolve_decoder_hidden_layer_count(model_or_config) -> int:
     model_config = getattr(model_or_config, "config", model_or_config)
-    thinker_config = getattr(model_config, "thinker_config", None)
+    thinker_config = _config_field(model_config, "thinker_config")
     candidate_values = [
-        getattr(getattr(model_config, "text_config", None), "num_hidden_layers", None),
-        getattr(model_config, "num_hidden_layers", None),
-        getattr(getattr(model_config, "language_model", None), "num_hidden_layers", None),
+        _config_field(_config_field(model_config, "text_config"), "num_hidden_layers"),
+        _config_field(model_config, "num_hidden_layers"),
+        _config_field(_config_field(model_config, "language_model"), "num_hidden_layers"),
         # Qwen3-Omni: the trainable Thinker's decoder count lives under
         # thinker_config.text_config (QWEN3_OMNI_IMPLEMENTATION.md §5.5). The
         # standalone Thinker exposes it via text_config directly (first candidate);
         # this also resolves it when handed the full omni config.
-        getattr(getattr(thinker_config, "text_config", None), "num_hidden_layers", None),
+        _config_field(_config_field(thinker_config, "text_config"), "num_hidden_layers"),
     ]
     for value in candidate_values:
         if value is None:

@@ -15,6 +15,7 @@ def harmonized_configs():
         for path in MAIN.glob("*harmonized_selmacrof1_likelihood_v1*.yaml")
         if not path.name.endswith("_en.yaml")
         and "_gemma4_12b" not in path.name
+        and "_qwen38_27b" not in path.name
         and "_officialdev" not in path.name
         and "turkish_negative_only" not in path.name
         # The pooled question-conditioned family is a separate locked recipe.
