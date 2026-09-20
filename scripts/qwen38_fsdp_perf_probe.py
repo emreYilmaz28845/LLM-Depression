@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import traceback
@@ -32,7 +33,11 @@ if str(REPO_ROOT) not in sys.path:
 import torch  # noqa: E402
 from torch.utils.data import DataLoader  # noqa: E402
 
-from src.data.runtime import build_examples, load_manifest_rows  # noqa: E402
+from src.data.runtime import (  # noqa: E402
+    AudioTextDataset,
+    build_examples,
+    load_manifest_rows,
+)
 from src.model.runtime import (  # noqa: E402
     build_collator,
     fsdp_wrap_policy_names,
@@ -117,7 +122,12 @@ def _measure_batch_size(
     model_name_or_path = resolve_model_name_or_path(None, config)
 
     dataloader = DataLoader(
-        examples,
+        AudioTextDataset(
+            examples,
+            processor_sampling_rate=None,
+            silence_audio=bool(config["data"].get("silence_audio", False)),
+            chunk_sampling="deterministic",
+        ),
         batch_size=batch_size,
         shuffle=False,
         collate_fn=build_collator(config, processor),
@@ -178,8 +188,8 @@ def _measure_batch_size(
 def _build_report(args) -> dict:
     base_config = load_yaml_with_overrides(REPO_ROOT / args.config, args.overrides or None)
     strategy = resolve_training_strategy(base_config)
-    rank = int(getattr(torch.distributed, "get_rank", lambda: 0)()) if torch.distributed.is_initialized() else 0
-    world_size = int(getattr(torch.distributed, "get_world_size", lambda: 1)()) if torch.distributed.is_initialized() else 1
+    rank = int(os.environ.get("RANK", "0"))
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
     report: dict = {
         "schema": "audiollm.qwen38_fsdp_perf_probe.v1",
         "config": str(args.config),
