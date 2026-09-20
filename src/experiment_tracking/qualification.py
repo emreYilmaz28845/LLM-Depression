@@ -55,6 +55,9 @@ RECIPE_EVAL_PRECEDENCE = {
     "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_officialdev_v1": ("best_model/standalone_eval",),
     "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_qcond_v1": ("best_model/standalone_eval",),
     "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_en_qcond_v1": ("best_model/standalone_eval",),
+    "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_01_v1": ("best_model/standalone_eval",),
+    "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_truefalse_v1": ("best_model/standalone_eval",),
+    "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_yesno_v1": ("best_model/standalone_eval",),
 }
 
 # Recipes whose documented protocol is cv train_val: the outer fold is both the
@@ -69,6 +72,9 @@ RECIPE_ALLOWED_TRAIN_VAL = {
     "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_officialdev_v1",
     "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_qcond_v1",
     "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_en_qcond_v1",
+    "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_01_v1",
+    "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_truefalse_v1",
+    "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_yesno_v1",
 }
 
 

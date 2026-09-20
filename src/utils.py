@@ -6,6 +6,7 @@ import logging
 import os
 import random
 import re
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,26 @@ LABEL_TEXT_BY_INT = {0: LABEL_NON_DEPRESSED, 1: LABEL_DEPRESSED}
 LABEL_INT_BY_TEXT = {value: key for key, value in LABEL_TEXT_BY_INT.items()}
 LABEL_VOCAB_VERSION_LEGACY = "legacy_english_labels"
 LABEL_VOCAB_VERSION_SHORT_AB = "short_internal_ab_labels"
-SUPPORTED_LABEL_VOCAB_VERSIONS = (LABEL_VOCAB_VERSION_LEGACY, LABEL_VOCAB_VERSION_SHORT_AB)
+LABEL_VOCAB_VERSION_BINARY_01 = "binary_01_labels"
+LABEL_VOCAB_VERSION_TRUEFALSE = "truefalse_labels"
+LABEL_VOCAB_VERSION_YESNO = "yesno_labels"
+SUPPORTED_LABEL_VOCAB_VERSIONS = (
+    LABEL_VOCAB_VERSION_LEGACY,
+    LABEL_VOCAB_VERSION_SHORT_AB,
+    LABEL_VOCAB_VERSION_BINARY_01,
+    LABEL_VOCAB_VERSION_TRUEFALSE,
+    LABEL_VOCAB_VERSION_YESNO,
+)
+# Legend-style vocabularies render an explicit "X = Depressed / Y = Non-depressed"
+# legend in the prompt instruction; the legacy English vocabulary has no legend
+# line because the labels are already the external class names.
+LEGEND_STYLE_LABEL_TOKENS: dict[str, tuple[str, str]] = {
+    LABEL_VOCAB_VERSION_SHORT_AB: ("A", "B"),
+    LABEL_VOCAB_VERSION_BINARY_01: ("1", "0"),
+    LABEL_VOCAB_VERSION_TRUEFALSE: ("True", "False"),
+    LABEL_VOCAB_VERSION_YESNO: ("Yes", "No"),
+}
+LEGEND_STYLE_LABEL_VOCAB_VERSIONS = tuple(LEGEND_STYLE_LABEL_TOKENS)
 INPUT_MODALITY_AUDIO_TEXT = "audio_text"
 INPUT_MODALITY_AUDIO_ONLY = "audio_only"
 INPUT_MODALITY_TEXT_ONLY = "text_only"
@@ -136,11 +156,12 @@ def load_yaml(path: str | Path) -> dict[str, Any]:
 
 
 def _default_label_config_for_version(version: str) -> dict[str, str]:
-    if version == LABEL_VOCAB_VERSION_SHORT_AB:
+    if version in LEGEND_STYLE_LABEL_TOKENS:
+        internal_positive_label, internal_negative_label = LEGEND_STYLE_LABEL_TOKENS[version]
         return {
-            "label_vocab_version": LABEL_VOCAB_VERSION_SHORT_AB,
-            "internal_positive_label": "A",
-            "internal_negative_label": "B",
+            "label_vocab_version": version,
+            "internal_positive_label": internal_positive_label,
+            "internal_negative_label": internal_negative_label,
             "external_positive_label": LABEL_DEPRESSED,
             "external_negative_label": LABEL_NON_DEPRESSED,
         }
@@ -362,22 +383,29 @@ def read_json(path: str | Path) -> Any:
         return json.load(handle)
 
 
+def atomic_write_path(path: str | Path) -> Path:
+    """Unique sibling temp path for an atomic replace.
+
+    The unique suffix matters when several worker processes write the same
+    shared path (for example concurrent manifest builds into the experiment
+    runtime); a fixed temp name would let the writers corrupt each other.
+    """
+    path = Path(path)
+    return path.with_name(f".{path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex[:8]}")
+
+
 def save_json(data: Any, path: str | Path, indent: int = 2) -> None:
     path = Path(path)
     ensure_dir(path.parent)
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=indent, ensure_ascii=False)
-        handle.write("\n")
-
-
-def save_json_atomic(data: Any, path: str | Path, indent: int = 2) -> None:
-    path = Path(path)
-    ensure_dir(path.parent)
-    tmp_path = path.with_name(f"{path.name}.tmp")
+    tmp_path = atomic_write_path(path)
     with tmp_path.open("w", encoding="utf-8") as handle:
         json.dump(data, handle, indent=indent, ensure_ascii=False)
         handle.write("\n")
     tmp_path.replace(path)
+
+
+def save_json_atomic(data: Any, path: str | Path, indent: int = 2) -> None:
+    save_json(data, path, indent=indent)
 
 
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
@@ -394,9 +422,11 @@ def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
 def write_jsonl(rows: list[dict[str, Any]], path: str | Path) -> None:
     path = Path(path)
     ensure_dir(path.parent)
-    with path.open("w", encoding="utf-8") as handle:
+    tmp_path = atomic_write_path(path)
+    with tmp_path.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    tmp_path.replace(path)
 
 
 def sha256_text(text: str) -> str:
@@ -614,7 +644,7 @@ def prompt_label_descriptor(config: dict[str, Any]) -> str:
 def prompt_label_instruction(config: dict[str, Any]) -> str:
     labels_cfg = resolve_label_config(config)
     version = labels_cfg["label_vocab_version"]
-    if version == LABEL_VOCAB_VERSION_SHORT_AB:
+    if version in LEGEND_STYLE_LABEL_VOCAB_VERSIONS:
         return (
             f"Use this label legend:\n"
             f"{labels_cfg['internal_positive_label']} = {labels_cfg['external_positive_label']}\n"
