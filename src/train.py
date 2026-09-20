@@ -2479,6 +2479,16 @@ def main() -> None:
             gc.collect()
             torch.cuda.empty_cache()
 
+    # Per-rank memory evidence: the FSDP decision needs the peak of every rank,
+    # not only rank 0's.
+    if torch.cuda.is_available():
+        LOGGER.info(
+            "Per-rank training memory | rank=%s peak_allocated_gb=%.3f peak_reserved_gb=%.3f free_gb=%.3f",
+            int(getattr(accelerator, "process_index", 0)),
+            torch.cuda.max_memory_allocated() / 1024**3,
+            torch.cuda.max_memory_reserved() / 1024**3,
+            torch.cuda.mem_get_info()[0] / 1024**3,
+        )
     save_last_selected = False
     if accelerator.is_main_process:
         unwrapped = accelerator.unwrap_model(model)
