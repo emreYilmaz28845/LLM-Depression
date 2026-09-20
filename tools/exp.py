@@ -652,6 +652,7 @@ def _cmd_submit(args) -> int:
             github_pr=os.environ.get("GITHUB_PR"),
             train_nodes=args.train_nodes,
             train_gpus_per_node=args.train_gpus_per_node,
+            env_activate=getattr(args, "env_activate", None),
         )
     except SubmissionError as e:
         print(f"ERROR: {e}", file=sys.stderr)
@@ -1658,6 +1659,11 @@ def main() -> int:
         type=int,
         default=4,
         help="GPUs per training node (4 by default; never 8 on one node)",
+    )
+    submit_parser.add_argument(
+        "--env-activate",
+        default=None,
+        help="absolute path to the venv activate script the workers must source (defaults to the worker default)",
     )
     submit_parser.add_argument("--dry-run", action="store_true", help="print the full resolved contract and exact commands without mutation")
     submit_parser.add_argument("--execute", action="store_true", help="verify deployment, transfer context, and submit through Slurm")

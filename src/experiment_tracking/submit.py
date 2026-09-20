@@ -93,6 +93,7 @@ def resolve_contract(
     attempt_id: str | None = None,
     train_nodes: int = 1,
     train_gpus_per_node: int = 4,
+    env_activate: str | None = None,
 ) -> dict[str, Any]:
     """Resolve the complete submission contract without touching the network."""
     if dataset != config_dict.get("dataset"):
@@ -229,6 +230,7 @@ def resolve_contract(
         "log_root_train": log_root_train,
         "log_root_eval": log_root_eval,
         "training_shape": training_shape,
+        "env_activate": env_activate,
         "launch_command": (
             "torchrun"
             f" --nproc_per_node={training_shape['gpus_per_node']}"
@@ -306,8 +308,10 @@ def build_remote_submit_script(contract: dict[str, Any]) -> str:
         f"export EXPERIMENT_CONTEXT={q(contract['context_path'])}",
         f"export TRAIN_NODES={contract['training_shape']['nodes']}",
         f"export TRAIN_GPUS_PER_NODE={contract['training_shape']['gpus_per_node']}",
-        "bash scripts/submit_train_and_eval.sh",
     ]
+    if contract.get("env_activate"):
+        lines.insert(-1, f"export ENV_ACTIVATE={q(contract['env_activate'])}")
+    lines.append("bash scripts/submit_train_and_eval.sh")
     return "\n".join(lines) + "\n"
 
 
