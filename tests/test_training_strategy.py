@@ -150,6 +150,21 @@ def test_accelerator_builds_for_fsdp() -> None:
     assert accelerator.mixed_precision == "no"
 
 
+def test_activation_offload_defaults_to_none_and_validates() -> None:
+    import contextlib
+
+    from src.training_strategy import activation_offload_context, resolve_activation_offload
+
+    assert resolve_activation_offload({}) == "none"
+    assert resolve_activation_offload({"training": {"activation_offload": "CPU"}}) == "cpu"
+    with pytest.raises(ValueError, match="Unsupported training.activation_offload"):
+        resolve_activation_offload({"training": {"activation_offload": "gpu"}})
+    assert isinstance(activation_offload_context({}), contextlib.nullcontext)
+    cpu_context = activation_offload_context({"training": {"activation_offload": "cpu"}})
+    assert not isinstance(cpu_context, contextlib.nullcontext)
+    assert hasattr(cpu_context, "__enter__") and hasattr(cpu_context, "__exit__")
+
+
 def test_fsdp_accelerator_syncs_gradients_on_every_microbatch() -> None:
     """FSDP's no_sync keeps unsharded gradients per rank and OOMed the 27B run."""
     import contextlib

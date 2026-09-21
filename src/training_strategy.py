@@ -23,6 +23,10 @@ TRAINING_STRATEGY_DDP = "ddp"
 TRAINING_STRATEGY_FSDP = "fsdp"
 SUPPORTED_TRAINING_STRATEGIES = (TRAINING_STRATEGY_DDP, TRAINING_STRATEGY_FSDP)
 
+ACTIVATION_OFFLOAD_NONE = "none"
+ACTIVATION_OFFLOAD_CPU = "cpu"
+SUPPORTED_ACTIVATION_OFFLOAD = (ACTIVATION_OFFLOAD_NONE, ACTIVATION_OFFLOAD_CPU)
+
 FSDP_SHARDING_STRATEGY_FULL_SHARD = "full_shard"
 
 
@@ -156,6 +160,38 @@ def align_fsdp_model_dtypes(model, dtype=None) -> str:
         len(parameters),
     )
     return str(target)
+
+
+def resolve_activation_offload(config: dict[str, Any]) -> str:
+    """Resolve ``training.activation_offload`` (default ``none``)."""
+    raw_value = config.get("training", {}).get("activation_offload", ACTIVATION_OFFLOAD_NONE)
+    if raw_value in (None, ""):
+        return ACTIVATION_OFFLOAD_NONE
+    normalized = str(raw_value).strip().lower()
+    if normalized not in SUPPORTED_ACTIVATION_OFFLOAD:
+        raise ValueError(
+            f"Unsupported training.activation_offload={raw_value!r}. "
+            f"Expected one of {', '.join(SUPPORTED_ACTIVATION_OFFLOAD)} (or unset)."
+        )
+    return normalized
+
+
+def activation_offload_context(config: dict[str, Any]):
+    """Context manager for the *training* forward/backward only.
+
+    ``cpu`` stores the tensors that the backward needs on host memory
+    (``torch.autograd.graph.save_on_cpu``, pinned), which trades PCIe traffic for
+    GPU memory. Validation and standalone evaluation never use it: they run under
+    inference mode and save nothing.
+    """
+    import contextlib  # noqa: PLC0415
+
+    if resolve_activation_offload(config) != ACTIVATION_OFFLOAD_CPU:
+        return contextlib.nullcontext()
+    import torch  # noqa: PLC0415
+
+    LOGGER.info("Activation offload | save_on_cpu(pin_memory=True) for the training step")
+    return torch.autograd.graph.save_on_cpu(pin_memory=True)
 
 
 def _force_gradient_sync_in_accumulation(accelerator) -> None:

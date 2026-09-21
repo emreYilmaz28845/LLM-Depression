@@ -74,6 +74,7 @@ from src.model.runtime import (
 )
 from src.model.lora_common import resolved_lora_layer_selection
 from src.training_strategy import (
+    activation_offload_context,
     broadcast_flag,
     build_accelerator,
     effective_global_batch_size,
@@ -2226,7 +2227,7 @@ def main() -> None:
         else:
             raise ValueError(f"Unsupported training.objective={objective!r}.")
         for step, batch in enumerate(training_batches, start=1):
-            with accelerator.accumulate(model):
+            with activation_offload_context(config), accelerator.accumulate(model):
                 loss_weights = batch.pop("loss_weight", None)
                 outputs = model(**batch)
                 loss = outputs.loss
