@@ -195,6 +195,21 @@ def _measure_batch_size(
     # The loader stays out of accelerator.prepare: the probe must feed the same
     # long examples to every rank, not a DistributedSampler shard of them.
     model, optimizer = accelerator.prepare(model, optimizer)
+    if rank == 0:
+        report_evidence[f"memory_after_prepare_bs{batch_size}"] = _memory_state()
+        try:
+            from torch.distributed.fsdp import FullyShardedDataParallel as FSDP  # noqa: PLC0415
+
+            modules = FSDP.fsdp_modules(model)
+            flat_params = [m._flat_param for m in modules if getattr(m, "_flat_param", None) is not None]
+            report_evidence["fsdp_units"] = len(modules)
+            report_evidence["flat_param_shard_numel"] = int(sum(int(p.numel()) for p in flat_params))
+            report_evidence["flat_param_dtypes"] = sorted({str(p.dtype) for p in flat_params})
+            report_evidence["sharded_parameter_bytes_gb"] = round(
+                sum(int(p.numel()) * p.element_size() for p in flat_params) / 1024**3, 3
+            )
+        except Exception as exc:  # noqa: BLE001 - evidence only
+            report_evidence["fsdp_introspection_error"] = f"{type(exc).__name__}: {exc}"
 
     torch.cuda.reset_peak_memory_stats()
     batches = []
