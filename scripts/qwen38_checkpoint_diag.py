@@ -152,21 +152,35 @@ def _saved_tensor_accounting(model, batch) -> dict:
 
 
 def _phase(label: str, fn, record: dict, rank: int) -> None:
+    """Run one phase and record its memory; a failure ends the ladder on every rank.
+
+    FSDP collectives run inside every phase, so a rank that swallowed an OOM and
+    continued would leave the other ranks inside a collective. The failure is
+    recorded and re-raised: torchrun tears the job down, and each rank's report is
+    still written by the caller's finally block.
+    """
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
     started = time.perf_counter()
-    error = None
     try:
         fn()
-    except Exception as exc:  # noqa: BLE001 - an OOM is a result here
-        error = f"{type(exc).__name__}: {exc}"
+    except Exception as exc:
+        entry = {
+            "seconds": round(time.perf_counter() - started, 3),
+            **_memory_state(),
+            "error": f"{type(exc).__name__}: {exc}",
+            "traceback": traceback.format_exc(),
+        }
+        record.setdefault("phases", {})[label] = entry
+        print(f"[rank {rank}] {label}: FAILED {entry['error']}")
+        raise
     torch.cuda.synchronize()
     entry = {"seconds": round(time.perf_counter() - started, 3), **_memory_state()}
-    if error:
-        entry["error"] = error
-        entry["traceback"] = traceback.format_exc()
     record.setdefault("phases", {})[label] = entry
-    print(f"[rank {rank}] {label}: peak={entry['peak_allocated_gb']} free={entry['free_gb']} error={error}")
+    print(
+        f"[rank {rank}] {label}: peak={entry['peak_allocated_gb']} free={entry['free_gb']} "
+        f"non_torch={entry['non_torch_gb']}"
+    )
 
 
 def main() -> int:
@@ -280,8 +294,9 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001 - always write evidence
         report["error"] = f"{type(exc).__name__}: {exc}"
         report["traceback"] = traceback.format_exc()
+    finally:
+        output_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
-    output_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     if rank == 0:
         print(json.dumps({k: v for k, v in report.items() if k != "traceback"}, indent=2))
     return 1 if report.get("error") else 0
