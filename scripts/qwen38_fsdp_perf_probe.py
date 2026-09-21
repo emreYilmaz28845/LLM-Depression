@@ -107,6 +107,46 @@ def _accumulation_cycle(
     }
 
 
+def _fast_path_evidence(model) -> dict:
+    """Prove which delta-rule kernel the live model actually uses.
+
+    transformers picks the fla kernels at module import time
+    (``self.chunk_gated_delta_rule = chunk_gated_delta_rule or torch_chunk_gated_delta_rule``),
+    so the module of the bound callable is the evidence, not a version string.
+    """
+    evidence: dict = {}
+    try:
+        from transformers.utils.import_utils import (  # noqa: PLC0415
+            _is_package_available,
+            is_causal_conv1d_available,
+            is_flash_linear_attention_available,
+        )
+
+        evidence["fla_distribution"] = list(_is_package_available("fla", return_version=True))
+        evidence["transformers_fla_available"] = bool(is_flash_linear_attention_available())
+        evidence["causal_conv1d_available"] = bool(is_causal_conv1d_available())
+    except Exception as exc:  # noqa: BLE001 - evidence only
+        evidence["import_error"] = f"{type(exc).__name__}: {exc}"
+
+    layer = None
+    for module in model.modules():
+        if hasattr(module, "chunk_gated_delta_rule") and hasattr(module, "recurrent_gated_delta_rule"):
+            layer = module
+            break
+    if layer is None:
+        evidence["layer_found"] = False
+        return evidence
+    evidence["layer_found"] = True
+    chunk_kernel = getattr(layer, "chunk_gated_delta_rule", None)
+    evidence["chunk_kernel_module"] = getattr(chunk_kernel, "__module__", "")
+    evidence["chunk_kernel_name"] = getattr(chunk_kernel, "__name__", "")
+    evidence["causal_conv1d_fn_used"] = getattr(layer, "causal_conv1d_fn", None) is not None
+    norm = getattr(layer, "norm", None)
+    evidence["norm_class"] = type(norm).__name__ if norm is not None else None
+    evidence["fast_path"] = str(evidence.get("chunk_kernel_module", "")).startswith("fla")
+    return evidence
+
+
 def _measure_batch_size(
     base_config: dict,
     examples: list[dict],
@@ -115,6 +155,7 @@ def _measure_batch_size(
     accumulation: int,
     steps: int,
     rank: int,
+    report_evidence: dict,
 ) -> dict:
     config = json.loads(json.dumps(base_config))
     config["training"]["per_device_train_batch_size"] = batch_size
@@ -134,6 +175,8 @@ def _measure_batch_size(
         num_workers=0,
     )
     model = load_model_for_training(model_name_or_path, config)
+    if rank == 0 and not report_evidence.get("fast_path_evidence"):
+        report_evidence["fast_path_evidence"] = _fast_path_evidence(model)
     optimizer = torch.optim.AdamW(
         [parameter for parameter in model.parameters() if parameter.requires_grad],
         lr=float(config["training"]["learning_rate"]),
@@ -199,6 +242,7 @@ def _build_report(args) -> dict:
         "manifest_path": str(args.manifest),
         "batch_sizes": [int(value) for value in args.batch_sizes],
         "results": [],
+        "fast_path_evidence": {},
         "error": None,
     }
     processor = load_processor(resolve_model_name_or_path(None, base_config), base_config)
@@ -217,7 +261,14 @@ def _build_report(args) -> dict:
         try:
             report["results"].append(
                 _measure_batch_size(
-                    base_config, examples, processor, batch_size, accumulation, int(args.steps), rank
+                    base_config,
+                    examples,
+                    processor,
+                    batch_size,
+                    accumulation,
+                    int(args.steps),
+                    rank,
+                    report,
                 )
             )
         except Exception as exc:  # noqa: BLE001 - one option failing must not hide the others
