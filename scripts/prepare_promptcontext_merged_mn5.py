@@ -40,6 +40,8 @@ SCHEDULER_HOST = "ozu647717@alogin2.bsc.es"
 REMOTE_RUNTIME_BASE = "/gpfs/projects/etur92/ozu647717/AudioLLM/experiment_runtime"
 PERMANENT_CHECKOUT = "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression"
 QWEN_ENV_ACTIVATE = "/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate"
+# The pooled qcond campaign used the home-level runtime base, which is a
+# different tree from the AudioLLM-level base used by the managed workflow.
 POOLED_SOURCE_ROOT = (
     "/gpfs/projects/etur92/ozu647717/experiment_runtime/"
     "exp-turkish-pooled-qcond-clean-v1-20260903/source_inputs_remote"
@@ -199,12 +201,15 @@ files = sorted(
 )
 payload = {{
     'root': str(code),
-    'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=code, text=True).strip(),
     'hashes': {{str(path.relative_to(code)): sha(path) for path in files}},
 }}
 print(json.dumps(payload, indent=2, sort_keys=True))
 PY
 """
+
+
+def _local_git(*args: str) -> str:
+    return subprocess.check_output(["git", *args], cwd=str(PROJECT_ROOT), text=True).strip()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -229,6 +234,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"merged execution root: {code} ({'dry-run' if dry_run else 'execute'})")
 
     if not dry_run:
+        if _local_git("status", "--porcelain"):
+            raise PrepError(
+                "the merged code root must match one commit; commit or stash before preparing"
+            )
         subprocess.run(["bash", str(PROJECT_ROOT / "scripts" / "capture_provenance.sh")], check=True)
 
     ssh(
@@ -241,12 +250,17 @@ def main(argv: list[str] | None = None) -> int:
     print("--- build steps (scheduler login) ---")
     ssh(SCHEDULER_HOST, build_script(remote_root), dry_run=dry_run)
     print("--- audit ---")
-    audit = ssh(TRANSFER_HOST, audit_script(remote_root), dry_run=dry_run)
+    audit_json = ssh(TRANSFER_HOST, audit_script(remote_root), dry_run=dry_run)
     if not dry_run:
+        payload = json.loads(audit_json)
+        payload["source_commit"] = _local_git("rev-parse", "HEAD")
+        payload["source_branch"] = _local_git("branch", "--show-current")
+        payload["source_root"] = str(args.source)
+        payload["source_clean"] = True
         output = args.audit_output or (PROJECT_ROOT / "outputs/promptcontext_audit/merged_prep.json")
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(audit + "\n", encoding="utf-8")
-        print(audit)
+        output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(json.dumps(payload, indent=2, sort_keys=True))
         print(f"audit written: {output}")
     return 0
 
