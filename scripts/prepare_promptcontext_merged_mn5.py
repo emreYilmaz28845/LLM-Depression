@@ -134,22 +134,22 @@ def build_script(remote_root: str) -> str:
         f"permanent={q(PERMANENT_CHECKOUT)}",
     ]
     for dataset, relative in COPIED_COMPONENTS.items():
-        source = f"$permanent/outputs/manifests_harmonized/{relative}"
+        source = f'"$permanent"/outputs/manifests_harmonized/{relative}'
         target = f"{manifests}/{relative}"
         lines += [
             f"mkdir -p $(dirname {q(target)})",
-            f"test -f {q(source)} || {{ echo 'missing component manifest: {source}' >&2; exit 1; }}",
-            f"test ! -e {q(target)} || {{ echo 'refusing to overwrite: {target}' >&2; exit 1; }}",
-            f"cp {q(source)} {q(target)}",
+            f"test -f {source} || {{ echo 'missing component manifest:' {source} >&2; exit 1; }}",
+            f"test ! -e {q(target)} || {{ echo 'refusing to overwrite:' {q(target)} >&2; exit 1; }}",
+            f"cp {source} {q(target)}",
         ]
     for dataset, relative in COPIED_METADATA.items():
-        source = f"$permanent/outputs/splits_harmonized/{relative}"
+        source = f'"$permanent"/outputs/splits_harmonized/{relative}'
         target = f"{splits}/{relative}"
         lines += [
             f"mkdir -p $(dirname {q(target)})",
-            f"test -f {q(source)} || {{ echo 'missing split metadata: {source}' >&2; exit 1; }}",
-            f"test ! -e {q(target)} || {{ echo 'refusing to overwrite: {target}' >&2; exit 1; }}",
-            f"cp {q(source)} {q(target)}",
+            f"test -f {source} || {{ echo 'missing split metadata:' {source} >&2; exit 1; }}",
+            f"test ! -e {q(target)} || {{ echo 'refusing to overwrite:' {q(target)} >&2; exit 1; }}",
+            f"cp {source} {q(target)}",
         ]
     lines += [
         f"test -d $permanent/.deps/qwen_hidden && cp -r $permanent/.deps {q(code)}/ || echo 'note: no .deps/qwen_hidden to copy'",
