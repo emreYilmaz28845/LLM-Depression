@@ -175,8 +175,6 @@ def _row(declared: dict, project_root: Path) -> dict:
     else:
         notes.append("evaluations.json missing")
     row["evaluation_view"] = evaluation_view
-    if not evaluation_view:
-        notes.append("evaluation_view not recorded in local evidence")
 
     metrics_path = _metrics_path(run_dir, declared["backend"])
     if metrics_path.is_file():
@@ -201,6 +199,24 @@ def _row(declared: dict, project_root: Path) -> dict:
         )
     else:
         notes.append(f"metrics_{declared['backend']}.json missing")
+
+    if not row["evaluation_view"]:
+        eval_config_path = metrics_path.parent / "eval_config.yaml"
+        if eval_config_path.is_file():
+            # A second view can come from a standalone evaluation job that carries
+            # its overrides in eval_config.yaml; read it from there rather than
+            # leaving the row blank.
+            recorded = load_yaml(eval_config_path)
+            recorded_evaluation = (recorded.get("config") or {}).get("evaluation") or {}
+            recorded_view = str(recorded_evaluation.get("evaluation_view") or "")
+            if recorded_view:
+                row["evaluation_view"] = recorded_view
+                row["aggregation"] = row["aggregation"] or str(
+                    recorded_evaluation.get("aggregation_level") or ""
+                )
+                notes.append("view read from eval_config.yaml (no tracking record)")
+    if not row["evaluation_view"]:
+        notes.append("evaluation_view not recorded in local evidence")
 
     row["jobs"] = _job_ids(run_dir)
     row["checkpoint_role"] = row["checkpoint_role"] or "best_model"
