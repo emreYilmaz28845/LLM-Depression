@@ -78,6 +78,7 @@ from src.training_strategy import (
     broadcast_flag,
     build_accelerator,
     effective_global_batch_size,
+    resolve_activation_offload,
     resolve_training_strategy,
     save_training_checkpoint,
 )
@@ -2022,6 +2023,10 @@ def main() -> None:
             "run_final_eval_in_train": bool(
                 config["training"].get("run_final_eval_in_train", False)
             ),
+            "forced_sync_each_microbatch": (
+                resolve_training_strategy(config) == "fsdp"
+            ),
+            "activation_offload": resolve_activation_offload(config),
         },
         "sampling": {
             "mode": str(config.get("training", {}).get("class_balance", "none")).strip().lower(),

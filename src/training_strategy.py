@@ -212,6 +212,11 @@ def _force_gradient_sync_in_accumulation(accelerator) -> None:
     accelerator.no_sync = types.MethodType(
         lambda self, model: contextlib.nullcontext(), accelerator
     )
+    if not isinstance(accelerator.no_sync(None), contextlib.nullcontext):
+        raise RuntimeError(
+            "The FSDP no_sync override did not take effect; refusing to train with "
+            "unsharded accumulation gradients."
+        )
     LOGGER.info(
         "FSDP gradient sync forced on every microbatch (no_sync disabled) so the "
         "gradients stay sharded during accumulation."

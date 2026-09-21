@@ -83,24 +83,65 @@ def _longest_subject_rows(manifest_path: Path, limit: int, example_index: int = 
     return ordered[:limit]
 
 
+def _host_ram_gb() -> dict:
+    """Host memory from /proc: peak (VmHWM) and current resident (VmRSS)."""
+    values = {}
+    try:
+        with open("/proc/self/status", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("VmHWM:"):
+                    values["host_peak_gb"] = round(int(line.split()[1]) / 1024**2, 3)
+                elif line.startswith("VmRSS:"):
+                    values["host_rss_gb"] = round(int(line.split()[1]) / 1024**2, 3)
+    except OSError:
+        pass
+    return values
+
+
+def _assert_forced_gradient_sync(accelerator, model) -> dict:
+    """Runtime proof that the accumulation window does not use FSDP's no_sync."""
+    import contextlib  # noqa: PLC0415
+
+    context = accelerator.no_sync(model)
+    forced = isinstance(context, contextlib.nullcontext)
+    if not forced:
+        raise RuntimeError(
+            "FSDP no_sync is active in the accumulation window; gradients would be "
+            "kept unsharded. Refusing to measure an unsupported configuration."
+        )
+    return {"forced_sync_each_microbatch": True, "no_sync_context": type(context).__name__}
+
+
 def _accumulation_cycle(
-    accelerator, model, optimizer, batches: list[dict], *, skip_sync: bool
+    accelerator,
+    model,
+    optimizer,
+    batches: list[dict],
+    *,
+    skip_sync: bool,
+    config: dict | None = None,
 ) -> dict:
     """One optimizer update over ``batches``; returns wall time and sync mode."""
+    from src.training_strategy import activation_offload_context  # noqa: PLC0415
+
     torch.cuda.synchronize()
     started = time.perf_counter()
-    for batch in batches:
-        if skip_sync:
-            with accelerator.accumulate(model):
-                loss = model(**batch).loss
-                accelerator.backward(loss)
+    losses: list[float] = []
+    with activation_offload_context(config or {}):
+        for batch in batches:
+            if skip_sync:
+                with accelerator.accumulate(model):
+                    outputs = model(**batch)
+                    losses.append(float(outputs.loss.detach().item()))
+                    accelerator.backward(outputs.loss)
+                    optimizer.step()
+                    optimizer.zero_grad()
+            else:
+                outputs = model(**batch)
+                losses.append(float(outputs.loss.detach().item()))
+                accelerator.backward(outputs.loss)
                 optimizer.step()
                 optimizer.zero_grad()
-        else:
-            loss = model(**batch).loss
-            accelerator.backward(loss)
-            optimizer.step()
-            optimizer.zero_grad()
     torch.cuda.synchronize()
     elapsed = time.perf_counter() - started
     samples = sum(int(batch["input_ids"].shape[0]) for batch in batches)
@@ -110,6 +151,7 @@ def _accumulation_cycle(
         "seconds": round(elapsed, 3),
         "samples_per_second": round(samples / elapsed, 4) if elapsed > 0 else None,
         "seconds_per_microbatch": round(elapsed / max(1, len(batches)), 4),
+        "losses": [round(value, 6) for value in losses],
     }
 
 
@@ -162,10 +204,12 @@ def _measure_batch_size(
     steps: int,
     rank: int,
     report_evidence: dict,
+    offload: str = "none",
 ) -> dict:
     config = json.loads(json.dumps(base_config))
     config["training"]["per_device_train_batch_size"] = batch_size
     config["training"]["gradient_accumulation_steps"] = accumulation
+    config["training"]["activation_offload"] = offload
     model_name_or_path = resolve_model_name_or_path(None, config)
 
     dataloader = DataLoader(
@@ -221,24 +265,28 @@ def _measure_batch_size(
     result: dict = {
         "per_device_train_batch_size": batch_size,
         "gradient_accumulation_steps": accumulation,
+        "activation_offload": offload,
         "effective_global_batch_size": effective_global_batch_size(
             config, int(getattr(accelerator, "num_processes", 1))
         ),
         "rank": rank,
         "steps": len(batches),
         "long_example_batches": len(batches),
+        "gradient_sync": _assert_forced_gradient_sync(accelerator, model),
+        "host_ram_before": _host_ram_gb(),
     }
 
-    # Steady-state timing: accumulation with the accumulate context (skips the
-    # per-microbatch sync when the framework supports no_sync), then the same
-    # microbatches with a forced sync on each one.
+    # Steady-state timing: accumulation with the accumulate context (the production
+    # path; gradients still sync every microbatch because no_sync is disabled),
+    # then the same microbatches outside the context.
     result["accumulate_context"] = _accumulation_cycle(
-        accelerator, model, optimizer, batches, skip_sync=True
+        accelerator, model, optimizer, batches, skip_sync=True, config=config
     )
     result["sync_every_microbatch"] = _accumulation_cycle(
-        accelerator, model, optimizer, batches, skip_sync=False
+        accelerator, model, optimizer, batches, skip_sync=False, config=config
     )
     result["memory_after_steps"] = _memory_state()
+    result["host_ram_after"] = _host_ram_gb()
     result["no_sync_available"] = bool(hasattr(model, "no_sync"))
     result["distributed_type"] = str(getattr(accelerator.state, "distributed_type", ""))
     del model, optimizer, dataloader
@@ -267,7 +315,18 @@ def _build_report(args) -> dict:
         "error": None,
     }
     processor = load_processor(resolve_model_name_or_path(None, base_config), base_config)
-    rows = _longest_subject_rows(Path(args.manifest), int(args.longest), int(args.example_index))
+    if int(args.spread) > 0:
+        # Evenly spaced over the length-sorted subjects, so one sweep covers the
+        # real length distribution including the longest example.
+        ordered = _longest_subject_rows(Path(args.manifest), 10**9)
+        count = min(int(args.spread), len(ordered))
+        if count == 1:
+            rows = [ordered[0]]
+        else:
+            indices = [round(index * (len(ordered) - 1) / (count - 1)) for index in range(count)]
+            rows = [ordered[index] for index in sorted(set(indices))]
+    else:
+        rows = _longest_subject_rows(Path(args.manifest), int(args.longest), int(args.example_index))
     report["selected_subjects"] = [str(row["subject_id"]) for row in rows]
     report["selected_transcript_chars"] = [
         len(str(row.get("full_participant_transcript") or "")) for row in rows
@@ -290,6 +349,7 @@ def _build_report(args) -> dict:
                     int(args.steps),
                     rank,
                     report,
+                    offload=str(args.offload),
                 )
             )
         except Exception as exc:  # noqa: BLE001 - one option failing must not hide the others
@@ -324,6 +384,18 @@ def main() -> int:
         help="pick exactly the N-th longest subject (0 = longest); overrides --longest",
     )
     parser.add_argument("--steps", type=int, default=2)
+    parser.add_argument(
+        "--offload",
+        choices=["none", "cpu"],
+        default="none",
+        help="activation offload for the training step (training.activation_offload)",
+    )
+    parser.add_argument(
+        "--spread",
+        type=int,
+        default=0,
+        help="use this many subjects evenly spaced over the length distribution (0 = use --longest)",
+    )
     parser.add_argument("--overrides", nargs="*", default=None)
     args = parser.parse_args()
 
