@@ -209,7 +209,7 @@ def _measure_batch_size(
     config = json.loads(json.dumps(base_config))
     config["training"]["per_device_train_batch_size"] = batch_size
     config["training"]["gradient_accumulation_steps"] = accumulation
-    config["training"]["activation_offload"] = offload
+    config["training"]["activation_offload"] = "cpu" if offload == "both" else offload
     model_name_or_path = resolve_model_name_or_path(None, config)
 
     dataloader = DataLoader(
@@ -285,6 +285,19 @@ def _measure_batch_size(
     result["sync_every_microbatch"] = _accumulation_cycle(
         accelerator, model, optimizer, batches, skip_sync=False, config=config
     )
+    if offload == "both":
+        # Same microbatches, same order: the loss lists are the equality evidence,
+        # and the second cycle's timing is the offload cost.
+        reference_config = json.loads(json.dumps(config))
+        reference_config["training"]["activation_offload"] = "none"
+        result["offload_none"] = _accumulation_cycle(
+            accelerator, model, optimizer, batches, skip_sync=True, config=reference_config
+        )
+        torch.cuda.reset_peak_memory_stats()
+        result["offload_cpu"] = _accumulation_cycle(
+            accelerator, model, optimizer, batches, skip_sync=True, config=config
+        )
+        result["memory_after_offload_cpu"] = _memory_state()
     result["memory_after_steps"] = _memory_state()
     result["host_ram_after"] = _host_ram_gb()
     result["no_sync_available"] = bool(hasattr(model, "no_sync"))
@@ -386,9 +399,9 @@ def main() -> int:
     parser.add_argument("--steps", type=int, default=2)
     parser.add_argument(
         "--offload",
-        choices=["none", "cpu"],
+        choices=["none", "cpu", "both"],
         default="none",
-        help="activation offload for the training step (training.activation_offload)",
+        help="activation offload for the training step; 'both' runs none then cpu on the same batches",
     )
     parser.add_argument(
         "--spread",
