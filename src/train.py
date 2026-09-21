@@ -1048,9 +1048,13 @@ def _evaluate_selection_components(
     the same number of forward calls on every rank. Only the main process writes
     the evidence files and logs; the metrics agree across ranks because the
     inputs and their order are identical.
+
+    The evaluation runs through the *prepared* model. Calling the unwrapped module
+    tree directly breaks under FSDP with ``use_orig_params``: the original
+    parameter views are only valid inside the FSDP forward, and a direct call sees
+    flattened 1-D weights.
     """
-    unwrapped = accelerator.unwrap_model(model)
-    prepare_model_for_evaluation(unwrapped, config)
+    prepare_model_for_evaluation(model, config)
     component_headlines: list[tuple[str, dict[str, Any]]] = []
     component_losses: dict[str, float] = {}
     component_eval_dirs: dict[str, str] = {}
@@ -1059,7 +1063,7 @@ def _evaluate_selection_components(
     primary_eval_dir: Path | None = None
     for index, component in enumerate(selection_components):
         component_eval_dir = ensure_dir(logs_dir / f"{component['log_dir_prefix']}_epoch_{epoch}")
-        component_loss = _compute_dataset_loss(unwrapped, component["loss_loader"])
+        component_loss = _compute_dataset_loss(model, component["loss_loader"])
         if accelerator.is_main_process:
             LOGGER.info(
                 "Selection evaluation dataset=%s split=%s | backend=%s | aggregation_level=%s | protocol=%s",
@@ -1070,7 +1074,7 @@ def _evaluate_selection_components(
                 evaluation_protocol_name(sample_prediction_mode),
             )
         metrics = evaluate_examples(
-            unwrapped,
+            model,
             processor,
             component["examples"],
             component["config"],
