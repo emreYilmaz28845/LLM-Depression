@@ -1,0 +1,55 @@
+name: promptcontext_v1_matrix
+recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v2_promptcontext_v1
+seed: 1337
+max_epochs: 20
+checkpoint_selection: inner_val_macro_f1
+evaluation_view: harmonized_all_windows_full_coverage
+# Standalone cells: five datasets x three modalities x two backbones.
+# DAIC uses the canonical official protocol, which has one official-test fold.
+standalone:
+  - {dataset: androids_interview, modality: audio_only, backbone: qwen, folds: [0, 1, 2, 3, 4], config: configs/main/androids_audio_only_harmonized_selmacrof1_likelihood_v2_promptcontext.yaml}
+  - {dataset: androids_interview, modality: audio_only, backbone: gemma4, folds: [0, 1, 2, 3, 4], config: configs/main/androids_audio_only_harmonized_selmacrof1_likelihood_v2_promptcontext_gemma4.yaml}
+  - {dataset: androids_interview, modality: text_only, backbone: qwen, folds: [0, 1, 2, 3, 4], config: configs/main/androids_text_only_harmonized_selmacrof1_likelihood_v2_promptcontext.yaml}
+  - {dataset: androids_interview, modality: text_only, backbone: gemma4, folds: [0, 1, 2, 3, 4], config: configs/main/androids_text_only_harmonized_selmacrof1_likelihood_v2_promptcontext_gemma4.yaml}
+  - {dataset: androids_interview, modality: audio_text, backbone: qwen, folds: [0, 1, 2, 3, 4], config: configs/main/androids_audio_text_harmonized_selmacrof1_likelihood_v2_promptcontext.yaml}
+  - {dataset: androids_interview, modality: audio_text, backbone: gemma4, folds: [0, 1, 2, 3, 4], config: configs/main/androids_audio_text_harmonized_selmacrof1_likelihood_v2_promptcontext_gemma4.yaml}
+  - {dataset: d3tec, modality: audio_only, backbone: qwen, folds: [0, 1, 2, 3, 4], config: configs/main/d3tec_audio_only_harmonized_selmacrof1_likelihood_v2_promptcontext.yaml}
+  - {dataset: d3tec, modality: audio_only, backbone: gemma4, folds: [0, 1, 2, 3, 4], config: configs/main/d3tec_audio_only_harmonized_selmacrof1_likelihood_v2_promptcontext_gemma4.yaml}
+  - {dataset: d3tec, modality: text_only, backbone: qwen, folds: [0, 1, 2, 3, 4], config: configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v2_promptcontext.yaml}
+  - {dataset: d3tec, modality: text_only, backbone: gemma4, folds: [0, 1, 2, 3, 4], config: configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v2_promptcontext_gemma4.yaml}
+  - {dataset: d3tec, modality: audio_text, backbone: qwen, folds: [0, 1, 2, 3, 4], config: configs/main/d3tec_audio_text_harmonized_selmacrof1_likelihood_v2_promptcontext.yaml}
+  - {dataset: d3tec, modality: audio_text, backbone: gemma4, folds: [0, 1, 2, 3, 4], config: configs/main/d3tec_audio_text_harmonized_selmacrof1_likelihood_v2_promptcontext_gemma4.yaml}
+  - {dataset: daic, modality: audio_only, backbone: qwen, folds: [0], config: configs/main/daic_audio_only_harmonized_selmacrof1_likelihood_v2_promptcontext.yaml}
+  - {dataset: daic, modality: audio_only, backbone: gemma4, folds: [0], config: configs/main/daic_audio_only_harmonized_selmacrof1_likelihood_v2_promptcontext_gemma4.yaml}
+  - {dataset: daic, modality: text_only, backbone: qwen, folds: [0], config: configs/main/daic_text_only_harmonized_selmacrof1_likelihood_v2_promptcontext.yaml}
+  - {dataset: daic, modality: text_only, backbone: gemma4, folds: [0], config: configs/main/daic_text_only_harmonized_selmacrof1_likelihood_v2_promptcontext_gemma4.yaml}
+  - {dataset: daic, modality: audio_text, backbone: qwen, folds: [0], config: configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_v2_promptcontext.yaml}
+  - {dataset: daic, modality: audio_text, backbone: gemma4, folds: [0], config: configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_v2_promptcontext_gemma4.yaml}
+  - {dataset: cmdc, modality: audio_only, backbone: qwen, folds: [0, 1, 2, 3, 4], config: configs/main/cmdc_audio_only_harmonized_selmacrof1_likelihood_v2_promptcontext.yaml}
+  - {dataset: cmdc, modality: audio_only, backbone: gemma4, folds: [0, 1, 2, 3, 4], config: configs/main/cmdc_audio_only_harmonized_selmacrof1_likelihood_v2_promptcontext_gemma4.yaml}
+  - {dataset: cmdc, modality: text_only, backbone: qwen, folds: [0, 1, 2, 3, 4], config: configs/main/cmdc_text_only_harmonized_selmacrof1_likelihood_v2_promptcontext.yaml}
+  - {dataset: cmdc, modality: text_only, backbone: gemma4, folds: [0, 1, 2, 3, 4], config: configs/main/cmdc_text_only_harmonized_selmacrof1_likelihood_v2_promptcontext_gemma4.yaml}
+  - {dataset: cmdc, modality: audio_text, backbone: qwen, folds: [0, 1, 2, 3, 4], config: configs/main/cmdc_audio_text_harmonized_selmacrof1_likelihood_v2_promptcontext.yaml}
+  - {dataset: cmdc, modality: audio_text, backbone: gemma4, folds: [0, 1, 2, 3, 4], config: configs/main/cmdc_audio_text_harmonized_selmacrof1_likelihood_v2_promptcontext_gemma4.yaml}
+  - {dataset: turkish, modality: audio_only, backbone: qwen, folds: [0, 1, 2, 3, 4], config: configs/main/turkish_pooled_t17_audio_only_harmonized_selmacrof1_likelihood_v2_promptcontext_qwen3asr.yaml}
+  - {dataset: turkish, modality: audio_only, backbone: gemma4, folds: [0, 1, 2, 3, 4], config: configs/main/turkish_pooled_t17_audio_only_harmonized_selmacrof1_likelihood_v2_promptcontext_qwen3asr_gemma4.yaml}
+  - {dataset: turkish, modality: text_only, backbone: qwen, folds: [0, 1, 2, 3, 4], config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v2_promptcontext_qwen3asr.yaml}
+  - {dataset: turkish, modality: text_only, backbone: gemma4, folds: [0, 1, 2, 3, 4], config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v2_promptcontext_qwen3asr_gemma4.yaml}
+  - {dataset: turkish, modality: audio_text, backbone: qwen, folds: [0, 1, 2, 3, 4], config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v2_promptcontext_qwen3asr.yaml}
+  - {dataset: turkish, modality: audio_text, backbone: gemma4, folds: [0, 1, 2, 3, 4], config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v2_promptcontext_qwen3asr_gemma4.yaml}
+# Merged cells: paired-familiar Turkish pooled components; CV is five-fold and
+# the final stage evaluates the untouched DAIC official test partition.
+merged:
+  - {modality: audio_only, backbone: qwen, stages: [cv, final], config: configs/experiments/merged/symmetric_merged_harmonized_promptcontext_audio_only.yaml}
+  - {modality: audio_only, backbone: gemma4, stages: [cv, final], config: configs/experiments/merged/symmetric_merged_harmonized_gemma4_promptcontext_audio_only.yaml}
+  - {modality: text_only, backbone: qwen, stages: [cv, final], config: configs/experiments/merged/symmetric_merged_harmonized_promptcontext_text_only.yaml}
+  - {modality: text_only, backbone: gemma4, stages: [cv, final], config: configs/experiments/merged/symmetric_merged_harmonized_gemma4_promptcontext_text_only.yaml}
+  - {modality: audio_text, backbone: qwen, stages: [cv, final], config: configs/experiments/merged/symmetric_merged_harmonized_promptcontext_audio_text.yaml}
+  - {modality: audio_text, backbone: gemma4, stages: [cv, final], config: configs/experiments/merged/symmetric_merged_harmonized_gemma4_promptcontext_audio_text.yaml}
+counts:
+  standalone_cells: 30
+  merged_cells: 6
+  standalone_training_folds: 126
+  merged_cv_folds: 30
+  merged_final_fits: 6
+  total_training_fits: 162

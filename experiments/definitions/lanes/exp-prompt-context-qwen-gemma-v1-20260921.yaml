@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: exp-prompt-context-qwen-gemma-v1-20260921
+slug: prompt-context-qwen-gemma-v1
+tier: 1
+branch: agent/exp-prompt-context-qwen-gemma-v1
+worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-exp-prompt-context-qwen-gemma-v1
+parent_branch: origin/main
+parent_sha: ea3791eddda9c41694493f536445346e289847f4
+created_at_utc: "2026-09-21T20:37:27Z"
+experiment_group_path: experiments/definitions/prompt-context-qwen-gemma-v1-20260921.yaml
+type: competing

@@ -1,0 +1,89 @@
+schema_version: audiollm.experiment_group.v1
+group_id: prompt-context-qwen-gemma-v1-20260921
+title: Dataset-aware prompt context for Qwen and Gemma depression classification
+research_question: >-
+  Does replacing the short per-backend system instruction with one shared
+  instruction plus a short, source-grounded recording-context block per dataset
+  change the harmonized headline metrics of the Qwen and Gemma recipes, both
+  standalone and in the pooled-Turkish symmetric merged recipe, when every other
+  recipe setting stays identical?
+dataset: 'androids_interview; d3tec; daic; cmdc; turkish'
+baseline: >-
+  The current canonical harmonized likelihood family: one short per-backend
+  system instruction, no dataset recording context, positive-only Turkish in the
+  symmetric merged family.
+treatment: >-
+  One shared English system instruction followed by a dataset-specific recording
+  context block, with the Turkish pooled cells selecting the versioned
+  question-set sentences through prompt.question_context_version. No other
+  recipe setting changes.
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: fold_mean_subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+scope:
+  recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v2_promptcontext_v1
+  scripted_context_source: docs/PROMPT_PROPOSAL_DEPRESSION_20260920.md
+  standalone_cells: 30
+  merged_cells: 6
+  standalone_training_folds: 126
+  merged_cv_folds: 30
+  merged_final_fits: 6
+  total_training_fits: 162
+  datasets:
+    - androids_interview
+    - d3tec
+    - daic
+    - cmdc
+    - turkish
+  modalities:
+    - audio_only
+    - text_only
+    - audio_text
+  backbones:
+    - qwen
+    - gemma4
+  daic_protocol: official_test_partition
+  turkish_recipe: pooled_t17 with both question conditions, threshold BDI >= 17
+  merged_turkish_component: pooled_t17 audio-only, audio+text and text-only
+  audio_encoder: frozen
+  checkpoint_role: best_model
+  backbone_selection_metric: inner_val_macro_f1
+  backbone_selection_mode: max
+  evaluation_backend: likelihood
+  evaluation_view: harmonized_all_windows_full_coverage
+  aggregation_conventions:
+    cv: fold_mean_subject_level
+    daic: official_test_subject_level
+    turkish_pooled_text_only: turkish_pooled_text_pair_mean_margin_strict_v1
+  reporting_metrics:
+    - macro_f1
+    - positive_f1
+    - binary_strict_uar
+  in_scope_knowledge_infusion: short clinical context inside the prompt only
+  merged_comparison_caveat: >-
+    The new merged cells change both the prompt and the Turkish component
+    (positive-only to pooled); the merged difference must not be presented as a
+    prompt-only effect.
+exclusions:
+  - e_daic
+  - english_translation_conditions
+  - hidden_state_classifiers
+  - optuna_heads
+  - emotion_caption_variants
+  - standalone_turkish_positive_only_or_negative_only_reruns
+  - alternative_daic_evaluation_views
+  - prompt_ablations
+  - new_or_changing_backends
+  - workbook_updates_from_unverified_results
+  - separate_question_answer_pretraining_stage

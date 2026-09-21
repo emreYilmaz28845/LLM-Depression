@@ -68,6 +68,44 @@ QUESTION_CONTEXT_SENTENCES = {
     "negative_only_t17": "The following speech is the subject's response to negative interview questions.",
 }
 
+# Versioned condition sentences. The legacy set above keeps its exact wording so
+# every config written before the prompt-context recipe still renders
+# byte-identically; a newer family selects its own set through
+# ``prompt.question_context_version``.
+QUESTION_CONTEXT_SENTENCE_SETS: dict[str, dict[str, str]] = {
+    "legacy_v1": QUESTION_CONTEXT_SENTENCES,
+    "promptcontext_v1": {
+        "pos_only_t17": (
+            "Positive set: This recording answers a question from the positive set. "
+            "The question's positive framing is not the participant's depression label."
+        ),
+        "negative_only_t17": (
+            "Negative set: This recording answers a question from the negative set. "
+            "The question's negative framing is not the participant's depression label."
+        ),
+    },
+}
+DEFAULT_QUESTION_CONTEXT_SENTENCE_SET = "legacy_v1"
+
+
+def resolve_question_context_sentences(config: dict[str, Any]) -> dict[str, str]:
+    """Resolve the condition-sentence set for a config.
+
+    Configs without ``prompt.question_context_version`` keep the legacy wording,
+    so pre-existing pooled configs render exactly as they always did.
+    """
+    prompt_cfg = config.get("prompt", {}) or {}
+    raw_version = prompt_cfg.get(
+        "question_context_version", DEFAULT_QUESTION_CONTEXT_SENTENCE_SET
+    )
+    version = str(raw_version).strip() or DEFAULT_QUESTION_CONTEXT_SENTENCE_SET
+    if version not in QUESTION_CONTEXT_SENTENCE_SETS:
+        raise ValueError(
+            f"Unsupported prompt.question_context_version={raw_version!r}. "
+            f"Expected one of {sorted(QUESTION_CONTEXT_SENTENCE_SETS)}."
+        )
+    return QUESTION_CONTEXT_SENTENCE_SETS[version]
+
 
 def resolve_audio_placeholder(config: dict[str, Any]) -> str:
     if resolve_model_backend(config) == MODEL_BACKEND_QWEN3OMNI:
@@ -160,12 +198,13 @@ def render_user_prompt_text(
         else _audio_context_block(use_audio, is_subject_bundle)
     )
     if "{question_context}" in template:
-        if question_condition not in QUESTION_CONTEXT_SENTENCES:
+        sentence_set = resolve_question_context_sentences(config)
+        if question_condition not in sentence_set:
             raise ValueError(
                 "Tagged Turkish pooled prompt requires question_condition to be "
-                f"one of {sorted(QUESTION_CONTEXT_SENTENCES)}, got {question_condition!r}."
+                f"one of {sorted(sentence_set)}, got {question_condition!r}."
             )
-        question_context = QUESTION_CONTEXT_SENTENCES[question_condition]
+        question_context = sentence_set[question_condition]
     else:
         # Keep untagged prompt rendering byte-identical for every existing
         # recipe. The value is available only so format_map has one stable
@@ -588,7 +627,7 @@ def _build_turkish_pooled_text_only_examples(
     recipe. Existing harmonized text-only recipes continue through their
     original one-example-per-subject implementation.
     """
-    allowed = set(QUESTION_CONTEXT_SENTENCES)
+    allowed = set(resolve_question_context_sentences(config))
     grouped: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(
         lambda: defaultdict(list)
     )

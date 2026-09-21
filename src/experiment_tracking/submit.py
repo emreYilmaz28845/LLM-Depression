@@ -23,6 +23,13 @@ REMOTE_RUNTIME_BASE = Path("/gpfs/projects/etur92/ozu647717/AudioLLM/experiment_
 TRAIN_JOB_KEY = "train"
 EVAL_JOB_KEY = "best_eval"
 
+MANIFEST_POLICIES = ("build", "prebuilt")
+# Dataset variants whose manifest cannot be built by the training worker from
+# the dataset root: the pooled Turkish manifest is source-manifest-only
+# (``scripts/build_turkish_pooled_manifest.py``), so it must already exist in
+# the runtime manifest directory and the worker must skip the build.
+PREBUILT_MANIFEST_VARIANTS = frozenset({"pooled_t17"})
+
 
 class SubmissionError(RuntimeError):
     """Raised when a submission contract is invalid or submission must fail."""
@@ -91,11 +98,23 @@ def resolve_contract(
     github_issue: str | None = None,
     github_pr: str | None = None,
     attempt_id: str | None = None,
+    manifest_policy: str = "build",
 ) -> dict[str, Any]:
     """Resolve the complete submission contract without touching the network."""
     if dataset != config_dict.get("dataset"):
         raise SubmissionError(
             f"dataset qualifier {dataset!r} does not match resolved config dataset {config_dict.get('dataset')!r}"
+        )
+    if manifest_policy not in MANIFEST_POLICIES:
+        raise SubmissionError(
+            f"unsupported manifest policy {manifest_policy!r}; expected one of {list(MANIFEST_POLICIES)}"
+        )
+    dataset_variant = str(config_dict.get("dataset_variant", "")).strip()
+    if manifest_policy == "build" and dataset_variant in PREBUILT_MANIFEST_VARIANTS:
+        raise SubmissionError(
+            f"dataset_variant={dataset_variant!r} has no buildable manifest; build it with "
+            "scripts/build_turkish_pooled_manifest.py into the runtime manifest dir and submit "
+            "with --manifest-policy prebuilt"
         )
     runtime_root = REMOTE_RUNTIME_BASE / experiment_id
     permanent_output_base = REMOTE_PROJECT_BASE / "output_model"
@@ -200,6 +219,7 @@ def resolve_contract(
         "standalone_eval_dir": standalone_eval_dir,
         "log_root_train": log_root_train,
         "log_root_eval": log_root_eval,
+        "manifest_policy": manifest_policy,
         "overrides": overrides,
         "overrides_b64": encode_overrides(overrides),
         "qualifiers": {
@@ -260,8 +280,12 @@ def build_remote_submit_script(contract: dict[str, Any]) -> str:
         f"export OVERRIDES_JSON_B64={q(contract['overrides_b64'])}",
         f"export LOG_ROOT={q(contract['log_root_train'])}",
         f"export EXPERIMENT_CONTEXT={q(contract['context_path'])}",
-        "bash scripts/submit_train_and_eval.sh",
     ]
+    if contract.get("manifest_policy", "build") == "prebuilt":
+        # The manifest and split artifacts already exist in the runtime dir; the
+        # workers must not rebuild them (a pooled manifest has no builder).
+        lines.append("export SKIP_MANIFEST_BUILD=1")
+    lines.append("bash scripts/submit_train_and_eval.sh")
     return "\n".join(lines) + "\n"
 
 

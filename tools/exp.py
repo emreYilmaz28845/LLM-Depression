@@ -650,6 +650,7 @@ def _cmd_submit(args) -> int:
             group_id=group_identity["experiment_group_id"],
             github_issue=os.environ.get("GITHUB_ISSUE"),
             github_pr=os.environ.get("GITHUB_PR"),
+            manifest_policy=getattr(args, "manifest_policy", "build"),
         )
     except SubmissionError as e:
         print(f"ERROR: {e}", file=sys.stderr)
@@ -684,6 +685,16 @@ def _cmd_submit(args) -> int:
         )
         print(f"deployment verified: {result['deployment_id']} "
               f"({result['tree_verification']['verified_files']}/{result['tree_verification']['expected_files']} files)")
+
+        if contract.get("manifest_policy") == "prebuilt":
+            if not remote_path_exists(runner, contract["manifest_dir"]) or not remote_path_exists(
+                runner, contract["split_dir"]
+            ):
+                raise DeploymentError(
+                    "prebuilt manifests are missing: build them into "
+                    f"{contract['manifest_dir']} and {contract['split_dir']} before submitting"
+                )
+            print(f"prebuilt manifests present: {contract['manifest_dir']}")
 
         def exists(path: str) -> bool:
             return remote_path_exists(runner, path)
@@ -1645,6 +1656,16 @@ def main() -> int:
     submit_parser.add_argument("--scheduler-host", default=None, help="override scheduler login host")
     submit_parser.add_argument("--group-id", default=None)
     submit_parser.add_argument("--supersedes-attempt-id", default=None)
+    submit_parser.add_argument(
+        "--manifest-policy",
+        choices=("build", "prebuilt"),
+        default="build",
+        help=(
+            "build: the training worker builds the manifest from the dataset root; "
+            "prebuilt: the manifest and split artifacts already exist in the runtime dir "
+            "and the workers must skip the build (required for pooled Turkish)"
+        ),
+    )
     submit_parser.add_argument("--dry-run", action="store_true", help="print the full resolved contract and exact commands without mutation")
     submit_parser.add_argument("--execute", action="store_true", help="verify deployment, transfer context, and submit through Slurm")
     submit_parser.set_defaults(func=_cmd_submit)

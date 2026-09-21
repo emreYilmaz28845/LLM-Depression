@@ -248,3 +248,34 @@ def test_worker_scripts_decode_overrides_json_b64():
         'sbatch --parsable --chdir="$PROJECT_ROOT" "${SBATCH_BASE_ARGS[@]}" '
         '--dependency=afterok:$TRAIN_JOB_ID'
     ) in wrapper
+
+
+def test_pooled_variant_refuses_the_build_manifest_policy():
+    config = {**_config(), "dataset_variant": "pooled_t17"}
+    with pytest.raises(SubmissionError, match="manifest-policy prebuilt"):
+        resolve_contract(deployment=_deployment(), config_dict=config, **BASE_KW)
+
+
+def test_prebuilt_manifest_policy_skips_the_worker_manifest_build():
+    config = {**_config(), "dataset_variant": "pooled_t17"}
+    contract = resolve_contract(
+        deployment=_deployment(), config_dict=config, manifest_policy="prebuilt", **BASE_KW
+    )
+    assert contract["manifest_policy"] == "prebuilt"
+    script = build_remote_submit_script(contract)
+    assert "export SKIP_MANIFEST_BUILD=1" in script
+    assert contract["manifest_dir"].endswith("/manifests/daic")
+    assert contract["split_dir"].endswith("/splits/daic")
+
+
+def test_build_manifest_policy_keeps_the_worker_manifest_build():
+    contract = resolve_contract(deployment=_deployment(), config_dict=_config(), **BASE_KW)
+    assert contract["manifest_policy"] == "build"
+    assert "SKIP_MANIFEST_BUILD" not in build_remote_submit_script(contract)
+
+
+def test_unknown_manifest_policy_is_refused():
+    with pytest.raises(SubmissionError, match="manifest policy"):
+        resolve_contract(
+            deployment=_deployment(), config_dict=_config(), manifest_policy="whatever", **BASE_KW
+        )
