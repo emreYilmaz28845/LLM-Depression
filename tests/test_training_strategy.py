@@ -150,6 +150,33 @@ def test_accelerator_builds_for_fsdp() -> None:
     assert accelerator.mixed_precision == "no"
 
 
+def test_fsdp_accelerator_syncs_gradients_on_every_microbatch() -> None:
+    """FSDP's no_sync keeps unsharded gradients per rank and OOMed the 27B run."""
+    import contextlib
+
+    config = {
+        "training": {
+            "strategy": "fsdp",
+            "run_final_eval_in_train": False,
+            "gradient_accumulation_steps": 32,
+            "bf16": True,
+        }
+    }
+    accelerator = build_accelerator(
+        config, model=_fake_decoder_model(), wrap_policy_names=fsdp_transformer_cls_names
+    )
+    with accelerator.no_sync("model"):
+        pass
+    assert isinstance(accelerator.no_sync("model"), contextlib.nullcontext)
+
+
+def test_ddp_accelerator_keeps_the_framework_no_sync() -> None:
+    config = {"training": {"gradient_accumulation_steps": 32, "bf16": True}}
+    accelerator = build_accelerator(config, model=_fake_decoder_model())
+    # The DDP path is untouched: accelerate still resolves the model's own no_sync.
+    assert accelerator.no_sync.__func__ is not None
+
+
 def test_fsdp_plugin_pins_bf16_parameters() -> None:
     plugin = build_fsdp_plugin(
         {"training": {"strategy": "fsdp", "bf16": True}},

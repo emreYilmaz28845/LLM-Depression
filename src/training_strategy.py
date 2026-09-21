@@ -158,6 +158,30 @@ def align_fsdp_model_dtypes(model, dtype=None) -> str:
     return str(target)
 
 
+def _force_gradient_sync_in_accumulation(accelerator) -> None:
+    """Sync FSDP gradients on every microbatch instead of inside a no_sync window.
+
+    FSDP's ``no_sync`` skips the reduce-scatter, so during gradient accumulation
+    each rank keeps the *unsharded* gradients of the units it just ran - roughly
+    world_size times the sharded size. The 4-GPU Qwen3.8 measurement isolated it:
+    forward plus backward peaked at 32.6 GiB, the same step inside
+    ``Accelerator.accumulate`` peaked at 51.8 GiB and OOMed. Returning a null
+    context keeps the reduce-scatter in every microbatch; the optimizer still steps
+    once per accumulation window and the accumulated sum is unchanged, at the cost
+    of one gradient reduction per microbatch.
+    """
+    import contextlib  # noqa: PLC0415
+    import types  # noqa: PLC0415
+
+    accelerator.no_sync = types.MethodType(
+        lambda self, model: contextlib.nullcontext(), accelerator
+    )
+    LOGGER.info(
+        "FSDP gradient sync forced on every microbatch (no_sync disabled) so the "
+        "gradients stay sharded during accumulation."
+    )
+
+
 def broadcast_flag(accelerator, flag: bool) -> bool:
     """Broadcast a rank-0 decision so every rank agrees on collective work.
 
@@ -248,6 +272,7 @@ def build_accelerator(
             mixed_precision="no",
             fsdp_plugin=build_fsdp_plugin(config, model, wrap_policy_names),
         )
+        _force_gradient_sync_in_accumulation(accelerator)
         return accelerator
 
     accelerator = Accelerator(
