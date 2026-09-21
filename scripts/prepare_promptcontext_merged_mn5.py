@@ -105,7 +105,9 @@ def rsync(source: str, destination: str, *, dry_run: bool) -> None:
         "-avh",
         "--include=.provenance/***",
         "--filter=:- .gitignore",
-        "--exclude=.git/",
+        # A lane worktree stores .git as a file that points at the main
+        # checkout, so the directory-only form would copy that pointer.
+        "--exclude=.git",
     ]
     if dry_run:
         argv.append("--dry-run")
