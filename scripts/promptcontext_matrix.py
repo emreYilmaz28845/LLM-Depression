@@ -28,6 +28,10 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MATRIX_PATH = PROJECT_ROOT / "configs/experiments/promptcontext/matrix.yaml"
 
+# Managed lane identity. ``tools/exp.py`` resolves lanes by experiment id (or by
+# the ``agent/<slug>`` branch form), not by the short slug used at creation.
+LANE_ID = "exp-prompt-context-qwen-gemma-v1-20260921"
+
 STANDALONE_BACKENDS = ("qwen", "gemma4")
 MERGED_STAGES = ("smoke", "cv", "final")
 MODALITY_ORDER = ("audio_only", "text_only", "audio_text")
@@ -176,7 +180,7 @@ def _exp_submit_argv(job: dict[str, Any], *, execute: bool) -> list[str]:
         sys.executable,
         str(PROJECT_ROOT / "tools" / "exp.py"),
         "submit",
-        "prompt-context-qwen-gemma-v1",
+        LANE_ID,
         "--config",
         job["config"],
         "--fold",
