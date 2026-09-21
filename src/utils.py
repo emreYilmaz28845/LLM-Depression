@@ -90,6 +90,8 @@ OPTIONAL_OVERRIDE_PATHS = {
     ("evaluation", "aggregation_level"),
     ("evaluation", "headline_mode"),
     ("lora", "last_n_layers"),
+    ("training", "activation_offload"),
+    ("training", "strategy"),
 }
 GENERATION_PARSE_PREFIXES = (
     "answer:",
