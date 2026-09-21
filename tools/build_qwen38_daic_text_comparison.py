@@ -57,24 +57,28 @@ ROWS = [
         "run_dir": "output_model/harmonized_v1/text_only/daic/"
         "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_daic_text_only_r1/fold_0",
         "backend": "original_teacher_forced",
+        "project_root": "/home/emre/Projects/AudioLLM/LLM-Depression",
     },
     {
         "model": "Gemma 4 12B",
         "run_dir": "output_model/harmonized_v1_gemma4/text_only/daic/"
         "gemma4_harmonized_v1_gemma4_v1_prod_20260812T020449Z_cca3f4ae_daic_text_only/fold_0",
         "backend": "original_teacher_forced",
+        "project_root": "/home/emre/Projects/AudioLLM/LLM-Depression",
     },
     {
         "model": "Qwen3.8-27B",
         "run_dir": "output_model/harmonized_v1_qwen38_likelihood/text_only/daic/"
-        "qwen38_text_only_fold0_20260920/fold_0",
+        "qwen38_text_only_fold0_prod_20260921/fold_0",
         "backend": "likelihood",
+        "project_root": "/home/emre/Projects/AudioLLM/worktrees/LLM-Depression-feat-qwen38-daic-text",
     },
     {
         "model": "Qwen3.8-27B",
         "run_dir": "output_model/harmonized_v1_qwen38_likelihood/text_only/daic/"
-        "qwen38_text_only_fold0_20260920/fold_0",
+        "qwen38_text_only_fold0_prod_20260921/fold_0",
         "backend": "original_teacher_forced",
+        "project_root": "/home/emre/Projects/AudioLLM/worktrees/LLM-Depression-feat-qwen38-daic-text",
     },
 ]
 
@@ -100,7 +104,11 @@ def _uar_from_confusion(confusion: list[list[int]] | None) -> float | None:
 
 
 def _metrics_path(run_dir: Path, backend: str) -> Path:
-    return run_dir / "best_model" / "standalone_eval" / f"metrics_{backend}.json"
+    """The likelihood view lives in standalone_eval, the teacher-forced view in its own dir."""
+    primary = run_dir / "best_model" / "standalone_eval" / f"metrics_{backend}.json"
+    if primary.is_file():
+        return primary
+    return run_dir / "best_model" / "standalone_eval_teacher_forced" / f"metrics_{backend}.json"
 
 
 def _job_ids(run_dir: Path) -> str:
@@ -119,7 +127,8 @@ def _job_ids(run_dir: Path) -> str:
 
 
 def _row(declared: dict, project_root: Path) -> dict:
-    run_dir = project_root / declared["run_dir"]
+    root = Path(declared.get("project_root") or project_root)
+    run_dir = root / declared["run_dir"]
     row = {column: "" for column in COLUMNS}
     row["model"] = declared["model"]
     row["eval_backend"] = declared["backend"]
@@ -188,7 +197,7 @@ def _row(declared: dict, project_root: Path) -> dict:
             )
         row["uar"] = "" if uar is None else f"{uar:.6f}"
         row["local_evidence"] = str(
-            (run_dir / "best_model" / "standalone_eval").relative_to(project_root)
+            (run_dir / "best_model" / "standalone_eval").relative_to(root)
         )
     else:
         notes.append(f"metrics_{declared['backend']}.json missing")
