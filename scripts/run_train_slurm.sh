@@ -27,6 +27,15 @@ else
     echo "Environment activate script not found: $ENV_ACTIVATE"
     exit 1
 fi
+# The interpreter of the activated environment drives the ranks: an isolated
+# overlay venv has no console scripts of its own, and torchrun's shebang would
+# otherwise run the base environment's python and hide the overlay's packages.
+if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+    PYTHON_BIN="$VIRTUAL_ENV/bin/python"
+else
+    PYTHON_BIN="$(command -v python)"
+fi
+echo "Training interpreter: $PYTHON_BIN"
 
 # MN5 has no outbound internet: force offline everywhere, and hard-fail when a
 # package or model would try to reach the network. Qwen jobs load local GPFS
@@ -266,7 +275,10 @@ if [ "${NNODES:-1}" -gt 1 ]; then
     MASTER_ADDR="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)"
     MASTER_PORT="${MASTER_PORT:-29517}"
     SRUN_CPUS_PER_TASK=$(( ${SLURM_CPUS_PER_TASK:-20} * NPROC_PER_NODE ))
-    echo "Multi-node rendezvous | nnodes=$NNODES master=$MASTER_ADDR:$MASTER_PORT tasks_per_node=1 cpus_per_task=$SRUN_CPUS_PER_TASK" | tee -a "$RUN_LOG_FILE"
+    # The selected environment's own interpreter drives the ranks. An isolated
+    # overlay venv has no console scripts, and torchrun's shebang would otherwise
+    # run the base environment's python and hide the overlay's packages.
+    echo "Multi-node rendezvous | nnodes=$NNODES master=$MASTER_ADDR:$MASTER_PORT tasks_per_node=1 cpus_per_task=$SRUN_CPUS_PER_TASK python=$PYTHON_BIN" | tee -a "$RUN_LOG_FILE"
     CMD=(
         srun
         --nodes="$NNODES"
@@ -274,16 +286,19 @@ if [ "${NNODES:-1}" -gt 1 ]; then
         --ntasks-per-node=1
         --cpus-per-task="$SRUN_CPUS_PER_TASK"
         --export=ALL
-        bash -c 'exec torchrun --nproc_per_node="$1" --nnodes="$2" --node_rank="$SLURM_NODEID" --master_addr="$3" --master_port="$4" "${@:5}"' _
+        bash -c 'exec "$5" -m torch.distributed.run --nproc_per_node="$1" --nnodes="$2" --node_rank="$SLURM_NODEID" --master_addr="$3" --master_port="$4" "${@:6}"' _
         "$NPROC_PER_NODE"
         "$NNODES"
         "$MASTER_ADDR"
         "$MASTER_PORT"
+        "$PYTHON_BIN"
         "${TRAIN_ENTRY[@]}"
     )
 else
     CMD=(
-        torchrun
+        "$PYTHON_BIN"
+        -m
+        torch.distributed.run
         --nproc_per_node="$NPROC_PER_NODE"
         "${TRAIN_ENTRY[@]}"
     )

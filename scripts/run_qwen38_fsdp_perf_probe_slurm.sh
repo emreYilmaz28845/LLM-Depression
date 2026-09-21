@@ -59,7 +59,10 @@ export PROJECT_ROOT
 cd "$PROJECT_ROOT"
 
 set +e
-torchrun --nproc_per_node="${NPROC_PER_NODE:-4}" scripts/qwen38_fsdp_perf_probe.py \
+# Launch through the selected environment's own interpreter: an isolated overlay
+# venv has no console scripts of its own, and torchrun's shebang would otherwise
+# pick the base environment's python and hide the overlay's packages.
+"$VENV_DIR/bin/python" -m torch.distributed.run --nproc_per_node="${NPROC_PER_NODE:-4}" scripts/qwen38_fsdp_perf_probe.py \
   --config "$CONFIG" \
   --manifest "$MANIFEST" \
   --output "$OUTPUT" \
