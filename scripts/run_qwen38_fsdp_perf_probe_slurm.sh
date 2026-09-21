@@ -69,6 +69,7 @@ set +e
   --batch-sizes ${BATCH_SIZES:-1 2 4} \
   --longest "${LONGEST:-4}" \
   --steps "${STEPS:-2}" \
+  ${EXAMPLE_INDEX:+--example-index "$EXAMPLE_INDEX"} \
   ${OVERRIDES:-}
 STATUS=$?
 set -e
