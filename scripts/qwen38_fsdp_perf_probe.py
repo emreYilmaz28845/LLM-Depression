@@ -60,7 +60,7 @@ def _memory_state() -> dict[str, float]:
     }
 
 
-def _longest_subject_rows(manifest_path: Path, limit: int) -> list[dict]:
+def _longest_subject_rows(manifest_path: Path, limit: int, example_index: int = -1) -> list[dict]:
     rows = load_manifest_rows(manifest_path)
     best_by_subject: dict[str, dict] = {}
     for row in rows:
@@ -74,6 +74,12 @@ def _longest_subject_rows(manifest_path: Path, limit: int) -> list[dict]:
         key=lambda row: len(str(row.get("full_participant_transcript") or "")),
         reverse=True,
     )
+    if example_index >= 0:
+        if example_index >= len(ordered):
+            raise ValueError(
+                f"--example-index {example_index} is out of range for {len(ordered)} subjects"
+            )
+        return [ordered[example_index]]
     return ordered[:limit]
 
 
@@ -246,7 +252,7 @@ def _build_report(args) -> dict:
         "error": None,
     }
     processor = load_processor(resolve_model_name_or_path(None, base_config), base_config)
-    rows = _longest_subject_rows(Path(args.manifest), int(args.longest))
+    rows = _longest_subject_rows(Path(args.manifest), int(args.longest), int(args.example_index))
     report["selected_subjects"] = [str(row["subject_id"]) for row in rows]
     report["selected_transcript_chars"] = [
         len(str(row.get("full_participant_transcript") or "")) for row in rows
@@ -296,12 +302,23 @@ def main() -> int:
     parser.add_argument("--output", required=True)
     parser.add_argument("--batch-sizes", nargs="+", default=["1", "2", "4"])
     parser.add_argument("--longest", type=int, default=4)
+    parser.add_argument(
+        "--example-index",
+        type=int,
+        default=-1,
+        help="pick exactly the N-th longest subject (0 = longest); overrides --longest",
+    )
     parser.add_argument("--steps", type=int, default=2)
     parser.add_argument("--overrides", nargs="*", default=None)
     args = parser.parse_args()
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    # Every rank writes its own report; a shared path would race and the last
+    # writer would hide the other ranks' evidence.
+    rank = os.environ.get("RANK", "0")
+    if rank != "0":
+        output_path = output_path.with_name(f"{output_path.stem}.rank{rank}{output_path.suffix}")
     try:
         if not torch.cuda.is_available():
             raise RuntimeError("No CUDA device visible; run this probe inside a Slurm GPU job.")
