@@ -151,7 +151,7 @@ def _saved_tensor_accounting(model, batch) -> dict:
     }
 
 
-def _phase(label: str, fn, record: dict, rank: int) -> None:
+def _phase(label: str, fn, record: dict, rank: int, output_path: Path | None = None) -> None:
     """Run one phase and record its memory; a failure ends the ladder on every rank.
 
     FSDP collectives run inside every phase, so a rank that swallowed an OOM and
@@ -159,6 +159,10 @@ def _phase(label: str, fn, record: dict, rank: int) -> None:
     recorded and re-raised: torchrun tears the job down, and each rank's report is
     still written by the caller's finally block.
     """
+    def _persist() -> None:
+        if output_path is not None:
+            output_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
     started = time.perf_counter()
@@ -172,14 +176,16 @@ def _phase(label: str, fn, record: dict, rank: int) -> None:
             "traceback": traceback.format_exc(),
         }
         record.setdefault("phases", {})[label] = entry
+        _persist()
         print(f"[rank {rank}] {label}: FAILED {entry['error']}")
         raise
     torch.cuda.synchronize()
     entry = {"seconds": round(time.perf_counter() - started, 3), **_memory_state()}
     record.setdefault("phases", {})[label] = entry
+    _persist()
     print(
-        f"[rank {rank}] {label}: peak={entry['peak_allocated_gb']} free={entry['free_gb']} "
-        f"non_torch={entry['non_torch_gb']}"
+        f"[rank {rank}] {label}: peak={entry['peak_allocated_gb']} end_alloc={entry['allocated_gb']} "
+        f"free={entry['free_gb']} non_torch={entry['non_torch_gb']}"
     )
 
 
@@ -253,13 +259,13 @@ def main() -> int:
 
         model.train()
         with torch.no_grad():
-            _phase("1_forward_no_grad", lambda: model(**batch), report, rank)
+            _phase("1_forward_no_grad", lambda: model(**batch), report, rank, output_path)
 
         def forward_with_graph():
             nonlocal_loss = model(**batch)
             report["forward_loss"] = float(nonlocal_loss.loss.detach().item())
 
-        _phase("2_forward_training", forward_with_graph, report, rank)
+        _phase("2_forward_training", forward_with_graph, report, rank, output_path)
 
         if rank == 0:
             report["saved_tensors"] = _saved_tensor_accounting(model, batch)
@@ -269,7 +275,27 @@ def main() -> int:
             outputs = model(**batch)
             outputs.loss.backward()
 
-        _phase("3_forward_backward", forward_backward, report, rank)
+        _phase("3_forward_backward", forward_backward, report, rank, output_path)
+        optimizer.zero_grad(set_to_none=True)
+        torch.cuda.empty_cache()
+
+        def forward_backward_optimizer():
+            optimizer.zero_grad(set_to_none=True)
+            outputs = model(**batch)
+            outputs.loss.backward()
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+
+        _phase("3b_forward_backward_optimizer", forward_backward_optimizer, report, rank, output_path)
+        torch.cuda.empty_cache()
+
+        def accumulate_context_backward():
+            optimizer.zero_grad(set_to_none=True)
+            with accelerator.accumulate(model):
+                loss = model(**batch).loss
+                accelerator.backward(loss)
+
+        _phase("3c_accumulate_forward_backward", accumulate_context_backward, report, rank, output_path)
         optimizer.zero_grad(set_to_none=True)
         torch.cuda.empty_cache()
 
@@ -281,14 +307,14 @@ def main() -> int:
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
 
-        _phase("4_checkpointing_on_full_step", standard_step, report, rank)
+        _phase("4_checkpointing_on_full_step", standard_step, report, rank, output_path)
         torch.cuda.empty_cache()
 
         # Phase 5: the same step with checkpointing disabled.
         if hasattr(unwrapped, "gradient_checkpointing_disable"):
             unwrapped.gradient_checkpointing_disable()
         report["checkpointing_disabled_state"] = _checkpointing_state(unwrapped)
-        _phase("5_checkpointing_off_full_step", standard_step, report, rank)
+        _phase("5_checkpointing_off_full_step", standard_step, report, rank, output_path)
 
         report["fsdp_units"] = _fsdp_units(model)
     except Exception as exc:  # noqa: BLE001 - always write evidence
