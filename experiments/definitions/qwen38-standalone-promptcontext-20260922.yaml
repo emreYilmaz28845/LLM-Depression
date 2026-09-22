@@ -1,0 +1,176 @@
+schema_version: audiollm.experiment_group.v1
+group_id: qwen38-standalone-promptcontext-20260922
+title: Qwen3.8-27B standalone text-only cells under the prompt-context recipe
+research_question: >-
+  How does Qwen3.8-27B perform on the five standalone native text-only cells
+  (DAIC, D3TEC, Androids, CMDC, Turkish pooled) under the versioned
+  prompt-context recipe, which replaces the short generic system prompt with one
+  shared instruction plus one source-grounded recording-context block per
+  dataset, and — for Turkish — with versioned question-context sentences that
+  state what the positive and negative question sets are not?
+dataset: multi_dataset
+baseline: >-
+  The canonical native text-only likelihood references of each cell, read only
+  when label, subject set, split protocol, evaluation backend, evaluation view and
+  aggregation all match: DAIC fold 0 official test (Qwen2-7B-Instruct
+  harmonized_v1 text_only r1 teacher-forced 0.7353 in the original_teacher_forced
+  view, and the PR #259 Qwen3.8-27B old-prompt likelihood row macro-F1 0.7834 on
+  the same split and evaluation view), and the D3TEC / Androids / CMDC / Turkish
+  pooled five-fold cells of the canonical likelihood workbook derivation. Rows
+  whose evaluation view or backend cannot be confirmed from local evidence are
+  left blank with the reason instead of being inferred.
+treatment: >-
+  configs/main/*_promptcontext_v1_qwen38_27b.yaml (five configs, one per cell):
+  Qwen3.8-27B (Qwen3_5ForConditionalGeneration) loaded in BF16 with no
+  quantization, LoRA rank 16 / alpha 32 over the PR #259 256-module target set,
+  FSDP training on four GPUs with per-rank batch 1 and accumulation 32
+  (effective global batch 128), gradient checkpointing, CPU activation offload,
+  the PR #259 LoRA target regex, 20-epoch cap with early stopping,
+  inner_val_macro_f1 checkpoint selection in mode max, a separate single-GPU
+  standalone evaluation job per fit, and likelihood as the evaluation backend.
+  The prompt is the promptcontext_v1 recipe: prompt.version selects the shared
+  instruction (with a modality-honest text-only wording) plus the dataset context
+  key, and the pooled Turkish cell selects the versioned question-context
+  sentences through prompt.question_context_version; the Turkish pooled manifest
+  is prebuilt by scripts/build_turkish_pooled_manifest.py and submitted with
+  manifest_policy=prebuilt.
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+runs:
+  - logical_run: daic_text_only_promptcontext
+    dataset: daic
+    modality: text_only
+    config: configs/main/daic_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml
+    folds:
+      - 0
+    endpoint: official_test_partition
+    folds_note: >-
+      DAIC keeps its fixed split: fold 0 is the protected official test
+      partition, reported once.
+  - logical_run: d3tec_text_only_promptcontext
+    dataset: d3tec
+    modality: text_only
+    config: configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: outer_fold_test_partition
+    folds_note: Five-fold CV (train_val_test); the headline is the unweighted mean of the five fold metrics.
+  - logical_run: androids_text_only_promptcontext
+    dataset: androids_interview
+    modality: text_only
+    config: configs/main/androids_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: outer_fold_test_partition
+    folds_note: Five-fold CV (train_val_test); the headline is the unweighted mean of the five fold metrics.
+  - logical_run: cmdc_text_only_promptcontext
+    dataset: cmdc
+    modality: text_only
+    config: configs/main/cmdc_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: selected_validation_view
+    folds_note: >-
+      Five-fold CV (train_val): the outer fold is both the selection and the
+      reported partition, so the result is a selected-validation number, not a
+      held-out test.
+  - logical_run: turkish_pooled_text_only_promptcontext
+    dataset: turkish
+    dataset_variant: pooled_t17
+    modality: text_only
+    config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: selected_validation_view
+    folds_note: >-
+      Five-fold CV (train_val) over subject-safe pooled folds. One example per
+      participant per condition; both conditions stay in the same subject fold and
+      the pair-margin policy combines them into one participant-level result per
+      fold. Reported as a selected-validation five-fold mean.
+prompt_contract:
+  prompt_context_version: promptcontext_v1
+  shared_instruction: one shared English instruction, with a text-only wording that removes audio-availability claims
+  dataset_context_version: promptcontext_v1
+  dataset_context_keys:
+    daic: daic
+    d3tec: d3tec
+    androids_interview: androids
+    cmdc: cmdc
+    turkish_pooled_t17: turkish_pooled
+  question_context_version: promptcontext_v1
+  question_context_sentences:
+    pos_only_t17: "Positive set: This recording answers a question from the positive set. The question's positive framing is not the participant's depression label."
+    negative_only_t17: "Negative set: This recording answers a question from the negative set. The question's negative framing is not the participant's depression label."
+  label_contract: Depressed / Non-depressed (legacy_english_labels, unchanged)
+model_contract:
+  backend: qwen38
+  model: Qwen3.8-27B
+  model_path: /gpfs/projects/etur92/ozu647717/models/Qwen3.8-27B
+  model_revision: 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+  precision: bf16 (no quantization)
+  training_strategy: fsdp
+  training_shape: 1 node x 4 H100s (world_size 4, per-rank batch 1, accumulation 32, effective batch 128)
+  evaluation_shape: 1 node, 1 H100
+comparison_rule: >-
+  One reader-facing row per cell per verified evaluation view. Only rows whose
+  label, subject set, split protocol, evaluation backend, evaluation view and
+  aggregation match may share a comparison column; teacher-forced and likelihood
+  rows never mix in one column, and no value is called significant without a
+  prespecified test. For D3TEC, Androids, CMDC and Turkish pooled the Qwen3.8 rows
+  change both the model and the prompt relative to the Qwen2 and Gemma 4
+  references, so a difference there must not be attributed to prompt wording
+  alone. The DAIC prompt comparison is the same-backend one: Qwen3.8-27B with the
+  old prompt (PR #259) versus Qwen3.8-27B with the prompt-context recipe, same
+  manifest, split, evaluation view and official test endpoint, read in the
+  likelihood view that both runs declare.
+scope:
+  campaign: promptcontext_v1_qwen38_likelihood
+  checkpoint_role: best_model
+  evaluation_jobs_per_fit: 1
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
+  storage_note: >-
+    Checkpoints are LoRA adapters of a 27B backbone; the base model stays at
+    /gpfs/projects/etur92/ozu647717/models/Qwen3.8-27B.
+exclusions:
+  - merged_configs_or_matrices
+  - qwen3_omni_code_or_configs
+  - audio_only_and_audio_text_cells
+  - english_translation_cells
+  - hidden_classifier_logreg_xgboost_work
+  - workbook_result_updates
+  - wandb_cloud_export
+  - PR_258_cancelled_experiment_evidence
+  - quantization_qlora_or_transcript_truncation
+github_issue: null
+github_pr: null

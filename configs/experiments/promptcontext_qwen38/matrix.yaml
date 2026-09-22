@@ -1,0 +1,79 @@
+name: promptcontext_v1_qwen38_standalone_matrix
+prompt_context_version: promptcontext_v1
+seed: 1337
+max_epochs: 20
+checkpoint_selection: inner_val_macro_f1
+evaluation_backend: likelihood
+evaluation_view: harmonized_all_windows_full_coverage
+experiments:
+- cell_id: daic
+  dataset: daic
+  dataset_variant: null
+  modality: text_only
+  backbone: qwen38
+  prompt_context_dataset: daic
+  recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1_promptcontext_v1
+  config: configs/main/daic_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml
+  folds:
+  - 0
+  separate_eval: true
+- cell_id: d3tec
+  dataset: d3tec
+  dataset_variant: null
+  modality: text_only
+  backbone: qwen38
+  prompt_context_dataset: d3tec
+  recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1_promptcontext_v1
+  config: configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml
+  folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  separate_eval: true
+- cell_id: androids
+  dataset: androids_interview
+  dataset_variant: null
+  modality: text_only
+  backbone: qwen38
+  prompt_context_dataset: androids
+  recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1_promptcontext_v1
+  config: configs/main/androids_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml
+  folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  separate_eval: true
+- cell_id: cmdc
+  dataset: cmdc
+  dataset_variant: null
+  modality: text_only
+  backbone: qwen38
+  prompt_context_dataset: cmdc
+  recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1_promptcontext_v1
+  config: configs/main/cmdc_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml
+  folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  separate_eval: true
+- cell_id: turkish_pooled
+  dataset: turkish
+  dataset_variant: pooled_t17
+  modality: text_only
+  backbone: qwen38
+  prompt_context_dataset: turkish_pooled
+  recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_qcond_v1_promptcontext_v1
+  config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml
+  folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  separate_eval: true

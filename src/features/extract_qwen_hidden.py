@@ -19,9 +19,9 @@ import numpy as np
 import torch
 
 from src.data.emotion import load_emotion_cache, report_cache_coverage, resolve_missing_policy, use_emotion
+from src.data.prompt_context import resolve_question_context_sentences
 from src.data.runtime import (
     JOINT_PACKED30_MODE,
-    QUESTION_CONTEXT_SENTENCES,
     build_examples,
     filter_rows_by_subjects,
     load_manifest_rows,
@@ -1093,7 +1093,9 @@ def main() -> None:
         cache_config["prompt_context_contract"] = {
             "user_template_redacted": str(config.get("prompt", {}).get("user_template", "")),
             "transcript_block_redacted": True,
-            "question_context_sentences": dict(QUESTION_CONTEXT_SENTENCES),
+            "question_context_sentences": dict(
+                resolve_question_context_sentences(config)
+            ),
         }
         if _is_turkish_pooled_text(config):
             cache_config.update({

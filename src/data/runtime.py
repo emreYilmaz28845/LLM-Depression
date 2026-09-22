@@ -21,6 +21,11 @@ from src.data.emotion import (
     single_chunk_emotion_block,
     use_emotion,
 )
+from src.data.prompt_context import (
+    LEGACY_QUESTION_CONTEXT_SENTENCES,
+    resolve_question_context_sentences,
+    resolve_system_prompt,
+)
 from src.daic_chunking import (
     balanced_joint_bundles,
     evenly_spaced_indices,
@@ -63,10 +68,11 @@ JOINT_PACKED30_REQUIRED_K = 4
 JOINT_PACKED30_CONTEXT_SENTINEL = "__JOINT_BUNDLE_AUDIO_CONTEXT__"
 HARMONIZED_RESPONSE_WINDOWS_MODE = "harmonized_response_windows"
 
-QUESTION_CONTEXT_SENTENCES = {
-    "pos_only_t17": "The following speech is the subject's response to positive interview questions.",
-    "negative_only_t17": "The following speech is the subject's response to negative interview questions.",
-}
+# The legacy sentence wording, kept as the module-level default so imports and
+# audits that predate the versioned sets keep working. A config selects another
+# set through prompt.question_context_version; a config without it renders these
+# sentences byte-identically to before.
+QUESTION_CONTEXT_SENTENCES = LEGACY_QUESTION_CONTEXT_SENTENCES
 
 
 def resolve_audio_placeholder(config: dict[str, Any]) -> str:
@@ -160,12 +166,13 @@ def render_user_prompt_text(
         else _audio_context_block(use_audio, is_subject_bundle)
     )
     if "{question_context}" in template:
-        if question_condition not in QUESTION_CONTEXT_SENTENCES:
+        sentence_set = resolve_question_context_sentences(config)
+        if question_condition not in sentence_set:
             raise ValueError(
                 "Tagged Turkish pooled prompt requires question_condition to be "
-                f"one of {sorted(QUESTION_CONTEXT_SENTENCES)}, got {question_condition!r}."
+                f"one of {sorted(sentence_set)}, got {question_condition!r}."
             )
-        question_context = QUESTION_CONTEXT_SENTENCES[question_condition]
+        question_context = sentence_set[question_condition]
     else:
         # Keep untagged prompt rendering byte-identical for every existing
         # recipe. The value is available only so format_map has one stable
@@ -359,7 +366,7 @@ def _base_example_from_row(
     )
     example_internal_label = row.get("internal_label_text") or internal_label_text_from_int(config, int(row["label"]))
     prompt_text = build_prompt_text(
-        system_prompt=config["prompt"]["system"],
+        system_prompt=resolve_system_prompt(config),
         user_text=user_text,
         num_audios=1 if use_audio else 0,
         use_audio=use_audio,
@@ -384,7 +391,7 @@ def _base_example_from_row(
         "input_modality": input_modality,
         "prompt_text": prompt_text,
         "training_text": build_training_text(prompt_text, example_internal_label),
-        "prompt_system_text": config["prompt"]["system"],
+        "prompt_system_text": resolve_system_prompt(config),
         "prompt_user_text": user_text,
         "question_id": row.get("question_id", ""),
         "response_id": row.get("response_id", ""),
@@ -478,7 +485,7 @@ def _build_subject_level_text_only_examples(
             int(canonical_row["label"]),
         )
         prompt_text = build_prompt_text(
-            system_prompt=config["prompt"]["system"],
+            system_prompt=resolve_system_prompt(config),
             user_text=user_text,
             num_audios=0,
             use_audio=False,
@@ -499,7 +506,7 @@ def _build_subject_level_text_only_examples(
                 "input_modality": INPUT_MODALITY_TEXT_ONLY,
                 "prompt_text": prompt_text,
                 "training_text": build_training_text(prompt_text, internal_label_text),
-                "prompt_system_text": config["prompt"]["system"],
+                "prompt_system_text": resolve_system_prompt(config),
                 "prompt_user_text": user_text,
                 "question_id": canonical_row.get("question_id", ""),
                 "protocol_id": canonical_row.get("protocol_id", ""),
@@ -588,7 +595,7 @@ def _build_turkish_pooled_text_only_examples(
     recipe. Existing harmonized text-only recipes continue through their
     original one-example-per-subject implementation.
     """
-    allowed = set(QUESTION_CONTEXT_SENTENCES)
+    allowed = set(resolve_question_context_sentences(config))
     grouped: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(
         lambda: defaultdict(list)
     )
@@ -928,7 +935,7 @@ def _build_subject_level_audio_examples(
         )
         audio_placeholder = resolve_audio_placeholder(config)
         prompt_text = build_prompt_text(
-            system_prompt=config["prompt"]["system"],
+            system_prompt=resolve_system_prompt(config),
             user_text=user_text,
             num_audios=effective_k,
             use_audio=True,
@@ -960,7 +967,7 @@ def _build_subject_level_audio_examples(
             # so each Emotional description i tracks the audio actually fed (§4.3).
             example["chunk_caption_by_path"] = chunk_caption_by_path
             example["emotion_user_text"] = user_text
-            example["emotion_system_prompt"] = config["prompt"]["system"]
+            example["emotion_system_prompt"] = resolve_system_prompt(config)
             example["emotion_internal_label_text"] = internal_label_text
             example["emotion_audio_placeholder"] = audio_placeholder
         if (
@@ -1053,7 +1060,7 @@ def _build_participant_speech_packed30_examples(
         transcript = str(row["full_participant_transcript"]) if use_text else ""
         user_text = render_user_prompt_text(config, transcript, is_subject_bundle=False)
         prompt_text = build_prompt_text(
-            system_prompt=config["prompt"]["system"],
+            system_prompt=resolve_system_prompt(config),
             user_text=user_text,
             num_audios=1,
             use_audio=True,
@@ -1086,7 +1093,7 @@ def _build_participant_speech_packed30_examples(
                 "input_modality": input_modality,
                 "prompt_text": prompt_text,
                 "training_text": build_training_text(prompt_text, internal_label_text),
-                "prompt_system_text": config["prompt"]["system"],
+                "prompt_system_text": resolve_system_prompt(config),
                 "prompt_user_text": user_text,
                 "question_id": "",
             }
@@ -1233,7 +1240,7 @@ def _build_participant_speech_packed30_joint_examples(
             "Expected 'full_participant' or 'chunk_aligned'."
         )
     audio_placeholder = resolve_audio_placeholder(config)
-    prompt_system = str(config["prompt"]["system"])
+    prompt_system = str(resolve_system_prompt(config))
     user_template = _user_prompt_template(config, is_subject_bundle=True)
 
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -1568,7 +1575,7 @@ def build_examples(
             user_text = render_user_prompt_text(config, combined_transcript, is_subject_bundle=True)
             internal_label_text = internal_label_text_from_int(config, int(ordered_rows[0]["label"]))
             prompt_text = build_prompt_text(
-                system_prompt=config["prompt"]["system"],
+                system_prompt=resolve_system_prompt(config),
                 user_text=user_text,
                 num_audios=len(audio_paths),
                 use_audio=use_audio,

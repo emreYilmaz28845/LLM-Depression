@@ -16,6 +16,29 @@ SUBMIT = ROOT / "scripts/submit_train_and_eval.sh"
 CONFIG = "configs/main/daic_text_only_harmonized_selmacrof1_likelihood_v1_qwen38_27b.yaml"
 
 
+def _prebuilt_overrides(tmp_path: Path, dataset: str = "daic") -> str:
+    """Satisfy the prebuilt-manifest guard with empty stand-in files.
+
+    The wrapper refuses a skipped manifest build without the files the workers
+    read, so the shape probe provides them and points the config at them.
+    """
+    manifest_dir = tmp_path / "manifests" / dataset
+    split_dir = tmp_path / "splits" / dataset
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    split_dir.mkdir(parents=True, exist_ok=True)
+    for path in (
+        manifest_dir / f"{dataset}_manifest.jsonl",
+        manifest_dir / f"{dataset}_manifest.csv",
+    ):
+        path.write_text("", encoding="utf-8")
+    (split_dir / f"{dataset}_folds.json").write_text("{}\n", encoding="utf-8")
+    (split_dir / f"{dataset}_manifest_metadata.json").write_text("{}\n", encoding="utf-8")
+    return (
+        f"--set=output_dirs.manifest_dir={manifest_dir} "
+        f"--set=output_dirs.split_dir={split_dir}"
+    )
+
+
 def _run_submit(tmp_path: Path, *, train_nodes: int, overrides: str = "") -> str:
     stub_dir = tmp_path / "bin"
     stub_dir.mkdir(parents=True, exist_ok=True)
@@ -38,7 +61,7 @@ def _run_submit(tmp_path: Path, *, train_nodes: int, overrides: str = "") -> str
         "TRAIN_NODES": str(train_nodes),
         "LOG_ROOT": str(log_root),
         "SKIP_MANIFEST_BUILD": "1",
-        "EXTRA_TRAIN_ARGS": overrides,
+        "EXTRA_TRAIN_ARGS": f"{_prebuilt_overrides(tmp_path)} {overrides}".strip(),
     }
     result = subprocess.run(
         ["bash", str(SUBMIT)], cwd=ROOT, env=env, capture_output=True, text=True
@@ -82,6 +105,7 @@ def test_two_node_lane_refuses_the_default_accumulation(tmp_path: Path) -> None:
         "TRAIN_NODES": "2",
         "LOG_ROOT": str(tmp_path / "logs"),
         "SKIP_MANIFEST_BUILD": "1",
+        "EXTRA_TRAIN_ARGS": _prebuilt_overrides(tmp_path),
     }
     result = subprocess.run(
         ["bash", str(SUBMIT)], cwd=ROOT, env=env, capture_output=True, text=True

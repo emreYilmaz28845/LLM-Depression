@@ -86,11 +86,47 @@ except Exception:
     from src.utils import load_yaml
     config = load_yaml(config_path)
 run_root = str(config["output_dirs"]["run_root"]).replace("${PROJECT_ROOT}", project_root)
+manifest_dir = str(config["output_dirs"]["manifest_dir"]).replace("${PROJECT_ROOT}", project_root)
+split_dir = str(config["output_dirs"]["split_dir"]).replace("${PROJECT_ROOT}", project_root)
 split = config.get("split", {})
-print(json.dumps({"run_root": run_root, "split_mode": split.get("mode", "fixed"), "cv_protocol": split.get("cv_protocol")}))
+print(json.dumps({
+    "run_root": run_root,
+    "split_mode": split.get("mode", "fixed"),
+    "cv_protocol": split.get("cv_protocol"),
+    "dataset": str(config["dataset"]),
+    "dataset_variant": str(config.get("dataset_variant", "") or ""),
+    "manifest_dir": manifest_dir,
+    "split_dir": split_dir,
+}))
 PY
 )"
 RUN_ROOT_REL="$(printf '%s' "$CONFIG_VALUES" | python -c 'import json,sys; print(json.load(sys.stdin)["run_root"])')"
+DATASET_VARIANT="$(printf '%s' "$CONFIG_VALUES" | python -c 'import json,sys; print(json.load(sys.stdin)["dataset_variant"])')"
+MANIFEST_DIR="$(printf '%s' "$CONFIG_VALUES" | python -c 'import json,sys; print(json.load(sys.stdin)["manifest_dir"])')"
+SPLIT_DIR="$(printf '%s' "$CONFIG_VALUES" | python -c 'import json,sys; print(json.load(sys.stdin)["split_dir"])')"
+# Manifest route guard (fail closed before any sbatch):
+# - the pooled Turkish recipe must never let the worker rebuild its manifest;
+# - a prebuilt submission must already provide every file the workers read.
+if [ "$DATASET_VARIANT" = "pooled_t17" ] && [ "$SKIP_MANIFEST_BUILD" != "1" ]; then
+    echo "ERROR: dataset_variant=pooled_t17 requires a prebuilt manifest" >&2
+    echo "       (set manifest_policy=prebuilt / SKIP_MANIFEST_BUILD=1)" >&2
+    exit 1
+fi
+if [ "$SKIP_MANIFEST_BUILD" = "1" ]; then
+    PREBUILT_FILES=(
+        "$MANIFEST_DIR/${DATASET_NAME}_manifest.jsonl"
+        "$MANIFEST_DIR/${DATASET_NAME}_manifest.csv"
+        "$SPLIT_DIR/${DATASET_NAME}_folds.json"
+        "$SPLIT_DIR/${DATASET_NAME}_manifest_metadata.json"
+    )
+    for prebuilt in "${PREBUILT_FILES[@]}"; do
+        if [ ! -f "$prebuilt" ]; then
+            echo "ERROR: prebuilt manifest file missing: $prebuilt" >&2
+            exit 1
+        fi
+    done
+    echo "  prebuilt_manifest: verified ${#PREBUILT_FILES[@]} files under $MANIFEST_DIR and $SPLIT_DIR"
+fi
 RUN_ROOT="${RUN_ROOT_REL}"
 FOLD_DIR="$RUN_ROOT/$RUN_NAME/fold_$FOLD"
 BEST_CHECKPOINT_DIR="$FOLD_DIR/best_model"

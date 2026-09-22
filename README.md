@@ -25,6 +25,7 @@ The active harmonized configurations live in `configs/main/`, named `<dataset>[_
 
 - candidate-label **likelihood** (`sample_prediction_mode: likelihood`) as the canonical decision rule: per subject, the mean dep/non candidate score over the windows, decided by their margin (`argmax(mean dep_score, mean non_score)`);
 - teacher-forced decoding (`original_teacher_forced`) as a clearly labelled legacy view; its configs live in `configs/archive/pre_likelihood_20260917/` and its former canonical workbook values in the "Legacy TF" sheet;
+- new experiments run the likelihood view only: no teacher-forced evaluation is launched, and historical teacher-forced results are never mixed into a likelihood comparison column — they stay a separately labelled view with their own table or column;
 - `headline/binary_strict_*` metrics, where invalid decoded labels count as wrong (`valid_only_*` is ignored);
 - macro-F1 and positive-F1 alongside UAR (`binary_strict_uar`: the unweighted average recall, i.e. balanced accuracy, recomputed from the same subject predictions; existing artifacts already carry it as `macro_recall`);
 - validation macro-F1 (`inner_val_macro_f1`, mode max) for checkpoint selection and early stopping;
@@ -41,7 +42,7 @@ scope and processor-boundary token audit.
 
 ### Evaluation warning
 
-Candidate likelihood is now the canonical decision rule; `original_teacher_forced` is the legacy view. Teacher forcing reconstructs label tokens under a gold-conditioned continuation, so it is not a clean deployable classifier decision, and some audio paths already aggregated gold-independent candidate-label score margins under the same backend name. The canonical likelihood rule removes that inconsistency: one gold-independent rule — the per-subject argmax of the mean dep/non candidate scores — applies to every modality and backbone cell. Teacher-forced results remain a clearly labelled diagnostic view: their configs are in `configs/archive/pre_likelihood_20260917/` and their former canonical workbook values are in the "Legacy TF" sheet. See `docs/LLM_CLASSIFICATION_INFERENCE_INVESTIGATION.md`.
+Candidate likelihood is now the canonical decision rule; `original_teacher_forced` is the legacy view. Teacher forcing reconstructs label tokens under a gold-conditioned continuation, so it is not a clean deployable classifier decision, and some audio paths already aggregated gold-independent candidate-label score margins under the same backend name. The canonical likelihood rule removes that inconsistency: one gold-independent rule — the per-subject argmax of the mean dep/non candidate scores — applies to every modality and backbone cell. Teacher-forced results remain a clearly labelled diagnostic view: their configs are in `configs/archive/pre_likelihood_20260917/` and their former canonical workbook values are in the "Legacy TF" sheet. See `docs/LLM_CLASSIFICATION_INFERENCE_INVESTIGATION.md`. The full policy for new experiments — backend, view (`harmonized_all_windows_full_coverage`), aggregation (strict subject-level), the headline metric set (Macro-F1, Positive-F1, UAR), INVALID-as-wrong, and the rule that teacher-forced and likelihood results never share a comparison column — is in `configs/README.md`.
 
 Current canonical coverage:
 
