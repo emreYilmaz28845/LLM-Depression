@@ -111,20 +111,23 @@ nvidia-smi || true
 "$PYTHON_BIN" -V
 "$PYTHON_BIN" -c "import torch, transformers, peft, accelerate; print('torch', torch.__version__, 'cuda', torch.version.cuda); print('transformers', transformers.__version__); print('peft', peft.__version__); print('accelerate', accelerate.__version__)"
 
-PROBE_CMD=(
-    "$PYTHON_BIN" scripts/qwen3omni_backend_probe.py "$PROBE_MODE"
+# torchrun runs its entrypoint with the interpreter that runs it, so the
+# entrypoint is the script plus its arguments. Passing the venv interpreter as
+# the first element would make torchrun execute that binary as a Python script.
+PROBE_ENTRYPOINT=(
+    scripts/qwen3omni_backend_probe.py "$PROBE_MODE"
     --config "$CONFIG"
     --output "$PROBE_OUTPUT"
     "${OVERRIDE_ARGS[@]}"
 )
 if [ -n "$PROBE_INVENTORY" ]; then
-    PROBE_CMD+=(--inventory "$PROBE_INVENTORY")
+    PROBE_ENTRYPOINT+=(--inventory "$PROBE_INVENTORY")
 fi
-PROBE_CMD+=("${PROBE_EXTRA[@]}")
+PROBE_ENTRYPOINT+=("${PROBE_EXTRA[@]}")
 
 if [ "$PROBE_MODE" = "forward" ] || [ "$PROBE_MODE" = "tree" ]; then
     echo "launching single-process ${PROBE_MODE} probe"
-    "${PROBE_CMD[@]}"
+    "$PYTHON_BIN" "${PROBE_ENTRYPOINT[@]}"
 else
     echo "launching torchrun probe | nodes=$PROBE_NODES | ranks/node=$PROBE_GPUS"
     if [ "${PROBE_NODES}" -gt 1 ]; then
@@ -132,9 +135,9 @@ else
         MASTER_PORT="${MASTER_PORT:-29517}"
         srun --nodes="$PROBE_NODES" --ntasks="$PROBE_NODES" --ntasks-per-node=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-80}" --export=ALL \
             bash -c 'exec "$0" -m torch.distributed.run --nproc_per_node="$1" --nnodes="$2" --node_rank="$SLURM_NODEID" --master_addr="$3" --master_port="$4" "${@:5}"' \
-            "$PYTHON_BIN" "$PROBE_GPUS" "$PROBE_NODES" "$MASTER_ADDR" "$MASTER_PORT" "${PROBE_CMD[@]}"
+            "$PYTHON_BIN" "$PROBE_GPUS" "$PROBE_NODES" "$MASTER_ADDR" "$MASTER_PORT" "${PROBE_ENTRYPOINT[@]}"
     else
-        "$PYTHON_BIN" -m torch.distributed.run --nproc_per_node="$PROBE_GPUS" --standalone "${PROBE_CMD[@]}"
+        "$PYTHON_BIN" -m torch.distributed.run --nproc_per_node="$PROBE_GPUS" --standalone "${PROBE_ENTRYPOINT[@]}"
     fi
 fi
 
