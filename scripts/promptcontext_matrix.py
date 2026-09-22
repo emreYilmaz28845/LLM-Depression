@@ -219,6 +219,23 @@ def _merged_submit_argv(
     return argv
 
 
+def submitted_jobs() -> set[tuple[str, int]]:
+    """Run names that already have a local submission contract."""
+    root = PROJECT_ROOT / "outputs" / "exp_submit"
+    done: set[tuple[str, int]] = set()
+    if not root.is_dir():
+        return done
+    for contract in root.glob("*/contract.json"):
+        try:
+            payload = json.loads(contract.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if payload.get("run_name") is None:
+            continue
+        done.add((str(payload["run_name"]), int(payload.get("fold", -1))))
+    return done
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--audit", action="store_true", help="print the resolved matrix plan")
@@ -232,8 +249,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dataset", default=None)
     parser.add_argument("--modality", choices=MODALITY_ORDER, default=None)
     parser.add_argument("--fold", type=int, default=None)
+    parser.add_argument(
+        "--folds",
+        default=None,
+        help="comma-separated fold list, for resuming a partially submitted cell",
+    )
     parser.add_argument("--stage", choices=MERGED_STAGES, default="smoke")
     parser.add_argument("--limit", type=int, default=None, help="submit at most N resolved jobs")
+    parser.add_argument(
+        "--skip-submitted",
+        action="store_true",
+        help="skip folds that already have a local submission contract (resume)",
+    )
     parser.add_argument("--run-name-prefix", default=None)
     parser.add_argument("--execute", action="store_true", help="run the resolved commands")
     parser.add_argument("--dry-run", action="store_true", help="print the resolved commands")
@@ -274,6 +301,15 @@ def main(argv: list[str] | None = None) -> int:
         jobs = standalone_jobs(cells, run_name_prefix=args.run_name_prefix)
         if args.fold is not None:
             jobs = [job for job in jobs if job["fold"] == args.fold]
+        if args.folds:
+            wanted = {int(value) for value in str(args.folds).split(",") if value.strip()}
+            jobs = [job for job in jobs if job["fold"] in wanted]
+        if args.skip_submitted:
+            done = submitted_jobs()
+            skipped = [job for job in jobs if (job["run_name"], job["fold"]) in done]
+            jobs = [job for job in jobs if (job["run_name"], job["fold"]) not in done]
+            if skipped:
+                print(f"skipping {len(skipped)} already-submitted fold(s)")
         if args.limit is not None:
             jobs = jobs[: int(args.limit)]
         if not jobs:

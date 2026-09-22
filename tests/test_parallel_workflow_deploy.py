@@ -446,3 +446,25 @@ def test_runtime_dir_creation_issues_single_mkdir(tmp_path):
 def test_estimate_transfer_bytes_matches_manifest():
     manifest = {"files": [{"size_bytes": 10}, {"size_bytes": 32}]}
     assert estimate_transfer_bytes(manifest) == 42
+
+
+def test_temporary_python_cache_file_is_allowed(tmp_path):
+    """A killed import leaves <name>.pyc.<pid>; it must not fail verification."""
+
+    repo = _init_repo(tmp_path)
+    manifest = _write_provenance(repo)
+    plan = plan_deployment(worktree=repo, experiment_id="exp-x", branch="agent/exp-x",
+                           allow_dirty=False, deployment_id="dep-pycache-tmp")
+    runner = FakeRunner()
+    _populate_deployed_tree(
+        runner,
+        repo,
+        plan["deployed_code_path"],
+        manifest,
+        extras=["src/__pycache__/daic_mil.cpython-310.pyc.140103725005744"],
+    )
+
+    result = execute_deployment(plan, runner, rsync_executor=_rsync_ok_factory([]))
+
+    assert result["verification"]["unexpected"] == []
+    assert "src/__pycache__/daic_mil.cpython-310.pyc.140103725005744" in result["verification"]["allowed_extras"]
