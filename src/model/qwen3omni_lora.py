@@ -316,33 +316,58 @@ def resolve_qwen3omni_model_class(model_name_or_path: str | Path) -> str:
     return QWEN3OMNI_MODEL_CLASS_NAME
 
 
-def _qwen3omni_language_model(model):
-    """Locate the Thinker's language-model decoder under the raw or PEFT-wrapped model."""
-    for path in (
-        # PeftModel wrapping the Thinker -> the Thinker's text model.
-        "base_model.model.model",
-        # The raw Thinker's text model.
-        "model",
-        # Defensive: a full omni model whose Thinker was not unwrapped.
-        "thinker.model",
-        "model.thinker.model",
-    ):
-        target = model
-        for part in path.split("."):
-            target = getattr(target, part, None)
-            if target is None:
-                break
-        if target is not None and hasattr(target, "layers"):
-            return target
+def _qwen3omni_decoder_layers_path(model) -> str:
+    """Dotted path of the decoder-layer ModuleList inside ``model``.
+
+    Structure-based rather than name-based: the decoder is the ModuleList whose
+    children carry both ``self_attn`` and ``mlp``. The audio encoder's layer list
+    has ``self_attn`` but no ``mlp``, and the vision tower's blocks have ``mlp``
+    but no ``self_attn``, so neither can be mistaken for the decoder.
+    """
+    for name, module in model.named_modules():
+        if isinstance(module, torch.nn.ModuleList) and len(module) > 0:
+            first = module[0]
+            if hasattr(first, "self_attn") and hasattr(first, "mlp"):
+                return name
     raise ValueError(
-        "Could not locate the Qwen3-Omni Thinker text decoder. "
-        "Expected the Thinker's text model (model.layers) to be present."
+        "Could not locate the Qwen3-Omni Thinker decoder layers; expected a "
+        "ModuleList of layers carrying self_attn and mlp."
     )
+
+
+def _qwen3omni_decoder_layers(model):
+    """The Thinker's decoder-layer ModuleList (duck-typed lookups allowed).
+
+    Resolved against the PEFT base model, so a wrapped model and its base agree.
+    """
+    base = (
+        model.base_model.model
+        if hasattr(model, "base_model") and hasattr(model.base_model, "model")
+        else model
+    )
+    target = base
+    for part in _qwen3omni_decoder_layers_path(base).split("."):
+        target = getattr(target, part)
+    return target
+
+
+def _decoder_module_prefix(model) -> str:
+    """Decoder-layer path relative to the PEFT base model (``model.layers``).
+
+    ``inspect_matched_modules`` reports names relative to ``model.base_model``
+    (the Thinker), so the audit must use the same frame of reference.
+    """
+    base = (
+        model.base_model.model
+        if hasattr(model, "base_model") and hasattr(model.base_model, "model")
+        else model
+    )
+    return _qwen3omni_decoder_layers_path(base)
 
 
 def fsdp_transformer_cls_names(model) -> list[str]:
     """Decoder layer classes FSDP should wrap for the Qwen3-Omni Thinker."""
-    layers = _qwen3omni_language_model(model).layers
+    layers = _qwen3omni_decoder_layers(model)
     if len(layers) == 0:
         raise ValueError("The Qwen3-Omni language-model decoder has no layers to wrap.")
     return sorted({type(layer).__name__ for layer in layers})
@@ -356,10 +381,10 @@ def expected_lora_module_names(model) -> set[str]:
     gate/up/down projections. Routers, routed experts and fused expert
     parameters are never part of the expected set.
     """
-    text_model = _qwen3omni_language_model(model)
+    layers = _qwen3omni_decoder_layers(model)
     prefix = _decoder_module_prefix(model)
     expected: set[str] = set()
-    for layer_index, layer in enumerate(text_model.layers):
+    for layer_index, layer in enumerate(layers):
         suffixes = [
             "self_attn.q_proj",
             "self_attn.k_proj",
@@ -374,26 +399,8 @@ def expected_lora_module_names(model) -> set[str]:
                 "mlp.down_proj",
             ]
         for suffix in suffixes:
-            expected.add(f"{prefix}.layers.{layer_index}.{suffix}")
+            expected.add(f"{prefix}.{layer_index}.{suffix}")
     return expected
-
-
-def _decoder_module_prefix(model) -> str:
-    """Dotted path of the decoder layers relative to the PEFT base model.
-
-    ``inspect_matched_modules`` reports names relative to ``model.base_model``
-    (the Thinker), so the expected set must use the same frame of reference.
-    """
-    base = (
-        model.base_model.model
-        if hasattr(model, "base_model") and hasattr(model.base_model, "model")
-        else model
-    )
-    text_model = _qwen3omni_language_model(base)
-    for name, module in base.named_modules():
-        if module is text_model:
-            return name
-    raise ValueError("Could not determine the decoder module prefix for the LoRA target audit.")
 
 
 def _audit_qwen3omni_lora_modules(model, matched_modules: set[str]) -> dict[str, Any]:
@@ -414,7 +421,7 @@ def _audit_qwen3omni_lora_modules(model, matched_modules: set[str]) -> dict[str,
         violations.append(
             f"routers, experts or non-decoder modules are adapted: {forbidden[:8]}"
         )
-    decoder_prefix = f"{_decoder_module_prefix(model)}.layers."
+    decoder_prefix = f"{_decoder_module_prefix(model)}."
     outside_decoder = sorted(
         name for name in matched_modules if decoder_prefix not in f"{name}."
     )

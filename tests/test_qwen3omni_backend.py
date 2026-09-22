@@ -568,11 +568,12 @@ def test_fsdp_wrap_policy_names_reads_the_decoder_layer_classes() -> None:
     model = _FakeThinker(layers=2)
     assert fsdp_transformer_cls_names(model) == ["_FakeDecoderLayer"]
 
+    # A tree with no decoder layers is a lookup failure, not a silent empty wrap.
     empty = _FakeThinker(layers=0)
-    with pytest.raises(ValueError, match="no layers to wrap"):
+    with pytest.raises(ValueError, match="Could not locate the Qwen3-Omni Thinker decoder layers"):
         fsdp_transformer_cls_names(empty)
 
-    with pytest.raises(ValueError, match="Could not locate the Qwen3-Omni Thinker"):
+    with pytest.raises(ValueError, match="Could not locate the Qwen3-Omni Thinker decoder layers"):
         fsdp_transformer_cls_names(torch.nn.Linear(2, 2))
 
 

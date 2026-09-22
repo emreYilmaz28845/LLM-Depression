@@ -73,8 +73,9 @@ def _processor_measurements(
     processor, config: dict[str, Any], examples: list[dict[str, Any]]
 ) -> dict[str, dict[str, Any]]:
     """Rendered token counts and audio-feature shapes per example."""
+    from src.data.runtime import AudioTextDataset
     from src.model.collator import Qwen2AudioSFTCollator
-    from src.data.runtime import AudioTextDataset, resolve_processor_sampling_rate
+    from src.model.runtime import resolve_processor_sampling_rate
 
     sampling_rate = resolve_processor_sampling_rate(processor)
     collator = Qwen2AudioSFTCollator(processor=processor)
