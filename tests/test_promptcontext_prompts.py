@@ -10,6 +10,7 @@ from src.data.prompt_context import (
     DATASET_CONTEXT_BLOCKS,
     PROMPT_CONTEXT_VERSION,
     QUESTION_CONTEXT_SENTENCE_SETS,
+    SHARED_INSTRUCTION,
     SHARED_INSTRUCTION_TEXT_ONLY,
     resolve_question_context_sentences,
     resolve_system_prompt,
@@ -120,6 +121,55 @@ def test_text_only_prompts_never_claim_audio() -> None:
             assert claim not in combined, f"{cell_id}: audio claim {claim!r}"
         assert "Based on the transcript, determine whether" in user_text
         assert not user_text.startswith("The subject's speech audio is provided")
+
+
+def _audio_modality_config(modality: str) -> dict:
+    """Minimal audio-bearing DAIC config that selects the prompt-context recipe."""
+    return {
+        "dataset": "daic",
+        "prompt": {
+            "version": PROMPT_CONTEXT_VERSION,
+            "dataset_context": "daic",
+            "user_template": (
+                "{audio_context_block}\n{transcript_block}Based on the {decision_basis}, "
+                "determine whether the subject is {label_descriptor}.\n{label_instruction}"
+            ),
+            "prompt_language": "english",
+        },
+        "labels": {"label_vocab_version": "legacy_english_labels"},
+        "data": {
+            "use_audio": True,
+            "use_text": modality == "audio_text",
+            "sample_mode": "participant_speech_packed30",
+        },
+    }
+
+
+def test_audio_bearing_modalities_render_the_shared_instruction_verbatim() -> None:
+    """Audio-only and audio+text keep the approved audio-bearing instruction.
+
+    The text-only wording is a text-only override; the audio modalities must fall
+    back to the shared instruction and the dataset's default context block.
+    """
+    for modality in ("audio_only", "audio_text"):
+        config = _audio_modality_config(modality)
+        system_prompt = resolve_system_prompt(config)
+        assert SHARED_INSTRUCTION in system_prompt, modality
+        assert SHARED_INSTRUCTION_TEXT_ONLY not in system_prompt, modality
+        assert DATASET_CONTEXT_BLOCKS[PROMPT_CONTEXT_VERSION]["daic"]["default"] in system_prompt
+        assert system_prompt.count("Recording context:") == 1
+
+
+def test_audio_only_omits_the_transcript_block_but_keeps_the_audio_window() -> None:
+    transcript = "I have been feeling low for a few weeks and sleeping is hard."
+    audio_only = render_user_prompt_text(_audio_modality_config("audio_only"), transcript)
+    audio_text = render_user_prompt_text(_audio_modality_config("audio_text"), transcript)
+    assert transcript not in audio_only
+    assert "The transcript of the subject's speech is:" not in audio_only
+    assert transcript in audio_text
+    assert "The transcript of the subject's speech is:" in audio_text
+    assert "Based on the audio, determine whether" in audio_only
+    assert "Based on the audio and transcript, determine whether" in audio_text
 
 
 def test_transcript_placement_and_label_contract() -> None:
