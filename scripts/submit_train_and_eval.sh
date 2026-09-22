@@ -17,6 +17,12 @@ SKIP_MANIFEST_BUILD="${SKIP_MANIFEST_BUILD:-0}"
 # carry its node exclusion into both the training and dependent evaluation
 # submissions without changing the requested resource shape.
 SBATCH_EXTRA_ARGS="${SBATCH_EXTRA_ARGS:-}"
+# Train job shape. The default is today's single 4-GPU lane; the FSDP strategy can
+# use 2 nodes x 4 GPUs (8 GPUs) when a model does not fit one card. The evaluation
+# job keeps its own single-GPU shape regardless.
+TRAIN_NODES="${TRAIN_NODES:-1}"
+TRAIN_GPUS_PER_NODE="${TRAIN_GPUS_PER_NODE:-4}"
+TRAIN_CPUS_PER_GPU="${TRAIN_CPUS_PER_GPU:-20}"
 TRAIN_SCRIPT="${TRAIN_SCRIPT:-$PROJECT_ROOT/scripts/run_train_slurm.sh}"
 EVAL_SCRIPT="${EVAL_SCRIPT:-$PROJECT_ROOT/scripts/run_eval_slurm.sh}"
 if [ -f "/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate" ]; then
@@ -127,6 +133,40 @@ echo "  dataset: $DATASET_NAME"
 echo "  fold_dir: $FOLD_DIR"
 echo "  evaluation_view: $EVAL_VIEW"
 echo "  log_root: $LOG_ROOT"
+# Resolve the training strategy and the effective global batch the run will use.
+read -r SHAPE_STRATEGY PER_DEVICE_BATCH GRAD_ACCUM <<< "$(python - "$CONFIG" "$PROJECT_ROOT" "$EXTRA_TRAIN_ARGS" "$OVERRIDES_JSON_B64" <<'PY'
+import base64, json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+from src.utils import load_yaml, load_yaml_with_overrides
+extra = []
+if len(sys.argv) > 4 and sys.argv[4]:
+    extra = json.loads(base64.b64decode(sys.argv[4]).decode("utf-8"))
+elif len(sys.argv) > 3 and sys.argv[3]:
+    extra = sys.argv[3].split()
+try:
+    config = load_yaml_with_overrides(Path(sys.argv[1]), extra or None)
+except Exception:
+    config = load_yaml(Path(sys.argv[1]))
+training = config.get("training", {})
+print(
+    training.get("strategy", "ddp"),
+    training.get("per_device_train_batch_size", 1),
+    training.get("gradient_accumulation_steps", 1),
+)
+PY
+)"
+WORLD_SIZE=$((TRAIN_NODES * TRAIN_GPUS_PER_NODE))
+EFFECTIVE_BATCH=$((PER_DEVICE_BATCH * GRAD_ACCUM * WORLD_SIZE))
+echo "  training_strategy: $SHAPE_STRATEGY"
+echo "  train_shape: ${TRAIN_NODES} node(s) x ${TRAIN_GPUS_PER_NODE} GPU(s) = ${WORLD_SIZE} rank(s)"
+echo "  effective_global_batch_size: $EFFECTIVE_BATCH (per_device=${PER_DEVICE_BATCH} x accumulation=${GRAD_ACCUM} x world_size=${WORLD_SIZE})"
+if [ "$SHAPE_STRATEGY" = "fsdp" ] && [ "$EFFECTIVE_BATCH" -ne 128 ]; then
+    SUGGESTED_ACCUM=$((128 / (PER_DEVICE_BATCH * WORLD_SIZE)))
+    echo "ERROR: the fsdp recipe keeps an effective global batch of 128; ${WORLD_SIZE} rank(s) give ${EFFECTIVE_BATCH}." >&2
+    echo "       Pass EXTRA_TRAIN_ARGS=\"--set training.gradient_accumulation_steps=${SUGGESTED_ACCUM}\" so the change is recorded in provenance." >&2
+    exit 1
+fi
 # Ensure log root exists
 mkdir -p "$LOG_ROOT"
 EXPORT_ARGS="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$CONFIG,FOLD=$FOLD,RUN_NAME=$RUN_NAME,EXTRA_TRAIN_ARGS=$EXTRA_TRAIN_ARGS,EXTRA_EVAL_ARGS=$EXTRA_EVAL_ARGS,EXPERIMENT_CONTEXT=${EXPERIMENT_CONTEXT:-},LOG_ROOT=$LOG_ROOT,OVERRIDES_JSON_B64=${OVERRIDES_JSON_B64:-},ENV_ACTIVATE=${ENV_ACTIVATE:-},MODEL_PATH=${MODEL_PATH:-},SKIP_MANIFEST_BUILD=$SKIP_MANIFEST_BUILD"
@@ -135,12 +175,26 @@ if [ -n "$SBATCH_EXTRA_ARGS" ]; then
     # shellcheck disable=SC2206
     read -r -a SBATCH_BASE_ARGS <<< "$SBATCH_EXTRA_ARGS"
 fi
+TRAIN_SBATCH_ARGS=(
+    --nodes="$TRAIN_NODES"
+    --ntasks="$WORLD_SIZE"
+    --ntasks-per-node="$TRAIN_GPUS_PER_NODE"
+    --cpus-per-task="$TRAIN_CPUS_PER_GPU"
+    --gres="gpu:$TRAIN_GPUS_PER_NODE"
+)
+EVAL_SBATCH_ARGS=(
+    --nodes=1
+    --ntasks=1
+    --ntasks-per-node=1
+    --cpus-per-task="$TRAIN_CPUS_PER_GPU"
+    --gres="gpu:1"
+)
 echo "Submitting workflow with --chdir=$PROJECT_ROOT"
-TRAIN_JOB_RAW="$(sbatch --parsable --chdir="$PROJECT_ROOT" "${SBATCH_BASE_ARGS[@]}" --export="$EXPORT_ARGS" "$TRAIN_SCRIPT")"
+TRAIN_JOB_RAW="$(sbatch --parsable --chdir="$PROJECT_ROOT" "${SBATCH_BASE_ARGS[@]}" "${TRAIN_SBATCH_ARGS[@]}" --export="$EXPORT_ARGS,NNODES=$TRAIN_NODES,NPROC_PER_NODE=$TRAIN_GPUS_PER_NODE" "$TRAIN_SCRIPT")"
 TRAIN_JOB_ID="${TRAIN_JOB_RAW%%;*}"
 echo "Submitted training job: $TRAIN_JOB_ID"
 BEST_OUTPUT_DIR="$BEST_CHECKPOINT_DIR/standalone_eval"
-BEST_JOB_RAW="$(sbatch --parsable --chdir="$PROJECT_ROOT" "${SBATCH_BASE_ARGS[@]}" --dependency=afterok:$TRAIN_JOB_ID --export="$EXPORT_ARGS,CHECKPOINT_DIR=$BEST_CHECKPOINT_DIR,OUTPUT_DIR=$BEST_OUTPUT_DIR" "$EVAL_SCRIPT")"
+BEST_JOB_RAW="$(sbatch --parsable --chdir="$PROJECT_ROOT" "${SBATCH_BASE_ARGS[@]}" "${EVAL_SBATCH_ARGS[@]}" --dependency=afterok:$TRAIN_JOB_ID --export="$EXPORT_ARGS,CHECKPOINT_DIR=$BEST_CHECKPOINT_DIR,OUTPUT_DIR=$BEST_OUTPUT_DIR" "$EVAL_SCRIPT")"
 BEST_JOB_ID="${BEST_JOB_RAW%%;*}"
 echo "Submitted best-checkpoint eval job: $BEST_JOB_ID"
 if [ -n "${EXPERIMENT_CONTEXT:-}" ] && [ -f "$EXPERIMENT_CONTEXT" ]; then

@@ -11,6 +11,7 @@ from src.utils import (
     INPUT_MODALITY_TEXT_ONLY,
     MODEL_BACKEND_GEMMA4,
     MODEL_BACKEND_QWEN2AUDIO,
+    MODEL_BACKEND_QWEN38,
     MODEL_BACKEND_QWEN3OMNI,
     MODEL_BACKEND_TEXT,
     resolve_input_modality,
@@ -22,7 +23,7 @@ def _backend(config: dict[str, Any]):
     # An explicit model_backend wins over the modality default. This is what lets
     # the same-backbone text-only control (data.use_audio=false) route through the
     # omni Thinker instead of the dense text model (QWEN3_OMNI_IMPLEMENTATION.md §4.2)
-    # and what selects the Gemma 4 unified backend.
+    # and what selects the Gemma 4 unified backend or the Qwen3.8 text-only backend.
     backend = resolve_model_backend(config)
     if backend == MODEL_BACKEND_GEMMA4:
         # Lazy: the Gemma classes only exist in the dedicated Gemma environment
@@ -31,6 +32,13 @@ def _backend(config: dict[str, Any]):
         from src.model import gemma4_lora  # noqa: PLC0415
 
         return gemma4_lora
+    if backend == MODEL_BACKEND_QWEN38:
+        # Lazy: the Qwen3.8 architecture class exists only in a transformers build
+        # that ships qwen3_5. The Qwen2-Audio and Gemma environments must never
+        # import it while another backend is selected.
+        from src.model import qwen38_lora  # noqa: PLC0415
+
+        return qwen38_lora
     if backend == MODEL_BACKEND_QWEN3OMNI:
         return qwen3omni_lora
     if backend == MODEL_BACKEND_QWEN2AUDIO:
@@ -73,14 +81,18 @@ def prepare_backend_examples(
 ) -> list[dict[str, Any]]:
     """Backend-dispatched example prompt preparation.
 
-    Gemma re-renders ``prompt_text``/``training_text`` from the raw system/user
-    fields through its pinned chat template; Qwen keeps the pre-rendered text
-    (no-op).
+    Gemma and Qwen3.8 re-render ``prompt_text``/``training_text`` from the raw
+    system/user fields through their own pinned chat template; the Qwen2-Audio
+    text path keeps the pre-rendered text (no-op).
     """
     if resolve_model_backend(config) == MODEL_BACKEND_GEMMA4:
         from src.model.gemma4_io import prepare_gemma4_examples  # noqa: PLC0415
 
         return prepare_gemma4_examples(examples, config, processor)
+    if resolve_model_backend(config) == MODEL_BACKEND_QWEN38:
+        from src.model.qwen38_lora import prepare_qwen38_examples  # noqa: PLC0415
+
+        return prepare_qwen38_examples(examples, config, processor)
     return examples
 
 
@@ -112,6 +124,19 @@ def restore_model_for_training(model, config: dict[str, Any]) -> None:
 
 def save_adapter_and_processor(model, processor, output_dir: str | Path, config: dict[str, Any]) -> None:
     _backend(config).save_adapter_and_processor(model, processor, output_dir, config=config)
+
+
+def fsdp_wrap_policy_names(config: dict[str, Any], model) -> list[str] | None:
+    """Backend-dispatched FSDP wrap policy: the transformer classes to wrap.
+
+    Returns ``None`` when the backend does not declare one, so Accelerate keeps
+    its own default policy. Only the FSDP strategy calls this hook; the DDP path
+    never does.
+    """
+    hook = getattr(_backend(config), "fsdp_transformer_cls_names", None)
+    if hook is None:
+        return None
+    return hook(model)
 
 
 def resolve_audio_adapter_config(config: dict[str, Any] | None = None) -> dict[str, Any]:

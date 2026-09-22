@@ -92,6 +92,47 @@ def test_override_roundtrip_is_lossless_with_spaces_and_shell_metacharacters():
     assert decoded == tricky
 
 
+def test_contract_reports_the_training_shape_and_guards_the_fsdp_batch():
+    # Default lane: one node, four GPUs, DDP.
+    contract = resolve_contract(deployment=_deployment(), config_dict=_config(), **BASE_KW)
+    shape = contract["training_shape"]
+    assert shape["nodes"] == 1 and shape["gpus_per_node"] == 4 and shape["world_size"] == 4
+    assert shape["effective_global_batch_size"] == (
+        shape["per_device_train_batch_size"] * shape["gradient_accumulation_steps"] * 4
+    )
+    assert "1 node" in contract["job_graph"][0]["shape"]
+    assert "--nnodes=1" in contract["launch_command"]
+
+    # Two nodes x four GPUs is selectable; the effective batch must stay at 128.
+    fsdp_config = dict(_config())
+    fsdp_config["training"] = dict(fsdp_config.get("training", {}))
+    fsdp_config["training"].update(
+        {"strategy": "fsdp", "per_device_train_batch_size": 1, "gradient_accumulation_steps": 32}
+    )
+    with pytest.raises(SubmissionError, match="effective global batch of 128"):
+        resolve_contract(
+            deployment=_deployment(),
+            config_dict=fsdp_config,
+            train_nodes=2,
+            train_gpus_per_node=4,
+            **BASE_KW,
+        )
+    fsdp_config["training"]["gradient_accumulation_steps"] = 16
+    two_node = resolve_contract(
+        deployment=_deployment(),
+        config_dict=fsdp_config,
+        train_nodes=2,
+        train_gpus_per_node=4,
+        **BASE_KW,
+    )
+    assert two_node["training_shape"]["world_size"] == 8
+    assert two_node["training_shape"]["effective_global_batch_size"] == 128
+    assert "--nnodes=2" in two_node["launch_command"]
+    script = build_remote_submit_script(two_node)
+    assert "export TRAIN_NODES=2" in script
+    assert "export TRAIN_GPUS_PER_NODE=4" in script
+
+
 def test_resolve_contract_paths_follow_writable_contract():
     contract = resolve_contract(deployment=_deployment(), config_dict=_config(), **BASE_KW)
     exp_id = BASE_KW["experiment_id"]
@@ -244,7 +285,11 @@ def test_worker_scripts_decode_overrides_json_b64():
         assert 'OVERRIDE_ARGS' in text
     wrapper = (PROJECT_ROOT / "scripts" / "submit_train_and_eval.sh").read_text()
     assert "OVERRIDES_JSON_B64" in wrapper
+    # The evaluation job keeps its own single-GPU shape while the training job
+    # carries the configurable lane shape.
     assert (
         'sbatch --parsable --chdir="$PROJECT_ROOT" "${SBATCH_BASE_ARGS[@]}" '
+        '"${EVAL_SBATCH_ARGS[@]}" '
         '--dependency=afterok:$TRAIN_JOB_ID'
     ) in wrapper
+    assert '"${TRAIN_SBATCH_ARGS[@]}"' in wrapper

@@ -27,6 +27,15 @@ else
     echo "Environment activate script not found: $ENV_ACTIVATE"
     exit 1
 fi
+# The interpreter of the activated environment drives the ranks: an isolated
+# overlay venv has no console scripts of its own, and torchrun's shebang would
+# otherwise run the base environment's python and hide the overlay's packages.
+if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+    PYTHON_BIN="$VIRTUAL_ENV/bin/python"
+else
+    PYTHON_BIN="$(command -v python)"
+fi
+echo "Training interpreter: $PYTHON_BIN"
 
 # MN5 has no outbound internet: force offline everywhere, and hard-fail when a
 # package or model would try to reach the network. Qwen jobs load local GPFS
@@ -66,6 +75,7 @@ CONFIG="${CONFIG:-$PROJECT_ROOT/configs/main/daic_audio_text_harmonized_selmacro
 FOLD="${FOLD:-0}"
 RUN_NAME="${RUN_NAME:-mn5_reproduction}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
+NNODES="${NNODES:-1}"
 MODEL_PATH="${MODEL_PATH:-}"
 EXTRA_TRAIN_ARGS="${EXTRA_TRAIN_ARGS:-}"
 OVERRIDES_JSON_B64="${OVERRIDES_JSON_B64:-}"
@@ -233,9 +243,7 @@ export CUBLAS_WORKSPACE_CONFIG="${CUBLAS_WORKSPACE_CONFIG:-:4096:8}"
 export PYTHONHASHSEED="${PYTHONHASHSEED:-0}"
 echo "Determinism env | CUBLAS_WORKSPACE_CONFIG=$CUBLAS_WORKSPACE_CONFIG PYTHONHASHSEED=$PYTHONHASHSEED" | tee -a "$RUN_LOG_FILE"
 
-CMD=(
-    torchrun
-    --nproc_per_node="$NPROC_PER_NODE"
+TRAIN_ENTRY=(
     "$PROJECT_ROOT/src/train.py"
     --config "$CONFIG"
     --fold "$FOLD"
@@ -243,20 +251,57 @@ CMD=(
 )
 
 if [ -n "$MODEL_PATH" ]; then
-    CMD+=(--model_name_or_path "$MODEL_PATH")
+    TRAIN_ENTRY+=(--model_name_or_path "$MODEL_PATH")
 fi
 
 if [ -n "$LABEL_MASK_FLAG" ]; then
-    CMD+=("$LABEL_MASK_FLAG")
+    TRAIN_ENTRY+=("$LABEL_MASK_FLAG")
 fi
 
 if [ "${#OVERRIDE_ARGS[@]}" -gt 0 ]; then
     # Lossless common override array (from OVERRIDES_JSON_B64 or legacy split).
-    CMD+=("${OVERRIDE_ARGS[@]}")
+    TRAIN_ENTRY+=("${OVERRIDE_ARGS[@]}")
 fi
 
 if [ -n "$EXPERIMENT_CONTEXT" ]; then
-    CMD+=(--experiment-context "$EXPERIMENT_CONTEXT")
+    TRAIN_ENTRY+=(--experiment-context "$EXPERIMENT_CONTEXT")
+fi
+
+# Multi-node shape: one 4-GPU lane per node (2 nodes x 4 GPUs = 8 GPUs).
+# Slurm runs the batch script on the FIRST node only, so the second node needs
+# srun to start its own torchrun; the node rank must expand inside each task,
+# which is why it is passed to bash -c rather than expanded on the batch host.
+if [ "${NNODES:-1}" -gt 1 ]; then
+    MASTER_ADDR="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)"
+    MASTER_PORT="${MASTER_PORT:-29517}"
+    SRUN_CPUS_PER_TASK=$(( ${SLURM_CPUS_PER_TASK:-20} * NPROC_PER_NODE ))
+    # The selected environment's own interpreter drives the ranks. An isolated
+    # overlay venv has no console scripts, and torchrun's shebang would otherwise
+    # run the base environment's python and hide the overlay's packages.
+    echo "Multi-node rendezvous | nnodes=$NNODES master=$MASTER_ADDR:$MASTER_PORT tasks_per_node=1 cpus_per_task=$SRUN_CPUS_PER_TASK python=$PYTHON_BIN" | tee -a "$RUN_LOG_FILE"
+    CMD=(
+        srun
+        --nodes="$NNODES"
+        --ntasks="$NNODES"
+        --ntasks-per-node=1
+        --cpus-per-task="$SRUN_CPUS_PER_TASK"
+        --export=ALL
+        bash -c 'exec "$5" -m torch.distributed.run --nproc_per_node="$1" --nnodes="$2" --node_rank="$SLURM_NODEID" --master_addr="$3" --master_port="$4" "${@:6}"' _
+        "$NPROC_PER_NODE"
+        "$NNODES"
+        "$MASTER_ADDR"
+        "$MASTER_PORT"
+        "$PYTHON_BIN"
+        "${TRAIN_ENTRY[@]}"
+    )
+else
+    CMD=(
+        "$PYTHON_BIN"
+        -m
+        torch.distributed.run
+        --nproc_per_node="$NPROC_PER_NODE"
+        "${TRAIN_ENTRY[@]}"
+    )
 fi
 
 printf 'Launch command: ' | tee -a "$RUN_LOG_FILE"

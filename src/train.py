@@ -18,7 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import torch
-from accelerate import Accelerator, DistributedDataParallelKwargs
+from accelerate import Accelerator
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from transformers import get_linear_schedule_with_warmup
@@ -62,6 +62,7 @@ from src.data.split_utils import (
 from src.evaluate import _processor_inputs, evaluate_examples
 from src.model.runtime import (
     build_collator,
+    fsdp_wrap_policy_names,
     load_model_for_inference,
     load_model_for_training,
     load_processor,
@@ -70,9 +71,17 @@ from src.model.runtime import (
     prepare_model_for_evaluation,
     restore_model_for_training,
     resolve_audio_adapter_config,
-    save_adapter_and_processor,
 )
 from src.model.lora_common import resolved_lora_layer_selection
+from src.training_strategy import (
+    activation_offload_context,
+    broadcast_flag,
+    build_accelerator,
+    effective_global_batch_size,
+    resolve_activation_offload,
+    resolve_training_strategy,
+    save_training_checkpoint,
+)
 from src.sampling import (
     SAMPLING_MODE_SUBJECT_OVERSAMPLE,
     build_subject_oversampling,
@@ -1023,6 +1032,90 @@ def _compute_dataset_loss(
     return sum(losses) / max(1, len(losses))
 
 
+def _evaluate_selection_components(
+    accelerator,
+    model,
+    processor,
+    selection_components: list[dict[str, Any]],
+    config: dict[str, Any],
+    logs_dir: Path,
+    epoch: int,
+    sample_prediction_mode: str,
+) -> dict[str, Any]:
+    """Run the epoch-end selection evaluation on every rank.
+
+    FSDP needs every rank inside the forward collectives, so the evaluation is
+    replicated instead of rank-0-only: the same examples in the same order, with
+    the same number of forward calls on every rank. Only the main process writes
+    the evidence files and logs; the metrics agree across ranks because the
+    inputs and their order are identical.
+
+    The evaluation runs through the *prepared* model. Calling the unwrapped module
+    tree directly breaks under FSDP with ``use_orig_params``: the original
+    parameter views are only valid inside the FSDP forward, and a direct call sees
+    flattened 1-D weights.
+    """
+    prepare_model_for_evaluation(model, config)
+    component_headlines: list[tuple[str, dict[str, Any]]] = []
+    component_losses: dict[str, float] = {}
+    component_eval_dirs: dict[str, str] = {}
+    primary_headline_metrics: dict[str, Any] | None = None
+    primary_selection_loss: float | None = None
+    primary_eval_dir: Path | None = None
+    for index, component in enumerate(selection_components):
+        component_eval_dir = ensure_dir(logs_dir / f"{component['log_dir_prefix']}_epoch_{epoch}")
+        component_loss = _compute_dataset_loss(model, component["loss_loader"])
+        if accelerator.is_main_process:
+            LOGGER.info(
+                "Selection evaluation dataset=%s split=%s | backend=%s | aggregation_level=%s | protocol=%s",
+                component["dataset"],
+                component["split_name"],
+                sample_prediction_mode,
+                resolve_aggregation_level(component["config"]),
+                evaluation_protocol_name(sample_prediction_mode),
+            )
+        metrics = evaluate_examples(
+            model,
+            processor,
+            component["examples"],
+            component["config"],
+            component_eval_dir,
+            checkpoint_name=f"epoch_{epoch}",
+            sample_prediction_mode=sample_prediction_mode,
+            write_artifacts=accelerator.is_main_process,
+        )
+        headline_metrics = metrics["backend_results"][sample_prediction_mode]["headline_metrics"]
+        component_headlines.append((component["name"], headline_metrics))
+        component_losses[f"{component['name']}_loss"] = float(component_loss)
+        component_eval_dirs[component["name"]] = str(component_eval_dir)
+        if index == 0:
+            primary_headline_metrics = headline_metrics
+            primary_selection_loss = float(component_loss)
+            primary_eval_dir = component_eval_dir
+        if accelerator.is_main_process:
+            LOGGER.info(
+                "Selection component epoch=%s | dataset=%s split=%s aggregation_level=%s | loss=%.6f "
+                "positive_f1=%.6f macro_f1=%.6f precision=%.6f recall=%.6f",
+                epoch,
+                component["dataset"],
+                component["split_name"],
+                resolve_aggregation_level(component["config"]),
+                component_loss,
+                float(headline_metrics["positive_f1"]),
+                float(headline_metrics["macro_f1"]),
+                float(headline_metrics["precision"]),
+                float(headline_metrics["recall"]),
+            )
+    return {
+        "component_headlines": component_headlines,
+        "component_losses": component_losses,
+        "component_eval_dirs": component_eval_dirs,
+        "primary_headline_metrics": primary_headline_metrics,
+        "primary_selection_loss": primary_selection_loss,
+        "primary_eval_dir": primary_eval_dir,
+    }
+
+
 def _save_best_checkpoint(save_strategy: str) -> bool:
     return save_strategy in {"full", "best_only"}
 
@@ -1848,15 +1941,14 @@ def main() -> None:
     )
     warmup_steps = int(total_steps * float(config["training"]["warmup_ratio"]))
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps)
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     dist_timeout_minutes = int(config.get("training", {}).get("dist_timeout_minutes", 0) or 0)
     if dist_timeout_minutes > 0 and not torch.distributed.is_initialized():
-        # Rank-0-only per-epoch selection evaluation (e.g. 445 balanced-cover
-        # bundles) can hold the other ranks at the next collective for longer
-        # than torch's default 600s NCCL watchdog timeout. Pre-initialize the
-        # process group with a longer timeout; Accelerate reuses an already
-        # initialized group. Opt-in via training.dist_timeout_minutes so other
-        # recipes keep the default behavior.
+        # A slow collective (e.g. the epoch-end evaluation or an FSDP all-gather)
+        # can hold the other ranks at the next collective for longer than torch's
+        # default 600s NCCL watchdog timeout. Pre-initialize the process group
+        # with a longer timeout; Accelerate reuses an already initialized group.
+        # Opt-in via training.dist_timeout_minutes so other recipes keep the
+        # default behavior.
         import datetime
 
         torch.distributed.init_process_group(
@@ -1867,10 +1959,20 @@ def main() -> None:
             "(training.dist_timeout_minutes).",
             dist_timeout_minutes,
         )
-    accelerator = Accelerator(
-        gradient_accumulation_steps=int(config["training"]["gradient_accumulation_steps"]),
-        mixed_precision="bf16" if bool(config["training"].get("bf16", False)) else "no",
-        kwargs_handlers=[ddp_kwargs],
+    strategy = resolve_training_strategy(config)
+    accelerator = build_accelerator(
+        config,
+        model=model,
+        wrap_policy_names=lambda wrapped_model: fsdp_wrap_policy_names(config, wrapped_model),
+    )
+    LOGGER.info(
+        "Training strategy | strategy=%s world_size=%s per_device_train_batch_size=%s "
+        "gradient_accumulation_steps=%s effective_global_batch_size=%s",
+        strategy,
+        int(os.environ.get("WORLD_SIZE", "1")),
+        int(config["training"].get("per_device_train_batch_size", 1)),
+        int(config["training"].get("gradient_accumulation_steps", 1)),
+        effective_global_batch_size(config, int(os.environ.get("WORLD_SIZE", "1"))),
     )
     model, optimizer, train_loader, scheduler = accelerator.prepare(model, optimizer, train_loader, scheduler)
     if daic_schedule_audit is not None:
@@ -1910,6 +2012,22 @@ def main() -> None:
         "cv_protocol": partition_plan["cv_protocol"],
         "fold": int(args.fold),
         "save_strategy": args.save_strategy,
+        "training_strategy": {
+            "strategy": resolve_training_strategy(config),
+            "world_size": int(os.environ.get("WORLD_SIZE", "1")),
+            "per_device_train_batch_size": int(config["training"].get("per_device_train_batch_size", 1)),
+            "gradient_accumulation_steps": int(config["training"].get("gradient_accumulation_steps", 1)),
+            "effective_global_batch_size": effective_global_batch_size(
+                config, int(os.environ.get("WORLD_SIZE", "1"))
+            ),
+            "run_final_eval_in_train": bool(
+                config["training"].get("run_final_eval_in_train", False)
+            ),
+            "forced_sync_each_microbatch": (
+                resolve_training_strategy(config) == "fsdp"
+            ),
+            "activation_offload": resolve_activation_offload(config),
+        },
         "sampling": {
             "mode": str(config.get("training", {}).get("class_balance", "none")).strip().lower(),
             "oversampling_ratio": config.get("training", {}).get("oversampling_ratio"),
@@ -2118,7 +2236,7 @@ def main() -> None:
         else:
             raise ValueError(f"Unsupported training.objective={objective!r}.")
         for step, batch in enumerate(training_batches, start=1):
-            with accelerator.accumulate(model):
+            with activation_offload_context(config), accelerator.accumulate(model):
                 loss_weights = batch.pop("loss_weight", None)
                 outputs = model(**batch)
                 loss = outputs.loss
@@ -2167,56 +2285,30 @@ def main() -> None:
             )
 
         accelerator.wait_for_everyone()
+        selection_eval: dict[str, Any] | None = None
+        if selection_enabled:
+            selection_eval = _evaluate_selection_components(
+                accelerator,
+                model,
+                processor,
+                selection_components,
+                config,
+                logs_dir,
+                epoch,
+                sample_prediction_mode,
+            )
+        accelerator.wait_for_everyone()
+        save_best_selected = False
         if accelerator.is_main_process:
             unwrapped = accelerator.unwrap_model(model)
             if selection_enabled:
-                component_headlines: list[tuple[str, dict[str, Any]]] = []
-                component_losses: dict[str, float] = {}
-                component_eval_dirs: dict[str, str] = {}
-                primary_headline_metrics: dict[str, Any] | None = None
-                primary_selection_loss: float | None = None
-                primary_eval_dir: Path | None = None
-                for component in selection_components:
-                    component_eval_dir = ensure_dir(logs_dir / f"{component['log_dir_prefix']}_epoch_{epoch}")
-                    component_loss = _compute_dataset_loss(unwrapped, component["loss_loader"])
-                    LOGGER.info(
-                        "Selection evaluation dataset=%s split=%s | backend=%s | aggregation_level=%s | protocol=%s",
-                        component["dataset"],
-                        component["split_name"],
-                        sample_prediction_mode,
-                        resolve_aggregation_level(component["config"]),
-                        evaluation_protocol_name(sample_prediction_mode),
-                    )
-                    metrics = evaluate_examples(
-                        unwrapped,
-                        processor,
-                        component["examples"],
-                        component["config"],
-                        component_eval_dir,
-                        checkpoint_name=f"epoch_{epoch}",
-                        sample_prediction_mode=sample_prediction_mode,
-                    )
-                    headline_metrics = metrics["backend_results"][sample_prediction_mode]["headline_metrics"]
-                    component_headlines.append((component["name"], headline_metrics))
-                    component_losses[f"{component['name']}_loss"] = float(component_loss)
-                    component_eval_dirs[component["name"]] = str(component_eval_dir)
-                    if component is selection_components[0]:
-                        primary_headline_metrics = headline_metrics
-                        primary_selection_loss = float(component_loss)
-                        primary_eval_dir = component_eval_dir
-                    LOGGER.info(
-                        "Selection component epoch=%s | dataset=%s split=%s aggregation_level=%s | loss=%.6f "
-                        "positive_f1=%.6f macro_f1=%.6f precision=%.6f recall=%.6f",
-                        epoch,
-                        component["dataset"],
-                        component["split_name"],
-                        resolve_aggregation_level(component["config"]),
-                        component_loss,
-                        float(headline_metrics["positive_f1"]),
-                        float(headline_metrics["macro_f1"]),
-                        float(headline_metrics["precision"]),
-                        float(headline_metrics["recall"]),
-                    )
+                assert selection_eval is not None
+                component_headlines = selection_eval["component_headlines"]
+                component_losses = selection_eval["component_losses"]
+                component_eval_dirs = selection_eval["component_eval_dirs"]
+                primary_headline_metrics = selection_eval["primary_headline_metrics"]
+                primary_selection_loss = selection_eval["primary_selection_loss"]
+                primary_eval_dir = selection_eval["primary_eval_dir"]
                 if primary_headline_metrics is None or primary_selection_loss is None or primary_eval_dir is None:
                     raise RuntimeError("Selection was enabled but no selection components were evaluated.")
                 metric_value = float(primary_headline_metrics["positive_f1"])
@@ -2292,7 +2384,7 @@ def main() -> None:
                     if _save_best_checkpoint(args.save_strategy):
                         if best_dir.exists():
                             shutil.rmtree(best_dir)
-                        save_adapter_and_processor(unwrapped, processor, best_dir, config=config)
+                        save_best_selected = True
                     if partition_plan["cv_protocol"] == CV_PROTOCOL_TRAIN_VAL:
                         best_validation_dir = eval_dir / "best_validation"
                         if best_validation_dir.exists():
@@ -2367,6 +2459,12 @@ def main() -> None:
                 )
                 LOGGER.info("Finished epoch=%s | selection disabled | train_loss=%.6f", epoch, sum(epoch_losses) / max(1, len(epoch_losses)))
             _log_peak_gpu_memory(LOGGER, f"epoch_{epoch}")
+        # Collective checkpoint save: the main process's decision travels to every
+        # rank first, then every rank joins the gather (FSDP) and the main process
+        # writes the adapter directory.
+        save_best_selected = broadcast_flag(accelerator, save_best_selected)
+        if save_best_selected:
+            save_training_checkpoint(accelerator, model, processor, best_dir, config=config)
         stop_training_tensor = torch.tensor(0, device=accelerator.device, dtype=torch.int32)
         if accelerator.is_main_process and early_stop_cfg["enabled"] and early_stop_bad_epochs >= early_stop_cfg["patience"]:
             stopped_early = True
@@ -2391,6 +2489,17 @@ def main() -> None:
             gc.collect()
             torch.cuda.empty_cache()
 
+    # Per-rank memory evidence: the FSDP decision needs the peak of every rank,
+    # not only rank 0's.
+    if torch.cuda.is_available():
+        LOGGER.info(
+            "Per-rank training memory | rank=%s peak_allocated_gb=%.3f peak_reserved_gb=%.3f free_gb=%.3f",
+            int(getattr(accelerator, "process_index", 0)),
+            torch.cuda.max_memory_allocated() / 1024**3,
+            torch.cuda.max_memory_reserved() / 1024**3,
+            torch.cuda.mem_get_info()[0] / 1024**3,
+        )
+    save_last_selected = False
     if accelerator.is_main_process:
         unwrapped = accelerator.unwrap_model(model)
         if objective == "subject_mean_margin_mil":
@@ -2438,11 +2547,16 @@ def main() -> None:
         if selection_enabled and _save_last_checkpoint(args.save_strategy):
             if last_dir.exists():
                 shutil.rmtree(last_dir)
-            save_adapter_and_processor(unwrapped, processor, last_dir, config=config)
+            save_last_selected = True
         if not selection_enabled:
             if last_dir.exists():
                 shutil.rmtree(last_dir)
-            save_adapter_and_processor(unwrapped, processor, last_dir, config=config)
+            save_last_selected = True
+    save_last_selected = broadcast_flag(accelerator, save_last_selected)
+    if save_last_selected:
+        save_training_checkpoint(accelerator, model, processor, last_dir, config=config)
+    if accelerator.is_main_process:
+        if not selection_enabled:
             if best_dir.exists():
                 shutil.rmtree(best_dir)
             shutil.copytree(last_dir, best_dir)
