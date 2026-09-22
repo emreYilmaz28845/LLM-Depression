@@ -531,7 +531,7 @@ def test_lora_regex_matches_only_attention_and_dense_mlp() -> None:
         assert not pattern.fullmatch(name), name
 
 
-def test_expected_lora_module_names_follow_the_module_tree() -> None:
+def test_expected_lora_module_names_follow_the_module_tree(monkeypatch) -> None:
     # The real checkpoint is MoE in every layer: attention only.
     moe = _FakeThinker(layers=3, dense_mlp=False)
     expected = sorted(expected_lora_module_names(moe))
@@ -544,6 +544,7 @@ def test_expected_lora_module_names_follow_the_module_tree() -> None:
     # The PEFT-wrapped path form resolves to the same frame of reference, while an
     # unwrapped Thinker is not mistaken for a wrapper (transformers' base_model
     # property makes .base_model.model resolve to the text model itself).
+    monkeypatch.setattr(qwen3omni_lora, "PeftModel", _FakePeftWrapper)
     wrapped = _FakePeftWrapper(moe)
     assert sorted(expected_lora_module_names(wrapped)) == expected
     assert sorted(expected_lora_module_names(moe)) == expected

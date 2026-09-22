@@ -117,20 +117,36 @@ def load_processor(model_name_or_path: str, config: dict[str, Any] | None = None
     return Qwen3OmniMoeProcessor.from_pretrained(model_name_or_path)
 
 
+def _decoder_layers_path_or_none(root) -> str | None:
+    """Path of the decoder-layer ModuleList inside ``root``, or ``None``.
+
+    Structure-based rather than name-based: the decoder is the ModuleList whose
+    children carry both ``self_attn`` and ``mlp``. The audio encoder's layer list
+    has ``self_attn`` but no ``mlp``, and the vision tower's blocks have ``mlp``
+    but no ``self_attn``, so neither can be mistaken for the decoder.
+    """
+    if not isinstance(root, torch.nn.Module):
+        return None
+    for name, module in root.named_modules():
+        if isinstance(module, torch.nn.ModuleList) and len(module) > 0:
+            first = module[0]
+            if hasattr(first, "self_attn") and hasattr(first, "mlp"):
+                return name
+    return None
+
+
 def _peft_base_model(model):
     """The module PEFT wrapped, or ``model`` itself.
 
-    ``PreTrainedModel.base_model`` is a property that returns the module named by
-    ``base_model_prefix``, so ``hasattr(model, "base_model")`` is true for an
-    unwrapped Thinker too and ``.base_model.model`` can point back at itself. A
-    real PEFT wrapper is the case where ``base_model.model`` is a different
-    module, which is what this checks.
+    ``PreTrainedModel.base_model`` is a property that resolves
+    ``base_model_prefix``, so an unwrapped Thinker also answers
+    ``hasattr(model, "base_model")``. Wrapper detection is therefore structural:
+    the candidate must be a different module *and* must carry the decoder layers
+    the audit adapts.
     """
-    base_model = getattr(model, "base_model", None)
-    if isinstance(base_model, torch.nn.Module):
-        wrapped = getattr(base_model, "model", None)
-        if isinstance(wrapped, torch.nn.Module) and wrapped is not base_model:
-            return wrapped
+    if isinstance(model, PeftModel):
+        # Exact: PEFT reports matched module names relative to model.base_model.
+        return model.base_model.model
     return model
 
 
@@ -335,22 +351,14 @@ def resolve_qwen3omni_model_class(model_name_or_path: str | Path) -> str:
 
 
 def _qwen3omni_decoder_layers_path(model) -> str:
-    """Dotted path of the decoder-layer ModuleList inside ``model``.
-
-    Structure-based rather than name-based: the decoder is the ModuleList whose
-    children carry both ``self_attn`` and ``mlp``. The audio encoder's layer list
-    has ``self_attn`` but no ``mlp``, and the vision tower's blocks have ``mlp``
-    but no ``self_attn``, so neither can be mistaken for the decoder.
-    """
-    for name, module in model.named_modules():
-        if isinstance(module, torch.nn.ModuleList) and len(module) > 0:
-            first = module[0]
-            if hasattr(first, "self_attn") and hasattr(first, "mlp"):
-                return name
-    raise ValueError(
-        "Could not locate the Qwen3-Omni Thinker decoder layers; expected a "
-        "ModuleList of layers carrying self_attn and mlp."
-    )
+    """Dotted path of the decoder-layer ModuleList inside ``model``."""
+    path = _decoder_layers_path_or_none(model)
+    if path is None:
+        raise ValueError(
+            "Could not locate the Qwen3-Omni Thinker decoder layers; expected a "
+            "ModuleList of layers carrying self_attn and mlp."
+        )
+    return path
 
 
 def _qwen3omni_decoder_layers(model):
@@ -803,7 +811,10 @@ def load_model_for_training(model_name_or_path: str, config: dict[str, Any]):
     if unmatched:
         raise ValueError(
             "The resolved LoRA targets disagree with the declared anchored pattern: "
-            f"{unmatched[:8]}"
+            f"{unmatched[:8]}. Structure: class={type(model).__name__} "
+            f"decoder_path={_decoder_layers_path_or_none(model)!r} "
+            f"children={[name for name, _ in model.named_children()]} "
+            f"first_modules={[name for name, _ in model.named_modules()][:6]}"
         )
     LOGGER.info(
         "Resolved %s LoRA target modules from the anchored pattern (first: %s, last: %s).",
