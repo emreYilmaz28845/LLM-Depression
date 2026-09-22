@@ -1,5 +1,29 @@
 # Configs
 
+## Canonical evaluation policy for new experiments
+
+New experiments use the likelihood evaluation. This is the canonical decision rule, not a per-run choice:
+
+- **backend**: `evaluation.sample_prediction_mode: likelihood` with `evaluation.headline_mode: likelihood`; the
+  per-subject decision is the argmax of the mean dep/non candidate scores (`argmax(mean dep_score,
+  mean non_score)`), and Turkish pooled text uses its locked pair-margin rule
+  (`subject_score_aggregation: turkish_pooled_text_pair_mean_margin_strict_v1`);
+- **view**: `evaluation.evaluation_view: harmonized_all_windows_full_coverage`;
+- **aggregation**: strict subject-level (`evaluation.aggregation_level: subject`);
+- **headline metrics**: Macro-F1, Positive-F1 and UAR, read from `headline/binary_strict_*`
+  (`binary_strict_uar` is the unweighted average recall, i.e. balanced accuracy); AUROC is not a headline;
+- **INVALID counts as wrong**: a subject whose prediction is not a valid label counts as an error under the
+  strict rule, and `valid_only_*` is not a headline;
+- **no mixed columns**: historical teacher-forced results are never placed in the same comparison column (or
+  table block) as likelihood results. Teacher forcing (`original_teacher_forced`) stays a separately labelled
+  legacy/diagnostic view: its configs are archived under `configs/archive/pre_likelihood_20260917/` and its
+  former canonical workbook values live in the workbook's "Legacy TF" sheet.
+
+Teacher-forced evaluation is not run for new experiments. Historical configs, archived results and existing
+`run_config.yaml` files are not rewritten: they remain the record of what ran under the older recipe, and a
+report that cites them must say which backend/view each number comes from. Checkpoint selection and early
+stopping stay `inner_val_macro_f1`, mode `max`.
+
 ## Cross-validation reporting rule
 
 For every model, head, language, and standalone CV dataset, report the
