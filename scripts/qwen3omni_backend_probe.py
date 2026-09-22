@@ -451,6 +451,7 @@ def run_fsdp_mode(args, mode: str) -> dict[str, Any]:
             "timings": timings,
         }
     elif mode == "maxrisk":
+        host_before = _host_memory_gb()
         for modality in modalities:
             batches = _batches(args, config, processor, modality, inventory)
             started = time.monotonic()
@@ -467,32 +468,59 @@ def run_fsdp_mode(args, mode: str) -> dict[str, Any]:
             "structure": structure,
             "losses": losses,
             "timings": timings,
+            "host_memory_before_gb": host_before,
+            "host_memory_after_gb": _host_memory_gb(),
         }
     elif mode == "perf":
         modality = args.modalities[0]
         batches = _batches(args, config, processor, modality, inventory)
+        # One measured unit is a single-example forward+backward+step at this
+        # world size; the accumulation window is derived from it, never assumed.
         steps = max(1, args.steps)
         warmup = max(0, args.warmup_steps)
         step_seconds: list[float] = []
+        host_before = _host_memory_gb()
         for index in range(steps + warmup):
             entry = batches[index % len(batches)]
             started = time.monotonic()
             _accumulation_step(accelerator, model, optimizer, config, entry["batch"], True)
             if index >= warmup:
                 step_seconds.append(time.monotonic() - started)
-        examples = steps * structure["effective_global_batch_size"]
+        host_after = _host_memory_gb()
         wall = sum(step_seconds)
+        microbatch_seconds = wall / len(step_seconds) if step_seconds else None
+        accumulation = int(structure["gradient_accumulation_steps"])
+        examples_per_second = 1.0 / microbatch_seconds if microbatch_seconds else None
+        optimizer_step_seconds = (
+            microbatch_seconds * accumulation if microbatch_seconds is not None else None
+        )
         extra = {
             "mode": mode,
             "structure": structure,
-            "steps": steps,
+            "measured_steps": steps,
             "warmup_steps": warmup,
+            "measured_unit": "single-example forward+backward+optimizer-step",
             "step_seconds": [round(value, 3) for value in step_seconds],
-            "step_seconds_mean": round(wall / len(step_seconds), 3),
-            "examples_per_second": round(examples / wall, 4) if wall else None,
-            "optimizer_steps_per_hour": round(3600 * steps / wall, 2) if wall else None,
+            "microbatch_seconds_mean": (
+                round(microbatch_seconds, 3) if microbatch_seconds is not None else None
+            ),
+            "examples_per_second_per_rank": (
+                round(examples_per_second, 4) if examples_per_second is not None else None
+            ),
+            "global_examples_per_second": (
+                round(examples_per_second * world_size, 4)
+                if examples_per_second is not None
+                else None
+            ),
+            "derived_optimizer_step_seconds": (
+                round(optimizer_step_seconds, 2) if optimizer_step_seconds is not None else None
+            ),
+            "derived_optimizer_steps_per_hour": (
+                round(3600 / optimizer_step_seconds, 2) if optimizer_step_seconds else None
+            ),
             "losses": losses,
-            "steps_per_hour": round(3600 * steps / wall, 2) if wall else None,
+            "host_memory_before_gb": host_before,
+            "host_memory_after_gb": host_after,
         }
     else:  # pragma: no cover - argparse restricts the choices
         raise SystemExit(f"unsupported mode {mode!r}")
