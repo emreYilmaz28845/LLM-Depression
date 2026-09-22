@@ -117,11 +117,28 @@ def load_processor(model_name_or_path: str, config: dict[str, Any] | None = None
     return Qwen3OmniMoeProcessor.from_pretrained(model_name_or_path)
 
 
+def _peft_base_model(model):
+    """The module PEFT wrapped, or ``model`` itself.
+
+    ``PreTrainedModel.base_model`` is a property that returns the module named by
+    ``base_model_prefix``, so ``hasattr(model, "base_model")`` is true for an
+    unwrapped Thinker too and ``.base_model.model`` can point back at itself. A
+    real PEFT wrapper is the case where ``base_model.model`` is a different
+    module, which is what this checks.
+    """
+    base_model = getattr(model, "base_model", None)
+    if isinstance(base_model, torch.nn.Module):
+        wrapped = getattr(base_model, "model", None)
+        if isinstance(wrapped, torch.nn.Module) and wrapped is not base_model:
+            return wrapped
+    return model
+
+
 def _unwrap_base_model(model):
-    """Strip the PEFT wrapper, then descend into ``.thinker`` if a full omni model
-    slipped through. Our loaders return the Thinker directly, so the descent is a
-    defensive no-op in the common path."""
-    base = model.base_model.model if hasattr(model, "base_model") and hasattr(model.base_model, "model") else model
+    """The Thinker: strip the PEFT wrapper, then descend into ``.thinker`` if a
+    full omni model slipped through. Our loaders return the Thinker directly, so
+    the descent is a defensive no-op in the common path."""
+    base = _peft_base_model(model)
     if hasattr(base, "thinker") and hasattr(base.thinker, "audio_tower"):
         return base.thinker
     return base
@@ -341,11 +358,7 @@ def _qwen3omni_decoder_layers(model):
 
     Resolved against the PEFT base model, so a wrapped model and its base agree.
     """
-    base = (
-        model.base_model.model
-        if hasattr(model, "base_model") and hasattr(model.base_model, "model")
-        else model
-    )
+    base = _peft_base_model(model)
     target = base
     for part in _qwen3omni_decoder_layers_path(base).split("."):
         target = getattr(target, part)
@@ -358,12 +371,7 @@ def _decoder_module_prefix(model) -> str:
     ``inspect_matched_modules`` reports names relative to ``model.base_model``
     (the Thinker), so the audit must use the same frame of reference.
     """
-    base = (
-        model.base_model.model
-        if hasattr(model, "base_model") and hasattr(model.base_model, "model")
-        else model
-    )
-    return _qwen3omni_decoder_layers_path(base)
+    return _qwen3omni_decoder_layers_path(_peft_base_model(model))
 
 
 def fsdp_transformer_cls_names(model) -> list[str]:

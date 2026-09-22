@@ -165,6 +165,15 @@ class _FakeDecoderLayer(torch.nn.Module):
         self.mlp = _FakeDenseMlp() if dense_mlp else _FakeMoEMlp()
 
 
+class _FakePeftWrapper(torch.nn.Module):
+    """PEFT-shaped wrapper: ``base_model.model`` is a different module."""
+
+    def __init__(self, base: torch.nn.Module) -> None:
+        super().__init__()
+        self.base_model = torch.nn.Module()
+        self.base_model.model = base
+
+
 class _FakeThinker(torch.nn.Module):
     """Thinker-shaped tree: ``audio_tower`` plus a text model at ``model``."""
 
@@ -532,9 +541,12 @@ def test_expected_lora_module_names_follow_the_module_tree() -> None:
     # A dense layer also exposes its gate/up/down projections.
     dense = _FakeThinker(layers=3, dense_mlp=True)
     assert len(expected_lora_module_names(dense)) == 3 * 7
-    # The PEFT-wrapped path form resolves to the same frame of reference.
-    wrapped = SimpleNamespace(base_model=SimpleNamespace(model=moe))
+    # The PEFT-wrapped path form resolves to the same frame of reference, while an
+    # unwrapped Thinker is not mistaken for a wrapper (transformers' base_model
+    # property makes .base_model.model resolve to the text model itself).
+    wrapped = _FakePeftWrapper(moe)
     assert sorted(expected_lora_module_names(wrapped)) == expected
+    assert sorted(expected_lora_module_names(moe)) == expected
 
 
 def test_resolved_lora_targets_are_exact_names_peft_can_consume() -> None:
