@@ -171,9 +171,19 @@ def audit_fold(fold_dir: Path) -> dict[str, Any]:
             expected = {subject: 2 for subject in {row["subject_id"] for row in samples}}
             if dict(per_subject) != expected:
                 failures.append("pooled evaluation does not give every subject exactly two condition rows")
-            labels = Counter(str(row["label"]) for row in samples)
-            if len(labels) != 1:
-                failures.append(f"pooled evaluation mixes labels across conditions: {dict(labels)}")
+            labels_by_subject: dict[str, set[str]] = {}
+            for row in samples:
+                labels_by_subject.setdefault(row["subject_id"], set()).add(str(row["label"]))
+            inconsistent = {
+                subject: sorted(labels)
+                for subject, labels in labels_by_subject.items()
+                if len(labels) != 1
+            }
+            if inconsistent:
+                failures.append(
+                    "pooled participants carry more than one label across conditions: "
+                    f"{list(inconsistent)[:5]}"
+                )
             if len(subjects) != len({row["subject_id"] for row in samples}):
                 failures.append("subject-level rows do not match the evaluated subjects")
     record["passed"] = not failures
@@ -181,7 +191,12 @@ def audit_fold(fold_dir: Path) -> dict[str, Any]:
 
 
 def _fold_dirs_from_root(root: Path) -> list[Path]:
-    return sorted(path for path in root.glob("*/fold_*") if path.is_dir())
+    """Find fold dirs under a campaign root, a modality root or a dataset root."""
+    found: dict[Path, None] = {}
+    for path in root.rglob("fold_*"):
+        if path.is_dir() and (path / "run_config.yaml").is_file():
+            found[path] = None
+    return sorted(found)
 
 
 def main(argv: list[str] | None = None) -> int:
