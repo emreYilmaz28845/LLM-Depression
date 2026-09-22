@@ -101,7 +101,12 @@ def _processor_measurements(
 
 
 def _select(records: list[dict[str, Any]]) -> dict[str, Any]:
-    """Deterministic max-risk selection over the measured records."""
+    """Deterministic max-risk selection over the measured records.
+
+    The pseudonymous subject reference is used only to answer whether the audio
+    and token maxima belong to different participants; it is never published.
+    """
+    subject_by_ref = {record["example_ref"]: record.pop("subject_ref", None) for record in records}
     by_duration = sorted(records, key=lambda r: (r["audio_seconds"], r["example_ref"]))
     by_tokens = sorted(records, key=lambda r: (r["rendered_tokens"], r["example_ref"]))
     by_footprint = sorted(
@@ -118,6 +123,10 @@ def _select(records: list[dict[str, Any]]) -> dict[str, Any]:
         "longest_prompt": longest_tokens,
         "largest_combined_footprint": largest_footprint,
         "audio_and_token_maxima_differ": longest_audio["example_ref"] != longest_tokens["example_ref"],
+        "audio_and_token_maxima_in_different_subjects": (
+            subject_by_ref.get(longest_audio["example_ref"])
+            != subject_by_ref.get(longest_tokens["example_ref"])
+        ),
         "footprint_maximum_differs_from_both": (
             largest_footprint["example_ref"] not in {longest_audio["example_ref"], longest_tokens["example_ref"]}
         ),
@@ -144,6 +153,7 @@ def _per_modality(
         records = [
             {
                 "example_ref": example_ref(example["sample_id"]),
+                "subject_ref": example_ref(f"subject:{example['subject_id']}"),
                 "partition": str(example.get("partition_name", "")),
                 "audio_seconds": round(_audio_seconds(example), 4),
                 "span_count": len(example.get("audio_spans") or []),

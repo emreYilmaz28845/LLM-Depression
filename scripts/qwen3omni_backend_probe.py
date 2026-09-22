@@ -152,7 +152,7 @@ def _selection_refs(inventory: dict[str, Any], modality: str) -> list[str]:
         "shortest_prompt",
     ):
         entry = selection.get(key)
-        if entry and entry["example_ref"] not in refs:
+        if isinstance(entry, dict) and entry["example_ref"] not in refs:
             refs.append(entry["example_ref"])
     return refs
 
@@ -196,6 +196,32 @@ def _split_loss_weight(batch: dict[str, Any]) -> tuple[dict[str, Any], Any]:
 # --------------------------------------------------------------------------- #
 
 
+def _audio_tower_output_length(model, batch: dict[str, Any]) -> int | None:
+    """Measured audio-encoder output length, which is the audio token count."""
+    tower = getattr(model, "audio_tower", None)
+    if tower is None or "input_features" not in batch:
+        return None
+    captured: dict[str, int] = {}
+
+    def _capture(module, args, output):
+        hidden = getattr(output, "last_hidden_state", None)
+        if hidden is None and isinstance(output, (tuple, list)) and output:
+            hidden = output[0]
+        if torch.is_tensor(hidden):
+            captured["length"] = int(hidden.shape[1])
+
+    handle = tower.register_forward_hook(_capture)
+    try:
+        with torch.no_grad():
+            tower(
+                input_features=batch["input_features"],
+                attention_mask=batch.get("feature_attention_mask"),
+            )
+    finally:
+        handle.remove()
+    return captured.get("length")
+
+
 def _candidate_scores(model, batch: dict[str, Any], processor) -> dict[str, Any]:
     model_batch, loss_weight = _split_loss_weight(batch)
     with torch.no_grad():
@@ -209,6 +235,7 @@ def _candidate_scores(model, batch: dict[str, Any], processor) -> dict[str, Any]
     return {
         "loss": loss,
         "loss_weight": float(loss_weight) if loss_weight is not None else None,
+        "logits_shape": list(outputs.logits.shape),
         "depressed_score": scores[0],
         "non_depressed_score": scores[1],
         "finite": all(value is not None and torch.isfinite(torch.tensor(value)) for value in [loss, *scores]),
@@ -242,6 +269,7 @@ def run_forward(args) -> dict[str, Any]:
                     "input_features_dtype_collated": str(batch["input_features"].dtype),
                     "feature_attention_mask_dtype": str(batch["feature_attention_mask"].dtype),
                     "has_transcript": bool(example.get("transcript")),
+                    "measured_audio_tokens": _audio_tower_output_length(model, batch),
                     **scores,
                 }
             )
