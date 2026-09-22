@@ -196,36 +196,43 @@ def _split_loss_weight(batch: dict[str, Any]) -> tuple[dict[str, Any], Any]:
 # --------------------------------------------------------------------------- #
 
 
-def _audio_tower_output_length(model, batch: dict[str, Any]) -> int | None:
-    """Measured audio-encoder output length, which is the audio token count."""
-    tower = getattr(model, "audio_tower", None)
-    if tower is None or "input_features" not in batch:
-        return None
-    captured: dict[str, int] = {}
+class _AudioTokenCapture:
+    """Capture the audio encoder's output length from the model's own forward.
 
-    def _capture(module, args, output):
+    Hooking the real forward avoids duplicating the encoder's call signature
+    (it takes ``feature_lens``, not an attention mask) and measures the audio
+    token count the model actually uses.
+    """
+
+    def __init__(self, model) -> None:
+        self.model = model
+        self.length: int | None = None
+        self._handle = None
+
+    def __enter__(self):
+        tower = getattr(self.model, "audio_tower", None)
+        if tower is not None:
+            self._handle = tower.register_forward_hook(self._capture)
+        return self
+
+    def __exit__(self, *exc_info) -> bool:
+        if self._handle is not None:
+            self._handle.remove()
+        return False
+
+    def _capture(self, module, args, output) -> None:
         hidden = getattr(output, "last_hidden_state", None)
         if hidden is None and isinstance(output, (tuple, list)) and output:
             hidden = output[0]
         if torch.is_tensor(hidden):
-            captured["length"] = int(hidden.shape[1])
-
-    handle = tower.register_forward_hook(_capture)
-    try:
-        with torch.no_grad():
-            tower(
-                input_features=batch["input_features"],
-                attention_mask=batch.get("feature_attention_mask"),
-            )
-    finally:
-        handle.remove()
-    return captured.get("length")
+            self.length = int(hidden.shape[1])
 
 
 def _candidate_scores(model, batch: dict[str, Any], processor) -> dict[str, Any]:
     model_batch, loss_weight = _split_loss_weight(batch)
-    with torch.no_grad():
+    with _AudioTokenCapture(model) as capture, torch.no_grad():
         outputs = model(**model_batch)
+        audio_tokens = capture.length
     loss = float(outputs.loss) if getattr(outputs, "loss", None) is not None else None
     logits = outputs.logits[:, -1, :].float()
     log_probabilities = torch.log_softmax(logits, dim=-1).squeeze(0)
@@ -236,6 +243,7 @@ def _candidate_scores(model, batch: dict[str, Any], processor) -> dict[str, Any]
         "loss": loss,
         "loss_weight": float(loss_weight) if loss_weight is not None else None,
         "logits_shape": list(outputs.logits.shape),
+        "measured_audio_tokens": audio_tokens,
         "depressed_score": scores[0],
         "non_depressed_score": scores[1],
         "finite": all(value is not None and torch.isfinite(torch.tensor(value)) for value in [loss, *scores]),
@@ -269,7 +277,6 @@ def run_forward(args) -> dict[str, Any]:
                     "input_features_dtype_collated": str(batch["input_features"].dtype),
                     "feature_attention_mask_dtype": str(batch["feature_attention_mask"].dtype),
                     "has_transcript": bool(example.get("transcript")),
-                    "measured_audio_tokens": _audio_tower_output_length(model, batch),
                     **scores,
                 }
             )
