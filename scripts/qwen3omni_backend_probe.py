@@ -184,14 +184,22 @@ def _collated(example: dict[str, Any], config: dict[str, Any], processor, device
     return moved
 
 
+def _split_loss_weight(batch: dict[str, Any]) -> tuple[dict[str, Any], Any]:
+    """Separate ``loss_weight`` from the model inputs, as the training loop does."""
+    model_batch = dict(batch)
+    weight = model_batch.pop("loss_weight", None)
+    return model_batch, weight
+
+
 # --------------------------------------------------------------------------- #
 # forward probe (device-map sharded single process)
 # --------------------------------------------------------------------------- #
 
 
 def _candidate_scores(model, batch: dict[str, Any], processor) -> dict[str, Any]:
+    model_batch, loss_weight = _split_loss_weight(batch)
     with torch.no_grad():
-        outputs = model(**batch)
+        outputs = model(**model_batch)
     loss = float(outputs.loss) if getattr(outputs, "loss", None) is not None else None
     logits = outputs.logits[:, -1, :].float()
     log_probabilities = torch.log_softmax(logits, dim=-1).squeeze(0)
@@ -200,6 +208,7 @@ def _candidate_scores(model, batch: dict[str, Any], processor) -> dict[str, Any]
     scores = [float(log_probabilities[depressed_id]), float(log_probabilities[non_id])]
     return {
         "loss": loss,
+        "loss_weight": float(loss_weight) if loss_weight is not None else None,
         "depressed_score": scores[0],
         "non_depressed_score": scores[1],
         "finite": all(value is not None and torch.isfinite(torch.tensor(value)) for value in [loss, *scores]),
@@ -313,11 +322,16 @@ def _gradient_summary(inner) -> dict[str, Any]:
 
 
 def _accumulation_step(accelerator, model, optimizer, config, batch, accumulate: bool) -> float:
+    model_batch, loss_weight = _split_loss_weight(batch)
     with activation_offload_context(config):
         context = accelerator.accumulate(model) if accumulate else contextlib.nullcontext()
         with context:
-            outputs = model(**batch)
+            outputs = model(**model_batch)
             loss = outputs.loss
+            if loss_weight is not None:
+                # The packed30 recipe weights every window by its subject-normalized
+                # weight; the probe keeps that term so memory and timing match training.
+                loss = loss * loss_weight.reshape(-1)[0].to(loss.device)
             accelerator.backward(loss)
     if accumulate:
         optimizer.step()
@@ -488,8 +502,11 @@ def run_tree(args) -> dict[str, Any]:
     config = _load_config(args)
     model_dir = str(resolve_model_name_or_path(None, config))
     hf_config = AutoConfig.from_pretrained(model_dir, local_files_only=True)
+    # The full checkpoint nests the Thinker: the class is built from the thinker
+    # sub-config, exactly as the full model builds it.
+    thinker_config = getattr(hf_config, "thinker_config", None) or hf_config
     with init_empty_weights():
-        model = Qwen3OmniMoeThinkerForConditionalGeneration(hf_config)
+        model = Qwen3OmniMoeThinkerForConditionalGeneration(thinker_config)
 
     import re
 
