@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import base64
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -279,3 +280,73 @@ def test_unknown_manifest_policy_is_refused():
         resolve_contract(
             deployment=_deployment(), config_dict=_config(), manifest_policy="whatever", **BASE_KW
         )
+
+
+def _gemma_config():
+    return {
+        "dataset": "daic",
+        "model_backend": "gemma4",
+        "evaluation": {
+            "sample_prediction_mode": "likelihood",
+            "aggregation_level": "subject",
+            "evaluation_view": "harmonized_all_windows_full_coverage",
+        },
+        "output_dirs": {"run_root": "${PROJECT_ROOT}/output_model/x"},
+    }
+
+
+def test_backend_runtime_selects_the_gemma_environment_and_pinned_model():
+    from src.experiment_tracking.submit import (
+        GEMMA4_MODEL_PATH,
+        resolve_backend_runtime,
+    )
+
+    contract = resolve_contract(deployment=_deployment(), config_dict=_gemma_config(), **BASE_KW)
+    runtime = contract["backend_runtime"]
+    assert runtime["model_backend"] == "gemma4"
+    assert runtime["env_activate"].endswith("venvs/gemma4_12b_tf5_14_1/bin/activate")
+    assert runtime["model_path"] == GEMMA4_MODEL_PATH
+    script = build_remote_submit_script(contract)
+    assert "export ENV_ACTIVATE=" in script
+    assert "gemma4_12b_tf5_14_1/bin/activate" in script
+    assert f"export MODEL_PATH={GEMMA4_MODEL_PATH}" in script
+    assert resolve_backend_runtime(_gemma_config()) == runtime
+
+
+def test_backend_runtime_keeps_the_qwen_environment_and_leaves_model_path_empty():
+    contract = resolve_contract(deployment=_deployment(), config_dict=_config(), **BASE_KW)
+    runtime = contract["backend_runtime"]
+    assert runtime["model_backend"] == "qwen"
+    assert runtime["env_activate"].endswith("venvs/qwen_mn5_rebuilt/bin/activate")
+    assert runtime["model_path"] == ""
+    script = build_remote_submit_script(contract)
+    assert "qwen_mn5_rebuilt/bin/activate" in script
+    assert "export MODEL_PATH=" not in script
+
+
+def test_backend_runtime_matches_the_shell_helper():
+    """The Python resolver and scripts/harmonized_backend_env.sh must agree."""
+    from src.experiment_tracking.submit import resolve_backend_runtime
+    from src.utils import load_yaml
+
+    env = dict(os.environ)
+    env["PATH"] = f"{Path(sys.executable).parent}:{env.get('PATH', '')}"
+    for name in (
+        "daic_audio_text_harmonized_selmacrof1_likelihood_v1_gemma4_12b.yaml",
+        "daic_audio_text_harmonized_selmacrof1_likelihood_v1.yaml",
+    ):
+        config_path = PROJECT_ROOT / "configs/main" / name
+        config = load_yaml(config_path)
+        resolved = resolve_backend_runtime(config)
+        output = subprocess.run(
+            ["bash", str(PROJECT_ROOT / "scripts/harmonized_backend_env.sh"), str(config_path), str(PROJECT_ROOT)],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=True,
+        ).stdout
+        shell_values = dict(
+            line.split("=", 1) for line in output.splitlines() if "=" in line
+        )
+        assert shell_values["ENV_ACTIVATE"] == resolved["env_activate"], name
+        assert shell_values["MODEL_PATH"] == resolved["model_path"], name

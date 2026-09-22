@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import shlex
 import subprocess
 from pathlib import Path
@@ -29,6 +30,38 @@ MANIFEST_POLICIES = ("build", "prebuilt")
 # (``scripts/build_turkish_pooled_manifest.py``), so it must already exist in
 # the runtime manifest directory and the worker must skip the build.
 PREBUILT_MANIFEST_VARIANTS = frozenset({"pooled_t17"})
+
+# Backend-resolved worker runtime. These mirror ``scripts/harmonized_backend_env.sh``
+# so managed submissions activate the same environment and base model as the
+# legacy harmonized launchers; ``tests/test_parallel_workflow_submit.py``
+# cross-checks both implementations. Qwen cells leave MODEL_PATH empty so each
+# config's own model path (audio or dense text) decides.
+MODEL_BACKEND_GEMMA4 = "gemma4"
+QWEN_ENV_ACTIVATE = "/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate"
+GEMMA_ENV_ROOT = "/gpfs/projects/etur92/ozu647717/venvs/gemma4_12b_tf5_14_1"
+GEMMA4_MODEL_PATH = (
+    "/gpfs/projects/etur92/ozu647717/models/gemma-4-12B-it/"
+    "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7"
+)
+
+
+def resolve_backend_runtime(config_dict: dict[str, Any]) -> dict[str, str]:
+    """Resolve the worker environment for one resolved config."""
+    from src.utils import resolve_model_backend
+
+    backend = resolve_model_backend(config_dict) or ""
+    if backend == MODEL_BACKEND_GEMMA4:
+        env_root = os.environ.get("GEMMA_ENV", GEMMA_ENV_ROOT).rstrip("/")
+        return {
+            "model_backend": MODEL_BACKEND_GEMMA4,
+            "env_activate": f"{env_root}/bin/activate",
+            "model_path": os.environ.get("GEMMA4_MODEL_PATH", GEMMA4_MODEL_PATH),
+        }
+    return {
+        "model_backend": backend or "qwen",
+        "env_activate": os.environ.get("QWEN_ENV_ACTIVATE", QWEN_ENV_ACTIVATE),
+        "model_path": "",
+    }
 
 
 class SubmissionError(RuntimeError):
@@ -116,6 +149,7 @@ def resolve_contract(
             "scripts/build_turkish_pooled_manifest.py into the runtime manifest dir and submit "
             "with --manifest-policy prebuilt"
         )
+    backend_runtime = resolve_backend_runtime(config_dict)
     runtime_root = REMOTE_RUNTIME_BASE / experiment_id
     permanent_output_base = REMOTE_PROJECT_BASE / "output_model"
     run_root = str(permanent_output_base / campaign / modality / dataset)
@@ -220,6 +254,7 @@ def resolve_contract(
         "log_root_train": log_root_train,
         "log_root_eval": log_root_eval,
         "manifest_policy": manifest_policy,
+        "backend_runtime": backend_runtime,
         "overrides": overrides,
         "overrides_b64": encode_overrides(overrides),
         "qualifiers": {
@@ -281,6 +316,13 @@ def build_remote_submit_script(contract: dict[str, Any]) -> str:
         f"export LOG_ROOT={q(contract['log_root_train'])}",
         f"export EXPERIMENT_CONTEXT={q(contract['context_path'])}",
     ]
+    runtime = contract.get("backend_runtime") or {}
+    if runtime.get("env_activate"):
+        # Backend-resolved activation: a Gemma config must not run in the Qwen
+        # environment (and vice versa), and a Gemma cell pins its base model.
+        lines.append(f"export ENV_ACTIVATE={q(runtime['env_activate'])}")
+    if runtime.get("model_path"):
+        lines.append(f"export MODEL_PATH={q(runtime['model_path'])}")
     if contract.get("manifest_policy", "build") == "prebuilt":
         # The manifest and split artifacts already exist in the runtime dir; the
         # workers must not rebuild them (a pooled manifest has no builder).
