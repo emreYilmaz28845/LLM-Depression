@@ -25,6 +25,10 @@ from src.aggregate import (
 )
 from src.data.build_manifest import build_for_config, manifest_build_signature
 from src.data.prompt_context import prompt_context_record
+from src.experiment_tracking.manifest_policy import (
+    MANIFEST_POLICY_PREBUILT,
+    resolve_manifest_policy,
+)
 from src.data.runtime import (
     build_examples,
     filter_rows_by_subjects,
@@ -1030,6 +1034,7 @@ def evaluate_examples(
 def _load_metadata_or_build(config_path: str | Path, config: dict[str, Any], config_overrides: list[str] | None = None) -> dict[str, Any]:
     metadata_path = resolve_project_path(Path(config["output_dirs"]["split_dir"]) / f"{config['dataset']}_manifest_metadata.json")
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    prebuilt = resolve_manifest_policy(config) == MANIFEST_POLICY_PREBUILT
     if metadata_path.exists():
         metadata = resolve_metadata_paths(read_json(metadata_path))
         usable, reason = _metadata_artifacts_are_usable(metadata)
@@ -1037,12 +1042,24 @@ def _load_metadata_or_build(config_path: str | Path, config: dict[str, Any], con
         if usable and missing_split_keys:
             usable = False
             reason = f"split_metadata_missing:{','.join(missing_split_keys)}"
-        if usable and metadata.get("build_signature") != manifest_build_signature(config):
+        # A prebuilt manifest was built outside the worker, so its build signature
+        # legitimately differs; the submission verified the files instead.
+        if usable and not prebuilt and metadata.get("build_signature") != manifest_build_signature(config):
             usable = False
             reason = "build_signature_mismatch"
         if usable:
             return metadata
+        if prebuilt:
+            raise RuntimeError(
+                f"manifest_policy=prebuilt but the prepared manifest metadata at "
+                f"{metadata_path} is unusable ({reason}); the worker must not rebuild it."
+            )
         LOGGER.warning("Refreshing stale metadata for %s: %s", config["dataset"], reason)
+    elif prebuilt:
+        raise RuntimeError(
+            f"manifest_policy=prebuilt but no prepared manifest metadata exists at "
+            f"{metadata_path}; the worker must not rebuild it."
+        )
     if local_rank == 0:
         build_for_config(config_path, config_overrides)
     return _wait_for_usable_metadata(metadata_path)

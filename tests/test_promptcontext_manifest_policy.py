@@ -223,6 +223,42 @@ def test_train_and_evaluation_jobs_keep_distinct_shapes() -> None:
     assert eval_job["checkpoint_dir"] == contract["checkpoint_dir"]
 
 
+def test_worker_never_rebuilds_a_prebuilt_manifest(tmp_path: Path, monkeypatch) -> None:
+    from src import evaluate as evaluate_module
+    from src import train as train_module
+
+    for module in (train_module, evaluate_module):
+        built: list[bool] = []
+        monkeypatch.setattr(module, "build_for_config", lambda *args, **kwargs: built.append(True))
+        pooled = {
+            **POOLED_CONFIG,
+            "output_dirs": {
+                "manifest_dir": str(tmp_path / "manifests"),
+                "split_dir": str(tmp_path / "splits"),
+                "run_root": str(tmp_path / "runs"),
+            },
+        }
+        with pytest.raises(RuntimeError, match="must not rebuild"):
+            module._load_metadata_or_build(tmp_path / "config.yaml", pooled)
+        assert built == []
+
+        prepared: list[str] = []
+        monkeypatch.setattr(
+            module, "_wait_for_usable_metadata", lambda path: prepared.append(str(path))
+        )
+        daic = {
+            **DAIC_CONFIG,
+            "output_dirs": {
+                "manifest_dir": str(tmp_path / "manifests2"),
+                "split_dir": str(tmp_path / "splits2"),
+                "run_root": str(tmp_path / "runs2"),
+            },
+        }
+        module._load_metadata_or_build(tmp_path / "config2.yaml", daic)
+        assert built == [True]
+        assert prepared and prepared[0].endswith("daic_manifest_metadata.json")
+
+
 def test_submit_cli_keeps_the_pr259_flags_and_adds_manifest_policy() -> None:
     proc = subprocess.run(
         [sys.executable, "tools/exp.py", "submit", "--help"],
