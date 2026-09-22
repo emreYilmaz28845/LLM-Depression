@@ -512,13 +512,17 @@ def run_tree(args) -> dict[str, Any]:
 
     pattern = re.compile(QWEN3OMNI_LORA_TARGET_REGEX)
     module_names = [name for name, _ in model.named_modules()]
+    parameter_names = [name for name, _ in model.named_parameters()]
     matched = sorted(name for name in module_names if pattern.fullmatch(name))
-    expected = sorted(expected_lora_module_names(model))
-    decoder_layers = [name for name in module_names if name.endswith("mlp.shared_expert")]
-    routers = sorted(name for name in module_names if name.endswith("mlp.gate"))
-    routed_experts = sorted(name for name in module_names if ".mlp.experts." in name)
-    audio_modules = sorted(name for name in module_names if ".audio_tower." in name and name.count(".") <= 3)
-
+    audit_error = None
+    expected: list[str] = []
+    try:
+        expected = sorted(expected_lora_module_names(model))
+        fsdp_names = fsdp_transformer_cls_names(model)
+    except Exception as exc:  # noqa: BLE001 - the audit must report, never crash
+        audit_error = f"{type(exc).__name__}: {exc}"
+        fsdp_names = []
+    expert_parameters = sorted(name for name in parameter_names if ".mlp.experts." in name)
     report = {
         "schema_version": SCHEMA_VERSION,
         "mode": "tree",
@@ -526,20 +530,42 @@ def run_tree(args) -> dict[str, Any]:
         "declared_architectures": list(getattr(hf_config, "architectures", []) or []),
         "model_class": type(model).__name__,
         "lora_target_regex": QWEN3OMNI_LORA_TARGET_REGEX,
-        "fsdp_wrap_class_names": fsdp_transformer_cls_names(model),
+        "fsdp_wrap_class_names": fsdp_names,
+        "audit_error": audit_error,
         "matched_module_count": len(matched),
         "expected_module_count": len(expected),
         "matched_equals_expected": matched == expected,
         "matched_modules_head": matched[:6],
         "unexpected_matches": sorted(set(matched) - set(expected))[:10],
         "missing_expected": sorted(set(expected) - set(matched))[:10],
-        "shared_expert_layers": len(decoder_layers),
-        "router_modules": routers[:3],
-        "router_module_count": len(routers),
-        "routed_expert_module_count": len(routed_experts),
-        "routed_expert_examples": routed_experts[:4],
-        "audio_tower_modules": audio_modules[:12],
-        "layer_names_sample": [name for name in module_names if ".layers.0." in name][:12],
+        "top_level_children": sorted(
+            name for name, _ in model.named_children()
+        ),
+        "layer_0_modules": [
+            name for name in module_names if name.startswith(("model.layers.0.", "layers.0."))
+        ][:24],
+        "mlp_modules_sample": [
+            name for name in module_names if ".mlp." in name and name.count(".") <= 5
+        ][:12],
+        "router_module_count": len([name for name in module_names if name.endswith("mlp.gate")]),
+        "router_modules": [name for name in module_names if name.endswith("mlp.gate")][:3],
+        "expert_parameter_names": expert_parameters[:6],
+        "expert_parameter_count": len(expert_parameters),
+        "audio_tower_modules": [
+            name for name in module_names if name.startswith("audio_tower") and name.count(".") <= 2
+        ][:10],
+        "visual_present": any(name.startswith("visual") for name in module_names),
+        "text_config": {
+            key: getattr(getattr(thinker_config, "text_config", None), key, None)
+            for key in (
+                "num_hidden_layers",
+                "num_experts",
+                "num_experts_per_tok",
+                "mlp_only_layers",
+                "decoder_sparse_step",
+            )
+        },
+        "parameter_count": sum(int(parameter.numel()) for parameter in model.parameters()),
     }
     del model
     return report

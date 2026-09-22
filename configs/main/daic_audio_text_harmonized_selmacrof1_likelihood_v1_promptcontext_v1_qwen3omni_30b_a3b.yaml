@@ -52,7 +52,7 @@ lora:
   alpha: 32
   dropout: 0.05
   bias: none
-  target_modules: ^model\.language_model\.layers\.\d+\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.shared_expert\.(?:gate_proj|up_proj|down_proj))$
+  target_modules: ^model\.layers\.\d+\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))$
 audio_adapter:
   enabled: false
   adapter_dim: 512

@@ -20,9 +20,10 @@ Qwen2-Audio:
   while integer masks and indices (``feature_attention_mask``, ``input_ids``,
   ``labels``) are never touched.
 * LoRA is restricted to the language-model decoder by an anchored regex: the four
-  attention projections plus the non-routed MLP (the shared expert) of every
-  layer. Routers (``mlp.gate``, ``shared_expert_gate``) and the routed experts
-  (``mlp.experts.*``) stay frozen.
+  attention projections of every decoder layer, plus gate/up/down where a layer's
+  MLP is dense. The checkpoint's 48 layers are all MoE, so the expert weights are
+  fused 3-D parameters in practice; routers (``mlp.gate``) and expert internals
+  always stay frozen.
 * Likelihood scoring is LM-head only, so ``src/evaluate.py`` is unchanged.
 
 The pure, model-agnostic primitives (``DepAdapter``, the adapter-config resolver,
@@ -73,12 +74,16 @@ QWEN3OMNI_SUPPORTED_MODEL_CLASSES = (
     QWEN3OMNI_MODEL_CLASS_NAME,
     QWEN3OMNI_FULL_MODEL_CLASS_NAME,
 )
-# Anchored decoder regex: attention projections plus the non-routed MLP (the
-# shared expert) of every layer. Routers and routed experts never match.
+# Anchored decoder regex, verified against the real Thinker tree. The checkpoint
+# declares 48 decoder layers, every one of them MoE (decoder_sparse_step=1,
+# mlp_only_layers=[]), so the only adaptable non-expert modules are the attention
+# projections: the expert weights are fused 3-D parameters (gate_up_proj /
+# down_proj) that LoRA cannot wrap, the router (mlp.gate) is a TopK router, and
+# there is no dense or shared MLP. A dense layer, if a future checkpoint has one,
+# would also expose mlp.gate_proj/up_proj/down_proj and is matched here.
 QWEN3OMNI_LORA_TARGET_REGEX = (
-    r"^model\.language_model\.layers\.\d+\."
-    r"(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)"
-    r"|mlp\.shared_expert\.(?:gate_proj|up_proj|down_proj))$"
+    r"^model\.layers\.\d+\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)"
+    r"|mlp\.(?:gate_proj|up_proj|down_proj))$"
 )
 QWEN3OMNI_EVALUATION_VIEW = "harmonized_all_windows_full_coverage"
 QWEN3OMNI_ALLOWED_EVALUATION_MODES = ("likelihood", "original_teacher_forced")
@@ -314,10 +319,13 @@ def resolve_qwen3omni_model_class(model_name_or_path: str | Path) -> str:
 def _qwen3omni_language_model(model):
     """Locate the Thinker's language-model decoder under the raw or PEFT-wrapped model."""
     for path in (
-        # PeftModel wrapping the Thinker.
-        "base_model.model.model.language_model",
-        "model.language_model",
-        "language_model",
+        # PeftModel wrapping the Thinker -> the Thinker's text model.
+        "base_model.model.model",
+        # The raw Thinker's text model.
+        "model",
+        # Defensive: a full omni model whose Thinker was not unwrapped.
+        "thinker.model",
+        "model.thinker.model",
     ):
         target = model
         for part in path.split("."):
@@ -327,8 +335,8 @@ def _qwen3omni_language_model(model):
         if target is not None and hasattr(target, "layers"):
             return target
     raise ValueError(
-        "Could not locate the Qwen3-Omni Thinker language-model decoder. "
-        "Expected a module at model.language_model.layers."
+        "Could not locate the Qwen3-Omni Thinker text decoder. "
+        "Expected the Thinker's text model (model.layers) to be present."
     )
 
 
@@ -343,29 +351,49 @@ def fsdp_transformer_cls_names(model) -> list[str]:
 def expected_lora_module_names(model) -> set[str]:
     """Decoder module names the anchored regex must adapt in this model.
 
-    Derived from the instantiated tree, so a model whose MLP carries no shared
-    expert simply has no ``mlp.shared_expert.*`` entries. Routers and routed
-    experts are never part of the expected set.
+    Derived from the instantiated tree: every layer contributes its attention
+    projections, and a layer whose MLP is dense (not MoE) also contributes its
+    gate/up/down projections. Routers, routed experts and fused expert
+    parameters are never part of the expected set.
     """
-    language_model = _qwen3omni_language_model(model)
+    text_model = _qwen3omni_language_model(model)
+    prefix = _decoder_module_prefix(model)
     expected: set[str] = set()
-    for layer_index, layer in enumerate(language_model.layers):
+    for layer_index, layer in enumerate(text_model.layers):
         suffixes = [
             "self_attn.q_proj",
             "self_attn.k_proj",
             "self_attn.v_proj",
             "self_attn.o_proj",
         ]
-        shared_expert = getattr(getattr(layer, "mlp", None), "shared_expert", None)
-        if shared_expert is not None:
+        mlp = getattr(layer, "mlp", None)
+        if all(hasattr(mlp, name) for name in ("gate_proj", "up_proj", "down_proj")):
             suffixes += [
-                "mlp.shared_expert.gate_proj",
-                "mlp.shared_expert.up_proj",
-                "mlp.shared_expert.down_proj",
+                "mlp.gate_proj",
+                "mlp.up_proj",
+                "mlp.down_proj",
             ]
         for suffix in suffixes:
-            expected.add(f"model.language_model.layers.{layer_index}.{suffix}")
+            expected.add(f"{prefix}.layers.{layer_index}.{suffix}")
     return expected
+
+
+def _decoder_module_prefix(model) -> str:
+    """Dotted path of the decoder layers relative to the PEFT base model.
+
+    ``inspect_matched_modules`` reports names relative to ``model.base_model``
+    (the Thinker), so the expected set must use the same frame of reference.
+    """
+    base = (
+        model.base_model.model
+        if hasattr(model, "base_model") and hasattr(model.base_model, "model")
+        else model
+    )
+    text_model = _qwen3omni_language_model(base)
+    for name, module in base.named_modules():
+        if module is text_model:
+            return name
+    raise ValueError("Could not determine the decoder module prefix for the LoRA target audit.")
 
 
 def _audit_qwen3omni_lora_modules(model, matched_modules: set[str]) -> dict[str, Any]:
@@ -386,8 +414,9 @@ def _audit_qwen3omni_lora_modules(model, matched_modules: set[str]) -> dict[str,
         violations.append(
             f"routers, experts or non-decoder modules are adapted: {forbidden[:8]}"
         )
+    decoder_prefix = f"{_decoder_module_prefix(model)}.layers."
     outside_decoder = sorted(
-        name for name in matched_modules if ".language_model.layers." not in name
+        name for name in matched_modules if decoder_prefix not in f"{name}."
     )
     if outside_decoder:
         violations.append(

@@ -137,44 +137,48 @@ class _FakeAttention(torch.nn.Module):
         self.q_norm.requires_grad_(False)
 
 
-class _FakeMlp(torch.nn.Module):
-    def __init__(self, *, shared_expert: bool) -> None:
+class _FakeMoEMlp(torch.nn.Module):
+    """MoE MLP shaped like the real one: a router plus fused expert parameters."""
+
+    def __init__(self) -> None:
         super().__init__()
         self.gate = _frozen_linear()
-        experts = torch.nn.ModuleList()
-        for _ in range(2):
-            expert = torch.nn.Module()
-            expert.gate_proj = _frozen_linear()
-            expert.up_proj = _frozen_linear()
-            expert.down_proj = _frozen_linear()
-            experts.append(expert)
-        self.experts = experts
-        if shared_expert:
-            self.shared_expert = torch.nn.Module()
-            self.shared_expert.gate_proj = _FakeLoraLinear()
-            self.shared_expert.up_proj = _FakeLoraLinear()
-            self.shared_expert.down_proj = _FakeLoraLinear()
-            self.shared_expert_gate = _frozen_linear()
+        self.experts = torch.nn.Module()
+        self.experts.gate_up_proj = torch.nn.Parameter(
+            torch.zeros(2, 4, 2), requires_grad=False
+        )
+        self.experts.down_proj = torch.nn.Parameter(torch.zeros(2, 2, 2), requires_grad=False)
+
+
+class _FakeDenseMlp(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.gate_proj = _FakeLoraLinear()
+        self.up_proj = _FakeLoraLinear()
+        self.down_proj = _FakeLoraLinear()
 
 
 class _FakeDecoderLayer(torch.nn.Module):
-    def __init__(self, *, shared_expert: bool) -> None:
+    def __init__(self, *, dense_mlp: bool) -> None:
         super().__init__()
         self.self_attn = _FakeAttention()
-        self.mlp = _FakeMlp(shared_expert=shared_expert)
+        self.mlp = _FakeDenseMlp() if dense_mlp else _FakeMoEMlp()
 
 
 class _FakeThinker(torch.nn.Module):
-    def __init__(self, *, layers: int = 2, shared_expert: bool = True) -> None:
+    """Thinker-shaped tree: ``audio_tower`` plus a text model at ``model``."""
+
+    def __init__(self, *, layers: int = 2, dense_mlp: bool = False) -> None:
         super().__init__()
-        self.model = torch.nn.Module()
-        self.model.audio_tower = torch.nn.Linear(2, 2, bias=False)
-        self.model.audio_tower.requires_grad_(False)
-        language_model = torch.nn.Module()
-        language_model.layers = torch.nn.ModuleList(
-            [_FakeDecoderLayer(shared_expert=shared_expert) for _ in range(layers)]
+        self.audio_tower = torch.nn.Linear(2, 2, bias=False)
+        self.audio_tower.requires_grad_(False)
+        self.visual = torch.nn.Linear(2, 2, bias=False)
+        self.visual.requires_grad_(False)
+        text_model = torch.nn.Module()
+        text_model.layers = torch.nn.ModuleList(
+            [_FakeDecoderLayer(dense_mlp=dense_mlp) for _ in range(layers)]
         )
-        self.model.language_model = language_model
+        self.model = text_model
 
 
 def _matched_lora_names(model) -> set[str]:
@@ -477,78 +481,85 @@ def test_normalize_audio_feature_dtype_preserves_other_entries() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_lora_regex_matches_only_attention_and_shared_expert() -> None:
+def test_lora_regex_matches_only_attention_and_dense_mlp() -> None:
     import re
 
     pattern = re.compile(QWEN3OMNI_LORA_TARGET_REGEX)
     matched = [
-        f"model.language_model.layers.{layer}.{module}"
+        f"model.layers.{layer}.{module}"
         for layer in (0, 47)
         for module in (
             "self_attn.q_proj",
             "self_attn.k_proj",
             "self_attn.v_proj",
             "self_attn.o_proj",
-            "mlp.shared_expert.gate_proj",
-            "mlp.shared_expert.up_proj",
-            "mlp.shared_expert.down_proj",
+            # A dense layer would expose these; the checkpoint has none, but the
+            # anchored pattern must cover them rather than accidentally skip them.
+            "mlp.gate_proj",
+            "mlp.up_proj",
+            "mlp.down_proj",
         )
     ]
     assert len(matched) == 14
     for name in matched:
         assert pattern.fullmatch(name), name
     for name in (
-        "model.language_model.layers.0.mlp.gate",
-        "model.language_model.layers.0.mlp.shared_expert_gate",
-        "model.language_model.layers.0.mlp.experts.0.gate_proj",
-        "model.language_model.layers.0.mlp.experts.127.down_proj",
-        "model.language_model.layers.0.self_attn.q_norm",
-        "model.language_model.layers.0.input_layernorm",
-        "model.language_model.embed_tokens",
+        # Router and fused expert parameters of the real MoE layers.
+        "model.layers.0.mlp.gate",
+        "model.layers.0.mlp.experts",
+        "model.layers.0.mlp.experts.0.gate_proj",
+        "model.layers.0.mlp.experts.127.down_proj",
+        # Norms, embeddings, heads and the other towers.
+        "model.layers.0.self_attn.q_norm",
+        "model.layers.0.input_layernorm",
+        "model.embed_tokens",
+        "model.norm",
         "lm_head",
-        "model.audio_tower.layers.0.self_attn.q_proj",
-        "model.visual.blocks.0.attn.qkv",
-        "talker.model.language_model.layers.0.self_attn.q_proj",
+        "audio_tower.layers.0.self_attn.q_proj",
+        "visual.blocks.0.attn.qkv",
+        "talker.model.layers.0.self_attn.q_proj",
     ):
         assert not pattern.fullmatch(name), name
 
 
 def test_expected_lora_module_names_follow_the_module_tree() -> None:
-    with_shared = _FakeThinker(layers=3, shared_expert=True)
-    assert len(expected_lora_module_names(with_shared)) == 3 * 7
-    without_shared = _FakeThinker(layers=3, shared_expert=False)
-    assert len(expected_lora_module_names(without_shared)) == 3 * 4
-    # The PEFT-wrapped path form resolves too.
-    wrapped = SimpleNamespace(base_model=SimpleNamespace(model=with_shared))
-    assert len(expected_lora_module_names(wrapped)) == 3 * 7
+    # The real checkpoint is MoE in every layer: attention only.
+    moe = _FakeThinker(layers=3, dense_mlp=False)
+    expected = sorted(expected_lora_module_names(moe))
+    assert len(expected) == 3 * 4
+    assert expected[0] == "model.layers.0.self_attn.k_proj"
+    assert not any("mlp." in name for name in expected)
+    # A dense layer also exposes its gate/up/down projections.
+    dense = _FakeThinker(layers=3, dense_mlp=True)
+    assert len(expected_lora_module_names(dense)) == 3 * 7
+    # The PEFT-wrapped path form resolves to the same frame of reference.
+    wrapped = SimpleNamespace(base_model=SimpleNamespace(model=moe))
+    assert sorted(expected_lora_module_names(wrapped)) == expected
 
 
 def test_lora_audit_accepts_the_expected_set_and_rejects_drift() -> None:
-    model = _FakeThinker(layers=2, shared_expert=True)
-    audit = _audit_qwen3omni_lora_modules(model, _matched_lora_names(model))
+    model = _FakeThinker(layers=2, dense_mlp=False)
+    matched = _matched_lora_names(model)
+    assert len(matched) == 8
+    audit = _audit_qwen3omni_lora_modules(model, matched)
     assert audit["audit_passed"] is True
-    assert audit["matched_modules"] == 14
-    assert audit["expected_modules"] == 14
-    assert audit["lora_trainable_params"] == 14 * (1 * 2 + 2 * 1)
+    assert audit["matched_modules"] == 8
+    assert audit["expected_modules"] == 8
+    assert audit["lora_trainable_params"] == 8 * (1 * 2 + 2 * 1)
 
     with pytest.raises(ValueError, match="routers, experts or non-decoder modules"):
-        _audit_qwen3omni_lora_modules(
-            model, _matched_lora_names(model) | {"model.language_model.layers.0.mlp.gate"}
-        )
+        _audit_qwen3omni_lora_modules(model, matched | {"model.layers.0.mlp.gate"})
     with pytest.raises(ValueError, match="expected decoder modules were not adapted"):
-        missing = _matched_lora_names(model) - {
-            "model.language_model.layers.0.self_attn.q_proj"
-        }
-        _audit_qwen3omni_lora_modules(model, missing)
-    with pytest.raises(ValueError, match="unexpected modules were adapted"):
         _audit_qwen3omni_lora_modules(
-            model, _matched_lora_names(model) | {"model.audio_tower.layers.0.fc1"}
+            model, matched - {"model.layers.0.self_attn.q_proj"}
         )
+    with pytest.raises(ValueError, match="unexpected modules were adapted"):
+        _audit_qwen3omni_lora_modules(model, matched | {"audio_tower.layers.0.fc1"})
     with pytest.raises(ValueError, match="no LoRA modules were adapted"):
         _audit_qwen3omni_lora_modules(model, set())
 
-    drifted = _FakeThinker(layers=2, shared_expert=True)
-    drifted.model.audio_tower.weight.requires_grad = True
+    drifted = _FakeThinker(layers=2)
+    drifted.audio_tower.weight.requires_grad = True
     with pytest.raises(ValueError, match="non-LoRA parameters are trainable"):
         _audit_qwen3omni_lora_modules(drifted, _matched_lora_names(drifted))
 
@@ -568,7 +579,7 @@ def test_fsdp_wrap_policy_names_reads_the_decoder_layer_classes() -> None:
 def test_audio_encoder_freeze_guard_freezes_leaked_lora_parameters() -> None:
     model = _FakeThinker(layers=1)
     leaked = torch.nn.Linear(2, 1, bias=False)
-    model.model.audio_tower.add_module("lora_A_default", leaked)
+    model.audio_tower.add_module("lora_A_default", leaked)
     summary = enforce_audio_encoder_freeze(model, {"lora": {}})
     assert summary["frozen_lora_params"] > 0
     assert leaked.weight.requires_grad is False
@@ -587,7 +598,7 @@ def test_talker_absence_audit() -> None:
     assert audit["loaded_class"] == QWEN3OMNI_MODEL_CLASS_NAME
 
     with_talker = _FakeThinker(layers=1)
-    with_talker.model.talker = torch.nn.Linear(2, 2, bias=False)
+    with_talker.talker = torch.nn.Linear(2, 2, bias=False)
     with pytest.raises(ValueError, match="talker tensors are present"):
         audit_talker_absence(with_talker)
 
