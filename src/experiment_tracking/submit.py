@@ -15,6 +15,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from src.experiment_tracking.identity import new_attempt_id, validate_attempt_id
+from src.experiment_tracking.manifest_policy import (
+    MANIFEST_POLICY_PREBUILT,
+    ManifestPolicyError,
+    prebuilt_manifest_files,
+    validate_manifest_policy,
+)
 
 DEFAULT_SCHEDULER_HOST = "ozu647717@alogin2.bsc.es"
 REMOTE_PROJECT_BASE = Path("/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression")
@@ -94,8 +100,13 @@ def resolve_contract(
     train_nodes: int = 1,
     train_gpus_per_node: int = 4,
     env_activate: str | None = None,
+    manifest_policy: str | None = None,
 ) -> dict[str, Any]:
     """Resolve the complete submission contract without touching the network."""
+    try:
+        resolved_manifest_policy = validate_manifest_policy(config_dict, manifest_policy)
+    except ManifestPolicyError as exc:
+        raise SubmissionError(str(exc)) from exc
     if dataset != config_dict.get("dataset"):
         raise SubmissionError(
             f"dataset qualifier {dataset!r} does not match resolved config dataset {config_dict.get('dataset')!r}"
@@ -222,6 +233,17 @@ def resolve_contract(
         "runtime_root": str(runtime_root),
         "manifest_dir": manifest_dir,
         "split_dir": split_dir,
+        "manifest_policy": resolved_manifest_policy,
+        "skip_manifest_build": resolved_manifest_policy == MANIFEST_POLICY_PREBUILT,
+        "prebuilt_manifest_files": (
+            prebuilt_manifest_files(
+                manifest_dir=str(manifest_dir),
+                split_dir=str(split_dir),
+                dataset=dataset,
+            )
+            if resolved_manifest_policy == MANIFEST_POLICY_PREBUILT
+            else {}
+        ),
         "run_root": run_root,
         "fold_dir": fold_dir,
         "local_fold_rel": local_fold_rel,
@@ -289,6 +311,20 @@ def check_collisions(contract: dict[str, Any], remote_exists: Callable[[str], bo
         raise SubmissionError("submission collisions: " + "; ".join(conflicts))
 
 
+def verify_prebuilt_manifest_files(
+    contract: dict[str, Any], remote_exists: Callable[[str], bool]
+) -> None:
+    """Fail before sbatch when a prebuilt submission lacks its manifest inputs."""
+    if contract.get("manifest_policy") != MANIFEST_POLICY_PREBUILT:
+        return
+    files = contract.get("prebuilt_manifest_files") or {}
+    missing = [path for path in files.values() if not remote_exists(path)]
+    if missing:
+        raise SubmissionError(
+            "prebuilt manifest files are missing on the cluster: " + "; ".join(missing)
+        )
+
+
 def build_remote_submit_script(contract: dict[str, Any]) -> str:
     """Shell script executed on the scheduler login; every value shlex-quoted."""
     q = shlex.quote
@@ -308,6 +344,7 @@ def build_remote_submit_script(contract: dict[str, Any]) -> str:
         f"export EXPERIMENT_CONTEXT={q(contract['context_path'])}",
         f"export TRAIN_NODES={contract['training_shape']['nodes']}",
         f"export TRAIN_GPUS_PER_NODE={contract['training_shape']['gpus_per_node']}",
+        f"export SKIP_MANIFEST_BUILD={1 if contract.get('skip_manifest_build') else 0}",
     ]
     if contract.get("env_activate"):
         lines.insert(-1, f"export ENV_ACTIVATE={q(contract['env_activate'])}")

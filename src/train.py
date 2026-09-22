@@ -34,6 +34,7 @@ from src.daic_chunking import (
     resolve_chunking_controls,
 )
 from src.daic_mil import candidate_mean_token_logprob, streaming_subject_mil_backward
+from src.data.prompt_context import prompt_context_record
 from src.data.runtime import (
     AudioTextDataset,
     build_examples,
@@ -2001,6 +2002,7 @@ def main() -> None:
             "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
         },
         "input_modality": input_modality,
+        "prompt_context": prompt_context_record(config),
         "audio_adapter": audio_adapter_cfg,
         "lora_resolution": lora_layer_selection,
         "resolved_model_name_or_path": model_name_or_path,

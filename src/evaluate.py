@@ -24,6 +24,7 @@ from src.aggregate import (
     aggregate_turkish_pooled_text_condition_predictions,
 )
 from src.data.build_manifest import build_for_config, manifest_build_signature
+from src.data.prompt_context import prompt_context_record
 from src.data.runtime import (
     build_examples,
     filter_rows_by_subjects,
@@ -1168,6 +1169,7 @@ def main() -> None:
             "aggregation_level": aggregation_level,
             "evaluation_protocol_name": evaluation_protocol_name(sample_prediction_mode),
             "input_modality": input_modality,
+            "prompt_context": prompt_context_record(config),
             "lora_resolution": lora_layer_selection,
             "resolved_model_name_or_path": model_name_or_path,
             "checkpoint_dir": str(Path(args.checkpoint_dir)),

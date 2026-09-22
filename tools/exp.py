@@ -546,6 +546,7 @@ def _cmd_submit(args) -> int:
         parse_submitted_job_ids,
         require_complete_job_ids,
         resolve_contract,
+        verify_prebuilt_manifest_files,
         DEFAULT_SCHEDULER_HOST,
     )
     from src.experiment_tracking.deployment import (
@@ -653,6 +654,7 @@ def _cmd_submit(args) -> int:
             train_nodes=args.train_nodes,
             train_gpus_per_node=args.train_gpus_per_node,
             env_activate=getattr(args, "env_activate", None),
+            manifest_policy=getattr(args, "manifest_policy", None),
         )
     except SubmissionError as e:
         print(f"ERROR: {e}", file=sys.stderr)
@@ -692,6 +694,7 @@ def _cmd_submit(args) -> int:
             return remote_path_exists(runner, path)
 
         check_collisions(contract, exists)
+        verify_prebuilt_manifest_files(contract, exists)
 
         context_payload = json.dumps(contract["context"], indent=2, sort_keys=True) + "\n"
         ctx_parent = str(Path(contract["context_path"]).parent)
@@ -1664,6 +1667,16 @@ def main() -> int:
         "--env-activate",
         default=None,
         help="absolute path to the venv activate script the workers must source (defaults to the worker default)",
+    )
+    submit_parser.add_argument(
+        "--manifest-policy",
+        choices=["build", "prebuilt"],
+        default=None,
+        help=(
+            "manifest route: build (worker rebuilds the manifest) or prebuilt "
+            "(use the manifest prepared outside the worker; required by the pooled "
+            "Turkish recipe). Defaults to the config's manifest_policy, else build."
+        ),
     )
     submit_parser.add_argument("--dry-run", action="store_true", help="print the full resolved contract and exact commands without mutation")
     submit_parser.add_argument("--execute", action="store_true", help="verify deployment, transfer context, and submit through Slurm")
