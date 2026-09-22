@@ -11,7 +11,7 @@ quarantine_path: ${PROJECT_ROOT}/configs/quarantines.yaml
 output_dirs:
   manifest_dir: ${PROJECT_ROOT}/outputs/manifests_harmonized/androids
   split_dir: ${PROJECT_ROOT}/outputs/splits_harmonized/androids
-  run_root: ${PROJECT_ROOT}/output_model/promptcontext_v1_qwen38_likelihood/text_only/androids
+  run_root: ${PROJECT_ROOT}/output_model/promptcontext_v1_qwen38_likelihood/text_only/androids_interview
 prompt:
   version: promptcontext_v1
   dataset_context: androids

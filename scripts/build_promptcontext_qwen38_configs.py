@@ -84,7 +84,9 @@ CELLS = (
         "androids",
         "androids_text_only_harmonized_selmacrof1_likelihood_v1.yaml",
         "androids_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml",
-        "androids",
+        # The run root carries the real dataset name so the managed submission's
+        # dataset qualifier, the config and the runtime override all agree.
+        "androids_interview",
         "androids",
         (0, 1, 2, 3, 4),
         False,
