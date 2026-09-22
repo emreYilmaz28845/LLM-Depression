@@ -115,7 +115,7 @@ PROBE_CMD=(
     "$PYTHON_BIN" scripts/qwen3omni_backend_probe.py "$PROBE_MODE"
     --config "$CONFIG"
     --output "$PROBE_OUTPUT"
-    --overrides "${OVERRIDE_ARGS[@]}"
+    "${OVERRIDE_ARGS[@]}"
 )
 if [ -n "$PROBE_INVENTORY" ]; then
     PROBE_CMD+=(--inventory "$PROBE_INVENTORY")

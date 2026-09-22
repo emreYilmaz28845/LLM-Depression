@@ -151,13 +151,13 @@ echo "=== module-tree audit ==="
 python scripts/qwen3omni_backend_probe.py tree \
     --config "$CONFIG" \
     --output "$PREP_OUTPUT/module_tree.json" \
-    --overrides "${OVERRIDE_ARGS[@]}"
+    "${OVERRIDE_ARGS[@]}"
 
 echo "=== DAIC risk inventory (model-free plus processor) ==="
 python scripts/qwen3omni_daic_risk_inventory.py \
     --config "$CONFIG" \
     --output "$PREP_OUTPUT/risk_inventory.json" \
     --with-processor \
-    --overrides "${OVERRIDE_ARGS[@]}"
+    "${OVERRIDE_ARGS[@]}"
 
 echo "preflight complete: $PREP_OUTPUT"

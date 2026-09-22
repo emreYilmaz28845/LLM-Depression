@@ -34,6 +34,7 @@ from src.data.daic import PACKED30_SAMPLE_RATE
 from src.data.runtime import build_examples, load_manifest_rows
 from src.utils import (
     get_logger,
+    normalize_config_overrides,
     resolve_input_modality,
     resolve_model_name_or_path,
     resolve_project_path,
@@ -165,11 +166,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--with-processor", action="store_true")
     parser.add_argument("--processor-dir", default=None)
-    parser.add_argument("--overrides", nargs="*", default=None)
+    parser.add_argument(
+        "--set",
+        dest="set_overrides",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="config override in the repository --set form (repeatable)",
+    )
     args = parser.parse_args(argv)
 
     config_path = Path(args.config)
-    overrides = list(args.overrides or [])
+    overrides = normalize_config_overrides(getattr(args, "set_overrides", []) or [])
     config = load_yaml_with_overrides(config_path, overrides)
 
     rows = _load_manifest_rows(config, config_path, overrides)

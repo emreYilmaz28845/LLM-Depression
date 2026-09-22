@@ -61,7 +61,12 @@ from src.training_strategy import (
     effective_global_batch_size,
     resolve_activation_offload,
 )
-from src.utils import get_logger, load_yaml_with_overrides, resolve_model_name_or_path
+from src.utils import (
+    get_logger,
+    load_yaml_with_overrides,
+    normalize_config_overrides,
+    resolve_model_name_or_path,
+)
 
 LOGGER = get_logger(__name__)
 
@@ -109,13 +114,15 @@ def _gpu_memory() -> dict[str, Any]:
 
 
 def _load_config(args) -> dict[str, Any]:
-    return load_yaml_with_overrides(Path(args.config), list(args.overrides or []) or None)
+    overrides = normalize_config_overrides(getattr(args, "set_overrides", []) or [])
+    return load_yaml_with_overrides(Path(args.config), overrides or None)
 
 
 def _manifest_rows(config: dict[str, Any], args) -> list[dict[str, Any]]:
     from src.evaluate import _load_metadata_or_build
 
-    metadata = _load_metadata_or_build(args.config, config, list(args.overrides or []) or None)
+    overrides = normalize_config_overrides(getattr(args, "set_overrides", []) or [])
+    metadata = _load_metadata_or_build(args.config, config, overrides or None)
     return load_manifest_rows(metadata["manifest_path"])
 
 
@@ -532,7 +539,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=4)
     parser.add_argument("--steps", type=int, default=3)
     parser.add_argument("--warmup-steps", type=int, default=1)
-    parser.add_argument("--overrides", nargs="*", default=None)
+    parser.add_argument(
+        "--set",
+        dest="set_overrides",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="config override in the repository --set form (repeatable)",
+    )
     args = parser.parse_args(argv)
 
     if args.mode == "tree":
