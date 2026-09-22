@@ -94,17 +94,33 @@ def resolve_lora_layer_selection(config: dict[str, Any], model_or_config) -> dic
     }
 
 
-def build_lora_config(config: dict[str, Any], model_or_config) -> tuple[LoraConfig, dict[str, Any]]:
+def build_lora_config(
+    config: dict[str, Any],
+    model_or_config,
+    *,
+    resolved_target_modules: list[str] | None = None,
+) -> tuple[LoraConfig, dict[str, Any]]:
+    """Build the PEFT LoRA config for a resolved backend config.
+
+    ``resolved_target_modules`` is for backends that verified an anchored regex
+    against the real module tree and want the exact names injected. PEFT 0.19.1
+    feeds ``target_modules`` through ``set()`` on transformers-v5 MoE models
+    (``convert_peft_config_for_transformers``), which turns a regex *string* into
+    a set of characters, so those backends must pass the matched names instead.
+    """
     lora_cfg = config["lora"]
     layer_selection = resolve_lora_layer_selection(config, model_or_config)
-    raw_target_modules = lora_cfg["target_modules"]
-    if isinstance(raw_target_modules, str):
-        # A regex string is a PEFT-native target pattern matched with
-        # re.fullmatch against module keys (e.g. the Gemma 4 unified decoder
-        # regex). Never split it into a list of characters.
-        target_modules: str | list[str] = raw_target_modules
+    if resolved_target_modules is not None:
+        target_modules: str | list[str] = list(resolved_target_modules)
     else:
-        target_modules = list(raw_target_modules)
+        raw_target_modules = lora_cfg["target_modules"]
+        if isinstance(raw_target_modules, str):
+            # A regex string is a PEFT-native target pattern matched with
+            # re.fullmatch against module keys (e.g. the Gemma 4 unified decoder
+            # regex). Never split it into a list of characters.
+            target_modules = raw_target_modules
+        else:
+            target_modules = list(raw_target_modules)
     lora_kwargs: dict[str, Any] = {
         "r": int(lora_cfg["rank"]),
         "lora_alpha": int(lora_cfg["alpha"]),
@@ -124,7 +140,8 @@ def build_lora_config(config: dict[str, Any], model_or_config) -> tuple[LoraConf
     # config opts in with `lora.tune_audio_encoder: true`.
     explicit_exclude = lora_cfg.get("exclude_modules")
     tune_audio_encoder = bool(lora_cfg.get("tune_audio_encoder", False))
-    gemma_regex_scope = isinstance(target_modules, str)
+    # An exactly resolved target list is already the scope, exactly like a regex.
+    gemma_regex_scope = isinstance(target_modules, str) or resolved_target_modules is not None
     if explicit_exclude:
         lora_kwargs["exclude_modules"] = explicit_exclude
     elif not tune_audio_encoder and not gemma_regex_scope:

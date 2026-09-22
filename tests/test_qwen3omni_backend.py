@@ -537,6 +537,42 @@ def test_expected_lora_module_names_follow_the_module_tree() -> None:
     assert sorted(expected_lora_module_names(wrapped)) == expected
 
 
+def test_resolved_lora_targets_are_exact_names_peft_can_consume() -> None:
+    """PEFT 0.19.1 mangles a regex string on transformers-v5 MoE models.
+
+    The backend must hand PEFT the exact names the anchored pattern matches, so
+    the config keeps the audited regex while the injected targets are a set of
+    module names.
+    """
+    import re
+
+    from src.model.lora_common import build_lora_config
+
+    model = _FakeThinker(layers=3, dense_mlp=False)
+    pattern = re.compile(QWEN3OMNI_LORA_TARGET_REGEX)
+    resolved = sorted(expected_lora_module_names(model))
+    assert resolved
+    assert all(pattern.fullmatch(name) for name in resolved)
+
+    config = _omni_config()
+    # build_lora_config resolves the decoder depth from the model config, so the
+    # stand-in carries one (the real Thinker exposes it at config.text_config).
+    config_holder = SimpleNamespace(
+        config=SimpleNamespace(text_config=SimpleNamespace(num_hidden_layers=len(model.model.layers)))
+    )
+    lora_config, _ = build_lora_config(
+        config, config_holder, resolved_target_modules=resolved
+    )
+    assert isinstance(lora_config.target_modules, set)
+    assert lora_config.target_modules == set(resolved)
+    # An exactly resolved scope behaves like the regex scope: no default excludes.
+    assert getattr(lora_config, "exclude_modules", None) is None
+
+    # Without the override the declared regex is passed through unchanged.
+    regex_config, _ = build_lora_config(config, config_holder)
+    assert regex_config.target_modules == QWEN3OMNI_LORA_TARGET_REGEX
+
+
 def test_lora_audit_accepts_the_expected_set_and_rejects_drift() -> None:
     model = _FakeThinker(layers=2, dense_mlp=False)
     matched = _matched_lora_names(model)

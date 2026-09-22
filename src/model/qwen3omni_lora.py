@@ -37,6 +37,7 @@ from __future__ import annotations
 import gc
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -780,7 +781,31 @@ def load_model_for_training(model_name_or_path: str, config: dict[str, Any]):
             model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
         except TypeError:
             model.gradient_checkpointing_enable()
-    lora_config, lora_layer_selection = build_lora_config(config, model)
+    # The declared anchored regex is the audited contract; PEFT receives the exact
+    # names it matches on this tree, because PEFT 0.19.1 mangles a regex string on
+    # transformers-v5 MoE models.
+    pattern = re.compile(QWEN3OMNI_LORA_TARGET_REGEX)
+    resolved_targets = sorted(expected_lora_module_names(model))
+    if not resolved_targets:
+        raise ValueError(
+            "The anchored LoRA target pattern matched no module in the loaded Thinker; "
+            "refusing to continue with an empty target set."
+        )
+    unmatched = [name for name in resolved_targets if not pattern.fullmatch(name)]
+    if unmatched:
+        raise ValueError(
+            "The resolved LoRA targets disagree with the declared anchored pattern: "
+            f"{unmatched[:8]}"
+        )
+    LOGGER.info(
+        "Resolved %s LoRA target modules from the anchored pattern (first: %s, last: %s).",
+        len(resolved_targets),
+        resolved_targets[0],
+        resolved_targets[-1],
+    )
+    lora_config, lora_layer_selection = build_lora_config(
+        config, model, resolved_target_modules=resolved_targets
+    )
     model = get_peft_model(model, lora_config)
     model._resolved_lora_layer_selection = dict(lora_layer_selection)
     model._qwen3omni_load_mode = load_mode
