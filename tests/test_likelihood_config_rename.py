@@ -54,13 +54,16 @@ def _tf_source(old_name: str) -> Path:
 
 
 def likelihood_main_configs():
-    # The 2026-09-17 rename covered the family that existed then. Backbone
-    # variants added later (the Qwen3.8 text-only config) carry their own
+    # The 2026-09-17 rename covered the family that existed then. Backbone and
+    # prompt variants added later (the Qwen3.8 text-only config, the
+    # prompt-context family, the Qwen3-Omni pilot configs) carry their own
     # provenance and are not part of the rename map.
     return sorted(
         path
         for path in MAIN.glob("*_likelihood_v1*.yaml")
         if "_qwen38_27b" not in path.name
+        and "_qwen3omni_30b_a3b" not in path.name
+        and "_promptcontext_v1" not in path.name
     )
 
 

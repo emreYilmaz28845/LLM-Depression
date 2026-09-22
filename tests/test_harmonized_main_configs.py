@@ -16,6 +16,7 @@ def harmonized_configs():
         if not path.name.endswith("_en.yaml")
         and "_gemma4_12b" not in path.name
         and "_qwen38_27b" not in path.name
+        and "_qwen3omni_30b_a3b" not in path.name
         and "_officialdev" not in path.name
         and "turkish_negative_only" not in path.name
         # The pooled question-conditioned family is a separate locked recipe.

@@ -18,6 +18,9 @@ PROJECT_ROOT="${2:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
 GEMMA_ENV="${GEMMA_ENV:-/gpfs/projects/etur92/ozu647717/venvs/gemma4_12b_tf5_14_1}"
 GEMMA4_MODEL_PATH="${GEMMA4_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/gemma-4-12B-it/707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7}"
 QWEN_ENV_ACTIVATE="${QWEN_ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate}"
+# Qwen3-Omni needs its own offline environment: the Qwen2-Audio environment ships
+# transformers 4.55.0, which has no Qwen3OmniMoe classes.
+QWEN3OMNI_ENV_ACTIVATE="${QWEN3OMNI_ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen3omni/bin/activate}"
 
 MODEL_BACKEND="$(python - "$CONFIG_PATH" "$PROJECT_ROOT" <<'PY'
 import sys
@@ -37,7 +40,14 @@ case "$MODEL_BACKEND" in
     printf 'HIDDEN_WORKER=%s/scripts/run_gemma4_harmonized_hidden_slurm.sh\n' "$PROJECT_ROOT"
     printf 'CLASSIFIER_VARIANTS=logreg_raw\n'
     ;;
-  qwen2audio|qwen_text|text|qwen3omni|"")
+  qwen3omni)
+    printf 'MODEL_BACKEND=qwen3omni\n'
+    printf 'ENV_ACTIVATE=%s\n' "$QWEN3OMNI_ENV_ACTIVATE"
+    printf 'MODEL_PATH=\n'
+    printf 'HIDDEN_WORKER=%s/scripts/run_qwen_hidden_extract_slurm.sh\n' "$PROJECT_ROOT"
+    printf 'CLASSIFIER_VARIANTS=logreg_raw:xgb_raw\n'
+    ;;
+  qwen2audio|qwen_text|text|"")
     printf 'MODEL_BACKEND=qwen\n'
     printf 'ENV_ACTIVATE=%s\n' "$QWEN_ENV_ACTIVATE"
     printf 'MODEL_PATH=\n'
