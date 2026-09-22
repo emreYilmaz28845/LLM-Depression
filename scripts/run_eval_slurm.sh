@@ -117,6 +117,7 @@ echo "Checkpoint Dir: $CHECKPOINT_DIR" | tee -a "$RUN_LOG_FILE"
 echo "Output Dir: $OUTPUT_DIR" | tee -a "$RUN_LOG_FILE"
 echo "MODEL_PATH: ${MODEL_PATH:-<from YAML or checkpoint base model>}" | tee -a "$RUN_LOG_FILE"
 echo "EXTRA_EVAL_ARGS: ${EXTRA_EVAL_ARGS:-<none>}" | tee -a "$RUN_LOG_FILE"
+echo "EVAL_GPUS_PER_NODE: ${EVAL_GPUS_PER_NODE:-1}" | tee -a "$RUN_LOG_FILE"
 echo "SKIP_MANIFEST_BUILD: $SKIP_MANIFEST_BUILD" | tee -a "$RUN_LOG_FILE"
 echo "DATASET_BASE_ROOT: $DATASET_BASE_ROOT" | tee -a "$RUN_LOG_FILE"
 echo "DAIC_DATASET_ROOT: $DAIC_DATASET_ROOT" | tee -a "$RUN_LOG_FILE"
@@ -154,6 +155,22 @@ print("dataset", dataset)
 print("dataset_root", config["dataset_root"])
 print("transcript_file", config.get("transcript_file", "<default>"))
 print("audio_adapter", json.dumps(config.get("audio_adapter", {}), sort_keys=True))
+
+# The declared evaluation shape is authoritative: the same key sizes the GPU
+# request in the submitter and the device map in the model loader, so a job that
+# sees a different device count must fail instead of running another shape.
+import torch
+
+resources = config.get("resources", {}) or {}
+declared_eval_gpus = int(resources.get("eval_gpus_per_node", 1) or 1)
+visible_devices = torch.cuda.device_count()
+print("eval_gpus_per_node", declared_eval_gpus)
+print("visible_cuda_devices", visible_devices)
+if declared_eval_gpus > 1 and visible_devices < declared_eval_gpus:
+    raise SystemExit(
+        f"the resolved config declares resources.eval_gpus_per_node={declared_eval_gpus} "
+        f"but only {visible_devices} CUDA device(s) are visible; refusing to run a different shape"
+    )
 
 split_dir = resolve_project_path(config["output_dirs"]["split_dir"])
 metadata_path = split_dir / f"{dataset}_manifest_metadata.json"

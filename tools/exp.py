@@ -653,6 +653,7 @@ def _cmd_submit(args) -> int:
             github_pr=os.environ.get("GITHUB_PR"),
             train_nodes=args.train_nodes,
             train_gpus_per_node=args.train_gpus_per_node,
+            eval_gpus_per_node=getattr(args, "eval_gpus_per_node", None),
             env_activate=getattr(args, "env_activate", None),
             manifest_policy=getattr(args, "manifest_policy", None),
         )
@@ -1662,6 +1663,16 @@ def main() -> int:
         type=int,
         default=4,
         help="GPUs per training node (4 by default; never 8 on one node)",
+    )
+    submit_parser.add_argument(
+        "--eval-gpus-per-node",
+        type=int,
+        default=None,
+        help=(
+            "GPUs for the standalone evaluation job (defaults to the resolved config's "
+            "resources.eval_gpus_per_node, else 1); the config value stays authoritative "
+            "for the model loader, so a mismatch fails closed"
+        ),
     )
     submit_parser.add_argument(
         "--env-activate",

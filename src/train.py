@@ -99,10 +99,12 @@ from src.utils import (
     internal_label_text_from_int,
     load_yaml_with_overrides,
     log_resolved_config,
+    model_load_audit,
     read_json,
     resolve_input_modality,
     resolve_metadata_paths,
     resolve_aggregation_level,
+    resolve_evaluation_resource_shape,
     resolve_model_name_or_path,
     resolve_prediction_mode,
     resolve_project_path,
@@ -959,6 +961,7 @@ def _audit_audio_budget(
     seconds: list[float] = []
     audio_tokens: list[float] = []
     seq_lengths: list[float] = []
+    audio_tensor_shapes: dict[str, list[int]] | None = None
     for index in range(audit_count):
         try:
             item = dataset[index]
@@ -973,6 +976,14 @@ def _audit_audio_budget(
         except Exception as exc:
             LOGGER.warning("Audio budget audit: collator failed on example %s: %s", index, exc)
             continue
+        if audio_tensor_shapes is None:
+            # Audio-feature shapes are constant per window for a resolved config,
+            # so one example is enough for provenance.
+            audio_tensor_shapes = {
+                key: list(value.shape)
+                for key, value in batch.items()
+                if torch.is_tensor(value) and ("feature" in key or "audio" in key)
+            }
         input_ids = batch["input_ids"][0]
         example_tokens = 0
         if audio_token_id is not None:
@@ -1008,6 +1019,7 @@ def _audit_audio_budget(
         "audio_seconds_per_example": _stats(seconds),
         "audio_tokens_per_example": _stats(audio_tokens),
         "total_sequence_tokens_per_example": _stats(seq_lengths),
+        "audio_tensor_shapes": audio_tensor_shapes or {},
     }
     save_json(payload, logs_dir / f"audio_budget_audit_{partition_name}.json")
     sec_stats = payload["audio_seconds_per_example"]
@@ -2022,6 +2034,8 @@ def main() -> None:
         "prompt_context": prompt_context_record(config),
         "audio_adapter": audio_adapter_cfg,
         "lora_resolution": lora_layer_selection,
+        "model_load_audit": model_load_audit(model),
+        "evaluation_resource_shape": resolve_evaluation_resource_shape(config),
         "resolved_model_name_or_path": model_name_or_path,
         "manifest_path": metadata["manifest_path"],
         "manifest_hash": metadata["manifest_hash"],
