@@ -220,7 +220,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--remote-root",
         default=None,
-        help="defaults to <runtime base>/<experiment-id>/merged",
+        help="defaults to <runtime base>/<experiment-id>/<root name>",
+    )
+    parser.add_argument(
+        "--root-name",
+        default=None,
+        help="defaults to merged_<source commit 8>; a source change needs a new root",
     )
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--source", default=str(PROJECT_ROOT))
@@ -230,7 +235,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    remote_root = args.remote_root or f"{REMOTE_RUNTIME_BASE}/{args.experiment_id}/merged"
+    root_name = args.root_name or f"merged_{_local_git('rev-parse', 'HEAD')[:8]}"
+    remote_root = args.remote_root or f"{REMOTE_RUNTIME_BASE}/{args.experiment_id}/{root_name}"
     code = f"{remote_root}/code"
     dry_run = not args.execute
     print(f"merged execution root: {code} ({'dry-run' if dry_run else 'execute'})")
