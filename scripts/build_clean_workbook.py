@@ -785,7 +785,7 @@ def build_qwen3omni_daic(wb: Workbook) -> None:
         ws, row + 1,
         "All Qwen3-Omni values were recomputed locally from predictions_subject_level.csv by "
         "`exp validate` before this sheet was generated, and the reference values are re-hashed "
-        "against their recorded per-subject artifacts by tools/build_qwen3omni_daic_comparison.py. "
+        "against their recorded per-subject artifacts by tools/build_qwen3omni_promptcontext_comparison.py. "
         "One seed each; differences are observations, not variance estimates or significance.",
         8, height=60,
     )
