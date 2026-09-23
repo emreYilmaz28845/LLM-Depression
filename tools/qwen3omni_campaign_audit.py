@@ -172,7 +172,40 @@ def audit_jobs(project_root: Path, sacct: dict[str, dict[str, str]]) -> dict[str
     }
 
 
-def audit_resources(probes_root: Path) -> dict[str, Any]:
+def _smoke_evidence(logs_root: Path | None) -> dict[str, Any]:
+    """Peak per-rank memory and the selected checkpoint line of each training log.
+
+    The training logs are the real-path evidence: the probes measure a synthetic
+    stress loop, while these come from the production-shape runs themselves.
+    """
+    if logs_root is None or not logs_root.is_dir():
+        return {}
+    evidence: dict[str, Any] = {}
+    for log_path in sorted(logs_root.glob("*/train-*.log")):
+        dataset = log_path.parent.name
+        peak_lines = [
+            line
+            for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            if "Peak GPU memory [final]" in line
+        ]
+        selection_lines = [
+            line for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            if "Selected checkpoint epoch" in line
+        ]
+        if not peak_lines and not selection_lines:
+            continue
+        job_id = log_path.name.split("-")[1] if "-" in log_path.name else ""
+        entry: dict[str, Any] = {"job": job_id, "log": str(log_path)}
+        if peak_lines:
+            parts = peak_lines[-1].split("|")[-2:]
+            entry["peak"] = " | ".join(part.strip() for part in parts)
+        if selection_lines:
+            entry["selection"] = selection_lines[-1].split("|", 3)[-1].strip()[:220]
+        evidence.setdefault(dataset, []).append(entry)
+    return evidence
+
+
+def audit_resources(probes_root: Path, logs_root: Path | None = None) -> dict[str, Any]:
     families: dict[str, dict[str, Any]] = {}
     for probe_path in sorted(probes_root.glob("*/*.json")):
         dataset = probe_path.parent.name
@@ -297,6 +330,7 @@ def audit_resources(probes_root: Path) -> dict[str, Any]:
         "schema_version": "audiollm.qwen3omni_campaign_resource_report.v1",
         "probes_root": str(probes_root),
         "families": families,
+        "smoke_evidence": _smoke_evidence(logs_root),
     }
 
 
@@ -434,6 +468,25 @@ def _resources_markdown(payload: dict[str, Any]) -> str:
                     notes="; ".join(note_bits),
                 )
             )
+    smoke = payload.get("smoke_evidence") or {}
+    if smoke:
+        lines += [
+            "",
+            "## Real training path (fold-0 smokes at the production shape)",
+            "",
+            "| Dataset | Job | Final peak | Selected checkpoint |",
+            "| --- | --- | --- | --- |",
+        ]
+        for dataset, entries in smoke.items():
+            for entry in entries:
+                lines.append(
+                    "| {dataset} | {job} | {peak} | {selection} |".format(
+                        dataset=dataset,
+                        job=entry.get("job", ""),
+                        peak=entry.get("peak", ""),
+                        selection=(entry.get("selection") or "")[:160],
+                    )
+                )
     return "\n".join(lines) + "\n"
 
 
@@ -448,6 +501,12 @@ def main(argv: list[str] | None = None) -> int:
 
     resources = sub.add_parser("resources", help="summarize the probe reports")
     resources.add_argument("--probes-root", required=True, type=Path)
+    resources.add_argument(
+        "--logs-root",
+        type=Path,
+        default=None,
+        help="slurm_train log root (adds the real-path peak memory and checkpoint selection per run)",
+    )
     resources.add_argument("--output", required=True, type=Path)
 
     selections = sub.add_parser(
@@ -482,7 +541,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  {record['dataset']}/{record['modality']}/fold_{record['fold']}: {record['problems']}")
         return 0 if audit["status"] == "passed" else 1
 
-    payload = audit_resources(args.probes_root)
+    payload = audit_resources(args.probes_root, args.logs_root)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     markdown_path = args.output.with_suffix(".md")
