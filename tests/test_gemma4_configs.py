@@ -12,6 +12,7 @@ from src.utils import load_yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "configs/main"
+QWEN2_ARCHIVE = ROOT / "configs/archive/pre_default_backbone_20260923"
 
 GEMMA_CONFIGS = {
     modality: f"daic_{modality}_harmonized_selmacrof1_likelihood_v1_gemma4_12b.yaml"
@@ -60,7 +61,7 @@ def _deep_diff(source: dict, target: dict, path: str = "") -> list[str]:
 
 
 def _approved_differences(modality: str) -> list[str]:
-    source = load_yaml(MAIN / QWEN_CONFIGS[modality])
+    source = load_yaml(QWEN2_ARCHIVE / QWEN_CONFIGS[modality])
     target = load_yaml(MAIN / GEMMA_CONFIGS[modality])
     differences: list[str] = []
     for key in sorted(set(source) | set(target)):
@@ -128,7 +129,7 @@ def test_gemma_configs_exist_and_validate() -> None:
 def test_gemma_configs_share_daic_manifest_and_split_dirs() -> None:
     for modality, name in GEMMA_CONFIGS.items():
         gemma = load_yaml(MAIN / name)
-        qwen = load_yaml(MAIN / QWEN_CONFIGS[modality])
+        qwen = load_yaml(QWEN2_ARCHIVE / QWEN_CONFIGS[modality])
         assert gemma["output_dirs"]["manifest_dir"] == qwen["output_dirs"]["manifest_dir"]
         assert gemma["output_dirs"]["split_dir"] == qwen["output_dirs"]["split_dir"]
 
@@ -142,7 +143,7 @@ def test_gemma_config_differences_are_limited_to_approved_list() -> None:
 def test_gemma_configs_preserve_scientific_invariants() -> None:
     for modality, name in GEMMA_CONFIGS.items():
         gemma = load_yaml(MAIN / name)
-        qwen = load_yaml(MAIN / QWEN_CONFIGS[modality])
+        qwen = load_yaml(QWEN2_ARCHIVE / QWEN_CONFIGS[modality])
         for key in ("dataset", "seed", "recipe_id", "protocol_id", "manifest_variant", "labels", "prompt", "split"):
             assert gemma[key] == qwen[key], f"{modality}: {key} changed"
         assert gemma["data"] == qwen["data"], f"{modality}: data changed"

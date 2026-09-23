@@ -42,10 +42,17 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.data.prompt_context import PROMPT_CONTEXT_VERSION, resolve_system_prompt
 
 MAIN = PROJECT_ROOT / "configs/main"
+PRE_DEFAULT_BACKBONE_ARCHIVE = PROJECT_ROOT / "configs/archive/pre_default_backbone_20260923"
 MATRIX = PROJECT_ROOT / "configs/experiments/promptcontext_qwen38/matrix.yaml"
 DEFAULT_AUDIT_OUTPUT = (
     PROJECT_ROOT / "outputs/prompt_context_config_diff/config_diff_audit.json"
 )
+
+
+def source_config_path(source_name: str) -> Path:
+    """Use the preserved Qwen2 source after canonical filenames change backend."""
+    archived = PRE_DEFAULT_BACKBONE_ARCHIVE / source_name
+    return archived if archived.is_file() else MAIN / source_name
 
 QWEN38_MODEL_PATH = "${QWEN38_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen3.8-27B}"
 QWEN38_MODEL_REVISION = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
@@ -220,7 +227,7 @@ def build_matrix() -> dict[str, Any]:
     cells = []
     for cell in CELLS:
         slug, source_name, target, _dataset_dir, context_key, folds, _pooled = cell
-        source = yaml.safe_load((MAIN / source_name).read_text(encoding="utf-8"))
+        source = yaml.safe_load(source_config_path(source_name).read_text(encoding="utf-8"))
         config = derive(source, cell)
         dataset = str(config["dataset"])
         cells.append(
@@ -392,7 +399,7 @@ def main(argv: list[str] | None = None) -> int:
     }
     for cell in CELLS:
         slug, source_name, target_name, dataset_dir, context_key, folds, pooled = cell
-        source_path = MAIN / source_name
+        source_path = source_config_path(source_name)
         if not source_path.is_file():
             raise GenerationError(f"missing canonical source config: {source_path}")
         source = yaml.safe_load(source_path.read_text(encoding="utf-8"))

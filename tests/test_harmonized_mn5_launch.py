@@ -24,7 +24,7 @@ MERGED = {
 
 def test_standalone_matrix_is_the_complete_fixed_head_recipe() -> None:
     matrix = yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-    assert matrix["fixed_heads"] == ["logreg_raw", "xgb_raw"]
+    assert matrix["fixed_heads"] == []
     assert matrix["max_epochs"] == 20
     assert matrix["checkpoint_selection"] == "inner_val_macro_f1"
     assert len(matrix["experiments"]) == 15
@@ -139,7 +139,7 @@ def test_workers_export_every_harmonized_dataset_root() -> None:
         assert all(name in text for name in required), worker
 
 
-def test_standalone_dry_run_has_63_trains_33_evals_and_63_fixed_heads() -> None:
+def test_standalone_dry_run_has_63_trains_33_evals_and_no_heads() -> None:
     result = subprocess.run(
         ["bash", str(ROOT / "scripts/submit_harmonized_standalone.sh")],
         cwd=ROOT,
@@ -156,11 +156,10 @@ def test_standalone_dry_run_has_63_trains_33_evals_and_63_fixed_heads() -> None:
         check=True,
     )
     commands = [line for line in result.stderr.splitlines() if line.startswith("DRY_RUN sbatch")]
-    assert len(commands) == 159
+    assert len(commands) == 96
     assert sum("run_train_slurm.sh" in line for line in commands) == 63
     assert sum("run_eval_slurm.sh" in line for line in commands) == 33
-    assert sum("run_qwen_hidden_extract_slurm.sh" in line for line in commands) == 63
-    assert "max_gpus=315" in result.stdout
+    assert sum("run_qwen_hidden_extract_slurm.sh" in line for line in commands) == 0
     assert "xgb_optuna" not in result.stdout + result.stderr
     assert "github_issue=12 github_pr=10" in result.stdout
 

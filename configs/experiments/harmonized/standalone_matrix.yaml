@@ -1,9 +1,9 @@
 name: harmonized_v1_standalone_matrix
-recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1
+recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1_promptcontext_v1
 seed: 1337
 max_epochs: 20
 checkpoint_selection: inner_val_macro_f1
-fixed_heads: [logreg_raw, xgb_raw]
+fixed_heads: []
 experiments:
   - {config: configs/main/d3tec_audio_text_harmonized_selmacrof1_likelihood_v1.yaml, folds: [0, 1, 2, 3, 4], separate_eval: true}
   - {config: configs/main/d3tec_audio_only_harmonized_selmacrof1_likelihood_v1.yaml, folds: [0, 1, 2, 3, 4], separate_eval: true}

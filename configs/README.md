@@ -58,7 +58,7 @@ configs/
 
 The active harmonized family is:
 
-`harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1`
+`harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1_promptcontext_v1`
 
 It covers D3TEC, Turkish BDI≥17 with Qwen3-ASR, Androids, DAIC-WOZ, and CMDC in audio-only, text-only, and audio+text modes.
 
@@ -72,6 +72,22 @@ It covers D3TEC, Turkish BDI≥17 with Qwen3-ASR, Androids, DAIC-WOZ, and CMDC i
 - Validation checkpoint selection and early stopping use `inner_val_macro_f1`, mode `max`.
 - Evaluation uses candidate-label **likelihood** (`sample_prediction_mode: likelihood`) as the canonical decision rule; the per-subject decision is the argmax of the mean dep/non candidate scores. Teacher forcing (`original_teacher_forced`) is a labelled legacy view: its configs are archived under `configs/archive/pre_likelihood_20260917/` and its former canonical workbook values live in the workbook's "Legacy TF" sheet.
 - The audio encoder remains frozen because `audio_adapter.enabled` and `train_projector` are false.
+
+### Default backbone policy
+
+The 15 unqualified canonical configs use the current production backbones:
+
+- text-only: `model_backend: qwen38` with the pinned Qwen3.8-27B snapshot;
+- audio-only and audio+text: `model_backend: qwen3omni` with the
+  Qwen3-Omni-30B-A3B Thinker. The Talker is not retained;
+- both families use `promptcontext_v1`, FSDP, BF16 inference, CPU activation
+  offload, likelihood evaluation and standalone evaluation after training.
+
+The pre-migration Qwen2/Qwen2-Audio versions of those exact 15 files are kept
+under `configs/archive/pre_default_backbone_20260923/`. Explicit Gemma, English,
+official-development, E-DAIC and secondary Turkish configs keep their named
+backends and recipes. Run `python scripts/build_canonical_backend_configs.py
+--check` after editing a canonical config.
 
 Naming:
 
@@ -159,7 +175,8 @@ E-DAIC was outside the harmonization scope and was not inspected, moved, or rewr
 
 Count the current inventory with `find configs/main -maxdepth 1 -type f -name '*.yaml' | wc -l`; do not copy an old total into plans or reports. The active families include:
 
-- the 15 core harmonized Qwen configs: five datasets × three modalities;
+- the 15 core harmonized default configs: five datasets × three modalities
+  (Qwen3.8 text-only; Qwen3-Omni Thinker audio-only and audio+text);
 - 5 isolated Turkish negative-only t17 secondary configs: three native
   modalities plus English audio+text and text-only;
 - the 3 Gemma 4 DAIC configs described above;

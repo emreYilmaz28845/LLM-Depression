@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "configs/main"
 MERGED = ROOT / "configs/experiments/merged"
 ARCHIVE = ROOT / "configs/archive/pre_likelihood_20260917"
+PRE_DEFAULT_BACKBONE_ARCHIVE = ROOT / "configs/archive/pre_default_backbone_20260923"
 RENAME_MAP = ROOT / "experiments/definitions/likelihood_rename_map.yaml"
 
 MAIN_DIFF_KEYS = {
@@ -58,13 +59,19 @@ def likelihood_main_configs():
     # prompt variants added later (the Qwen3.8 text-only config, the
     # prompt-context family, the Qwen3-Omni pilot configs) carry their own
     # provenance and are not part of the rename map.
-    return sorted(
+    current = sorted(
         path
         for path in MAIN.glob("*_likelihood_v1*.yaml")
         if "_qwen38_27b" not in path.name
         and "_qwen3omni_30b_a3b" not in path.name
         and "_promptcontext_v1" not in path.name
     )
+    return [
+        (PRE_DEFAULT_BACKBONE_ARCHIVE / path.name)
+        if (PRE_DEFAULT_BACKBONE_ARCHIVE / path.name).is_file()
+        else path
+        for path in current
+    ]
 
 
 def test_every_main_likelihood_config_matches_its_tf_source_exactly() -> None:

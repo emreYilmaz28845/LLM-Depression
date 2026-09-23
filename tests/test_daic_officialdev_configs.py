@@ -13,6 +13,7 @@ from src.utils import load_yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "configs/main"
+QWEN2_ARCHIVE = ROOT / "configs/archive/pre_default_backbone_20260923"
 
 OFFICIALDEV_RECIPE_ID = "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_officialdev_v1"
 OFFICIALDEV_VIEW = "harmonized_all_windows_full_coverage"
@@ -100,7 +101,10 @@ def test_six_officialdev_configs_exist_and_validate() -> None:
 def test_officialdev_differences_from_parents_are_exactly_the_allowlist() -> None:
     for backbone, modalities in OFFICIALDEV_CONFIGS.items():
         for modality, name in modalities.items():
-            parent = load_yaml(MAIN / PARENT_CONFIGS[backbone][modality])
+            parent_path = MAIN / PARENT_CONFIGS[backbone][modality]
+            if backbone == "qwen":
+                parent_path = QWEN2_ARCHIVE / PARENT_CONFIGS[backbone][modality]
+            parent = load_yaml(parent_path)
             child = load_yaml(MAIN / name)
             differences = _iter_differences(parent, child)
             expected = set(ALLOWED_DIFFS.values())
@@ -129,7 +133,10 @@ def test_officialdev_locked_split_contract() -> None:
 def test_officialdev_recipe_invariants_preserved() -> None:
     for backbone, modalities in OFFICIALDEV_CONFIGS.items():
         for modality, name in modalities.items():
-            parent = load_yaml(MAIN / PARENT_CONFIGS[backbone][modality])
+            parent_path = MAIN / PARENT_CONFIGS[backbone][modality]
+            if backbone == "qwen":
+                parent_path = QWEN2_ARCHIVE / PARENT_CONFIGS[backbone][modality]
+            parent = load_yaml(parent_path)
             child = load_yaml(MAIN / name)
             for key in ("dataset", "seed", "protocol_id", "manifest_variant", "labels", "prompt"):
                 assert child[key] == parent[key], f"{name}: {key} changed"

@@ -5,7 +5,7 @@ from src.utils import load_yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "configs/main"
-RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1"
+RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1_promptcontext_v1"
 DATASETS = {"d3tec", "turkish", "androids_interview", "daic", "cmdc"}
 
 

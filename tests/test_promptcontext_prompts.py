@@ -19,8 +19,9 @@ from src.data.runtime import QUESTION_CONTEXT_SENTENCES, build_examples, render_
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "configs/main"
+PRE_DEFAULT_BACKBONE_ARCHIVE = ROOT / "configs/archive/pre_default_backbone_20260923"
 LEGACY_POOLED = MAIN / "turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml"
-LEGACY_TEXT_ONLY = MAIN / "d3tec_text_only_harmonized_selmacrof1_likelihood_v1.yaml"
+LEGACY_TEXT_ONLY = PRE_DEFAULT_BACKBONE_ARCHIVE / "d3tec_text_only_harmonized_selmacrof1_likelihood_v1.yaml"
 
 NEW_CONFIGS = {cell[0]: MAIN / cell[2] for cell in CELLS}
 CONTEXT_KEYS = {cell[0]: cell[4] for cell in CELLS}
