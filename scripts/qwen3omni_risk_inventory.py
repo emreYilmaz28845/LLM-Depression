@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Model-free DAIC risk inventory for the Qwen3-Omni pilot.
+"""Model-free risk inventory for the Qwen3-Omni harmonized cells.
 
-Builds one deterministic inventory over the resolved DAIC manifest and selects
-the examples that stress the processor and the model most: the shortest and
-longest audio, the shortest and longest rendered prompt, the largest combined
-processor footprint, and — when they are different examples — each maximum
-separately. The probes and the memory gate then reuse exactly this selection.
+Builds one deterministic inventory over the resolved manifest of a
+Qwen3-Omni prompt-context config and selects the examples that stress the
+processor and the model most: the shortest and longest audio, the shortest and
+longest rendered prompt, the largest combined processor footprint, and — when
+they are different examples — each maximum separately. The probes and the memory
+gate then reuse exactly this selection.
 
 Nothing here loads model weights. With ``--with-processor`` the real
 ``Qwen3OmniMoeProcessor`` is used to measure the rendered token counts and the
@@ -53,10 +54,24 @@ def example_ref(sample_id: str) -> str:
     return hashlib.sha256(str(sample_id).encode("utf-8")).hexdigest()[:16]
 
 
-def _audio_seconds(row: dict[str, Any]) -> float:
-    spans = list(row.get("audio_spans") or [])
-    frames = sum(int(span["end_frame"]) - int(span["start_frame"]) for span in spans)
-    return frames / float(PACKED30_SAMPLE_RATE)
+def _audio_seconds(example: dict[str, Any]) -> float:
+    """Audio duration of one example in seconds, read as the loader resolves it.
+
+    Packed30 examples carry ordered ``audio_spans`` over the source WAV;
+    response-window datasets carry the window bounds instead.
+    """
+    spans = list(example.get("audio_spans") or [])
+    if spans:
+        frames = sum(int(span["end_frame"]) - int(span["start_frame"]) for span in spans)
+        return frames / float(PACKED30_SAMPLE_RATE)
+    start = example.get("start_time")
+    end = example.get("end_time")
+    if end not in (None, "") and start not in (None, ""):
+        return max(0.0, float(end) - float(start))
+    duration = example.get("segment_duration")
+    if duration not in (None, ""):
+        return float(duration)
+    return 0.0
 
 
 def _load_manifest_rows(config: dict[str, Any], config_path: Path, overrides: list[str]) -> list[dict[str, Any]]:
@@ -139,6 +154,9 @@ def _per_modality(
     import copy
 
     result: dict[str, Any] = {}
+    # The probed audio+text scope is the one the config declares (packed30 uses
+    # full_participant, the response-window datasets use full_subject).
+    declared_scope = (config.get("data") or {}).get("audio_text_transcript_scope")
     for modality_overrides in (
         {"use_audio": True, "use_text": False},
         {"use_audio": True, "use_text": True},
@@ -147,7 +165,9 @@ def _per_modality(
         modality_config["data"].update(modality_overrides)
         modality_config["data"].pop("audio_text_transcript_scope", None)
         if modality_overrides["use_text"]:
-            modality_config["data"]["audio_text_transcript_scope"] = "full_participant"
+            modality_config["data"]["audio_text_transcript_scope"] = str(
+                declared_scope or "full_participant"
+            )
         modality = resolve_input_modality(modality_config)
         examples = build_examples(rows, modality_config, partition_name="risk_inventory")
         records = [
@@ -192,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
     config = load_yaml_with_overrides(config_path, overrides)
 
     rows = _load_manifest_rows(config, config_path, overrides)
-    LOGGER.info("DAIC manifest rows: %s", len(rows))
+    LOGGER.info("manifest rows: %s", len(rows))
 
     manifests: dict[str, Any] = {}
     per_modality = _per_modality(config, rows, manifests)

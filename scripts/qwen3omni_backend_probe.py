@@ -127,6 +127,14 @@ def _manifest_rows(config: dict[str, Any], args) -> list[dict[str, Any]]:
 
 
 def _modality_config(config: dict[str, Any], modality: str) -> dict[str, Any]:
+    """One config per probed modality, keeping the dataset's declared semantics.
+
+    The audio+text transcript scope is whatever the config declares (DAIC's
+    packed30 recipe uses ``full_participant``; the response-window datasets use
+    ``full_subject``), falling back to the packed30 value when a config declares
+    none. Probing a different scope from the one the run resolves would measure a
+    different prompt.
+    """
     resolved = copy.deepcopy(config)
     if modality == "audio_only":
         resolved["data"]["use_audio"] = True
@@ -135,7 +143,9 @@ def _modality_config(config: dict[str, Any], modality: str) -> dict[str, Any]:
     elif modality == "audio_text":
         resolved["data"]["use_audio"] = True
         resolved["data"]["use_text"] = True
-        resolved["data"]["audio_text_transcript_scope"] = "full_participant"
+        resolved["data"]["audio_text_transcript_scope"] = str(
+            resolved["data"].get("audio_text_transcript_scope") or "full_participant"
+        )
     else:
         raise SystemExit(f"unsupported modality {modality!r}")
     return resolved

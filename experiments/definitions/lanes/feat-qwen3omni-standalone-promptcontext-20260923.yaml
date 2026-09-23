@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: feat-qwen3omni-standalone-promptcontext-20260923
+slug: qwen3omni-standalone-promptcontext
+tier: 2
+branch: agent/feat-qwen3omni-standalone-promptcontext
+worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-feat-qwen3omni-standalone-promptcontext
+parent_branch: origin/main
+parent_sha: 1266f1dfa879f583c125fe60f45f6766c50498eb
+created_at_utc: "2026-09-23T15:23:42Z"
+experiment_group_path: experiments/definitions/qwen3omni-standalone-promptcontext-20260923.yaml
+type: complementary
