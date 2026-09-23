@@ -337,3 +337,50 @@ def test_no_script_still_references_the_renamed_inventory() -> None:
         if "qwen3omni_daic_risk_inventory" in path.read_text(encoding="utf-8")
     ]
     assert not stale, stale
+
+
+def test_workbook_cell_labels_match_between_generator_and_selection_writer() -> None:
+    from scripts import build_clean_workbook as workbook
+    from tools import qwen3omni_campaign_audit as audit
+
+    assert audit.WORKBOOK_SHEET == workbook.QWEN3OMNI_PROMPTCONTEXT_SHEET
+    for cell in workbook.QWEN3OMNI_CELLS:
+        assert cell["label"] == audit.DATASET_LABELS[cell["dataset"]]
+        expected = (
+            f"{workbook.QWEN3OMNI_PROMPTCONTEXT_SHEET}|{cell['label']} — "
+            f"{workbook.QWEN3OMNI_MODALITY_LABELS[cell['modality']]} — "
+            "Qwen3-Omni Thinker, promptcontext_v1"
+        )
+        assert audit.workbook_cell(cell["dataset"], cell["modality"]) == expected
+
+
+def test_fold_mean_selection_grouping_requires_every_fold() -> None:
+    from tools import export_selected_results as exporter
+
+    records = [
+        {"cell": "Sheet|Row", "status": "selected", "value": value, "fold": fold}
+        for fold, value in enumerate((0.50, 0.60, 0.70, 0.80, 0.90))
+    ]
+    grouped = exporter._group_fold_selections(records)
+    assert len(grouped) == 1
+    assert grouped[0]["status"] == "selected"
+    assert grouped[0]["value"] == pytest.approx(0.70)
+    assert grouped[0]["aggregation"] == "fold_mean"
+    assert grouped[0]["folds"] == [0, 1, 2, 3, 4]
+    assert grouped[0]["fold_values"] == [0.50, 0.60, 0.70, 0.80, 0.90]
+
+    incomplete = [
+        {**record, "status": "legacy_unmigrated", "value": None} if record["fold"] == 3 else record
+        for record in records
+    ]
+    grouped = exporter._group_fold_selections(incomplete)
+    assert grouped[0]["status"] == "rejected_incomplete_fold_set"
+    assert grouped[0]["value"] is None
+    assert "not all resolved" in grouped[0]["reason"]
+
+    # A single fold (DAIC official test) passes through with its own value.
+    single = exporter._group_fold_selections([records[0]])
+    assert len(single) == 1
+    assert single[0]["value"] == 0.50
+    assert single[0]["fold"] == 0
+    assert "aggregation" not in single[0]

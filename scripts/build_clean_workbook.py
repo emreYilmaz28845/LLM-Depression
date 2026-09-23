@@ -654,57 +654,251 @@ MODALITIES = ["Audio + Text", "Audio only", "Text only"]
 HEAD_METHODS = [("logreg", "LogReg head"), ("xgb_fixed", "XGBoost fixed"), ("xgb_optuna", "XGBoost Optuna")]
 
 
-# --------------------------------------------------------------------------- Qwen3-Omni DAIC
-# Qwen3-Omni-30B-A3B Thinker pilot: DAIC official test fold 0 under the
-# promptcontext_v1 prompt, likelihood evaluation, strict subject-level metrics.
-# Values are the locally validated REPORTABLE results of the two production runs;
-# the reference rows are the PR #255 derived canonical Qwen2-Audio likelihood
-# values (same manifest, split, seed, aggregation and evaluation view).
-QWEN3OMNI_DAIC_CAMPAIGN = {
+# ----------------------------------------------------------------- Qwen3-Omni promptcontext
+# Qwen3-Omni-30B-A3B Thinker standalone prompt-context campaign: the PR #261 DAIC
+# pilot cells (official test fold 0) plus D3TEC, Androids Interview, CMDC and
+# Turkish pooled t17 in audio-only and audio+text under the promptcontext_v1
+# prompt, likelihood evaluation, strict subject-level metrics. One consolidated
+# table: every Omni cell is a locally validated REPORTABLE result (five-fold
+# means for the cross-validated datasets), and the reference rows are the PR #255
+# derived canonical Qwen2-Audio likelihood values, re-hashed against their
+# recorded per-subject artifacts by tools/build_qwen3omni_promptcontext_comparison.py.
+QWEN3OMNI_PROMPTCONTEXT_SHEET = "Qwen3-Omni promptcontext"
+QWEN3OMNI_CAMPAIGN = {
     "model": "Qwen3-Omni-30B-A3B-Instruct (Thinker only, LoRA attention-only)",
-    "group_id": "qwen3omni-daic-promptcontext-20260922",
-    "branch": "agent/feat-qwen3omni-daic-promptcontext",
-    "source_sha": "84e0be43d238b264d65cadf77bbfef8597e792c0",
+    "group_id": "qwen3omni-standalone-promptcontext-20260923",
+    "branch": "agent/feat-qwen3omni-standalone-promptcontext",
+    "source_sha": "8badb7d52c65140eef97338c2dda46eec26fa1e6",
     "deployment_id": (
+        "feat-qwen3omni-standalone-promptcontext-20260923-20260923T165823Z-8badb7d5-f832fa36"
+    ),
+    "daic_deployment_id": (
         "feat-qwen3omni-daic-promptcontext-20260922-20260923T011102Z-84e0be43-6a82cf0e"
     ),
-    "manifest_sha256": "72e2dd204b915ccba3ebf922f030531fe5678b3ea8c9c52b81b41242fe9dda17",
-    "split_sha256": "441333e0c88845eeacba9ea5355a8920cdd1f70e8cf7a7c15b9547b46da51473",
     "gpu_shape": (
         "2 nodes x 4 H100 (world size 8), batch 1 x accumulation 16 (effective 128), "
         "activation offload cpu, evaluation sharded across 4 H100 with a device map"
     ),
     "trainable_params": 13369344,
     "total_params": 31732574832,
-    "runs": {
-        "Audio only": {
-            "run": "qwen3omni_daic_audio_only_fold0_prod_20260923",
-            "attempt": "20260923T011558Z-qwen3omni_daic_audio_only_fold0_prod_20260923-84e0be43-7ef42110",
-            "train_job": "46376408",
-            "eval_job": "46376409",
-            "evidence": (
-                "output_model/promptcontext_v1_qwen3omni_likelihood/audio_only/daic/"
-                "qwen3omni_daic_audio_only_fold0_prod_20260923/fold_0/best_model/standalone_eval"
-            ),
-        },
-        "Audio + Text": {
-            "run": "qwen3omni_daic_audio_text_fold0_prod_20260923",
-            "attempt": "20260923T011634Z-qwen3omni_daic_audio_text_fold0_prod_20260923-84e0be43-bb975d80",
-            "train_job": "46376418",
-            "eval_job": "46376419",
-            "evidence": (
-                "output_model/promptcontext_v1_qwen3omni_likelihood/audio_text/daic/"
-                "qwen3omni_daic_audio_text_fold0_prod_20260923/fold_0/best_model/standalone_eval"
-            ),
-        },
+}
+
+# (dataset label, dataset key, modality, endpoint label, folds, manifest sha256,
+# split sha256). The DAIC rows are PR #261's official-test fold 0; the rest are
+# unweighted five-fold means over each dataset's own evaluation partitions.
+QWEN3OMNI_CELLS: tuple[dict, ...] = (
+    {
+        "label": "D3TEC",
+        "dataset": "d3tec",
+        "modality": "audio_only",
+        "endpoint": "5-fold mean (outer test)",
+        "folds": 5,
+        "manifest_sha256": "67a62eb73b4ab7e0cd810b81af5e424f6bf9deea9cfdbc322fb32057a6e6f799",
+        "split_sha256": "a672e309fb193d7fd76e7283f5f42828c33713fe770ccbbf90f1ed72bf3fc15c",
+    },
+    {
+        "label": "D3TEC",
+        "dataset": "d3tec",
+        "modality": "audio_text",
+        "endpoint": "5-fold mean (outer test)",
+        "folds": 5,
+        "manifest_sha256": "67a62eb73b4ab7e0cd810b81af5e424f6bf9deea9cfdbc322fb32057a6e6f799",
+        "split_sha256": "a672e309fb193d7fd76e7283f5f42828c33713fe770ccbbf90f1ed72bf3fc15c",
+    },
+    {
+        "label": "Androids Interview",
+        "dataset": "androids_interview",
+        "modality": "audio_only",
+        "endpoint": "5-fold mean (outer test)",
+        "folds": 5,
+        "manifest_sha256": "01a351f7277e4763a8bb9e4983bba190b265becafafca6d7ee04bdcfc948cbed",
+        "split_sha256": "f75dd2ba7bb324af26de8c5ae3497d2108e6b50815c0ef6cbcade7de70992518",
+    },
+    {
+        "label": "Androids Interview",
+        "dataset": "androids_interview",
+        "modality": "audio_text",
+        "endpoint": "5-fold mean (outer test)",
+        "folds": 5,
+        "manifest_sha256": "01a351f7277e4763a8bb9e4983bba190b265becafafca6d7ee04bdcfc948cbed",
+        "split_sha256": "f75dd2ba7bb324af26de8c5ae3497d2108e6b50815c0ef6cbcade7de70992518",
+    },
+    {
+        "label": "CMDC",
+        "dataset": "cmdc",
+        "modality": "audio_only",
+        "endpoint": "5-fold mean (selected validation)",
+        "folds": 5,
+        "manifest_sha256": "d9984856e243b6e32c087170652a9202c128f55270c0d8443bb45f7dea794d0f",
+        "split_sha256": "404342f7594833379eb8c15e6f4f5641c0ccec415374cb95df18f3723b9b54a0",
+    },
+    {
+        "label": "CMDC",
+        "dataset": "cmdc",
+        "modality": "audio_text",
+        "endpoint": "5-fold mean (selected validation)",
+        "folds": 5,
+        "manifest_sha256": "d9984856e243b6e32c087170652a9202c128f55270c0d8443bb45f7dea794d0f",
+        "split_sha256": "404342f7594833379eb8c15e6f4f5641c0ccec415374cb95df18f3723b9b54a0",
+    },
+    {
+        "label": "Turkish pooled t17",
+        "dataset": "turkish",
+        "modality": "audio_only",
+        "endpoint": "5-fold mean (selected validation)",
+        "folds": 5,
+        "manifest_sha256": "37e991526986d9693c9620682719a6b54c7d30ec86b53152ae23dde167271b70",
+        "split_sha256": "3262a009db52c6d049e223947a9be6ce119a31e816b5c3072ce84b3ad92ecd58",
+    },
+    {
+        "label": "Turkish pooled t17",
+        "dataset": "turkish",
+        "modality": "audio_text",
+        "endpoint": "5-fold mean (selected validation)",
+        "folds": 5,
+        "manifest_sha256": "37e991526986d9693c9620682719a6b54c7d30ec86b53152ae23dde167271b70",
+        "split_sha256": "3262a009db52c6d049e223947a9be6ce119a31e816b5c3072ce84b3ad92ecd58",
+    },
+    {
+        "label": "DAIC",
+        "dataset": "daic",
+        "modality": "audio_only",
+        "endpoint": "official test, fold 0",
+        "folds": 1,
+        "manifest_sha256": "72e2dd204b915ccba3ebf922f030531fe5678b3ea8c9c52b81b41242fe9dda17",
+        "split_sha256": "441333e0c88845eeacba9ea5355a8920cdd1f70e8cf7a7c15b9547b46da51473",
+    },
+    {
+        "label": "DAIC",
+        "dataset": "daic",
+        "modality": "audio_text",
+        "endpoint": "official test, fold 0",
+        "folds": 1,
+        "manifest_sha256": "72e2dd204b915ccba3ebf922f030531fe5678b3ea8c9c52b81b41242fe9dda17",
+        "split_sha256": "441333e0c88845eeacba9ea5355a8920cdd1f70e8cf7a7c15b9547b46da51473",
+    },
+)
+
+# (dataset, modality) -> (macro_f1, positive_f1, uar, accuracy) from each run's
+# verified metrics_likelihood.json (headline/binary_strict, INVALID as wrong).
+QWEN3OMNI_RESULTS: dict[tuple[str, str], tuple[float, float, float, float] | None] = {
+    ("daic", "audio_only"): (0.4125, 0.0, 0.5, 0.7021276595744681),
+    ("daic", "audio_text"): (
+        0.7552083333333333,
+        0.6666666666666666,
+        0.7662337662337663,
+        0.7872340425531915,
+    ),
+}
+
+# (dataset, modality) -> run identity, jobs and local evidence of the Omni cells.
+QWEN3OMNI_RUNS: dict[tuple[str, str], dict] = {
+    ("daic", "audio_only"): {
+        "run": "qwen3omni_daic_audio_only_fold0_prod_20260923",
+        "attempt": "20260923T011558Z-qwen3omni_daic_audio_only_fold0_prod_20260923-84e0be43-7ef42110",
+        "jobs": "train 46376408, eval 46376409",
+        "evidence": (
+            "output_model/promptcontext_v1_qwen3omni_likelihood/audio_only/daic/"
+            "qwen3omni_daic_audio_only_fold0_prod_20260923/fold_0/best_model/standalone_eval"
+        ),
+    },
+    ("daic", "audio_text"): {
+        "run": "qwen3omni_daic_audio_text_fold0_prod_20260923",
+        "attempt": "20260923T011634Z-qwen3omni_daic_audio_text_fold0_prod_20260923-84e0be43-bb975d80",
+        "jobs": "train 46376418, eval 46376419",
+        "evidence": (
+            "output_model/promptcontext_v1_qwen3omni_likelihood/audio_text/daic/"
+            "qwen3omni_daic_audio_text_fold0_prod_20260923/fold_0/best_model/standalone_eval"
+        ),
     },
 }
 
-# modality -> (macro_f1, positive_f1, uar, accuracy) from the verified
-# metrics_likelihood.json of each run (headline/binary_strict, INVALID as wrong).
-QWEN3OMNI_DAIC: dict[str, tuple[float, float, float, float]] = {
-    "Audio only": (0.4125, 0.0, 0.5, 0.7021276595744681),
-    "Audio + Text": (0.7552083333333333, 0.6666666666666666, 0.7662337662337663, 0.7872340425531915),
+# PR #255 derived canonical likelihood reference (Qwen2-Audio) per dataset and
+# modality: (macro_f1, positive_f1, uar). Read from
+# outputs/experiment_reports/likelihood_canonical_values/derived_values.json and
+# re-hashed against the recorded per-subject artifacts by the comparison tool.
+QWEN2AUDIO_REFERENCES: dict[tuple[str, str], tuple[float, float, float]] = {
+    ("d3tec", "audio_only"): (
+        0.6180564043799338,
+        0.553073593073593,
+        0.6657142857142857,
+    ),
+    ("d3tec", "audio_text"): (
+        0.5401981351981352,
+        0.49125874125874125,
+        0.5519047619047619,
+    ),
+    ("androids_interview", "audio_only"): (
+        0.8627999740731138,
+        0.8833743842364532,
+        0.8842113442113442,
+    ),
+    ("androids_interview", "audio_text"): (
+        0.8569653018080151,
+        0.8781349123418088,
+        0.8857264957264958,
+    ),
+    ("cmdc", "audio_only"): (
+        0.9515550239234448,
+        0.9318181818181819,
+        0.95,
+    ),
+    ("cmdc", "audio_text"): (0.97, 0.9600000000000002, 0.97),
+    ("turkish", "audio_only"): (0.40893415527561866, 0.8178683105512373, 0.5),
+    ("turkish", "audio_text"): (
+        0.6877173425008738,
+        0.8130036949391787,
+        0.6854516806722689,
+    ),
+    ("daic", "audio_only"): (0.5392156862745098, 0.4117647058823529, 0.553030303030303),
+    ("daic", "audio_text"): (0.735279057859703, 0.6451612903225806, 0.751082251082251),
+}
+
+QWEN3OMNI_MODALITY_LABELS = {"audio_only": "Audio only", "audio_text": "Audio + Text"}
+
+# Reference runs each derived cell was computed from, exactly as its recorded
+# per-subject artifact paths name them (a retry chain contributes more than one).
+QWEN2AUDIO_REFERENCE_RUNS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("d3tec", "audio_only"): (
+        "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_d3tec_audio_only",
+    ),
+    ("d3tec", "audio_text"): (
+        "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_d3tec_audio_text_r1",
+    ),
+    ("androids_interview", "audio_only"): (
+        "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_androids_interview_audio_only",
+        "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_androids_interview_audio_only_r1",
+    ),
+    ("androids_interview", "audio_text"): (
+        "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_androids_interview_audio_text",
+        "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_androids_interview_audio_text_r1",
+    ),
+    ("cmdc", "audio_only"): (
+        "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_cmdc_audio_only_r1",
+    ),
+    ("cmdc", "audio_text"): (
+        "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_cmdc_audio_text_r1",
+    ),
+    ("turkish", "audio_only"): (
+        "tpq_prod_v1_qwen_native_audio_only_s1337_f0_216bcec8",
+        "tpq_prod_v1_qwen_native_audio_only_s1337_f1_f57deb8d",
+        "tpq_prod_v1_qwen_native_audio_only_s1337_f2_e58b7280",
+        "tpq_prod_v1_qwen_native_audio_only_s1337_f3_89772359",
+        "tpq_prod_v1_qwen_native_audio_only_s1337_f4_e6396729",
+    ),
+    ("turkish", "audio_text"): (
+        "tpq_prod_v1_qwen_native_audio_text_s1337_f0_7c938850",
+        "tpq_prod_v1_qwen_native_audio_text_s1337_f1_fcbeb034",
+        "tpq_prod_v1_qwen_native_audio_text_s1337_f2_f2971057",
+        "tpq_prod_v1_qwen_native_audio_text_s1337_f3_eae76160",
+        "tpq_prod_v1_qwen_native_audio_text_s1337_f4_7d149f64",
+    ),
+    ("daic", "audio_only"): (
+        "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_daic_audio_only_r1",
+    ),
+    ("daic", "audio_text"): (
+        "harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_daic_audio_text_r1",
+    ),
 }
 
 # PR #255 derived canonical likelihood reference (Qwen2-Audio), same split.
@@ -714,72 +908,102 @@ QWEN2AUDIO_DAIC_REFERENCE: dict[str, tuple[float, float, float]] = {
 }
 
 
-def build_qwen3omni_daic(wb: Workbook) -> None:
-    ws = wb.create_sheet("Qwen3-Omni DAIC")
-    _widths(ws, {"A": 16, "B": 30, "C": 12, "D": 12, "E": 12, "F": 12, "G": 62, "H": 60})
-    campaign = QWEN3OMNI_DAIC_CAMPAIGN
-    _title(ws, "Qwen3-Omni-30B-A3B Thinker — DAIC official test (seed 1337, fold 0, likelihood)", 8)
+def build_qwen3omni_promptcontext(wb: Workbook) -> None:
+    """One consolidated campaign table: dataset x modality, Omni row plus reference row."""
+    ws = wb.create_sheet(QWEN3OMNI_PROMPTCONTEXT_SHEET)
+    _widths(
+        ws,
+        {"A": 20, "B": 12, "C": 46, "D": 30, "E": 8, "F": 12, "G": 12, "H": 12, "I": 12,
+         "J": 62, "K": 60, "L": 30},
+    )
+    campaign = QWEN3OMNI_CAMPAIGN
+    _title(
+        ws,
+        "Qwen3-Omni-30B-A3B Thinker — promptcontext_v1 likelihood results (seed 1337)",
+        12,
+    )
     _note(
         ws, 2,
-        f"{campaign['model']} from {campaign['model'].split(' ')[0]} snapshot staged offline. "
-        f"Campaign group {campaign['group_id']}; branch {campaign['branch']}; source "
-        f"{campaign['source_sha'][:8]}; deployment {campaign['deployment_id']}. "
-        f"Same manifest/split as the canonical Qwen harmonized DAIC campaign "
-        f"({campaign['manifest_sha256'][:12]}…/{campaign['split_sha256'][:12]}…). Recipe: "
-        f"promptcontext_v1 prompt (shared instruction plus the centralized DAIC recording context), "
-        f"FSDP {campaign['gpu_shape']}, {campaign['trainable_params']:,} trainable LoRA parameters of "
+        f"{campaign['model']} from the offline MN5 snapshot. Campaign group "
+        f"{campaign['group_id']}; branch {campaign['branch']}; source {campaign['source_sha'][:8]}; "
+        f"deployments {campaign['deployment_id']} (this campaign) and "
+        f"{campaign['daic_deployment_id']} (PR #261 DAIC pilot). Recipe: promptcontext_v1 prompt "
+        f"(one shared instruction plus each dataset's centralized recording context), FSDP "
+        f"{campaign['gpu_shape']}, {campaign['trainable_params']:,} trainable LoRA parameters of "
         f"{campaign['total_params']:,}, inner_val_macro_f1 checkpoint selection in max mode with the "
         f"canonical early stopping, best_model evaluated in the likelihood view with "
-        f"harmonized_all_windows_full_coverage and strict subject-level aggregation over the 47 "
-        f"official test subjects (INVALID counts as wrong). The Talker is never built, saved or "
-        f"evaluated. The reference rows are the PR #255 derived canonical likelihood values of the "
-        f"Qwen2-Audio DAIC runs: the same split, evaluation view and aggregation, but the older "
-        f"inline prompt, so the comparison is a model-plus-prompt comparison and carries no "
-        f"prompt-only claim.",
-        8, height=150,
+        f"harmonized_all_windows_full_coverage and strict subject-level aggregation (INVALID counts "
+        f"as wrong). The Talker is never built, saved or evaluated and the audio encoder stays "
+        f"frozen. DAIC rows are the PR #261 official-test fold 0; the other datasets are unweighted "
+        f"means of their five verified folds. The reference rows are the PR #255 derived canonical "
+        f"likelihood values of the matching Qwen2-Audio runs: same dataset recipe, split, evaluation "
+        f"view and aggregation, but the older inline prompt, so every comparison is a "
+        f"model-plus-prompt comparison and carries no prompt-only claim.",
+        12, height=190,
     )
     _header_row(
         ws, 4,
-        ["Modality", "Model / prompt", "Macro-F1", "Positive-F1", "UAR", "Accuracy",
-         "Run / attempt / jobs", "Local evidence"],
+        ["Dataset", "Modality", "Model / prompt", "Endpoint", "Folds", "Macro-F1", "Positive-F1",
+         "UAR", "Accuracy", "Run / attempt / jobs", "Local evidence", "Manifest / split sha256"],
     )
     row = 5
-    for modality in ("Audio only", "Audio + Text"):
-        run = campaign["runs"][modality]
-        macro, positive, uar, accuracy = QWEN3OMNI_DAIC[modality]
-        _body_cell(ws, row, 1, modality)
-        _body_cell(ws, row, 2, "Qwen3-Omni Thinker, promptcontext_v1")
-        _body_cell(ws, row, 3, macro, fmt="0.0000")
-        _body_cell(ws, row, 4, positive, fmt="0.0000")
-        _body_cell(ws, row, 5, uar, fmt="0.0000")
-        _body_cell(ws, row, 6, accuracy, fmt="0.0000")
-        _body_cell(
-            ws, row, 7,
-            f"run {run['run']}; attempt {run['attempt']}; train {run['train_job']} "
-            f"eval {run['eval_job']}",
+    for cell in QWEN3OMNI_CELLS:
+        modality_label = QWEN3OMNI_MODALITY_LABELS[cell["modality"]]
+        key = (cell["dataset"], cell["modality"])
+        run = QWEN3OMNI_RUNS.get(key) or {}
+        metrics = QWEN3OMNI_RESULTS.get(key)
+        hash_cell = (
+            f"manifest {cell['manifest_sha256'][:12]}… / split {cell['split_sha256'][:12]}…"
         )
-        _body_cell(ws, row, 8, run["evidence"])
+        _body_cell(ws, row, 1, cell["label"])
+        _body_cell(ws, row, 2, modality_label)
+        _body_cell(ws, row, 3, "Qwen3-Omni Thinker, promptcontext_v1")
+        _body_cell(ws, row, 4, cell["endpoint"])
+        _body_cell(ws, row, 5, cell["folds"])
+        if metrics is None:
+            for column in (6, 7, 8, 9):
+                _body_cell(ws, row, column, None)
+            _body_cell(
+                ws, row, 10,
+                run["run"] if run else "pending local validation",
+            )
+            _body_cell(ws, row, 11, run.get("evidence", "pending local validation"))
+            _body_cell(ws, row, 12, hash_cell)
+        else:
+            macro, positive, uar, accuracy = metrics
+            _body_cell(ws, row, 6, macro, fmt="0.0000")
+            _body_cell(ws, row, 7, positive, fmt="0.0000")
+            _body_cell(ws, row, 8, uar, fmt="0.0000")
+            _body_cell(ws, row, 9, accuracy, fmt="0.0000")
+            _body_cell(
+                ws, row, 10,
+                f"run {run['run']}; attempt {run['attempt']}; {run['jobs']}",
+            )
+            _body_cell(ws, row, 11, run["evidence"])
+            _body_cell(ws, row, 12, hash_cell)
         row += 1
-    for modality in ("Audio only", "Audio + Text"):
-        macro, positive, uar = QWEN2AUDIO_DAIC_REFERENCE[modality]
-        _body_cell(ws, row, 1, modality)
+        macro, positive, uar = QWEN2AUDIO_REFERENCES[key]
+        _body_cell(ws, row, 1, cell["label"])
+        _body_cell(ws, row, 2, modality_label)
         _body_cell(
-            ws, row, 2, "Qwen2-Audio-7B-Instruct, older inline prompt (PR #255 derived likelihood)"
+            ws, row, 3, "Qwen2-Audio-7B-Instruct, older inline prompt (PR #255 derived likelihood)"
         )
-        _body_cell(ws, row, 3, macro, fmt="0.0000")
-        _body_cell(ws, row, 4, positive, fmt="0.0000")
-        _body_cell(ws, row, 5, uar, fmt="0.0000")
-        _body_cell(ws, row, 6, None)
+        _body_cell(ws, row, 4, cell["endpoint"])
+        _body_cell(ws, row, 5, cell["folds"])
+        _body_cell(ws, row, 6, macro, fmt="0.0000")
+        _body_cell(ws, row, 7, positive, fmt="0.0000")
+        _body_cell(ws, row, 8, uar, fmt="0.0000")
+        _body_cell(ws, row, 9, None)
         _body_cell(
-            ws, row, 7,
-            "run harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_daic_"
-            + ("audio_only" if modality == "Audio only" else "audio_text")
-            + "_r1; derived from the teacher-forced runs' saved per-subject candidate scores",
+            ws, row, 10,
+            ", ".join(QWEN2AUDIO_REFERENCE_RUNS[key])
+            + "; derived from the teacher-forced runs' saved per-subject candidate scores",
         )
         _body_cell(
-            ws, row, 8,
+            ws, row, 11,
             "outputs/experiment_reports/likelihood_canonical_values/derived_values.json",
         )
+        _body_cell(ws, row, 12, hash_cell)
         row += 1
     _note(
         ws, row + 1,
@@ -787,7 +1011,7 @@ def build_qwen3omni_daic(wb: Workbook) -> None:
         "`exp validate` before this sheet was generated, and the reference values are re-hashed "
         "against their recorded per-subject artifacts by tools/build_qwen3omni_promptcontext_comparison.py. "
         "One seed each; differences are observations, not variance estimates or significance.",
-        8, height=60,
+        12, height=60,
     )
 
 
@@ -3988,7 +4212,34 @@ def main() -> None:
         help=("preserve every existing sheet in this workbook and replace only its significance sheets; "
               "requires --significance-report"),
     )
+    parser.add_argument(
+        "--base-workbook",
+        default=None,
+        help=("preserve every sheet of this workbook and rebuild only the Qwen3-Omni promptcontext "
+              "sheet in place (the canonical incremental update for that sheet)"),
+    )
     args = parser.parse_args()
+    if args.base_workbook is not None:
+        base_path = Path(args.base_workbook)
+        if not base_path.is_file():
+            raise FileNotFoundError(f"base workbook does not exist: {base_path}")
+        wb = load_workbook(base_path)
+        for existing in ("Qwen3-Omni DAIC", QWEN3OMNI_PROMPTCONTEXT_SHEET):
+            if existing in wb.sheetnames:
+                del wb[existing]
+        build_qwen3omni_promptcontext(wb)
+        # Keep the campaign sheet where its predecessors sat (third position).
+        current_index = wb.sheetnames.index(QWEN3OMNI_PROMPTCONTEXT_SHEET)
+        target_index = min(2, len(wb.sheetnames) - 1)
+        if current_index != target_index:
+            wb.move_sheet(QWEN3OMNI_PROMPTCONTEXT_SHEET, offset=target_index - current_index)
+        output_path = Path(args.output) if args.output is not None else base_path
+        wb.save(output_path)
+        print(
+            f"wrote {output_path} (base {base_path}; rebuilt only the "
+            f"{QWEN3OMNI_PROMPTCONTEXT_SHEET!r} sheet)"
+        )
+        return
     detailed = args.detailed
     native_en_report_path = Path(args.native_en_report)
     turkish_question_condition_report_path = (
@@ -4022,12 +4273,25 @@ def main() -> None:
                 cell_values[("Gemma 4 DAIC", f"{mod_label} — {variant_label}")] = (
                     GEMMA4_HEADS[mod_key][variant][0]
                 )
-        # Qwen3-Omni DAIC pilot cells (Qwen3-Omni DAIC sheet): macro-F1 per modality.
-        for modality in ("audio_only", "audio_text"):
-            mod_label = MODALITY_LABELS[modality]
+        # Qwen3-Omni promptcontext campaign cells (Qwen3-Omni promptcontext sheet):
+        # macro-F1 per dataset and modality for the Omni row and its reference row.
+        # A pending cell stays None so the validator reports it instead of comparing.
+        for campaign_cell in QWEN3OMNI_CELLS:
+            campaign_key = (campaign_cell["dataset"], campaign_cell["modality"])
+            head = (
+                f"{campaign_cell['label']} — "
+                f"{QWEN3OMNI_MODALITY_LABELS[campaign_cell['modality']]}"
+            )
+            metrics = QWEN3OMNI_RESULTS.get(campaign_key)
             cell_values[
-                ("Qwen3-Omni DAIC", f"{mod_label} — Qwen3-Omni Thinker, promptcontext_v1")
-            ] = QWEN3OMNI_DAIC[mod_label][0]
+                (QWEN3OMNI_PROMPTCONTEXT_SHEET, f"{head} — Qwen3-Omni Thinker, promptcontext_v1")
+            ] = metrics[0] if metrics else None
+            cell_values[
+                (
+                    QWEN3OMNI_PROMPTCONTEXT_SHEET,
+                    f"{head} — Qwen2-Audio reference (PR #255 derived likelihood)",
+                )
+            ] = QWEN2AUDIO_REFERENCES[campaign_key][0]
         # DAIC official-development cells (DAIC LLM Comparison and DAIC Head
         # Ablation sheets): six teacher-forced and twelve fixed-head macro-F1.
         for modality in ("audio_only", "audio_text", "text_only"):
@@ -4084,7 +4348,7 @@ def main() -> None:
         _build_turkish_pooled_lookup(turkish_pooled_qcond_report_path)
     build_summary(wb, detailed=detailed)
     build_gemma_vs_qwen(wb)
-    build_qwen3omni_daic(wb)
+    build_qwen3omni_promptcontext(wb)
     build_legacy_tf(wb)
     build_native_vs_english(wb, report_path=native_en_report_path)
     if turkish_question_condition_report_path is not None:

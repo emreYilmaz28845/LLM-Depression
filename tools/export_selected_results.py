@@ -39,6 +39,7 @@ def resolve_selection(
     view = str(selection["view"])
     aggregation = str(selection["aggregation"])
     attempt_id = selection.get("attempt_id")
+    fold = selection.get("fold")
     rows = registry.best_runs(
         connection,
         dataset=dataset,
@@ -50,6 +51,8 @@ def resolve_selection(
     )
     if attempt_id is not None:
         rows = [row for row in rows if row["attempt_id"] == attempt_id]
+    if fold is not None:
+        rows = [row for row in rows if int(row["fold"]) == int(fold)]
     if not rows:
         return {
             "cell": cell,
@@ -83,7 +86,7 @@ def resolve_selection(
         "value": value,
         "attempt_id": row["attempt_id"],
         "logical_run_name": row["logical_run_name"],
-        "fold": row["fold"],
+        "fold": int(fold) if fold is not None else row["fold"],
         "metric": metric,
         "namespace": namespace,
         "backend": backend,
@@ -181,6 +184,63 @@ def _resolve_report_path(selection_path: Path, raw_path: str) -> Path:
     return selection_path.parent / path
 
 
+def _group_fold_selections(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse per-fold selections of one cell into an unweighted fold mean.
+
+    A cell selected by more than one fold record becomes one record whose value is
+    the unweighted mean of those values, with the per-fold records kept under
+    ``fold_records`` for provenance. Any unresolved fold keeps the cell
+    unaggregated, so the workbook validator reports it instead of showing a mean
+    computed from a partial run. Records without a fold pass through untouched.
+    """
+    grouped: list[dict[str, Any]] = []
+    by_cell: dict[str, list[dict[str, Any]]] = {}
+    order: list[str] = []
+    for result in results:
+        if result.get("fold") is None:
+            grouped.append(result)
+            continue
+        cell = str(result.get("cell"))
+        if cell not in by_cell:
+            by_cell[cell] = []
+            order.append(cell)
+        by_cell[cell].append(result)
+    for cell in order:
+        records = by_cell[cell]
+        if len(records) == 1:
+            grouped.append(records[0])
+            continue
+        statuses = sorted({str(record.get("status")) for record in records})
+        if statuses != ["selected"]:
+            grouped.append(
+                {
+                    "cell": cell,
+                    "status": "rejected_incomplete_fold_set",
+                    "reason": f"per-fold selections are not all resolved: {statuses}",
+                    "value": None,
+                    "fold_records": records,
+                }
+            )
+            continue
+        values = [float(record["value"]) for record in records]
+        grouped.append(
+            {
+                "cell": cell,
+                "status": "selected",
+                "value": sum(values) / len(values),
+                "aggregation": "fold_mean",
+                "folds": [record["fold"] for record in records],
+                "fold_values": values,
+                "fold_records": records,
+                "metric": records[0].get("metric"),
+                "namespace": records[0].get("namespace"),
+                "backend": records[0].get("backend"),
+                "evaluation_view": records[0].get("evaluation_view"),
+            }
+        )
+    return grouped
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Validate an explicit workbook-cell selection against the registry. "
@@ -218,6 +278,8 @@ def main() -> int:
         ]
     finally:
         connection.close()
+    if native_en_report is None:
+        results = _group_fold_selections(results)
     statuses: dict[str, int] = {}
     for result in results:
         statuses[result["status"]] = statuses.get(result["status"], 0) + 1
