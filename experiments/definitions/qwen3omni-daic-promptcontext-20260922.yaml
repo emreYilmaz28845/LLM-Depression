@@ -1,0 +1,125 @@
+schema_version: audiollm.experiment_group.v1
+group_id: qwen3omni-daic-promptcontext-20260922
+title: Qwen3-Omni-30B-A3B Thinker on DAIC audio-only and audio+text under the prompt-context likelihood recipe
+research_question: >-
+  Can the Qwen3-Omni Thinker be trained and evaluated through the repository's
+  canonical harmonized likelihood workflow on the DAIC official-test fold 0 —
+  audio-only and audio+text, both under the versioned promptcontext_v1 prompt —
+  and how do the two resulting rows compare with the qualified Qwen2-Audio DAIC
+  canonical likelihood reference on the same split, evaluation view and
+  aggregation?
+dataset: daic
+baseline: >-
+  The PR #255 derived canonical likelihood evidence of the Qwen2-Audio
+  harmonized_v1_prod_20260809T171705Z_d1e8130b DAIC fold 0 runs, taken from
+  outputs/experiment_reports/likelihood_canonical_values/derived_values.json
+  (audio_only macro_f1 0.5392 / positive_f1 0.4118 / UAR 0.5530; audio_text
+  macro_f1 0.7353 / positive_f1 0.6452 / UAR 0.7511). That file records the
+  values as derived from the teacher-forced runs' saved per-subject candidate
+  scores (argmax of the mean dep/non score per subject), and each entry names the
+  sha256-verified prediction file it was derived from. Shared identity: manifest
+  sha256 72e2dd204b915ccba3ebf922f030531fe5678b3ea8c9c52b81b41242fe9dda17,
+  split metadata sha256
+  441333e0c88845eeacba9ea5355a8920cdd1f70e8cf7a7c15b9547b46da51473, seed 1337,
+  DAIC official test partition, subject-level aggregation, evaluation_view
+  harmonized_all_windows_full_coverage. The reference rows carry the older,
+  non-prompt-context prompt, so a difference against them is a model-plus-prompt
+  difference and must be reported as such.
+treatment: >-
+  configs/main/daic_audio_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen3omni_30b_a3b.yaml
+  and its audio_text counterpart: Qwen3-Omni-30B-A3B-Instruct loaded as the
+  Thinker only (Qwen3OmniMoeThinkerForConditionalGeneration; the Talker is never
+  built, saved or evaluated) in BF16 from the offline MN5 snapshot, LoRA rank 16
+  / alpha 32 anchored to the language-model decoder's attention projections plus
+  the non-routed shared expert (routers and routed experts frozen), audio encoder
+  frozen, FSDP training on one node of four H100s with per-rank batch 1 and
+  accumulation 32 (effective global batch 128), gradient checkpointing, the
+  centralized promptcontext_v1 prompt with the DAIC recording context,
+  inner_val_macro_f1 checkpoint selection in mode max with the canonical
+  early-stopping policy, likelihood evaluation with strict subject-level
+  aggregation, and a standalone evaluation that scores every test subject once
+  from a clean adapter reload.
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+runs:
+  - logical_run: qwen3omni_daic_audio_only_promptcontext
+    dataset: daic
+    modality: audio_only
+    config: configs/main/daic_audio_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen3omni_30b_a3b.yaml
+    folds:
+      - 0
+    endpoint: official_test_partition
+    folds_note: >-
+      DAIC keeps its fixed split: fold 0 is the protected official test
+      partition, reported once.
+  - logical_run: qwen3omni_daic_audio_text_promptcontext
+    dataset: daic
+    modality: audio_text
+    config: configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen3omni_30b_a3b.yaml
+    folds:
+      - 0
+    endpoint: official_test_partition
+    folds_note: >-
+      Same manifest and split identity as the audio-only cell; the two modalities
+      must share subject partitions.
+prompt_contract:
+  prompt_context_version: promptcontext_v1
+  shared_instruction: the approved audio-bearing shared English instruction, used verbatim for both audio modalities
+  dataset_context_key: daic
+  modality_honest_rendering: >-
+    Audio-only renders no transcript block and never claims a transcript is
+    present; audio+text includes the native full participant transcript on every
+    window. The prompt text lives only in src/data/prompt_context.py.
+  label_contract: Depressed / Non-depressed (legacy_english_labels, unchanged)
+model_contract:
+  backend: qwen3omni
+  trainable_class: Qwen3OmniMoeThinkerForConditionalGeneration
+  model_path: /gpfs/projects/etur92/ozu647717/models/Qwen3-Omni-30B-A3B-Instruct
+  precision: bf16 (no quantization)
+  attention_implementation: sdpa (the offline MN5 wheelhouse has no flash-attn)
+  training_strategy: fsdp
+  training_shape: 1 node x 4 H100s (world_size 4, per-rank batch 1, accumulation 32, effective batch 128)
+  evaluation_shape: >-
+    declared by resources.eval_gpus_per_node, measured by the pilot's one-GPU fit
+    probe and the maximum-risk gate; a sharded shape runs as one process with a
+    device map over one node
+comparison_rule: >-
+  One reader-facing row per modality per verified evaluation view. The Omni rows
+  use promptcontext_v1 and the Qwen2-Audio reference uses the older inline
+  prompt, so the comparison is a model-plus-prompt comparison and no prompt-only
+  effect is claimed. Likelihood and teacher-forced views never share a column.
+  All rows select their checkpoint with inner_val_macro_f1 in mode max. The table
+  is descriptive: no significance is claimed without a prespecified test, and
+  rows whose qualifiers cannot be confirmed from local evidence are blank with
+  the reason.
+scope:
+  campaign: promptcontext_v1_qwen3omni_likelihood
+  checkpoint_role: best_model
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
+  storage_note: >-
+    Checkpoints are LoRA adapters of a 30B Thinker; the base snapshot stays at
+    /gpfs/projects/etur92/ozu647717/models/Qwen3-Omni-30B-A3B-Instruct.
+exclusions:
+  - quantization_or_qlora
+  - data_or_split_changes
+  - transcript_or_audio_truncation
+  - lora_target_changes_to_pass_a_failure
+  - text_only_omni_cells
+  - merged_configs_or_matrices
+  - english_translation_cells
+  - hidden_classifier_logreg_xgboost_work
+  - wandb_cloud_export
+  - PR_merge
+github_issue: null
+github_pr: null

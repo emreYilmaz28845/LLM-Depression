@@ -114,9 +114,13 @@ DATASET_CONTEXT_BLOCKS: dict[str, dict[str, dict[str, str]]] = {
 }
 
 # The shared instruction is version-wide, so the modality override lives beside it
-# rather than inside a dataset block.
+# rather than inside a dataset block. ``default`` is the audio-bearing instruction
+# that audio-only and audio+text keep verbatim; only text-only replaces it.
 SHARED_INSTRUCTION_OVERRIDES: dict[str, dict[str, str]] = {
-    PROMPT_CONTEXT_VERSION: {INPUT_MODALITY_TEXT_ONLY: SHARED_INSTRUCTION_TEXT_ONLY}
+    PROMPT_CONTEXT_VERSION: {
+        "default": SHARED_INSTRUCTION,
+        INPUT_MODALITY_TEXT_ONLY: SHARED_INSTRUCTION_TEXT_ONLY,
+    }
 }
 
 LEGACY_QUESTION_CONTEXT_SENTENCES: dict[str, str] = {

@@ -74,6 +74,7 @@ from src.utils import (
     label_text_from_int,
     load_yaml_with_overrides,
     log_resolved_config,
+    model_load_audit,
     parse_generated_label_text,
     parse_internal_label_text,
     read_json,
@@ -81,6 +82,7 @@ from src.utils import (
     resolve_input_modality,
     resolve_metadata_paths,
     resolve_aggregation_level,
+    resolve_evaluation_resource_shape,
     resolve_model_name_or_path,
     resolve_prediction_mode,
     resolve_project_path,
@@ -1173,7 +1175,16 @@ def main() -> None:
     model = load_model_for_inference(model_name_or_path, args.checkpoint_dir, config)
     lora_layer_selection = resolve_lora_layer_selection(config, model)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
+    hf_device_map = getattr(model, "hf_device_map", None)
+    if hf_device_map:
+        # A config that declares a sharded evaluation shape loads the model with a
+        # device map; moving it onto one device would undo the sharding.
+        LOGGER.info(
+            "Evaluation model is sharded across %s device(s); keeping the declared placement.",
+            len(set(hf_device_map.values())),
+        )
+    else:
+        model.to(device)
     output_dir = args.output_dir or (Path(args.checkpoint_dir) / "standalone_eval")
     save_yaml(
         {
@@ -1188,6 +1199,8 @@ def main() -> None:
             "input_modality": input_modality,
             "prompt_context": prompt_context_record(config),
             "lora_resolution": lora_layer_selection,
+            "model_load_audit": model_load_audit(model),
+            "evaluation_resource_shape": resolve_evaluation_resource_shape(config),
             "resolved_model_name_or_path": model_name_or_path,
             "checkpoint_dir": str(Path(args.checkpoint_dir)),
             "config": config,

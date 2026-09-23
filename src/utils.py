@@ -60,6 +60,10 @@ SUPPORTED_MODEL_BACKENDS = (
     MODEL_BACKEND_GEMMA4,
     MODEL_BACKEND_QWEN38,
 )
+# A backend may attach its load audit (loaded class, snapshot hashes, parameter
+# counts, LoRA target audit, dtype boundary) to the model it returns; the shared
+# train/evaluate writers pick it up from this attribute for provenance.
+MODEL_LOAD_AUDIT_ATTR = "_model_load_audit"
 PREDICTION_MODE_LIKELIHOOD = "likelihood"
 PREDICTION_MODE_GENERATION = "generation"
 PREDICTION_MODE_ORIGINAL_TEACHER_FORCED = "original_teacher_forced"
@@ -87,6 +91,8 @@ OPTIONAL_OVERRIDE_PATHS = {
     ("split", "smoke_subject_limit"),
     ("evaluation", "evaluation_view"),
     ("evaluation", "inference_dtype"),
+    ("resources", "eval_nodes"),
+    ("resources", "eval_gpus_per_node"),
     ("evaluation", "aggregation_level"),
     ("evaluation", "headline_mode"),
     ("lora", "last_n_layers"),
@@ -741,6 +747,43 @@ def resolve_aggregation_level(config: dict[str, Any], override: str | None = Non
         return normalize_aggregation_level(override)
     evaluation_cfg = config.get("evaluation", {})
     return normalize_aggregation_level(evaluation_cfg.get("aggregation_level"))
+
+
+def resolve_evaluation_resource_shape(config: dict[str, Any] | None) -> dict[str, Any]:
+    """Resolve the declared standalone-evaluation resource shape.
+
+    ``resources.eval_gpus_per_node`` is the single source of truth for both the
+    managed submission contract (which sizes the evaluation Slurm job) and the
+    model loader (which decides whether to shard the model with a device map).
+    The default keeps every backend that does not declare the block on the
+    existing one-GPU path.
+    """
+    resources = (config or {}).get("resources") or {}
+    raw_nodes = resources.get("eval_nodes", 1)
+    raw_gpus = resources.get("eval_gpus_per_node", 1)
+    nodes = int(1 if raw_nodes is None else raw_nodes)
+    gpus_per_node = int(1 if raw_gpus is None else raw_gpus)
+    if nodes != 1:
+        raise ValueError(
+            "standalone evaluation runs on exactly one node; resources.eval_nodes must be 1"
+        )
+    if gpus_per_node < 1 or gpus_per_node > 8:
+        raise ValueError(
+            f"resources.eval_gpus_per_node must be between 1 and 8, got {gpus_per_node}"
+        )
+    return {"nodes": nodes, "gpus_per_node": gpus_per_node, "sharded": gpus_per_node > 1}
+
+
+def resolve_evaluation_device_map(config: dict[str, Any] | None) -> str | None:
+    """Device map for the standalone evaluation loader, or ``None`` for one device."""
+    shape = resolve_evaluation_resource_shape(config)
+    return "auto" if shape["sharded"] else None
+
+
+def model_load_audit(model: Any) -> dict[str, Any] | None:
+    """Backend-provided model-load audit for provenance, when one is declared."""
+    audit = getattr(model, MODEL_LOAD_AUDIT_ATTR, None)
+    return dict(audit) if isinstance(audit, dict) else None
 
 
 DAIC_OFFICIALDEV_RECIPE_SUFFIX = "_officialdev_v1"

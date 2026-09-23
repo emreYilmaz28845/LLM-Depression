@@ -654,6 +654,143 @@ MODALITIES = ["Audio + Text", "Audio only", "Text only"]
 HEAD_METHODS = [("logreg", "LogReg head"), ("xgb_fixed", "XGBoost fixed"), ("xgb_optuna", "XGBoost Optuna")]
 
 
+# --------------------------------------------------------------------------- Qwen3-Omni DAIC
+# Qwen3-Omni-30B-A3B Thinker pilot: DAIC official test fold 0 under the
+# promptcontext_v1 prompt, likelihood evaluation, strict subject-level metrics.
+# Values are the locally validated REPORTABLE results of the two production runs;
+# the reference rows are the PR #255 derived canonical Qwen2-Audio likelihood
+# values (same manifest, split, seed, aggregation and evaluation view).
+QWEN3OMNI_DAIC_CAMPAIGN = {
+    "model": "Qwen3-Omni-30B-A3B-Instruct (Thinker only, LoRA attention-only)",
+    "group_id": "qwen3omni-daic-promptcontext-20260922",
+    "branch": "agent/feat-qwen3omni-daic-promptcontext",
+    "source_sha": "84e0be43d238b264d65cadf77bbfef8597e792c0",
+    "deployment_id": (
+        "feat-qwen3omni-daic-promptcontext-20260922-20260923T011102Z-84e0be43-6a82cf0e"
+    ),
+    "manifest_sha256": "72e2dd204b915ccba3ebf922f030531fe5678b3ea8c9c52b81b41242fe9dda17",
+    "split_sha256": "441333e0c88845eeacba9ea5355a8920cdd1f70e8cf7a7c15b9547b46da51473",
+    "gpu_shape": (
+        "2 nodes x 4 H100 (world size 8), batch 1 x accumulation 16 (effective 128), "
+        "activation offload cpu, evaluation sharded across 4 H100 with a device map"
+    ),
+    "trainable_params": 13369344,
+    "total_params": 31732574832,
+    "runs": {
+        "Audio only": {
+            "run": "qwen3omni_daic_audio_only_fold0_prod_20260923",
+            "attempt": "20260923T011558Z-qwen3omni_daic_audio_only_fold0_prod_20260923-84e0be43-7ef42110",
+            "train_job": "46376408",
+            "eval_job": "46376409",
+            "evidence": (
+                "output_model/promptcontext_v1_qwen3omni_likelihood/audio_only/daic/"
+                "qwen3omni_daic_audio_only_fold0_prod_20260923/fold_0/best_model/standalone_eval"
+            ),
+        },
+        "Audio + Text": {
+            "run": "qwen3omni_daic_audio_text_fold0_prod_20260923",
+            "attempt": "20260923T011634Z-qwen3omni_daic_audio_text_fold0_prod_20260923-84e0be43-bb975d80",
+            "train_job": "46376418",
+            "eval_job": "46376419",
+            "evidence": (
+                "output_model/promptcontext_v1_qwen3omni_likelihood/audio_text/daic/"
+                "qwen3omni_daic_audio_text_fold0_prod_20260923/fold_0/best_model/standalone_eval"
+            ),
+        },
+    },
+}
+
+# modality -> (macro_f1, positive_f1, uar, accuracy) from the verified
+# metrics_likelihood.json of each run (headline/binary_strict, INVALID as wrong).
+QWEN3OMNI_DAIC: dict[str, tuple[float, float, float, float]] = {
+    "Audio only": (0.4125, 0.0, 0.5, 0.7021276595744681),
+    "Audio + Text": (0.7552083333333333, 0.6666666666666666, 0.7662337662337663, 0.7872340425531915),
+}
+
+# PR #255 derived canonical likelihood reference (Qwen2-Audio), same split.
+QWEN2AUDIO_DAIC_REFERENCE: dict[str, tuple[float, float, float]] = {
+    "Audio only": (0.5392156862745098, 0.4117647058823529, 0.553030303030303),
+    "Audio + Text": (0.735279057859703, 0.6451612903225806, 0.751082251082251),
+}
+
+
+def build_qwen3omni_daic(wb: Workbook) -> None:
+    ws = wb.create_sheet("Qwen3-Omni DAIC")
+    _widths(ws, {"A": 16, "B": 30, "C": 12, "D": 12, "E": 12, "F": 12, "G": 62, "H": 60})
+    campaign = QWEN3OMNI_DAIC_CAMPAIGN
+    _title(ws, "Qwen3-Omni-30B-A3B Thinker — DAIC official test (seed 1337, fold 0, likelihood)", 8)
+    _note(
+        ws, 2,
+        f"{campaign['model']} from {campaign['model'].split(' ')[0]} snapshot staged offline. "
+        f"Campaign group {campaign['group_id']}; branch {campaign['branch']}; source "
+        f"{campaign['source_sha'][:8]}; deployment {campaign['deployment_id']}. "
+        f"Same manifest/split as the canonical Qwen harmonized DAIC campaign "
+        f"({campaign['manifest_sha256'][:12]}…/{campaign['split_sha256'][:12]}…). Recipe: "
+        f"promptcontext_v1 prompt (shared instruction plus the centralized DAIC recording context), "
+        f"FSDP {campaign['gpu_shape']}, {campaign['trainable_params']:,} trainable LoRA parameters of "
+        f"{campaign['total_params']:,}, inner_val_macro_f1 checkpoint selection in max mode with the "
+        f"canonical early stopping, best_model evaluated in the likelihood view with "
+        f"harmonized_all_windows_full_coverage and strict subject-level aggregation over the 47 "
+        f"official test subjects (INVALID counts as wrong). The Talker is never built, saved or "
+        f"evaluated. The reference rows are the PR #255 derived canonical likelihood values of the "
+        f"Qwen2-Audio DAIC runs: the same split, evaluation view and aggregation, but the older "
+        f"inline prompt, so the comparison is a model-plus-prompt comparison and carries no "
+        f"prompt-only claim.",
+        8, height=150,
+    )
+    _header_row(
+        ws, 4,
+        ["Modality", "Model / prompt", "Macro-F1", "Positive-F1", "UAR", "Accuracy",
+         "Run / attempt / jobs", "Local evidence"],
+    )
+    row = 5
+    for modality in ("Audio only", "Audio + Text"):
+        run = campaign["runs"][modality]
+        macro, positive, uar, accuracy = QWEN3OMNI_DAIC[modality]
+        _body_cell(ws, row, 1, modality)
+        _body_cell(ws, row, 2, "Qwen3-Omni Thinker, promptcontext_v1")
+        _body_cell(ws, row, 3, macro, fmt="0.0000")
+        _body_cell(ws, row, 4, positive, fmt="0.0000")
+        _body_cell(ws, row, 5, uar, fmt="0.0000")
+        _body_cell(ws, row, 6, accuracy, fmt="0.0000")
+        _body_cell(
+            ws, row, 7,
+            f"run {run['run']}; attempt {run['attempt']}; train {run['train_job']} "
+            f"eval {run['eval_job']}",
+        )
+        _body_cell(ws, row, 8, run["evidence"])
+        row += 1
+    for modality in ("Audio only", "Audio + Text"):
+        macro, positive, uar = QWEN2AUDIO_DAIC_REFERENCE[modality]
+        _body_cell(ws, row, 1, modality)
+        _body_cell(
+            ws, row, 2, "Qwen2-Audio-7B-Instruct, older inline prompt (PR #255 derived likelihood)"
+        )
+        _body_cell(ws, row, 3, macro, fmt="0.0000")
+        _body_cell(ws, row, 4, positive, fmt="0.0000")
+        _body_cell(ws, row, 5, uar, fmt="0.0000")
+        _body_cell(ws, row, 6, None)
+        _body_cell(
+            ws, row, 7,
+            "run harmonized_v1_harmonized_v1_prod_20260809T171705Z_d1e8130b_daic_"
+            + ("audio_only" if modality == "Audio only" else "audio_text")
+            + "_r1; derived from the teacher-forced runs' saved per-subject candidate scores",
+        )
+        _body_cell(
+            ws, row, 8,
+            "outputs/experiment_reports/likelihood_canonical_values/derived_values.json",
+        )
+        row += 1
+    _note(
+        ws, row + 1,
+        "All Qwen3-Omni values were recomputed locally from predictions_subject_level.csv by "
+        "`exp validate` before this sheet was generated, and the reference values are re-hashed "
+        "against their recorded per-subject artifacts by tools/build_qwen3omni_daic_comparison.py. "
+        "One seed each; differences are observations, not variance estimates or significance.",
+        8, height=60,
+    )
+
+
 # --------------------------------------------------------------------------- Gemma 4 DAIC
 # First Gemma 4 DAIC backbone comparison (runbook docs/GEMMA4_DAIC_IMPLEMENTATION_RUNBOOK.md).
 # Backend gemma4 on google/gemma-4-12B-it revision 707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7;
@@ -3885,6 +4022,12 @@ def main() -> None:
                 cell_values[("Gemma 4 DAIC", f"{mod_label} — {variant_label}")] = (
                     GEMMA4_HEADS[mod_key][variant][0]
                 )
+        # Qwen3-Omni DAIC pilot cells (Qwen3-Omni DAIC sheet): macro-F1 per modality.
+        for modality in ("audio_only", "audio_text"):
+            mod_label = MODALITY_LABELS[modality]
+            cell_values[
+                ("Qwen3-Omni DAIC", f"{mod_label} — Qwen3-Omni Thinker, promptcontext_v1")
+            ] = QWEN3OMNI_DAIC[mod_label][0]
         # DAIC official-development cells (DAIC LLM Comparison and DAIC Head
         # Ablation sheets): six teacher-forced and twelve fixed-head macro-F1.
         for modality in ("audio_only", "audio_text", "text_only"):
@@ -3941,6 +4084,7 @@ def main() -> None:
         _build_turkish_pooled_lookup(turkish_pooled_qcond_report_path)
     build_summary(wb, detailed=detailed)
     build_gemma_vs_qwen(wb)
+    build_qwen3omni_daic(wb)
     build_legacy_tf(wb)
     build_native_vs_english(wb, report_path=native_en_report_path)
     if turkish_question_condition_report_path is not None:

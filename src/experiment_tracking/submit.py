@@ -62,6 +62,38 @@ def build_common_overrides(
     return overrides
 
 
+def resolve_evaluation_shape(
+    config_dict: dict[str, Any], eval_gpus_per_node: int | None = None
+) -> dict[str, Any]:
+    """Resolve the evaluation job shape declared by the config.
+
+    This mirrors ``src.utils.resolve_evaluation_resource_shape`` (the model
+    loader's copy) with stdlib only, because the tracking package must not import
+    the training stack. ``tests/test_qwen3omni_backend.py`` asserts the two agree,
+    so drift fails closed.
+    """
+    resources = config_dict.get("resources") or {}
+    raw_nodes = resources.get("eval_nodes", 1)
+    raw_gpus = resources.get("eval_gpus_per_node", 1)
+    nodes = int(1 if raw_nodes is None else raw_nodes)
+    configured = int(1 if raw_gpus is None else raw_gpus)
+    gpus_per_node = configured if eval_gpus_per_node is None else int(eval_gpus_per_node)
+    if nodes != 1:
+        raise SubmissionError(
+            "standalone evaluation runs on exactly one node; resources.eval_nodes must be 1"
+        )
+    if gpus_per_node < 1 or gpus_per_node > 8:
+        raise SubmissionError(
+            f"resources.eval_gpus_per_node must be between 1 and 8, got {gpus_per_node}"
+        )
+    return {
+        "nodes": nodes,
+        "gpus_per_node": gpus_per_node,
+        "configured_gpus_per_node": configured,
+        "sharded": gpus_per_node > 1,
+    }
+
+
 def _validate_override_token(token: str) -> tuple[str, str]:
     if not token.startswith("--set"):
         raise SubmissionError(f"only --set overrides are accepted, got: {token!r}")
@@ -99,6 +131,7 @@ def resolve_contract(
     attempt_id: str | None = None,
     train_nodes: int = 1,
     train_gpus_per_node: int = 4,
+    eval_gpus_per_node: int | None = None,
     env_activate: str | None = None,
     manifest_policy: str | None = None,
 ) -> dict[str, Any]:
@@ -113,6 +146,7 @@ def resolve_contract(
         )
     if int(train_nodes) < 1 or int(train_gpus_per_node) < 1:
         raise SubmissionError("train_nodes and train_gpus_per_node must be positive")
+    evaluation_shape = resolve_evaluation_shape(config_dict, eval_gpus_per_node)
     training_cfg = config_dict.get("training", {}) or {}
     strategy = str(training_cfg.get("strategy", "ddp") or "ddp").strip().lower()
     per_device_train_batch_size = int(training_cfg.get("per_device_train_batch_size", 1))
@@ -252,6 +286,7 @@ def resolve_contract(
         "log_root_train": log_root_train,
         "log_root_eval": log_root_eval,
         "training_shape": training_shape,
+        "evaluation_shape": evaluation_shape,
         "env_activate": env_activate,
         "launch_command": (
             "torchrun"
@@ -288,7 +323,14 @@ def resolve_contract(
             {
                 "job_key": EVAL_JOB_KEY,
                 "job_type": "evaluation",
-                "shape": "1 node, 1 task, 1 H100",
+                "shape": (
+                    "1 node, 1 task, 1 H100"
+                    if evaluation_shape["gpus_per_node"] == 1
+                    else (
+                        f"1 node, 1 task, {evaluation_shape['gpus_per_node']} H100 "
+                        "(single process, device_map sharded)"
+                    )
+                ),
                 "depends_on": [TRAIN_JOB_KEY],
                 "script": "scripts/run_eval_slurm.sh",
                 "checkpoint_dir": checkpoint_dir,
@@ -344,6 +386,7 @@ def build_remote_submit_script(contract: dict[str, Any]) -> str:
         f"export EXPERIMENT_CONTEXT={q(contract['context_path'])}",
         f"export TRAIN_NODES={contract['training_shape']['nodes']}",
         f"export TRAIN_GPUS_PER_NODE={contract['training_shape']['gpus_per_node']}",
+        f"export EVAL_GPUS_PER_NODE={contract['evaluation_shape']['gpus_per_node']}",
         f"export SKIP_MANIFEST_BUILD={1 if contract.get('skip_manifest_build') else 0}",
     ]
     if contract.get("env_activate"):

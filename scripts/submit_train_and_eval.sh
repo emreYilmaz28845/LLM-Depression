@@ -19,10 +19,13 @@ SKIP_MANIFEST_BUILD="${SKIP_MANIFEST_BUILD:-0}"
 SBATCH_EXTRA_ARGS="${SBATCH_EXTRA_ARGS:-}"
 # Train job shape. The default is today's single 4-GPU lane; the FSDP strategy can
 # use 2 nodes x 4 GPUs (8 GPUs) when a model does not fit one card. The evaluation
-# job keeps its own single-GPU shape regardless.
+# job keeps its own single-GPU shape unless the resolved config declares
+# resources.eval_gpus_per_node > 1, in which case the model is sharded with a
+# device map inside one process on one node.
 TRAIN_NODES="${TRAIN_NODES:-1}"
 TRAIN_GPUS_PER_NODE="${TRAIN_GPUS_PER_NODE:-4}"
 TRAIN_CPUS_PER_GPU="${TRAIN_CPUS_PER_GPU:-20}"
+EVAL_GPUS_PER_NODE="${EVAL_GPUS_PER_NODE:-1}"
 TRAIN_SCRIPT="${TRAIN_SCRIPT:-$PROJECT_ROOT/scripts/run_train_slurm.sh}"
 EVAL_SCRIPT="${EVAL_SCRIPT:-$PROJECT_ROOT/scripts/run_eval_slurm.sh}"
 if [ -f "/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate" ]; then
@@ -170,7 +173,7 @@ echo "  fold_dir: $FOLD_DIR"
 echo "  evaluation_view: $EVAL_VIEW"
 echo "  log_root: $LOG_ROOT"
 # Resolve the training strategy and the effective global batch the run will use.
-read -r SHAPE_STRATEGY PER_DEVICE_BATCH GRAD_ACCUM <<< "$(python - "$CONFIG" "$PROJECT_ROOT" "$EXTRA_TRAIN_ARGS" "$OVERRIDES_JSON_B64" <<'PY'
+read -r SHAPE_STRATEGY PER_DEVICE_BATCH GRAD_ACCUM CONFIG_EVAL_GPUS <<< "$(python - "$CONFIG" "$PROJECT_ROOT" "$EXTRA_TRAIN_ARGS" "$OVERRIDES_JSON_B64" <<'PY'
 import base64, json, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[2])
@@ -185,10 +188,12 @@ try:
 except Exception:
     config = load_yaml(Path(sys.argv[1]))
 training = config.get("training", {})
+resources = config.get("resources", {}) or {}
 print(
     training.get("strategy", "ddp"),
     training.get("per_device_train_batch_size", 1),
     training.get("gradient_accumulation_steps", 1),
+    resources.get("eval_gpus_per_node", 1),
 )
 PY
 )"
@@ -197,6 +202,13 @@ EFFECTIVE_BATCH=$((PER_DEVICE_BATCH * GRAD_ACCUM * WORLD_SIZE))
 echo "  training_strategy: $SHAPE_STRATEGY"
 echo "  train_shape: ${TRAIN_NODES} node(s) x ${TRAIN_GPUS_PER_NODE} GPU(s) = ${WORLD_SIZE} rank(s)"
 echo "  effective_global_batch_size: $EFFECTIVE_BATCH (per_device=${PER_DEVICE_BATCH} x accumulation=${GRAD_ACCUM} x world_size=${WORLD_SIZE})"
+echo "  eval_shape: 1 node, ${EVAL_GPUS_PER_NODE} GPU(s)$([ "$EVAL_GPUS_PER_NODE" -gt 1 ] && echo " (device_map sharded, single process)" || true)"
+if [ "$CONFIG_EVAL_GPUS" != "$EVAL_GPUS_PER_NODE" ]; then
+    echo "ERROR: EVAL_GPUS_PER_NODE=$EVAL_GPUS_PER_NODE does not match the resolved config's resources.eval_gpus_per_node=$CONFIG_EVAL_GPUS." >&2
+    echo "       The evaluation job would request a different GPU count than the model loader shards for." >&2
+    exit 1
+fi
+EVAL_CPUS_PER_TASK=$((TRAIN_CPUS_PER_GPU * EVAL_GPUS_PER_NODE))
 if [ "$SHAPE_STRATEGY" = "fsdp" ] && [ "$EFFECTIVE_BATCH" -ne 128 ]; then
     SUGGESTED_ACCUM=$((128 / (PER_DEVICE_BATCH * WORLD_SIZE)))
     echo "ERROR: the fsdp recipe keeps an effective global batch of 128; ${WORLD_SIZE} rank(s) give ${EFFECTIVE_BATCH}." >&2
@@ -205,7 +217,7 @@ if [ "$SHAPE_STRATEGY" = "fsdp" ] && [ "$EFFECTIVE_BATCH" -ne 128 ]; then
 fi
 # Ensure log root exists
 mkdir -p "$LOG_ROOT"
-EXPORT_ARGS="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$CONFIG,FOLD=$FOLD,RUN_NAME=$RUN_NAME,EXTRA_TRAIN_ARGS=$EXTRA_TRAIN_ARGS,EXTRA_EVAL_ARGS=$EXTRA_EVAL_ARGS,EXPERIMENT_CONTEXT=${EXPERIMENT_CONTEXT:-},LOG_ROOT=$LOG_ROOT,OVERRIDES_JSON_B64=${OVERRIDES_JSON_B64:-},ENV_ACTIVATE=${ENV_ACTIVATE:-},MODEL_PATH=${MODEL_PATH:-},SKIP_MANIFEST_BUILD=$SKIP_MANIFEST_BUILD"
+EXPORT_ARGS="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$CONFIG,FOLD=$FOLD,RUN_NAME=$RUN_NAME,EXTRA_TRAIN_ARGS=$EXTRA_TRAIN_ARGS,EXTRA_EVAL_ARGS=$EXTRA_EVAL_ARGS,EXPERIMENT_CONTEXT=${EXPERIMENT_CONTEXT:-},LOG_ROOT=$LOG_ROOT,OVERRIDES_JSON_B64=${OVERRIDES_JSON_B64:-},ENV_ACTIVATE=${ENV_ACTIVATE:-},MODEL_PATH=${MODEL_PATH:-},SKIP_MANIFEST_BUILD=$SKIP_MANIFEST_BUILD,EVAL_GPUS_PER_NODE=$EVAL_GPUS_PER_NODE"
 SBATCH_BASE_ARGS=()
 if [ -n "$SBATCH_EXTRA_ARGS" ]; then
     # shellcheck disable=SC2206
@@ -222,8 +234,8 @@ EVAL_SBATCH_ARGS=(
     --nodes=1
     --ntasks=1
     --ntasks-per-node=1
-    --cpus-per-task="$TRAIN_CPUS_PER_GPU"
-    --gres="gpu:1"
+    --cpus-per-task="$EVAL_CPUS_PER_TASK"
+    --gres="gpu:$EVAL_GPUS_PER_NODE"
 )
 echo "Submitting workflow with --chdir=$PROJECT_ROOT"
 TRAIN_JOB_RAW="$(sbatch --parsable --chdir="$PROJECT_ROOT" "${SBATCH_BASE_ARGS[@]}" "${TRAIN_SBATCH_ARGS[@]}" --export="$EXPORT_ARGS,NNODES=$TRAIN_NODES,NPROC_PER_NODE=$TRAIN_GPUS_PER_NODE" "$TRAIN_SCRIPT")"
