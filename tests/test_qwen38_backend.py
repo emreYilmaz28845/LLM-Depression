@@ -33,7 +33,7 @@ from src.utils import (
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "configs/main"
 QWEN38_CONFIG = MAIN / "daic_text_only_harmonized_selmacrof1_likelihood_v1_qwen38_27b.yaml"
-QWEN_CONFIG = MAIN / "daic_text_only_harmonized_selmacrof1_likelihood_v1.yaml"
+QWEN_CONFIG = ROOT / "configs/archive/pre_default_backbone_20260923/daic_text_only_harmonized_selmacrof1_likelihood_v1.yaml"
 CLOSED_THINKING_BLOCK = "<think>\n\n</think>\n\n"
 
 

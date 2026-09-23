@@ -52,10 +52,11 @@ from src.utils import (
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "configs/main"
+PRE_DEFAULT_BACKBONE_ARCHIVE = ROOT / "configs/archive/pre_default_backbone_20260923"
 OMNI_AUDIO_ONLY = MAIN / "daic_audio_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen3omni_30b_a3b.yaml"
 OMNI_AUDIO_TEXT = MAIN / "daic_audio_text_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen3omni_30b_a3b.yaml"
-QWEN_AUDIO_ONLY = MAIN / "daic_audio_only_harmonized_selmacrof1_likelihood_v1.yaml"
-QWEN_AUDIO_TEXT = MAIN / "daic_audio_text_harmonized_selmacrof1_likelihood_v1.yaml"
+QWEN_AUDIO_ONLY = PRE_DEFAULT_BACKBONE_ARCHIVE / "daic_audio_only_harmonized_selmacrof1_likelihood_v1.yaml"
+QWEN_AUDIO_TEXT = PRE_DEFAULT_BACKBONE_ARCHIVE / "daic_audio_text_harmonized_selmacrof1_likelihood_v1.yaml"
 
 # Every difference between an Omni config and its canonical Qwen2-Audio source,
 # grouped by the plan's allowed list: model backend/snapshot, attention

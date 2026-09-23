@@ -84,7 +84,7 @@ expected_train = int(sys.argv[3])
 expected_eval = int(sys.argv[4])
 matrix = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
 backend = str(matrix.get("model_backend", "") or "")
-expected_heads = ["logreg_raw"] if backend == "gemma4" else ["logreg_raw", "xgb_raw"]
+expected_heads = ["logreg_raw"] if backend == "gemma4" else (["logreg_raw", "xgb_raw"] if backend == "qwen" else [])
 if matrix.get("fixed_heads") != expected_heads:
     raise SystemExit(
         f"Harmonized matrix must contain only {expected_heads} heads for "
@@ -100,7 +100,7 @@ for item in matrix["experiments"]:
     if config["training"]["selection_metric"] != "inner_val_macro_f1":
         raise SystemExit(f"Expected macro-F1 selection: {config_path}")
     config_backend = str(config.get("model_backend", "") or "")
-    if config_backend != backend:
+    if backend and config_backend != backend:
         raise SystemExit(
             f"Matrix model_backend={backend!r} does not match config backend "
             f"{config_backend!r}: {config_path}"
@@ -108,7 +108,7 @@ for item in matrix["experiments"]:
     modality = "audio_text" if config["data"].get("use_audio") and config["data"].get("use_text") else "audio_only" if config["data"].get("use_audio") else "text_only"
     run_root = str(config["output_dirs"]["run_root"]).replace("${PROJECT_ROOT}", str(root))
     for fold in item["folds"]:
-        print("\t".join((str(config_path), str(config["dataset"]), modality, str(fold), "1" if item["separate_eval"] else "0", run_root, config_backend)))
+        print("\t".join((str(config_path), str(config["dataset"]), modality, str(fold), "1" if item["separate_eval"] else "0", run_root, config_backend, "1" if expected_heads else "0")))
         count += 1
         if item["separate_eval"]:
             eval_count += 1
@@ -149,7 +149,7 @@ if [ "$DRY_RUN" = 0 ]; then
 fi
 
 for task in "${TASKS[@]}"; do
-    IFS=$'\t' read -r config dataset modality fold separate_eval run_root config_backend <<< "$task"
+    IFS=$'\t' read -r config dataset modality fold separate_eval run_root config_backend fixed_heads_enabled <<< "$task"
     backend_vars="$(bash "$PROJECT_ROOT/scripts/harmonized_backend_env.sh" "$config" "$PROJECT_ROOT")"
     eval "$backend_vars"
     run_name="${RUN_PREFIX}_${RUN_ID}_${dataset}_${modality}"
@@ -216,17 +216,20 @@ PY
         [ "$DRY_RUN" = 1 ] || printf '%s\t%s\t%s\teval\t%s\t%s,%s\n' "$dataset" "$modality" "$fold" "$chain_job" "$train_job" "$aux_throttle" >> "$registry"
     fi
 
-    aux_lane=$((aux_index % MAX_CONCURRENT_AUX))
-    aux_throttle="${aux_lanes[$aux_lane]:-}"
-    hidden_dep="$(dependency_arg "$chain_job" "$aux_throttle")"
-    cache="$FEATURES_ROOT/$dataset/$run_name/fold_$fold"
-    classifiers="$CLASSIFIERS_ROOT/$dataset/$run_name/fold_$fold"
-    hidden_cmd=(sbatch --parsable --job-name="hh-${dataset:0:4}-${modality:0:2}-f$fold" "$hidden_dep" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CHECKPOINT_DIR=$fold_dir/best_model,CACHE_DIR=$cache,CLASSIFIER_DIR=$classifiers,MODEL_PATH=$MODEL_PATH,CONDITION=$modality,CLASSIFIER_VARIANTS=$CLASSIFIER_VARIANTS" "$HIDDEN_WORKER")
-    hidden_raw="$(submit "${hidden_cmd[@]}")"
-    hidden_job="$(job_id "$hidden_raw")"
-    aux_lanes[$aux_lane]="$hidden_job"
-    aux_index=$((aux_index + 1))
-    [ "$DRY_RUN" = 1 ] || printf '%s\t%s\t%s\thidden_fixed\t%s\t%s,%s\n' "$dataset" "$modality" "$fold" "$hidden_job" "$chain_job" "$aux_throttle" >> "$registry"
+    hidden_job=""
+    if [ "$fixed_heads_enabled" = 1 ]; then
+        aux_lane=$((aux_index % MAX_CONCURRENT_AUX))
+        aux_throttle="${aux_lanes[$aux_lane]:-}"
+        hidden_dep="$(dependency_arg "$chain_job" "$aux_throttle")"
+        cache="$FEATURES_ROOT/$dataset/$run_name/fold_$fold"
+        classifiers="$CLASSIFIERS_ROOT/$dataset/$run_name/fold_$fold"
+        hidden_cmd=(sbatch --parsable --job-name="hh-${dataset:0:4}-${modality:0:2}-f$fold" "$hidden_dep" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CHECKPOINT_DIR=$fold_dir/best_model,CACHE_DIR=$cache,CLASSIFIER_DIR=$classifiers,MODEL_PATH=$MODEL_PATH,CONDITION=$modality,CLASSIFIER_VARIANTS=$CLASSIFIER_VARIANTS" "$HIDDEN_WORKER")
+        hidden_raw="$(submit "${hidden_cmd[@]}")"
+        hidden_job="$(job_id "$hidden_raw")"
+        aux_lanes[$aux_lane]="$hidden_job"
+        aux_index=$((aux_index + 1))
+        [ "$DRY_RUN" = 1 ] || printf '%s\t%s\t%s\thidden_fixed\t%s\t%s,%s\n' "$dataset" "$modality" "$fold" "$hidden_job" "$chain_job" "$aux_throttle" >> "$registry"
+    fi
     if [ "$DRY_RUN" = 0 ]; then
         python - "$context_path" "$fold_dir" "$train_job" "${eval_raw:-}" "$hidden_job" "$PROJECT_ROOT" <<'PY'
 import json, os, sys
@@ -258,11 +261,12 @@ if eval_job:
         attempt_id=context["attempt_id"], fold=int(context["fold"]),
         slurm_job_id=eval_job, dependency_job_ids=[train_job], status="PENDING",
     ))
-events.append(lifecycle.new_job_event(
-    job_key="hidden_fixed", job_type="hidden_classifier", event_type="SUBMITTED",
-    attempt_id=context["attempt_id"], fold=int(context["fold"]),
-    slurm_job_id=hidden_job, dependency_job_ids=[eval_job or train_job], status="PENDING",
-))
+if hidden_job:
+    events.append(lifecycle.new_job_event(
+        job_key="hidden_fixed", job_type="hidden_classifier", event_type="SUBMITTED",
+        attempt_id=context["attempt_id"], fold=int(context["fold"]),
+        slurm_job_id=hidden_job, dependency_job_ids=[eval_job or train_job], status="PENDING",
+    ))
 for event in events:
     lifecycle.append_job_event(run_root / "jobs.jsonl", event)
 PY

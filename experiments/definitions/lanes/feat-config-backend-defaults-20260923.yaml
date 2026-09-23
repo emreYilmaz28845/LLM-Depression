@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: feat-config-backend-defaults-20260923
+slug: config-backend-defaults
+tier: 2
+branch: agent/feat-config-backend-defaults
+worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-feat-config-backend-defaults
+parent_branch: main
+parent_sha: 63ad4d1758f5fced65406b8cc7a39be87f509e6c
+created_at_utc: "2026-09-23T13:56:28Z"
+experiment_group_path: null
+type: complementary

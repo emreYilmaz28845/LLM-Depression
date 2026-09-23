@@ -13,6 +13,7 @@ from scripts.build_promptcontext_qwen38_configs import (
     QWEN38_MODEL_REVISION,
     diff_paths,
     main as generator_main,
+    source_config_path,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -72,7 +73,7 @@ def _load(path: Path) -> dict:
 
 def _pairs() -> list[tuple[str, dict, dict]]:
     return [
-        (cell[0], _load(MAIN / cell[1]), _load(MAIN / cell[2]))
+        (cell[0], _load(source_config_path(cell[1])), _load(MAIN / cell[2]))
         for cell in CELLS
     ]
 
@@ -118,7 +119,7 @@ def test_prompt_selection_is_explicit_and_centralized() -> None:
         assert config["prompt"]["dataset_context"]
         assert "system" not in config["prompt"], cell_id
         assert config["prompt"]["user_template"] == _load(
-            MAIN / SOURCE_NAMES[cell_id]
+            source_config_path(SOURCE_NAMES[cell_id])
         )["prompt"]["user_template"]
 
 

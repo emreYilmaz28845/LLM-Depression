@@ -27,6 +27,7 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MAIN = PROJECT_ROOT / "configs/main"
+QWEN2_ARCHIVE = PROJECT_ROOT / "configs/archive/pre_default_backbone_20260923"
 
 GEMMA4_MODEL_PATH = (
     "/gpfs/projects/etur92/ozu647717/models/gemma-4-12B-it/"
@@ -104,7 +105,8 @@ def main() -> int:
             for modality in modalities:
                 source_name = qwen_config_name(dataset, modality, english)
                 target_name = gemma_config_name(dataset, modality, english)
-                source_path = MAIN / source_name
+                archived_source = QWEN2_ARCHIVE / source_name
+                source_path = archived_source if archived_source.is_file() else MAIN / source_name
                 target_path = MAIN / target_name
                 if not source_path.is_file():
                     failures.append(f"missing Qwen base: {source_path}")

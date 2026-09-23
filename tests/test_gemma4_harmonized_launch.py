@@ -18,6 +18,7 @@ from src.utils import load_yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "configs/main"
+QWEN2_ARCHIVE = ROOT / "configs/archive/pre_default_backbone_20260923"
 HARMONIZED = ROOT / "configs/experiments/harmonized"
 GEMMA_NATIVE_MATRIX = HARMONIZED / "gemma4_standalone_matrix.yaml"
 GEMMA_EN_MATRIX = HARMONIZED / "gemma4_english_translation_matrix.yaml"
@@ -90,6 +91,12 @@ def qwen_base_name(gemma_name: str) -> str:
     return gemma_name.replace("_gemma4_12b.yaml", ".yaml")
 
 
+def qwen_base_path(gemma_name: str) -> Path:
+    name = qwen_base_name(gemma_name)
+    archived = QWEN2_ARCHIVE / name
+    return archived if archived.is_file() else MAIN / name
+
+
 def test_exact_gemma_config_sets_exist() -> None:
     all_names = sorted(path.name for path in MAIN.glob("*gemma4_12b.yaml"))
     legacy = sorted(name for name in all_names if name.startswith("turkish_t17_"))
@@ -136,7 +143,7 @@ def test_gemma_configs_validate_and_differ_only_by_backend_allowlist() -> None:
         else:
             assert "harmonized_v1" in gemma["output_dirs"]["run_root"]
         assert "gemma4" in gemma["output_dirs"]["run_root"]
-        base = load_yaml(MAIN / qwen_base_name(name))
+        base = load_yaml(qwen_base_path(name))
         differences = []
         for key in sorted(set(base) | set(gemma)):
             if key not in gemma:
@@ -166,7 +173,7 @@ def test_gemma_configs_validate_and_differ_only_by_backend_allowlist() -> None:
 def test_gemma_configs_preserve_scientific_fields() -> None:
     for name in GEMMA_CAMPAIGN_CONFIGS:
         gemma = load_yaml(MAIN / name)
-        base = load_yaml(MAIN / qwen_base_name(name))
+        base = load_yaml(qwen_base_path(name))
         for key in ("dataset", "seed", "recipe_id", "labels", "prompt", "split", "data", "training"):
             assert gemma[key] == base[key], f"{name}: {key} changed"
         assert gemma.get("audio_adapter") == base.get("audio_adapter")
@@ -287,10 +294,9 @@ def test_qwen_launchers_keep_their_behavior() -> None:
 
     native = _run_launcher(QWEN_MATRIX)
     assert native.returncode == 0, native.stderr
-    assert native.stderr.count("DRY_RUN ") == 159
+    assert native.stderr.count("DRY_RUN ") == 96
     assert "tasks=63" in native.stdout
-    assert "run_qwen_hidden_extract_slurm.sh" in native.stderr
-    assert "CLASSIFIER_VARIANTS=logreg_raw:xgb_raw" in native.stderr
+    assert "run_qwen_hidden_extract_slurm.sh" not in native.stderr
     env = {
         **{key: value for key, value in os.environ.items()},
         "MATRIX": str(QWEN_EN_MATRIX),
@@ -331,8 +337,8 @@ def test_backend_env_helper_routing() -> None:
         text=True,
     )
     assert result.returncode == 0, result.stderr
-    assert "MODEL_BACKEND=qwen" in result.stdout
-    assert "qwen_mn5_rebuilt" in result.stdout
+    assert "MODEL_BACKEND=qwen3omni" in result.stdout
+    assert "qwen3omni" in result.stdout
     assert "CLASSIFIER_VARIANTS=logreg_raw:xgb_raw" in result.stdout
 
 

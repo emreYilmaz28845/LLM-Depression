@@ -55,6 +55,7 @@ from src.model.qwen3omni_lora import (
 )
 
 MAIN = PROJECT_ROOT / "configs/main"
+PRE_DEFAULT_BACKBONE_ARCHIVE = PROJECT_ROOT / "configs/archive/pre_default_backbone_20260923"
 DEFAULT_AUDIT_OUTPUT = (
     PROJECT_ROOT / "outputs/qwen3omni_daic_config_diff/config_diff_audit.json"
 )
@@ -333,7 +334,7 @@ def main(argv: list[str] | None = None) -> int:
     }
     for cell in CELLS:
         slug, source_name, target_name, modality = cell
-        source_path = MAIN / source_name
+        source_path = PRE_DEFAULT_BACKBONE_ARCHIVE / source_name
         if not source_path.is_file():
             raise GenerationError(f"missing canonical source config: {source_path}")
         source = yaml.safe_load(source_path.read_text(encoding="utf-8"))
