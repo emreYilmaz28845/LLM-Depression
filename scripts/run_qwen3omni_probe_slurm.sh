@@ -68,7 +68,9 @@ PROBE_NODES="${PROBE_NODES:-1}"
 PROBE_ARGS="${PROBE_ARGS:-}"
 EXTRA_PROBE_ARGS="${EXTRA_PROBE_ARGS:-}"
 OVERRIDES_JSON_B64="${OVERRIDES_JSON_B64:-}"
-LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/qwen3omni_probe}"
+# Probe logs land beside the probe output (the task runtime), never inside the
+# immutable source deployment: writing there would dirty a clean-source tree.
+LOG_ROOT="${LOG_ROOT:-$(dirname "$PROBE_OUTPUT")/logs}"
 
 # The interpreter of the activated environment drives the ranks (same reasoning
 # as the training worker: torchrun's shebang would otherwise pick the base env).
