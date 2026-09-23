@@ -187,6 +187,10 @@ def audit_resources(probes_root: Path) -> dict[str, Any]:
             "prompt_version": payload.get("prompt_version"),
         }
         ranks = payload.get("ranks") or []
+        # FSDP probes report one entry per rank; the single-process device-map
+        # forward probe reports the same fields at the top level.
+        if not ranks and payload.get("mode") in {"forward", "tree"}:
+            ranks = [payload]
         if ranks:
             summary["ranks"] = len(ranks)
 
@@ -219,6 +223,36 @@ def audit_resources(probes_root: Path) -> dict[str, Any]:
                 summary["host_total_gb"] = max(
                     (rank.get("host_memory") or {}).get("MemTotal_gb", 0) for rank in ranks
                 )
+            audit = (ranks[0].get("model_load_audit") or {})
+            if audit:
+                summary["model_load_audit"] = {
+                    key: audit.get(key)
+                    for key in (
+                        "loaded_class",
+                        "load_mode",
+                        "talker_parameters",
+                        "matched_modules",
+                        "expected_modules",
+                        "lora_trainable_params",
+                        "audit_passed",
+                        "evaluation_device_map",
+                        "evaluation_resource_shape",
+                    )
+                    if key in audit
+                }
+            results = ranks[0].get("results") or {}
+            if results:
+                summary["finite_results"] = {}
+                for modality, entries in results.items():
+                    if not isinstance(entries, list):
+                        continue
+                    summary["finite_results"][modality] = {
+                        "examples": len(entries),
+                        "all_finite": all(bool(entry.get("finite")) for entry in entries),
+                        "max_audio_seconds": max(
+                            (entry.get("audio_seconds") or 0) for entry in entries
+                        ),
+                    }
             structure = ranks[0].get("structure") or {}
             if structure:
                 summary["training_shape"] = {
@@ -371,12 +405,24 @@ def _resources_markdown(payload: dict[str, Any]) -> str:
                 note_bits.append(f"{summary['global_examples_per_second']} examples/s global")
             if summary.get("min_free_gib"):
                 note_bits.append(f"{summary['min_free_gib']} GiB free at peak")
+            finite = summary.get("finite_results") or {}
+            if finite:
+                note_bits.append(
+                    "; ".join(
+                        f"{modality}: {entry['examples']} examples finite={entry['all_finite']}"
+                        for modality, entry in finite.items()
+                    )
+                )
             audit = summary.get("model_load_audit") or {}
             if audit:
-                note_bits.append(
-                    f"talker params {audit.get('talker_parameters')}, LoRA {audit.get('matched_modules')}/"
-                    f"{audit.get('expected_modules')}"
-                )
+                bits = [f"talker params {audit.get('talker_parameters')}"]
+                if audit.get("matched_modules") is not None:
+                    bits.append(
+                        f"LoRA {audit.get('matched_modules')}/{audit.get('expected_modules')}"
+                    )
+                if audit.get("evaluation_device_map") is not None:
+                    bits.append(f"device map {audit.get('evaluation_device_map')}")
+                note_bits.append(", ".join(bits))
             lines.append(
                 "| {dataset} | {mode} | {world} | {alloc} | {reserved} | {host} | {notes} |".format(
                     dataset=dataset,

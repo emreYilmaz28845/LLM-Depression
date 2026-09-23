@@ -354,6 +354,69 @@ def test_workbook_cell_labels_match_between_generator_and_selection_writer() -> 
         assert audit.workbook_cell(cell["dataset"], cell["modality"]) == expected
 
 
+def test_resource_audit_reads_both_probe_report_shapes(tmp_path: Path) -> None:
+    from tools import qwen3omni_campaign_audit as audit
+
+    probes = tmp_path / "probes"
+    (probes / "d3tec").mkdir(parents=True)
+    (probes / "cmdc").mkdir(parents=True)
+    # The single-process forward probe reports its fields at the top level.
+    (probes / "d3tec" / "forward.json").write_text(
+        json.dumps(
+            {
+                "mode": "forward",
+                "world_size": 1,
+                "gpu_memory": {
+                    "0": {"peak_allocated_gib": 15.5, "peak_reserved_gib": 16.4, "free_gib": 46.2, "total_gib": 63.3},
+                    "3": {"peak_allocated_gib": 19.6, "peak_reserved_gib": 20.6, "free_gib": 42.0, "total_gib": 63.3},
+                },
+                "host_memory": {"MemTotal_gb": 503.48, "MemAvailable_gb": 458.86},
+                "model_load_audit": {"talker_parameters": 0, "evaluation_device_map": {"0": 13, "3": 15}},
+                "results": {"audio_only": [{"finite": True}], "audio_text": [{"finite": True}, {"finite": False}]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    # The FSDP probes report one entry per rank under "ranks".
+    (probes / "cmdc" / "maxrisk.json").write_text(
+        json.dumps(
+            {
+                "mode": "maxrisk",
+                "world_size": 8,
+                "ranks": [
+                    {
+                        "gpu_memory": {"0": {"peak_allocated_gib": 21.4, "peak_reserved_gib": 43.5, "free_gib": 30.0, "total_gib": 63.3}},
+                        "host_memory": {"MemTotal_gb": 503.48, "MemAvailable_gb": 200.0},
+                        "structure": {
+                            "world_size": 8,
+                            "activation_offload": "cpu",
+                            "gradient_accumulation_steps": 16,
+                            "effective_global_batch_size": 128,
+                            "fsdp_units": 49,
+                            "gradient_checkpointing_active": True,
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = audit.audit_resources(probes)
+    forward = payload["families"]["d3tec"]["forward"]
+    assert forward["peak_allocated_gib"] == 19.6
+    assert forward["min_free_gib"] == 42.0
+    assert forward["peak_host_used_gb"] == pytest.approx(44.62)
+    assert forward["finite_results"]["audio_only"]["all_finite"] is True
+    assert forward["finite_results"]["audio_text"]["all_finite"] is False
+    maxrisk = payload["families"]["cmdc"]["maxrisk"]
+    assert maxrisk["ranks"] == 1
+    assert maxrisk["training_shape"]["effective_global_batch_size"] == 128
+    assert maxrisk["peak_reserved_gib"] == 43.5
+    markdown = audit._resources_markdown(payload)
+    assert "maxrisk" in markdown and "effective batch 128" in markdown
+
+
 def test_fold_mean_selection_grouping_requires_every_fold() -> None:
     from tools import export_selected_results as exporter
 
