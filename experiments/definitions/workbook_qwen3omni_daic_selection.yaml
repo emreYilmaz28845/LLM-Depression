@@ -1,0 +1,26 @@
+schema_version: audiollm.workbook_selection.v1
+description: >-
+  Explicit, attempt-pinned selection for the two Qwen3-Omni DAIC pilot cells in
+  the "Qwen3-Omni DAIC" sheet. Each selection names the exact REPORTABLE attempt
+  so the ambiguity guard in the registry query is satisfied; the values are the
+  locally validated headline/binary_strict macro-F1 of the DAIC official test
+  fold 0 under the likelihood view with strict subject-level aggregation.
+selections:
+  - cell: "Qwen3-Omni DAIC|Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: daic
+    modality: audio_only
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: subject_level
+    attempt_id: 20260923T011558Z-qwen3omni_daic_audio_only_fold0_prod_20260923-84e0be43-7ef42110
+  - cell: "Qwen3-Omni DAIC|Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: daic
+    modality: audio_text
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: subject_level
+    attempt_id: 20260923T011634Z-qwen3omni_daic_audio_text_fold0_prod_20260923-84e0be43-bb975d80

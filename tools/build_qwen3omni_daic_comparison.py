@@ -185,7 +185,10 @@ def _derived_row(declared: dict, project_root: Path) -> dict:
         value = metrics.get(key)
         row[column] = "" if value is None else f"{float(value):.6f}"
     row["evaluation_view"] = "harmonized_all_windows_full_coverage"
-    row["aggregation"] = str(entry.get("aggregation") or "")
+    # The derived file records the endpoint (single test fold); the decision is
+    # subject-level, which is what a comparison against the Omni rows needs.
+    row["aggregation"] = "subject_level"
+    notes.append(f"endpoint: {entry.get('aggregation') or 'not recorded'}")
     row["selection_metric"] = "inner_val_macro_f1 (max)"
     row["qualification"] = DERIVED_REFERENCE_LABEL + "; older inline prompt (not promptcontext_v1)"
     evidence_files = []
