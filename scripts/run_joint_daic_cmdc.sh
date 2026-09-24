@@ -31,7 +31,6 @@ RUN_NAME_PREFIX="${RUN_NAME_PREFIX:-joint_cmdc}"
 FINAL_EVAL_LEVELS="${FINAL_EVAL_LEVELS:-subject}"
 SUBMIT_DAIC_EVAL="${SUBMIT_DAIC_EVAL:-1}"
 SUBMIT_CMDC_EVAL="${SUBMIT_CMDC_EVAL:-1}"
-SUBMIT_LAST_EVAL="${SUBMIT_LAST_EVAL:-0}"
 EXTRA_TRAIN_ARGS="${EXTRA_TRAIN_ARGS:-}"
 EXTRA_EVAL_ARGS="${EXTRA_EVAL_ARGS:-}"
 SKIP_MANIFEST_BUILD="${SKIP_MANIFEST_BUILD:-0}"
@@ -93,7 +92,6 @@ echo "  run_name_prefix:    $RUN_NAME_PREFIX"
 echo "  final_eval_levels:  $FINAL_EVAL_LEVELS"
 echo "  submit_daic_eval:   $SUBMIT_DAIC_EVAL"
 echo "  submit_cmdc_eval:   $SUBMIT_CMDC_EVAL"
-echo "  submit_last_eval:   $SUBMIT_LAST_EVAL"
 echo "  extra_train_args:   ${EXTRA_TRAIN_ARGS:-<none>}"
 echo "  extra_eval_args:    ${EXTRA_EVAL_ARGS:-<none>}"
 echo "========================================"
@@ -117,7 +115,6 @@ for pair in "${PAIR_VALUES[@]}"; do
     RUN_ROOT="$(resolve_run_root "$PRIMARY_CONFIG")"
     FOLD_DIR="$RUN_ROOT/$RUN_NAME/fold_$FOLD"
     BEST_CHECKPOINT_DIR="$FOLD_DIR/best_model"
-    LAST_CHECKPOINT_DIR="$FOLD_DIR/last_model"
 
     EXPORT_ARGS="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$PRIMARY_CONFIG,FOLD=$FOLD,RUN_NAME=$RUN_NAME,EXTRA_TRAIN_ARGS=$EXTRA_TRAIN_ARGS,EXTRA_EVAL_ARGS=$EXTRA_EVAL_ARGS,SKIP_MANIFEST_BUILD=$SKIP_MANIFEST_BUILD,JOINT_CMDC_FOLD=$JOINT_CMDC_FOLD"
 
@@ -149,14 +146,6 @@ for pair in "${PAIR_VALUES[@]}"; do
             echo "  submitted CMDC holdout eval ($LEVEL): $CMDC_JOB_ID"
         fi
     done
-
-    if [ "$SUBMIT_LAST_EVAL" = "1" ]; then
-        LAST_OUTPUT_DIR="$LAST_CHECKPOINT_DIR/daic_test_eval_subject"
-        LAST_EXPORT_ARGS="ALL,PROJECT_ROOT=$PROJECT_ROOT,CONFIG=$PRIMARY_CONFIG,FOLD=$FOLD,CHECKPOINT_DIR=$LAST_CHECKPOINT_DIR,OUTPUT_DIR=$LAST_OUTPUT_DIR,EXTRA_EVAL_ARGS=$EXTRA_EVAL_ARGS,JOINT_CMDC_FOLD=$JOINT_CMDC_FOLD"
-        LAST_JOB_RAW="$(sbatch --parsable --dependency=afterok:$TRAIN_JOB_ID --export="$LAST_EXPORT_ARGS" "$EVAL_SCRIPT")"
-        LAST_JOB_ID="${LAST_JOB_RAW%%;*}"
-        echo "  submitted DAIC last-checkpoint eval: $LAST_JOB_ID"
-    fi
 done
 
 echo "========================================"

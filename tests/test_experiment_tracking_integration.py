@@ -150,6 +150,25 @@ def test_training_finalize_appends_artifacts_and_completed_event(tmp_path: Path)
     assert status["state"] == "RUNNING"
 
 
+def test_training_finalize_never_records_last_model_artifact(tmp_path: Path) -> None:
+    context_path = _context(tmp_path)
+    run_root = tmp_path / "run" / "fold_0"
+    run_root.mkdir(parents=True)
+    logs = run_root / "logs"
+    logs.mkdir()
+    (logs / "training_history.json").write_text("[]", encoding="utf-8")
+    (run_root / "best_model").mkdir()
+    (run_root / "last_model").mkdir()
+    args = _fake_args(tmp_path, context_path=str(context_path))
+    context = _load_experiment_context(args)
+    _initialize_tracking_sidecars(args, context, run_root, {"config": {"dataset": "daic"}})
+    _finalize_tracking_artifacts(args, context, run_root, {"config": {"dataset": "daic"}})
+    artifacts = json.loads((run_root / "artifacts.json").read_text(encoding="utf-8"))
+    paths = {artifact["path"] for artifact in artifacts["artifacts"]}
+    assert "best_model" in paths
+    assert "last_model" not in paths
+
+
 def _eval_context(tmp_path: Path) -> tuple[Path, dict]:
     context_path = _context(tmp_path)
     context = json.loads(context_path.read_text(encoding="utf-8"))
