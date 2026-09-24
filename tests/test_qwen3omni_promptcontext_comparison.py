@@ -126,7 +126,7 @@ def _write_fold(
 
 
 def _build(monkeypatch, rows: list[dict], root: Path, suffix: str = "prod_test"):
-    monkeypatch.setattr(comparison, "_rows_for", lambda _suffix, _daic: rows)
+    monkeypatch.setattr(comparison, "_rows_for", lambda _suffix, _daic, _root: rows)
     return comparison.build(root, suffix, "fold0_prod_test")
 
 
@@ -298,7 +298,7 @@ def test_smoke_runs_are_refused(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_declared_rows_cover_the_eight_cells_the_two_daic_rows_and_every_reference() -> None:
-    rows = comparison._rows_for("prod_test", "fold0_prod_test")
+    rows = comparison._rows_for("prod_test", "fold0_prod_test", Path("/tmp/campaign-root"))
     runs = [row for row in rows if row["kind"] == "run"]
     references = [row for row in rows if row["kind"] == "derived_reference"]
     assert len(runs) == 10 and len(references) == 10

@@ -789,14 +789,21 @@ QWEN3OMNI_RESULTS: dict[tuple[str, str], tuple[float, float, float, float] | Non
         0.7662337662337663,
         0.7872340425531915,
     ),
-}
+    ("d3tec", "audio_only"): (0.302318, 0.126316, 0.433333, 0.45011655011655005),
+    ("d3tec", "audio_text"): (0.642627, 0.575455, 0.652857, 0.6618881118881118),
+    ("androids_interview", "audio_only"): (0.860099, 0.885257, 0.870897, 0.8710144927536232),
+    ("androids_interview", "audio_text"): (0.871105, 0.904869, 0.873504, 0.8880434782608697),
+    ("cmdc", "audio_only"): (0.965909, 0.95, 0.96, 0.9733333333333334),
+    ("cmdc", "audio_text"): (0.984127, 0.977778, 0.98, 0.9866666666666667),
+    ("turkish", "audio_only"): (0.491039, 0.836623, 0.557143, 0.7267101449275362),
+    ("turkish", "audio_text"): (0.729142, 0.848247, 0.727573, 0.784463768115942),}
 
 # (dataset, modality) -> run identity, jobs and local evidence of the Omni cells.
 QWEN3OMNI_RUNS: dict[tuple[str, str], dict] = {
     ("daic", "audio_only"): {
         "run": "qwen3omni_daic_audio_only_fold0_prod_20260923",
         "attempt": "20260923T011558Z-qwen3omni_daic_audio_only_fold0_prod_20260923-84e0be43-7ef42110",
-        "jobs": "train 46376408, eval 46376409",
+        "jobs": "train 46376408; eval 46376409",
         "evidence": (
             "output_model/promptcontext_v1_qwen3omni_likelihood/audio_only/daic/"
             "qwen3omni_daic_audio_only_fold0_prod_20260923/fold_0/best_model/standalone_eval"
@@ -805,13 +812,60 @@ QWEN3OMNI_RUNS: dict[tuple[str, str], dict] = {
     ("daic", "audio_text"): {
         "run": "qwen3omni_daic_audio_text_fold0_prod_20260923",
         "attempt": "20260923T011634Z-qwen3omni_daic_audio_text_fold0_prod_20260923-84e0be43-bb975d80",
-        "jobs": "train 46376418, eval 46376419",
+        "jobs": "train 46376418; eval 46376419",
         "evidence": (
             "output_model/promptcontext_v1_qwen3omni_likelihood/audio_text/daic/"
             "qwen3omni_daic_audio_text_fold0_prod_20260923/fold_0/best_model/standalone_eval"
         ),
     },
-}
+    ("d3tec", "audio_only"): {
+        "run": "qwen3omni_d3tec_audio_only_f0..f4_prod_20260923",
+        "attempt": "20260923T190035Z-qwen3omni_d3tec_audio_only_f0_prod_20260923-ee223730-55f51964 / 20260923T190108Z-qwen3omni_d3tec_audio_only_f1_prod_20260923-ee223730-c8c65f57 / 20260923T190135Z-qwen3omni_d3tec_audio_only_f2_prod_20260923-ee223730-f3696e07 / 20260923T190203Z-qwen3omni_d3tec_audio_only_f3_prod_20260923-ee223730-2911fe0a / 20260923T190231Z-qwen3omni_d3tec_audio_only_f4_prod_20260923-ee223730-fe7a883d",
+        "jobs": "train 46431227 46431237 46431271 46431290 46431295; eval 46431228 46431238 46431272 46431291 46431297",
+        "evidence": "output_model/promptcontext_v1_qwen3omni_likelihood/audio_only/d3tec",
+    },
+    ("d3tec", "audio_text"): {
+        "run": "qwen3omni_d3tec_audio_text_f0..f4_prod_20260923",
+        "attempt": "20260923T190259Z-qwen3omni_d3tec_audio_text_f0_prod_20260923-ee223730-3d475ca1 / 20260923T190326Z-qwen3omni_d3tec_audio_text_f1_prod_20260923-ee223730-b3a3ed2e / 20260923T190354Z-qwen3omni_d3tec_audio_text_f2_prod_20260923-ee223730-713396e2 / 20260923T190422Z-qwen3omni_d3tec_audio_text_f3_prod_20260923-ee223730-b15e1699 / 20260923T190450Z-qwen3omni_d3tec_audio_text_f4_prod_20260923-ee223730-666acc93",
+        "jobs": "train 46431343 46431393 46431422 46431451 46431465; eval 46431345 46431394 46431423 46431453 46431466",
+        "evidence": "output_model/promptcontext_v1_qwen3omni_likelihood/audio_text/d3tec",
+    },
+    ("androids_interview", "audio_only"): {
+        "run": "qwen3omni_androids_audio_only_f0..f4_prod_20260923",
+        "attempt": "20260923T190518Z-qwen3omni_androids_audio_only_f0_prod_20260923-ee223730-65382252 / 20260923T190545Z-qwen3omni_androids_audio_only_f1_prod_20260923-ee223730-8a9a2254 / 20260923T190613Z-qwen3omni_androids_audio_only_f2_prod_20260923-ee223730-fb875d2b / 20260923T190641Z-qwen3omni_androids_audio_only_f3_prod_20260923-ee223730-810ae7c2 / 20260923T190714Z-qwen3omni_androids_audio_only_f4_prod_20260923-ee223730-74e2825b",
+        "jobs": "train 46431494 46431530 46431539 46431577 46431669; eval 46431495 46431531 46431540 46431580 46431670",
+        "evidence": "output_model/promptcontext_v1_qwen3omni_likelihood/audio_only/androids_interview",
+    },
+    ("androids_interview", "audio_text"): {
+        "run": "qwen3omni_androids_audio_text_f0..f4_prod_20260923",
+        "attempt": "20260923T190744Z-qwen3omni_androids_audio_text_f0_prod_20260923-ee223730-c4f992bb / 20260923T190817Z-qwen3omni_androids_audio_text_f1_prod_20260923-ee223730-c6c122ee / 20260923T190846Z-qwen3omni_androids_audio_text_f2_prod_20260923-ee223730-7bd4d00d / 20260923T190915Z-qwen3omni_androids_audio_text_f3_prod_20260923-ee223730-8d3b5dfe / 20260923T190943Z-qwen3omni_androids_audio_text_f4_prod_20260923-ee223730-b95a50d8",
+        "jobs": "train 46431692 46431732 46431760 46431831 46431851; eval 46431693 46431733 46431761 46431832 46431852",
+        "evidence": "output_model/promptcontext_v1_qwen3omni_likelihood/audio_text/androids_interview",
+    },
+    ("cmdc", "audio_only"): {
+        "run": "qwen3omni_cmdc_audio_only_f0..f4_prod_20260923",
+        "attempt": "20260923T191011Z-qwen3omni_cmdc_audio_only_f0_prod_20260923-ee223730-7d79f763 / 20260923T191045Z-qwen3omni_cmdc_audio_only_f1_prod_20260923-ee223730-431e392b / 20260923T191113Z-qwen3omni_cmdc_audio_only_f2_prod_20260923-ee223730-486d28a6 / 20260923T191141Z-qwen3omni_cmdc_audio_only_f3_prod_20260923-ee223730-a618d281 / 20260923T191210Z-qwen3omni_cmdc_audio_only_f4_prod_20260923-ee223730-c086aa7e",
+        "jobs": "train 46431893 46432041 46432063 46432093 46432103; eval 46431894 46432042 46432064 46432094 46432104",
+        "evidence": "output_model/promptcontext_v1_qwen3omni_likelihood/audio_only/cmdc",
+    },
+    ("cmdc", "audio_text"): {
+        "run": "qwen3omni_cmdc_audio_text_f0..f4_prod_20260923",
+        "attempt": "20260923T191238Z-qwen3omni_cmdc_audio_text_f0_prod_20260923-ee223730-762ee2bf / 20260923T191306Z-qwen3omni_cmdc_audio_text_f1_prod_20260923-ee223730-594f5dd3 / 20260923T191335Z-qwen3omni_cmdc_audio_text_f2_prod_20260923-ee223730-62ed97c7 / 20260923T191404Z-qwen3omni_cmdc_audio_text_f3_prod_20260923-ee223730-5fce8943 / 20260923T191432Z-qwen3omni_cmdc_audio_text_f4_prod_20260923-ee223730-eb2fc728",
+        "jobs": "train 46432135 46432150 46432193 46432247 46432267; eval 46432136 46432151 46432194 46432248 46432268",
+        "evidence": "output_model/promptcontext_v1_qwen3omni_likelihood/audio_text/cmdc",
+    },
+    ("turkish", "audio_only"): {
+        "run": "qwen3omni_turkish_pooled_audio_only_f0..f4_prod_20260923",
+        "attempt": "20260923T191501Z-qwen3omni_turkish_pooled_audio_only_f0_prod_20260923-ee223730-d5191169 / 20260923T191535Z-qwen3omni_turkish_pooled_audio_only_f1_prod_20260923-ee223730-a64dbbcb / 20260923T191609Z-qwen3omni_turkish_pooled_audio_only_f2_prod_20260923-ee223730-514ed642 / 20260923T191645Z-qwen3omni_turkish_pooled_audio_only_f3_prod_20260923-ee223730-cbf6a0b9 / 20260923T191721Z-qwen3omni_turkish_pooled_audio_only_f4_prod_20260923-ee223730-ce21605c",
+        "jobs": "train 46432304 46432325 46432357 46432381 46432417; eval 46432305 46432326 46432358 46432383 46432418",
+        "evidence": "output_model/promptcontext_v1_qwen3omni_likelihood/audio_only/turkish",
+    },
+    ("turkish", "audio_text"): {
+        "run": "qwen3omni_turkish_pooled_audio_text_f0..f4_prod_20260923",
+        "attempt": "20260923T191755Z-qwen3omni_turkish_pooled_audio_text_f0_prod_20260923-ee223730-f82c57c1 / 20260923T191830Z-qwen3omni_turkish_pooled_audio_text_f1_prod_20260923-ee223730-5e64e62e / 20260923T191905Z-qwen3omni_turkish_pooled_audio_text_f2_prod_20260923-ee223730-d706b191 / 20260923T191940Z-qwen3omni_turkish_pooled_audio_text_f3_prod_20260923-ee223730-b34927c6 / 20260923T192015Z-qwen3omni_turkish_pooled_audio_text_f4_prod_20260923-ee223730-87671872",
+        "jobs": "train 46432438 46432505 46432565 46432593 46432621; eval 46432439 46432507 46432566 46432594 46432622",
+        "evidence": "output_model/promptcontext_v1_qwen3omni_likelihood/audio_text/turkish",
+    },}
 
 # PR #255 derived canonical likelihood reference (Qwen2-Audio) per dataset and
 # modality: (macro_f1, positive_f1, uar). Read from

@@ -74,15 +74,28 @@ COLUMNS = [
 
 # Declared five-fold campaign cells. ``run_dir_template`` is resolved with the
 # fold and the run-name suffix; every fold must be present for a headline value.
+# (dataset dir, reference dataset label, modality, endpoint, cell id used in run names)
 FIVE_FOLD_CELLS = (
-    ("d3tec", "D3TEC", "audio_only", "outer_fold_test_partition"),
-    ("d3tec", "D3TEC", "audio_text", "outer_fold_test_partition"),
-    ("androids_interview", "Androids Interview", "audio_only", "outer_fold_test_partition"),
-    ("androids_interview", "Androids Interview", "audio_text", "outer_fold_test_partition"),
-    ("cmdc", "CMDC", "audio_only", "selected_validation_view"),
-    ("cmdc", "CMDC", "audio_text", "selected_validation_view"),
-    ("turkish", "Turkish", "audio_only", "selected_validation_view"),
-    ("turkish", "Turkish", "audio_text", "selected_validation_view"),
+    ("d3tec", "D3TEC", "audio_only", "outer_fold_test_partition", "d3tec_audio_only"),
+    ("d3tec", "D3TEC", "audio_text", "outer_fold_test_partition", "d3tec_audio_text"),
+    (
+        "androids_interview",
+        "Androids Interview",
+        "audio_only",
+        "outer_fold_test_partition",
+        "androids_audio_only",
+    ),
+    (
+        "androids_interview",
+        "Androids Interview",
+        "audio_text",
+        "outer_fold_test_partition",
+        "androids_audio_text",
+    ),
+    ("cmdc", "CMDC", "audio_only", "selected_validation_view", "cmdc_audio_only"),
+    ("cmdc", "CMDC", "audio_text", "selected_validation_view", "cmdc_audio_text"),
+    ("turkish", "Turkish", "audio_only", "selected_validation_view", "turkish_pooled_audio_only"),
+    ("turkish", "Turkish", "audio_text", "selected_validation_view", "turkish_pooled_audio_text"),
 )
 
 # DAIC was produced by PR #261 and is carried into the campaign comparison
@@ -95,9 +108,15 @@ DAIC_CELLS = (
 REFERENCE_MODALITY_LABELS = {"turkish": {"audio_only": "Audio only", "audio_text": "Audio + Text"}}
 
 
-def _rows_for(suffix: str, daic_suffix: str) -> list[dict]:
+def _rows_for(suffix: str, daic_suffix: str, campaign_root: Path) -> list[dict]:
+    """Declared rows: campaign cells resolve from ``campaign_root``, DAIC from the pilot's tree.
+
+    The two DAIC pilot folds were produced and validated by PR #261 in the main
+    checkout, so those rows keep pointing there while every new cell resolves
+    from the lane that produced it.
+    """
     rows: list[dict] = []
-    for dataset, reference_dataset, modality, endpoint in FIVE_FOLD_CELLS:
+    for dataset, reference_dataset, modality, endpoint, cell_id in FIVE_FOLD_CELLS:
         reference_modality = REFERENCE_MODALITY_LABELS.get(dataset, {}).get(modality, modality)
         rows.append(
             {
@@ -109,7 +128,7 @@ def _rows_for(suffix: str, daic_suffix: str) -> list[dict]:
                 "reference_modality": reference_modality,
                 "transcript_condition": "native" if dataset == "turkish" else None,
                 "endpoint": endpoint,
-                "project_root": str(PROJECT_ROOT),
+                "project_root": str(campaign_root),
             }
         )
         rows.append(
@@ -122,11 +141,10 @@ def _rows_for(suffix: str, daic_suffix: str) -> list[dict]:
                 "mode": "fold_mean",
                 "run_dir_template": (
                     "output_model/promptcontext_v1_qwen3omni_likelihood/"
-                    f"{modality}/{dataset}/qwen3omni_{dataset}_"
-                    f"{modality}_f{{fold}}_{suffix}/fold_{{fold}}"
+                    f"{modality}/{dataset}/qwen3omni_{cell_id}_f{{fold}}_{suffix}/fold_{{fold}}"
                 ),
                 "backend": "likelihood",
-                "project_root": str(PROJECT_ROOT),
+                "project_root": str(campaign_root),
             }
         )
     for dataset, reference_dataset, modality, endpoint in DAIC_CELLS:
@@ -230,7 +248,12 @@ def _derived_row(declared: dict, project_root: Path) -> tuple[dict, dict]:
     row["endpoint"] = declared["endpoint"]
     notes: list[str] = []
     root = Path(declared.get("project_root") or project_root)
+    # The derived reference file is PR #255 evidence; use the row's root when it
+    # carries the file (tests, alternative trees) and the main checkout otherwise.
     reference_path = root / DERIVED_REFERENCE
+    if not reference_path.is_file():
+        root = PROJECT_ROOT
+        reference_path = root / DERIVED_REFERENCE
     if not reference_path.is_file():
         row["notes"] = f"derived reference file missing: {DERIVED_REFERENCE}"
         return row, {"fold": "", "values": {}}
@@ -264,14 +287,21 @@ def _derived_row(declared: dict, project_root: Path) -> tuple[dict, dict]:
     evidence_files = []
     for recorded in entry.get("files") or []:
         recorded_path = Path(recorded.get("path", ""))
-        local_path = Path(
-            str(recorded_path).replace(
-                "/home/emre/Projects/AudioLLM/worktrees/LLM-Depression-feat-canonical-likelihood/",
-                str(root) + "/",
+        # The recorded path is authoritative when it exists (the PR #255 worktree is
+        # still on disk); otherwise try it rebased onto the row's root or the main checkout.
+        candidates = [recorded_path]
+        for base in (root, PROJECT_ROOT):
+            candidates.append(
+                Path(
+                    str(recorded_path).replace(
+                        "/home/emre/Projects/AudioLLM/worktrees/LLM-Depression-feat-canonical-likelihood/",
+                        str(base) + "/",
+                    )
+                )
             )
-        )
-        if not local_path.is_file():
-            notes.append(f"prediction artifact missing locally: {local_path}")
+        local_path = next((candidate for candidate in candidates if candidate.is_file()), None)
+        if local_path is None:
+            notes.append(f"prediction artifact missing locally: {recorded_path}")
             continue
         local_sha = _sha256(local_path)
         if local_sha != recorded.get("sha256"):
@@ -464,7 +494,7 @@ def build(
 ) -> tuple[list[dict], list[dict], dict]:
     headline_rows: list[dict] = []
     fold_rows: list[dict] = []
-    for declared in _rows_for(suffix, daic_suffix):
+    for declared in _rows_for(suffix, daic_suffix, project_root):
         if declared["kind"] == "derived_reference":
             row, _ = _derived_row(declared, project_root)
             headline_rows.append(row)

@@ -1,0 +1,427 @@
+schema_version: audiollm.workbook_selection.v1
+description: >-
+  Explicit, attempt-pinned selections for the Qwen3-Omni prompt-context campaign
+  cells in the "Qwen3-Omni promptcontext" sheet. Each cross-validated cell is selected per fold;
+  --validate-selected compares the workbook cell with the unweighted mean of the
+  resolved folds, and the DAIC cells (official test, fold 0) resolve directly.
+selections:
+  - cell: "Qwen3-Omni promptcontext|D3TEC — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: d3tec
+    modality: audio_only
+    fold: 0
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190035Z-qwen3omni_d3tec_audio_only_f0_prod_20260923-ee223730-55f51964
+  - cell: "Qwen3-Omni promptcontext|D3TEC — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: d3tec
+    modality: audio_only
+    fold: 1
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190108Z-qwen3omni_d3tec_audio_only_f1_prod_20260923-ee223730-c8c65f57
+  - cell: "Qwen3-Omni promptcontext|D3TEC — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: d3tec
+    modality: audio_only
+    fold: 2
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190135Z-qwen3omni_d3tec_audio_only_f2_prod_20260923-ee223730-f3696e07
+  - cell: "Qwen3-Omni promptcontext|D3TEC — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: d3tec
+    modality: audio_only
+    fold: 3
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190203Z-qwen3omni_d3tec_audio_only_f3_prod_20260923-ee223730-2911fe0a
+  - cell: "Qwen3-Omni promptcontext|D3TEC — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: d3tec
+    modality: audio_only
+    fold: 4
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190231Z-qwen3omni_d3tec_audio_only_f4_prod_20260923-ee223730-fe7a883d
+  - cell: "Qwen3-Omni promptcontext|D3TEC — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: d3tec
+    modality: audio_text
+    fold: 0
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190259Z-qwen3omni_d3tec_audio_text_f0_prod_20260923-ee223730-3d475ca1
+  - cell: "Qwen3-Omni promptcontext|D3TEC — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: d3tec
+    modality: audio_text
+    fold: 1
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190326Z-qwen3omni_d3tec_audio_text_f1_prod_20260923-ee223730-b3a3ed2e
+  - cell: "Qwen3-Omni promptcontext|D3TEC — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: d3tec
+    modality: audio_text
+    fold: 2
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190354Z-qwen3omni_d3tec_audio_text_f2_prod_20260923-ee223730-713396e2
+  - cell: "Qwen3-Omni promptcontext|D3TEC — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: d3tec
+    modality: audio_text
+    fold: 3
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190422Z-qwen3omni_d3tec_audio_text_f3_prod_20260923-ee223730-b15e1699
+  - cell: "Qwen3-Omni promptcontext|D3TEC — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: d3tec
+    modality: audio_text
+    fold: 4
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190450Z-qwen3omni_d3tec_audio_text_f4_prod_20260923-ee223730-666acc93
+  - cell: "Qwen3-Omni promptcontext|Androids Interview — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: androids_interview
+    modality: audio_only
+    fold: 0
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190518Z-qwen3omni_androids_audio_only_f0_prod_20260923-ee223730-65382252
+  - cell: "Qwen3-Omni promptcontext|Androids Interview — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: androids_interview
+    modality: audio_only
+    fold: 1
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190545Z-qwen3omni_androids_audio_only_f1_prod_20260923-ee223730-8a9a2254
+  - cell: "Qwen3-Omni promptcontext|Androids Interview — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: androids_interview
+    modality: audio_only
+    fold: 2
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190613Z-qwen3omni_androids_audio_only_f2_prod_20260923-ee223730-fb875d2b
+  - cell: "Qwen3-Omni promptcontext|Androids Interview — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: androids_interview
+    modality: audio_only
+    fold: 3
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190641Z-qwen3omni_androids_audio_only_f3_prod_20260923-ee223730-810ae7c2
+  - cell: "Qwen3-Omni promptcontext|Androids Interview — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: androids_interview
+    modality: audio_only
+    fold: 4
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190714Z-qwen3omni_androids_audio_only_f4_prod_20260923-ee223730-74e2825b
+  - cell: "Qwen3-Omni promptcontext|Androids Interview — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: androids_interview
+    modality: audio_text
+    fold: 0
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190744Z-qwen3omni_androids_audio_text_f0_prod_20260923-ee223730-c4f992bb
+  - cell: "Qwen3-Omni promptcontext|Androids Interview — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: androids_interview
+    modality: audio_text
+    fold: 1
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190817Z-qwen3omni_androids_audio_text_f1_prod_20260923-ee223730-c6c122ee
+  - cell: "Qwen3-Omni promptcontext|Androids Interview — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: androids_interview
+    modality: audio_text
+    fold: 2
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190846Z-qwen3omni_androids_audio_text_f2_prod_20260923-ee223730-7bd4d00d
+  - cell: "Qwen3-Omni promptcontext|Androids Interview — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: androids_interview
+    modality: audio_text
+    fold: 3
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190915Z-qwen3omni_androids_audio_text_f3_prod_20260923-ee223730-8d3b5dfe
+  - cell: "Qwen3-Omni promptcontext|Androids Interview — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: androids_interview
+    modality: audio_text
+    fold: 4
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T190943Z-qwen3omni_androids_audio_text_f4_prod_20260923-ee223730-b95a50d8
+  - cell: "Qwen3-Omni promptcontext|CMDC — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: cmdc
+    modality: audio_only
+    fold: 0
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T191011Z-qwen3omni_cmdc_audio_only_f0_prod_20260923-ee223730-7d79f763
+  - cell: "Qwen3-Omni promptcontext|CMDC — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: cmdc
+    modality: audio_only
+    fold: 1
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T191045Z-qwen3omni_cmdc_audio_only_f1_prod_20260923-ee223730-431e392b
+  - cell: "Qwen3-Omni promptcontext|CMDC — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: cmdc
+    modality: audio_only
+    fold: 2
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T191113Z-qwen3omni_cmdc_audio_only_f2_prod_20260923-ee223730-486d28a6
+  - cell: "Qwen3-Omni promptcontext|CMDC — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: cmdc
+    modality: audio_only
+    fold: 3
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T191141Z-qwen3omni_cmdc_audio_only_f3_prod_20260923-ee223730-a618d281
+  - cell: "Qwen3-Omni promptcontext|CMDC — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: cmdc
+    modality: audio_only
+    fold: 4
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T191210Z-qwen3omni_cmdc_audio_only_f4_prod_20260923-ee223730-c086aa7e
+  - cell: "Qwen3-Omni promptcontext|CMDC — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: cmdc
+    modality: audio_text
+    fold: 0
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T191238Z-qwen3omni_cmdc_audio_text_f0_prod_20260923-ee223730-762ee2bf
+  - cell: "Qwen3-Omni promptcontext|CMDC — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: cmdc
+    modality: audio_text
+    fold: 1
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T191306Z-qwen3omni_cmdc_audio_text_f1_prod_20260923-ee223730-594f5dd3
+  - cell: "Qwen3-Omni promptcontext|CMDC — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: cmdc
+    modality: audio_text
+    fold: 2
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T191335Z-qwen3omni_cmdc_audio_text_f2_prod_20260923-ee223730-62ed97c7
+  - cell: "Qwen3-Omni promptcontext|CMDC — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: cmdc
+    modality: audio_text
+    fold: 3
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T191404Z-qwen3omni_cmdc_audio_text_f3_prod_20260923-ee223730-5fce8943
+  - cell: "Qwen3-Omni promptcontext|CMDC — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: cmdc
+    modality: audio_text
+    fold: 4
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T191432Z-qwen3omni_cmdc_audio_text_f4_prod_20260923-ee223730-eb2fc728
+  - cell: "Qwen3-Omni promptcontext|Turkish pooled t17 — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: turkish
+    modality: audio_only
+    fold: 0
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T191501Z-qwen3omni_turkish_pooled_audio_only_f0_prod_20260923-ee223730-d5191169
+  - cell: "Qwen3-Omni promptcontext|Turkish pooled t17 — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: turkish
+    modality: audio_only
+    fold: 1
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T191535Z-qwen3omni_turkish_pooled_audio_only_f1_prod_20260923-ee223730-a64dbbcb
+  - cell: "Qwen3-Omni promptcontext|Turkish pooled t17 — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: turkish
+    modality: audio_only
+    fold: 2
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T191609Z-qwen3omni_turkish_pooled_audio_only_f2_prod_20260923-ee223730-514ed642
+  - cell: "Qwen3-Omni promptcontext|Turkish pooled t17 — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: turkish
+    modality: audio_only
+    fold: 3
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T191645Z-qwen3omni_turkish_pooled_audio_only_f3_prod_20260923-ee223730-cbf6a0b9
+  - cell: "Qwen3-Omni promptcontext|Turkish pooled t17 — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: turkish
+    modality: audio_only
+    fold: 4
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T191721Z-qwen3omni_turkish_pooled_audio_only_f4_prod_20260923-ee223730-ce21605c
+  - cell: "Qwen3-Omni promptcontext|Turkish pooled t17 — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: turkish
+    modality: audio_text
+    fold: 0
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T191755Z-qwen3omni_turkish_pooled_audio_text_f0_prod_20260923-ee223730-f82c57c1
+  - cell: "Qwen3-Omni promptcontext|Turkish pooled t17 — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: turkish
+    modality: audio_text
+    fold: 1
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T191830Z-qwen3omni_turkish_pooled_audio_text_f1_prod_20260923-ee223730-5e64e62e
+  - cell: "Qwen3-Omni promptcontext|Turkish pooled t17 — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: turkish
+    modality: audio_text
+    fold: 2
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T191905Z-qwen3omni_turkish_pooled_audio_text_f2_prod_20260923-ee223730-d706b191
+  - cell: "Qwen3-Omni promptcontext|Turkish pooled t17 — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: turkish
+    modality: audio_text
+    fold: 3
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T191940Z-qwen3omni_turkish_pooled_audio_text_f3_prod_20260923-ee223730-b34927c6
+  - cell: "Qwen3-Omni promptcontext|Turkish pooled t17 — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: turkish
+    modality: audio_text
+    fold: 4
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: response_subject
+    attempt_id: 20260923T192015Z-qwen3omni_turkish_pooled_audio_text_f4_prod_20260923-ee223730-87671872
+  - cell: "Qwen3-Omni promptcontext|DAIC — Audio only — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: daic
+    modality: audio_only
+    fold: 0
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: subject_level
+    attempt_id: 20260923T011558Z-qwen3omni_daic_audio_only_fold0_prod_20260923-84e0be43-7ef42110
+  - cell: "Qwen3-Omni promptcontext|DAIC — Audio + Text — Qwen3-Omni Thinker, promptcontext_v1"
+    dataset: daic
+    modality: audio_text
+    fold: 0
+    metric: macro_f1
+    namespace: headline/binary_strict
+    backend: likelihood
+    view: harmonized_all_windows_full_coverage
+    aggregation: subject_level
+    attempt_id: 20260923T011634Z-qwen3omni_daic_audio_text_fold0_prod_20260923-84e0be43-bb975d80

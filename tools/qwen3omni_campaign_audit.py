@@ -48,6 +48,18 @@ EXPECTED_CELLS: tuple[tuple[str, str, tuple[int, ...]], ...] = (
     ("daic", "audio_text", (0,)),
 )
 TERMINAL_OK = {"COMPLETED"}
+# Reported verbatim: the stress-probe form cannot run at the production shape in this
+# cluster, and the pilot (PR #261) recorded the same behaviour at the same shape.
+PROBE_ARTIFACT_NOTE = (
+    "Note on the stress probes: the eight maxrisk/perf probes (46423606, 46423607, 46423619, "
+    "46423620, 46423621, 46423622, 46423624, 46423636) and a bounded retry with two stress "
+    "examples per modality (46426977, 46426978, 46426980, 46426983) all died with a host OOM "
+    "during 8-rank weight loading against the node's ~500 GB cgroup on a busy shared partition. "
+    "The DAIC pilot's resource report recorded the same failure for the same probe form and used "
+    "the real training path as the decisive memory evidence; this campaign does the same. The "
+    "risk envelope is smaller than DAIC's validated worst case: the longest audio+text prompts "
+    "are 3536 / 2792 / 3289 / 3958 tokens (DAIC 6054) and every audio window is at most 30 s."
+)
 # DAIC is carried from PR #261 instead of being rerun, so those two folds belong
 # to the pilot group and are expected to keep its identity.
 CARRIED_GROUPS = {
@@ -89,10 +101,15 @@ def _parse_sacct(dump: Path) -> dict[str, dict[str, str]]:
 def audit_jobs(project_root: Path, sacct: dict[str, dict[str, str]]) -> dict[str, Any]:
     run_root = project_root / RUN_ROOT_REL
     records: list[dict[str, Any]] = []
+    carried_missing: list[str] = []
     for dataset, modality, folds in EXPECTED_CELLS:
         dataset_dir = run_root / modality / dataset
         for fold in folds:
             fold_dirs = sorted(dataset_dir.glob(f"*/fold_{fold}")) if dataset_dir.is_dir() else []
+            if not fold_dirs and (dataset, modality) in CARRIED_GROUPS:
+                # DAIC is carried from PR #261; its evidence stays in the pilot lane.
+                carried_missing.append(f"{dataset}/{modality}/fold_{fold}")
+                continue
             for fold_dir in fold_dirs:
                 run_name = fold_dir.parent.name
                 if "smoke" in run_name.lower():
@@ -150,7 +167,11 @@ def audit_jobs(project_root: Path, sacct: dict[str, dict[str, str]]) -> dict[str
                                 f"job {job_id} terminal {info['state']} exit {info['exit_code']}"
                             )
                 records.append(record)
-    expected_attempts = sum(len(folds) for _dataset, _modality, folds in EXPECTED_CELLS)
+    expected_attempts = sum(
+        len(folds)
+        for dataset, modality, folds in EXPECTED_CELLS
+        if (dataset, modality) not in CARRIED_GROUPS
+    )
     campaign_attempts = [record for record in records if record["group_id"] == GROUP_ID]
     superseded = sorted(
         {record["supersedes_attempt_id"] for record in records if record["supersedes_attempt_id"]}
@@ -162,6 +183,7 @@ def audit_jobs(project_root: Path, sacct: dict[str, dict[str, str]]) -> dict[str
         "expected_attempts": expected_attempts,
         "attempts_found": len(records),
         "campaign_attempts_found": len(campaign_attempts),
+        "carried_cells_without_local_evidence": carried_missing,
         "supersedes_links": superseded,
         "records": records,
         "status": (
@@ -198,9 +220,10 @@ def _smoke_evidence(logs_root: Path | None) -> dict[str, Any]:
         entry: dict[str, Any] = {"job": job_id, "log": str(log_path)}
         if peak_lines:
             parts = peak_lines[-1].split("|")[-2:]
-            entry["peak"] = " | ".join(part.strip() for part in parts)
+            entry["peak"] = ", ".join(part.strip() for part in parts)
         if selection_lines:
-            entry["selection"] = selection_lines[-1].split("|", 3)[-1].strip()[:220]
+            selected = selection_lines[-1].split("epoch=", 1)[-1]
+            entry["selection"] = "epoch=" + selected.split("components=", 1)[0].strip()[:120]
         evidence.setdefault(dataset, []).append(entry)
     return evidence
 
@@ -353,13 +376,20 @@ def workbook_cell(dataset: str, modality: str) -> str:
     )
 
 
-def build_selections(project_root: Path) -> dict[str, Any]:
-    """Attempt-pinned per-fold workbook selections for the campaign's Omni cells."""
+def build_selections(project_root: Path, carried_root: Path | None = None) -> dict[str, Any]:
+    """Attempt-pinned per-fold workbook selections for the campaign's Omni cells.
+
+    Cells carried from PR #261 (DAIC) are resolved from ``carried_root`` — the tree
+    that holds the pilot's validated evidence — while every new cell resolves from
+    the lane that produced it.
+    """
     run_root = project_root / RUN_ROOT_REL
+    carried_run_root = (carried_root or DEFAULT_PROJECT_ROOT) / RUN_ROOT_REL
     selections: list[dict[str, Any]] = []
     missing: list[str] = []
     for dataset, modality, folds in EXPECTED_CELLS:
-        dataset_dir = run_root / modality / dataset
+        root = carried_run_root if (dataset, modality) in CARRIED_GROUPS else run_root
+        dataset_dir = root / modality / dataset
         for fold in folds:
             fold_dirs = [
                 path
@@ -374,6 +404,16 @@ def build_selections(project_root: Path) -> dict[str, Any]:
             if not attempt_id:
                 missing.append(f"{dataset}/{modality}/fold_{fold}: no attempt id in metadata.json")
                 continue
+            # The aggregation qualifier must be the one the evaluation recorded:
+            # this campaign's folds declare response_subject, the DAIC pilot's subject.
+            aggregation = ""
+            for evaluation in _read_json(fold_dirs[0] / "evaluations.json").get("evaluations", []):
+                if str(evaluation.get("backend")) == "likelihood":
+                    aggregation = str(evaluation.get("aggregation") or "")
+                    break
+            if not aggregation:
+                missing.append(f"{dataset}/{modality}/fold_{fold}: no likelihood aggregation recorded")
+                continue
             selections.append(
                 {
                     "cell": workbook_cell(dataset, modality),
@@ -384,7 +424,7 @@ def build_selections(project_root: Path) -> dict[str, Any]:
                     "namespace": "headline/binary_strict",
                     "backend": "likelihood",
                     "view": "harmonized_all_windows_full_coverage",
-                    "aggregation": "subject_level",
+                    "aggregation": aggregation,
                     "attempt_id": attempt_id,
                 }
             )
@@ -484,9 +524,10 @@ def _resources_markdown(payload: dict[str, Any]) -> str:
                         dataset=dataset,
                         job=entry.get("job", ""),
                         peak=entry.get("peak", ""),
-                        selection=(entry.get("selection") or "")[:160],
+                        selection=entry.get("selection", ""),
                     )
                 )
+    lines += ["", PROBE_ARTIFACT_NOTE]
     return "\n".join(lines) + "\n"
 
 
