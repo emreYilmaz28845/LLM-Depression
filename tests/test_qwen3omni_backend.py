@@ -813,8 +813,12 @@ def test_config_generator_is_idempotent_and_keeps_the_diff_allowlisted(
     assert result.returncode == 0, result.stderr
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
     assert audit["prompt_context_version"] == PROMPT_CONTEXT_VERSION
-    assert len(audit["configs"]) == 2
-    for entry in audit["configs"]:
+    # Four derived configs in total: the two DAIC pilot cells and the two Turkish
+    # pooled cells of the standalone prompt-context campaign.
+    assert len(audit["configs"]) == 4
+    daic_entries = [entry for entry in audit["configs"] if entry["family"] == "daic"]
+    assert len(daic_entries) == 2
+    for entry in daic_entries:
         assert entry["allowed"] is True
         assert set(entry["changed_paths"]) <= ALLOWED_CONFIG_DIFFERENCES
 

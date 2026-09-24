@@ -91,61 +91,7 @@ python -m pip freeze > "$PREP_OUTPUT/pip_freeze.txt"
 wc -l "$PREP_OUTPUT/pip_freeze.txt"
 
 echo "=== environment audit ==="
-python - "$PREP_OUTPUT" "$PROJECT_ROOT" "$CONFIG" <<'PY'
-import hashlib
-import json
-import os
-import platform
-import sys
-from pathlib import Path
-
-out_dir, project_root, config_name = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
-import torch
-import transformers
-import accelerate
-import peft
-
-from src.utils import load_yaml_with_overrides, resolve_model_name_or_path
-
-config = load_yaml_with_overrides(project_root / config_name, [])
-model_dir = Path(str(resolve_model_name_or_path(None, config)))
-snapshot_files = sorted(path.name for path in model_dir.glob("*.safetensors"))
-config_path = model_dir / "config.json"
-audit = {
-    "schema_version": "audiollm.qwen3omni_env_audit.v1",
-    "hostname": platform.node(),
-    "python": sys.version.split()[0],
-    "torch": torch.__version__,
-    "torch_cuda": torch.version.cuda,
-    "cuda_available": torch.cuda.is_available(),
-    "cuda_device_count": torch.cuda.device_count(),
-    "cuda_device_names": [torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())],
-    "transformers": transformers.__version__,
-    "accelerate": accelerate.__version__,
-    "peft": peft.__version__,
-    "gpu_total_gib": [
-        round(torch.cuda.get_device_properties(i).total_memory / 1024**3, 2)
-        for i in range(torch.cuda.device_count())
-    ],
-    "imports": {},
-    "model_dir": str(model_dir),
-    "model_config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest() if config_path.is_file() else None,
-    "model_shard_count": len(snapshot_files),
-    "model_shard_names_head": snapshot_files[:3],
-}
-for name in ("Qwen3OmniMoeProcessor", "Qwen3OmniMoeForConditionalGeneration", "Qwen3OmniMoeThinkerForConditionalGeneration"):
-    try:
-        module = __import__("transformers", fromlist=[name])
-        getattr(module, name)
-        audit["imports"][name] = "ok"
-    except Exception as exc:  # noqa: BLE001 - report the exact import failure
-        audit["imports"][name] = f"failed: {exc}"
-(out_dir / "env_audit.json").write_text(json.dumps(audit, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-print(json.dumps(audit, indent=2, sort_keys=True))
-for key, value in audit["imports"].items():
-    if value != "ok":
-        raise SystemExit(f"required class {key} is not importable: {value}")
-PY
+python scripts/qwen3omni_env_audit.py --output "$PREP_OUTPUT" --config "$CONFIG"
 
 echo "=== module-tree audit ==="
 python scripts/qwen3omni_backend_probe.py tree \
@@ -153,8 +99,8 @@ python scripts/qwen3omni_backend_probe.py tree \
     --output "$PREP_OUTPUT/module_tree.json" \
     "${OVERRIDE_ARGS[@]}"
 
-echo "=== DAIC risk inventory (model-free plus processor) ==="
-python scripts/qwen3omni_daic_risk_inventory.py \
+echo "=== risk inventory (model-free plus processor) ==="
+python scripts/qwen3omni_risk_inventory.py \
     --config "$CONFIG" \
     --output "$PREP_OUTPUT/risk_inventory.json" \
     --with-processor \

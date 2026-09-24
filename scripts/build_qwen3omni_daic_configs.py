@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
-"""Generate the two Qwen3-Omni DAIC production configs under ``configs/main``.
+"""Generate the Qwen3-Omni prompt-context production configs under ``configs/main``.
 
-Each config is derived from the canonical Qwen2-Audio DAIC source and changes
-only the documented difference set, so the pair isolates the backbone (and, for
-the prompt, the prompt-context recipe) instead of silently moving the recipe:
+Two families come out of the same deterministic machinery:
+
+* the two DAIC pilot cells, derived from the archived pre-default-backbone
+  Qwen2-Audio DAIC sources, so PR #261's documented reproduction command keeps
+  working unchanged;
+* the two Turkish pooled t17 cells, derived from the current ``configs/main``
+  Turkish pooled Qwen2-Audio likelihood sources (the pooled recipe is not one of
+  PR #262's 15 canonical cells).
+
+Each config is derived from a canonical Qwen2-Audio source and changes only the
+documented difference set of its family, so the pair isolates the backbone (and,
+for the prompt, the prompt-context recipe) instead of silently moving the recipe:
 
 * ``model_backend``/``model_name_or_path`` select the verified offline
   Qwen3-Omni snapshot, and ``model_attn_implementation: sdpa`` is required
@@ -48,6 +57,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data.prompt_context import PROMPT_CONTEXT_VERSION, resolve_system_prompt
+from src.experiment_tracking.manifest_policy import MANIFEST_POLICY_PREBUILT
 from src.model.qwen3omni_lora import (
     QWEN3OMNI_EVALUATION_VIEW,
     QWEN3OMNI_LORA_TARGET_REGEX,
@@ -114,6 +124,37 @@ ALLOWED_DIFF_PATHS = frozenset(
         "resources.eval_gpus_per_node",
     }
 )
+
+# Turkish pooled t17 cells. Their sources are current ``configs/main`` configs, so
+# they are read from the main config directory rather than the archive.
+POOLED_SOURCE_DIR = MAIN
+POOLED_CELLS = (
+    (
+        "turkish_pooled_audio_only",
+        "turkish_pooled_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml",
+        "turkish_pooled_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr"
+        "_promptcontext_v1_qwen3omni_30b_a3b.yaml",
+        "audio_only",
+    ),
+    (
+        "turkish_pooled_audio_text",
+        "turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml",
+        "turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr"
+        "_promptcontext_v1_qwen3omni_30b_a3b.yaml",
+        "audio_text",
+    ),
+)
+
+# The pooled family adds the prompt question-context version and the prebuilt
+# manifest policy to the DAIC difference set. The pooled recipe's manifest is
+# built outside the worker, so the submission must never rebuild it.
+POOLED_ALLOWED_DIFF_PATHS = ALLOWED_DIFF_PATHS | {
+    "manifest_policy",
+    "prompt.question_context_version",
+}
+
+POOLED_DATASET_CONTEXT = "turkish_pooled"
+POOLED_RUN_ROOT_DATASET_DIR = "turkish"
 
 
 class GenerationError(RuntimeError):
@@ -193,6 +234,72 @@ def derive(source: dict[str, Any], cell: tuple) -> dict[str, Any]:
     return reorder(config)
 
 
+def derive_pooled(source: dict[str, Any], cell: tuple) -> dict[str, Any]:
+    """Derive one Turkish pooled t17 Qwen3-Omni prompt-context config.
+
+    Split protocol, leakage unit, windowing, hierarchical weights, label contract,
+    checkpoint selection, early stopping, dataset roots, transcript source and
+    subject aggregation are inherited unchanged: the pooled audio cells keep the
+    source recipe's response-subject mean aggregation, because the locked
+    pair-margin rule applies to the pooled text-only cell only.
+    """
+    slug, source_name, _target, modality = cell
+    config = copy.deepcopy(source)
+    prompt = config.get("prompt") or {}
+    template = prompt.get("user_template")
+    language = prompt.get("prompt_language", "english")
+    if not template:
+        raise GenerationError(f"{source_name}: prompt.user_template is missing")
+    if "{question_context}" not in str(template):
+        raise GenerationError(f"{source_name}: pooled template must carry {{question_context}}")
+
+    config["model_backend"] = "qwen3omni"
+    config["model_name_or_path"] = QWEN3_OMNI_MODEL_PATH
+    config["model_attn_implementation"] = QWEN3_OMNI_ATTN_IMPLEMENTATION
+    config["recipe_id"] = f"{config['recipe_id']}{RECIPE_SUFFIX}"
+    config["manifest_policy"] = MANIFEST_POLICY_PREBUILT
+    config["output_dirs"]["run_root"] = (
+        f"${{PROJECT_ROOT}}/output_model/{RUN_ROOT_CAMPAIGN}/{modality}/{POOLED_RUN_ROOT_DATASET_DIR}"
+    )
+    config["prompt"] = {
+        "version": PROMPT_CONTEXT_VERSION,
+        "dataset_context": POOLED_DATASET_CONTEXT,
+        "question_context_version": PROMPT_CONTEXT_VERSION,
+        "user_template": template,
+        "prompt_language": language,
+    }
+
+    lora = config["lora"]
+    if set(lora) - {"rank", "alpha", "dropout", "bias", "target_modules"}:
+        raise GenerationError(f"{source_name}: unexpected lora keys {sorted(lora)}")
+    lora["target_modules"] = QWEN3OMNI_LORA_TARGET_REGEX
+
+    training = config["training"]
+    training["strategy"] = "fsdp"
+    training["activation_offload"] = ACTIVATION_OFFLOAD
+    training["run_final_eval_in_train"] = False
+
+    config["evaluation"]["evaluation_view"] = QWEN3OMNI_EVALUATION_VIEW
+    config["evaluation"]["inference_dtype"] = INFERENCE_DTYPE
+
+    config["resources"] = {
+        "eval_nodes": EVAL_NODES,
+        "eval_gpus_per_node": EVAL_GPUS_PER_NODE,
+    }
+    if str(config.get("dataset_variant")) != "pooled_t17":
+        raise GenerationError(f"{slug}: pooled source must declare dataset_variant=pooled_t17")
+
+    changed = diff_paths(source, config)
+    disallowed = [path for path in changed if path not in POOLED_ALLOWED_DIFF_PATHS]
+    if disallowed:
+        raise GenerationError(f"{slug}: diff outside the pooled allowlist: {disallowed}")
+    if "prompt.system" in _flatten(config):
+        raise GenerationError(f"{slug}: derived config must not carry prompt.system")
+    validate_qwen3omni_config(config)
+    resolve_system_prompt(config)
+    return reorder(config, POOLED_TOP_LEVEL_ORDER)
+
+
 TOP_LEVEL_ORDER = (
     "dataset",
     "seed",
@@ -205,6 +312,35 @@ TOP_LEVEL_ORDER = (
     "dataset_root",
     "label_root",
     "quarantine_path",
+    "output_dirs",
+    "prompt",
+    "labels",
+    "data",
+    "split",
+    "lora",
+    "audio_adapter",
+    "training",
+    "evaluation",
+    "resources",
+)
+
+# The pooled configs mirror the canonical Turkish pooled config's field order,
+# including the keys the DAIC family does not carry.
+POOLED_TOP_LEVEL_ORDER = (
+    "dataset",
+    "dataset_variant",
+    "seed",
+    "recipe_id",
+    "model_backend",
+    "model_name_or_path",
+    "model_attn_implementation",
+    "dataset_root",
+    "metadata_csv",
+    "transcript_file",
+    "threshold",
+    "metadata_schema",
+    "quarantine_path",
+    "manifest_policy",
     "output_dirs",
     "prompt",
     "labels",
@@ -246,6 +382,7 @@ SECTION_ORDER = {
         "headline_mode",
         "aggregation_level",
         "subject_score_aggregation",
+        "hierarchical_score_aggregation",
         "evaluation_view",
         "inference_dtype",
         "generation_max_new_tokens",
@@ -263,12 +400,14 @@ def _ordered(mapping: dict[str, Any], order: tuple[str, ...]) -> dict[str, Any]:
     return result
 
 
-def reorder(config: dict[str, Any]) -> dict[str, Any]:
+def reorder(
+    config: dict[str, Any], top_level_order: tuple[str, ...] = TOP_LEVEL_ORDER
+) -> dict[str, Any]:
     """Keep the derived configs readable in the canonical field order."""
     for section, order in SECTION_ORDER.items():
         if isinstance(config.get(section), dict):
             config[section] = _ordered(config[section], order)
-    return _ordered(config, TOP_LEVEL_ORDER)
+    return _ordered(config, top_level_order)
 
 
 def _str_representer(dumper: yaml.Dumper, value: str):
@@ -312,6 +451,52 @@ def emit(target: Path, config: dict[str, Any], *, check_only: bool, failures: li
     print(f"wrote {target.relative_to(PROJECT_ROOT)}")
 
 
+FAMILIES = (
+    ("daic", PRE_DEFAULT_BACKBONE_ARCHIVE, CELLS, derive, ALLOWED_DIFF_PATHS),
+    (
+        "turkish_pooled",
+        POOLED_SOURCE_DIR,
+        POOLED_CELLS,
+        derive_pooled,
+        POOLED_ALLOWED_DIFF_PATHS,
+    ),
+)
+
+
+def _emit_cell(
+    *,
+    family: str,
+    source_dir: Path,
+    cell: tuple,
+    derive_fn: Any,
+    allowed_paths: frozenset[str],
+    check_only: bool,
+    failures: list[str],
+    audit: dict[str, Any],
+) -> None:
+    slug, source_name, target_name, modality = cell
+    source_path = source_dir / source_name
+    if not source_path.is_file():
+        raise GenerationError(f"missing canonical source config: {source_path}")
+    source = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+    config = derive_fn(source, cell)
+    target = MAIN / target_name
+    emit(target, config, check_only=check_only, failures=failures)
+    changed = diff_paths(source, config)
+    audit["configs"].append(
+        {
+            "cell_id": slug,
+            "family": family,
+            "modality": modality,
+            "source": str(source_path.relative_to(PROJECT_ROOT)),
+            "config": str(target.relative_to(PROJECT_ROOT)),
+            "changed_paths": changed,
+            "allowed_paths": sorted(allowed_paths),
+            "allowed": not (set(changed) - set(allowed_paths)),
+        }
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="verify without writing")
@@ -328,29 +513,25 @@ def main(argv: list[str] | None = None) -> int:
         "schema_version": "audiollm.qwen3omni_config_diff.v1",
         "prompt_context_version": PROMPT_CONTEXT_VERSION,
         "allowed_paths": sorted(ALLOWED_DIFF_PATHS),
+        "family_allowed_paths": {
+            family: sorted(allowed) for family, _source, _cells, _derive, allowed in FAMILIES
+        },
         "activation_offload": ACTIVATION_OFFLOAD,
         "evaluation_shape": {"nodes": EVAL_NODES, "gpus_per_node": EVAL_GPUS_PER_NODE},
         "configs": [],
     }
-    for cell in CELLS:
-        slug, source_name, target_name, modality = cell
-        source_path = PRE_DEFAULT_BACKBONE_ARCHIVE / source_name
-        if not source_path.is_file():
-            raise GenerationError(f"missing canonical source config: {source_path}")
-        source = yaml.safe_load(source_path.read_text(encoding="utf-8"))
-        config = derive(source, cell)
-        target = MAIN / target_name
-        emit(target, config, check_only=args.check, failures=failures)
-        audit["configs"].append(
-            {
-                "cell_id": slug,
-                "modality": modality,
-                "source": f"configs/main/{source_name}",
-                "config": f"configs/main/{target.name}",
-                "changed_paths": diff_paths(source, config),
-                "allowed": True,
-            }
-        )
+    for family, source_dir, cells, derive_fn, allowed_paths in FAMILIES:
+        for cell in cells:
+            _emit_cell(
+                family=family,
+                source_dir=source_dir,
+                cell=cell,
+                derive_fn=derive_fn,
+                allowed_paths=allowed_paths,
+                check_only=args.check,
+                failures=failures,
+                audit=audit,
+            )
 
     if args.audit_output is not None:
         args.audit_output.parent.mkdir(parents=True, exist_ok=True)
