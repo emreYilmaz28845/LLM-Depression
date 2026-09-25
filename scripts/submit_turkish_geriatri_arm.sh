@@ -22,6 +22,7 @@ FOLD="${FOLD:?set FOLD=<fold index>}"
 RUN_NAME="${RUN_NAME:?set RUN_NAME=<unique run name>}"
 MODE="${MODE:-dry-run}"
 EXTRA_SETS="${EXTRA_SETS:-}"
+SUPERSEDES="${SUPERSEDES:-}"
 
 case "$CELL" in
   text_only)
@@ -30,6 +31,9 @@ case "$CELL" in
     CAMPAIGN="promptcontext_v1_qwen38_likelihood"
     MODALITY="text_only"
     TRAIN_NODES=1
+    # The Qwen3.8 backend needs the transformers 5.8.0 environment; the default
+    # project venv has 4.55.0 and cannot import Qwen3_5ForConditionalGeneration.
+    ENV_ACTIVATE_PATH="/gpfs/projects/etur92/ozu647717/venvs/qwen38_fsdp_fastpath_20260921/bin/activate"
     ;;
   audio_only)
     BASELINE_CONFIG="configs/main/turkish_pooled_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml"
@@ -37,6 +41,8 @@ case "$CELL" in
     CAMPAIGN="promptcontext_v1_qwen3omni_likelihood"
     MODALITY="audio_only"
     TRAIN_NODES=2
+    # The Qwen3-Omni processor only exists in the dedicated omni environment.
+    ENV_ACTIVATE_PATH="/gpfs/projects/etur92/ozu647717/venvs/qwen3omni/bin/activate"
     ;;
   audio_text)
     BASELINE_CONFIG="configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml"
@@ -44,6 +50,7 @@ case "$CELL" in
     CAMPAIGN="promptcontext_v1_qwen3omni_likelihood"
     MODALITY="audio_text"
     TRAIN_NODES=2
+    ENV_ACTIVATE_PATH="/gpfs/projects/etur92/ozu647717/venvs/qwen3omni/bin/activate"
     ;;
   *)
     echo "CELL must be text_only, audio_only, or audio_text" >&2
@@ -61,6 +68,7 @@ ARGS=(
   --dataset turkish
   --train-nodes "$TRAIN_NODES"
   --train-gpus-per-node 4
+  --env-activate "$ENV_ACTIVATE_PATH"
 )
 
 case "$ARM" in
@@ -86,6 +94,10 @@ esac
 for extra in $EXTRA_SETS; do
   ARGS+=(--set "$extra")
 done
+
+if [ -n "$SUPERSEDES" ]; then
+  ARGS+=(--supersedes-attempt-id "$SUPERSEDES")
+fi
 
 cd "$PROJECT_ROOT"
 echo "arm=$ARM cell=$CELL fold=$FOLD run_name=$RUN_NAME mode=$MODE nodes=$TRAIN_NODES extra_sets='${EXTRA_SETS}'"
