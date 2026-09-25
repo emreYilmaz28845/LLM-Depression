@@ -51,7 +51,7 @@ case "$CELL" in
 esac
 
 ARGS=(
-  submit turkish-geriatri
+  submit exp-turkish-geriatri
   --fold "$FOLD"
   --seed 1337
   --run-name "$RUN_NAME"
