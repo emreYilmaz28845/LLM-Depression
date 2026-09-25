@@ -185,6 +185,28 @@ Count the current inventory with `find configs/main -maxdepth 1 -type f -name '*
 
 ## Turkish positive-only canonical family and negative-only secondary family
 
+### Four-source Turkish and geriatri extension
+
+`turkish_all_geriatri_t17_*_qwen3asr.yaml` is a separate, native-Turkish
+comparison family for audio-only, text-only, and audio+text. Each config reads
+four sources: the existing Turkish positive and negative question sets, plus
+the geriatri positive and negative question sets. The source list in each YAML
+is the input contract. The two existing sets share their patient IDs and BDO
+scores. The two geriatri sets also share patients, but geriatri patient codes
+are reused independently of the existing cohort. Manifest IDs therefore use
+`geriatri:` for that cohort; both question sets stay in the same patient fold.
+
+Labels use `depresyon_skoru >= 17` from the source CSVs. The geriatri workbook
+is an audit reference: one BDO entry differs from both geriatri CSVs (14 in
+the CSVs, 35 in the workbook). The CSV score is the agreed label source. BAÖ
+and the CSV `label` category do not set the depression target. Geriatri WAV
+basenames are matched after Unicode normalization; the original filenames and
+audio paths are retained in the manifest. Both geriatri sets need their own
+Qwen3-ASR transcript JSONL before a combined manifest can be built.
+
+This family has isolated manifest, split, and model output roots. It does not
+replace or rewrite the positive-only and negative-only experiments.
+
 Canonical Turkish is positive-only: the `turkish_pos_only_t17_*` configs cover
 the question-set-1 recordings (filenames `*-1-*`). The name `mixed` was wrong
 and is retired; see `experiments/definitions/turkish_pos_only_rename_map.yaml`

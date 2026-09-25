@@ -152,7 +152,9 @@ config = load_yaml_with_overrides(Path("$CONFIG"), override_args)
 dataset = config["dataset"]
 
 print("dataset", dataset)
-print("dataset_root", config["dataset_root"])
+print("dataset_root", config.get("dataset_root", "<multi-source>"))
+if config.get("sources"):
+    print("sources", json.dumps(config["sources"], sort_keys=True))
 print("transcript_file", config.get("transcript_file", "<default>"))
 print("audio_adapter", json.dumps(config.get("audio_adapter", {}), sort_keys=True))
 
