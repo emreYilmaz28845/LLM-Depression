@@ -2,7 +2,7 @@
 # Submit one fold of one arm of the Turkish four-source versus pooled comparison.
 #
 #   ARM=baseline|treatment CELL=text_only|audio_only|audio_text FOLD=<n> \
-#   RUN_NAME=<unique-name> [MODE=dry-run|execute] \
+#   RUN_NAME=<unique-name> [MODE=dry-run|execute] [EXTRA_SETS="k=v k=v"] \
 #   bash scripts/submit_turkish_geriatri_arm.sh
 #
 # The two arms must never share a manifest or split directory: the baseline arm
@@ -21,6 +21,7 @@ CELL="${CELL:?set CELL=text_only, audio_only, or audio_text}"
 FOLD="${FOLD:?set FOLD=<fold index>}"
 RUN_NAME="${RUN_NAME:?set RUN_NAME=<unique run name>}"
 MODE="${MODE:-dry-run}"
+EXTRA_SETS="${EXTRA_SETS:-}"
 
 case "$CELL" in
   text_only)
@@ -82,8 +83,12 @@ case "$ARM" in
     ;;
 esac
 
+for extra in $EXTRA_SETS; do
+  ARGS+=(--set "$extra")
+done
+
 cd "$PROJECT_ROOT"
-echo "arm=$ARM cell=$CELL fold=$FOLD run_name=$RUN_NAME mode=$MODE nodes=$TRAIN_NODES"
+echo "arm=$ARM cell=$CELL fold=$FOLD run_name=$RUN_NAME mode=$MODE nodes=$TRAIN_NODES extra_sets='${EXTRA_SETS}'"
 
 case "$MODE" in
   dry-run)
