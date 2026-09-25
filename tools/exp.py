@@ -1076,7 +1076,8 @@ def _cmd_status(args) -> int:
         lane_jobs = [j for j in lane_jobs if j.get("deployment_id") in lane_deployments]
 
     job_ids = sorted({str(j["slurm_job_id"]) for j in lane_jobs if j.get("slurm_job_id")})
-    scheduler = SchedulerClient()
+    scheduler_host = getattr(args, "scheduler_host", None)
+    scheduler = SchedulerClient(host=scheduler_host) if scheduler_host else SchedulerClient()
     had_error = False
     try:
         queue = scheduler.squeue(job_ids)
@@ -1636,6 +1637,11 @@ def main() -> int:
 
     status_parser = subparsers.add_parser("status", help="show experiment status (sidecars + squeue/sacct)")
     status_parser.add_argument("slug", nargs="?", default=None, help="experiment slug")
+    status_parser.add_argument(
+        "--scheduler-host",
+        default=None,
+        help="override the scheduler login host (use whichever login is currently reachable)",
+    )
     status_parser.set_defaults(func=_cmd_status)
 
     submit_parser = subparsers.add_parser("submit", help="submit train+standalone-eval job graph for a lane deployment (dry-run first)")
