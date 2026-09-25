@@ -21,6 +21,12 @@ CV sides are pooled out-of-fold: every per-fold ``predictions_subject_level``
 file is concatenated and each subject must appear exactly once. The reported
 delta therefore describes the pooled subject view; the decks' headline cells are
 unweighted fold means, which is a different (and stated) aggregation.
+
+``--mcnemar-table`` exports the exact McNemar view on its own, with no
+family-wise correction: one test per comparison and seed. Multi-seed sides are
+tested once per seed, because several seeds do not define one final subject
+correctness decision. The table is written for the slide-format comparison the
+regression script used; it never replaces the corrected report.
 """
 
 from __future__ import annotations
@@ -40,6 +46,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.metrics import classification_metrics  # noqa: E402
 from src.daic_statistics import (  # noqa: E402
     exact_mcnemar,
     exact_paired_prediction_swap,
@@ -568,6 +575,251 @@ def flat_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def _rows_of_seed(rows: list[dict[str, Any]], seed: int) -> list[dict[str, Any]]:
+    return [row for row in rows if int(row.get("seed", 0)) == seed]
+
+
+def mcnemar_rows(
+    family: dict[str, Any], evidence: dict[str, Any], joint: dict[str, Any] | None, *, alpha: float
+) -> list[dict[str, Any]]:
+    """Uncorrected exact McNemar rows, one per comparison and seed.
+
+    Multi-seed sides are tested once per seed: the seeds stay separate because
+    they do not define one final subject correctness decision.
+    """
+    rows: list[dict[str, Any]] = []
+    for block in family["families"]:
+        for comparison in block["comparisons"]:
+            left = normalize_subjects(
+                pool(resolve_side(comparison["baseline"], evidence, joint)), comparison.get("dataset")
+            )
+            right = normalize_subjects(
+                pool(resolve_side(comparison["comparison"], evidence, joint)), comparison.get("dataset")
+            )
+            left_seeds = sorted({int(row.get("seed", 0)) for row in left})
+            right_seeds = sorted({int(row.get("seed", 0)) for row in right})
+            if left_seeds != right_seeds:
+                raise SignificanceError(
+                    f"{comparison['id']}: seed sets differ ({left_seeds} vs {right_seeds})"
+                )
+            for seed in left_seeds:
+                result = exact_mcnemar(_rows_of_seed(left, seed), _rows_of_seed(right, seed))
+                rows.append({
+                    "block": block["id"],
+                    "comparison_id": comparison["id"],
+                    "correction_family": correction_family_id(block["id"], comparison["id"]),
+                    "dataset": comparison.get("dataset"),
+                    "seed": seed,
+                    "seeds_in_comparison": len(left_seeds),
+                    "uncorrected_significant": result["p_value"] < alpha,
+                    **result,
+                })
+    return rows
+
+
+def write_table(rows: list[dict[str, Any]], csv_path: Path, metadata: dict[str, Any]) -> Path:
+    """Write an export CSV plus its provenance sidecar; return the sidecar path."""
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = list(rows[0]) if rows else ["comparison_id"]
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    metadata_path = csv_path.with_suffix(".json")
+    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return metadata_path
+
+
+def metric_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Uncorrected comparison × metric rows read from a written report payload.
+
+    Every Holm column is dropped: the per-comparison p-value is the one the
+    permutation test produced, with no family correction applied.
+    """
+    alpha = float(payload.get("alpha", 0.05))
+    rows: list[dict[str, Any]] = []
+    for block in payload["results"]["blocks"]:
+        for comparison in block["comparisons"]:
+            mcnemar = comparison.get("mcnemar", {})
+            for metric in payload.get("metrics", PRIMARY_METRICS):
+                result = comparison["metrics"][metric]
+                permutation = result.get("permutation", {})
+                bootstrap = result.get("bootstrap", {})
+                p_value = permutation.get("p_value")
+                rows.append({
+                    "block": block["id"],
+                    "comparison_id": comparison["id"],
+                    "correction_family": comparison.get("correction_family"),
+                    "dataset": comparison.get("dataset"),
+                    "subjects": comparison.get("n_subjects"),
+                    "seeds": comparison.get("n_seeds"),
+                    "metric": metric,
+                    "observed_delta": permutation.get("observed_delta"),
+                    "bootstrap_ci_low": bootstrap.get("ci_low"),
+                    "bootstrap_ci_high": bootstrap.get("ci_high"),
+                    "permutation_method": permutation.get("method"),
+                    "p_value": p_value,
+                    "uncorrected_significant": p_value is not None and float(p_value) < alpha,
+                    "mcnemar_p_value": mcnemar.get("p_value"),
+                })
+    return rows
+
+
+def native_en_seed_map(report: dict[str, Any]) -> dict[str, int]:
+    """Map every recorded hidden-head prediction file to the seed it was run under.
+
+    Multi-seed sides keep their seed in the file path, not in the rows, so the
+    export has to rebuild the same per-file seed the original resolver passed.
+    """
+    mapping: dict[str, int] = {}
+    for item in report.get("seed_details", []):
+        seed = int(item["seed"])
+        for key, value in item.items():
+            if not key.endswith("_provenance") or not isinstance(value, list):
+                continue
+            for fold in value:
+                for artifact in fold.get("metrics_artifacts", []):
+                    mapping[str(Path(artifact["prediction_path"]))] = seed
+    if not mapping:
+        raise SignificanceError("the native/English hidden-head report lists no prediction files")
+    return mapping
+
+
+def load_verified_side(
+    files: list[str], hashes: dict[str, str], dataset: str | None, context: str,
+    seed_map: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
+    """Load one side of a comparison from the files the report recorded.
+
+    Every file is re-hashed against the report so a re-derived score cannot come
+    from evidence that changed after the report was written. Files listed in
+    ``seed_map`` keep their recorded seed, which multi-seed sides need because
+    their rows do not carry one. An output that is not 0/1 counts as wrong for
+    its true class, the strict convention used everywhere else in the repository.
+    """
+    if not files:
+        raise SignificanceError(f"{context}: the report records no prediction files")
+    entries = []
+    for path_string in files:
+        path = Path(path_string)
+        if not path.is_file():
+            raise SignificanceError(f"{context}: missing prediction file {path}")
+        expected = hashes.get(path_string)
+        if expected and sha256_file(path) != expected:
+            raise SignificanceError(f"{context}: {path} changed since the report was written")
+        seed = (seed_map or {}).get(path_string)
+        entries.append((path, dataset) if seed is None else (path, dataset, seed))
+    rows = normalize_subjects(pool(entries), dataset)
+    for row in rows:
+        row["invalid_output"] = int(row["prediction"]) not in (0, 1)
+        if row["invalid_output"]:
+            row["prediction"] = 1 - int(row["label"])
+    return rows
+
+
+def seed_metric_scores(rows: list[dict[str, Any]], metric: str) -> dict[int, float]:
+    """One metric value per seed, the same per-seed view the report's delta averages."""
+    scores: dict[int, float] = {}
+    for seed in sorted({int(row.get("seed", 0)) for row in rows}):
+        subset = _rows_of_seed(rows, seed)
+        scores[seed] = float(classification_metrics(
+            [int(row["label"]) for row in subset], [int(row["prediction"]) for row in subset]
+        )[metric])
+    return scores
+
+
+def report_export_tables(
+    payload: dict[str, Any], seed_map: dict[str, int] | None = None
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    """Build the results table and the paired subject dump from one report payload.
+
+    Absolute scores are re-derived from the prediction files the report lists, so
+    ``delta`` is recomputed rather than copied. Every comparison is checked against
+    the report's own ``observed_delta`` and any mismatch is returned as a note.
+    """
+    alpha = float(payload.get("alpha", 0.05))
+    results: list[dict[str, Any]] = []
+    paired: list[dict[str, Any]] = []
+    notes: list[str] = []
+    for block in payload["results"]["blocks"]:
+        for comparison in block["comparisons"]:
+            context = comparison["id"]
+            left = load_verified_side(
+                comparison.get("baseline_files", []), comparison.get("baseline_file_sha256", {}),
+                comparison.get("dataset"), f"{context} baseline", seed_map,
+            )
+            right = load_verified_side(
+                comparison.get("comparison_files", []), comparison.get("comparison_file_sha256", {}),
+                comparison.get("dataset"), f"{context} comparison", seed_map,
+            )
+            left_rows = {(row["subject_id"], int(row.get("seed", 0))): row for row in left}
+            right_rows = {(row["subject_id"], int(row.get("seed", 0))): row for row in right}
+            if set(left_rows) != set(right_rows):
+                raise SignificanceError(f"{context}: subject and seed sets differ between the sides")
+            for metric in payload.get("metrics", PRIMARY_METRICS):
+                left_scores = seed_metric_scores(left, metric)
+                right_scores = seed_metric_scores(right, metric)
+                score_baseline = sum(left_scores.values()) / len(left_scores)
+                score_comparison = sum(right_scores.values()) / len(right_scores)
+                delta = score_comparison - score_baseline
+                permutation = comparison["metrics"][metric].get("permutation", {})
+                bootstrap = comparison["metrics"][metric].get("bootstrap", {})
+                observed = permutation.get("observed_delta")
+                matched = observed is not None and abs(delta - float(observed)) <= 1e-9
+                if not matched:
+                    notes.append(f"{context} / {metric}: recomputed delta {delta:.10f} vs report {observed}")
+                holm_family = permutation.get("p_value_holm_family")
+                results.append({
+                    "block": block["id"],
+                    "comparison_id": comparison["id"],
+                    "correction_family": comparison.get("correction_family"),
+                    "dataset": comparison.get("dataset"),
+                    "subjects": comparison.get("n_subjects"),
+                    "seeds": comparison.get("n_seeds"),
+                    "metric": metric,
+                    "score_baseline": score_baseline,
+                    "score_comparison": score_comparison,
+                    "delta": delta,
+                    "delta_report": observed,
+                    "delta_check": "matched" if matched else "mismatch",
+                    "bootstrap_ci_low": bootstrap.get("ci_low"),
+                    "bootstrap_ci_high": bootstrap.get("ci_high"),
+                    "raw_p": permutation.get("p_value"),
+                    "holm_family_p": holm_family,
+                    "holm_primary_family_p": permutation.get("p_value_holm_primary_family"),
+                    "adjusted_significant": holm_family is not None and float(holm_family) < alpha,
+                })
+            for key in sorted(left_rows):
+                subject_id, seed = key
+                baseline_row, comparison_row = left_rows[key], right_rows[key]
+                paired.append({
+                    "block": block["id"],
+                    "comparison_id": comparison["id"],
+                    "dataset": comparison.get("dataset"),
+                    "seed": seed,
+                    "subject_id": subject_id,
+                    "label": int(baseline_row["label"]),
+                    "baseline_prediction": int(baseline_row["prediction"]),
+                    "comparison_prediction": int(comparison_row["prediction"]),
+                    "baseline_correct": int(int(baseline_row["prediction"]) == int(baseline_row["label"])),
+                    "comparison_correct": int(int(comparison_row["prediction"]) == int(comparison_row["label"])),
+                    "baseline_invalid": int(bool(baseline_row.get("invalid_output"))),
+                    "comparison_invalid": int(bool(comparison_row.get("invalid_output"))),
+                })
+    return results, paired, notes
+
+
+def coverage_family_from_report(payload: dict[str, Any], family: dict[str, Any]) -> dict[str, Any]:
+    """Rebuild the coverage inventory from a report plus the family's excluded list."""
+    return {
+        "families": [
+            {"id": block["id"], "comparisons": [{"id": comparison["id"]} for comparison in block["comparisons"]]}
+            for block in payload["results"]["blocks"]
+        ],
+        "excluded": family.get("excluded", []),
+    }
+
+
 def family_audit_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
     """One row represents one family member × metric/test correction."""
     rows: list[dict[str, Any]] = []
@@ -644,6 +896,17 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--dry-run", action="store_true",
                         help="resolve and validate every pair without running the tests")
+    parser.add_argument("--mcnemar-table", type=Path, default=None,
+                        help="write the uncorrected exact-McNemar table (CSV plus a JSON provenance sidecar at "
+                             "the same stem) instead of running the permutation and bootstrap tests")
+    parser.add_argument("--metric-table", type=Path, default=None,
+                        help="write the uncorrected comparison x metric table (CSV plus sidecar) from an existing "
+                             "report; requires --from-report")
+    parser.add_argument("--from-report", type=Path, default=None,
+                        help="existing significance_report.json to read instead of re-running the tests")
+    parser.add_argument("--report-export", type=Path, default=None,
+                        help="write the corrected results table, the full/audit/coverage tables and the paired "
+                             "subject dump from an existing report; requires --from-report")
     args = parser.parse_args()
 
     if not args.family.is_file():
@@ -651,6 +914,117 @@ def main() -> int:
     family = yaml.safe_load(args.family.read_text(encoding="utf-8"))
     if family.get("schema_version") != "audiollm.significance_family.v1":
         raise SignificanceError("unsupported family schema version")
+    if args.metric_table is not None:
+        if args.from_report is None:
+            raise SignificanceError("--metric-table reads an existing report; pass --from-report")
+        payload = json.loads(args.from_report.read_text(encoding="utf-8"))
+        if payload.get("schema_version") != "audiollm.significance_report.v1":
+            raise SignificanceError("unsupported report schema version")
+        if payload.get("family_sha256") != sha256_file(args.family):
+            raise SignificanceError(
+                "report was produced from a different family file; rebuild the report instead of relabelling it"
+            )
+        alpha = float(payload.get("alpha", family.get("alpha", 0.05)))
+        rows = metric_rows(payload)
+        metadata = {
+            "schema_version": "audiollm.metric_table.v1",
+            "source_report_path": str(args.from_report),
+            "source_report_sha256": sha256_file(args.from_report),
+            "family_path": str(args.family),
+            "family_sha256": payload["family_sha256"],
+            "evidence_path": payload.get("evidence_path"),
+            "evidence_sha256": payload.get("evidence_sha256"),
+            "alpha": alpha,
+            "analysis_status": "retrospective_exploratory",
+            "correction": "none",
+            "correction_note": "Uncorrected permutation p-values; no family-wise correction is applied. Read them "
+                               "against the number of tests, never as a per-row verdict.",
+            "aggregation": "pooled out-of-fold subject-level predictions; the deck headline cells are unweighted "
+                           "fold means, which is a different aggregation",
+            "metrics": payload.get("metrics"),
+            "comparisons": len({row["comparison_id"] for row in rows}),
+            "tests": len(rows),
+            "expected_false_positives_at_alpha": round(len(rows) * alpha, 2),
+        }
+        metadata_path = write_table(rows, args.metric_table, metadata)
+        significant = sum(1 for row in rows if row["uncorrected_significant"])
+        print(f"metric table: {len(rows)} tests over {metadata['comparisons']} comparisons "
+              f"({', '.join(payload.get('metrics', []))})")
+        print(f"uncorrected p<{alpha}: {significant} | expected by chance: "
+              f"{metadata['expected_false_positives_at_alpha']}")
+        print(f"wrote {args.metric_table} and {metadata_path}")
+        return 0
+    if args.report_export is not None:
+        if args.from_report is None:
+            raise SignificanceError("--report-export reads an existing report; pass --from-report")
+        payload = json.loads(args.from_report.read_text(encoding="utf-8"))
+        if payload.get("schema_version") != "audiollm.significance_report.v1":
+            raise SignificanceError("unsupported report schema version")
+        if payload.get("family_sha256") != sha256_file(args.family):
+            raise SignificanceError(
+                "report was produced from a different family file; rebuild the report instead of relabelling it"
+            )
+        alpha = float(payload.get("alpha", family.get("alpha", 0.05)))
+        multi_seed = any(
+            (comparison.get("n_seeds") or 1) > 1
+            for block in payload["results"]["blocks"] for comparison in block["comparisons"]
+        )
+        seed_map = None
+        if multi_seed:
+            if args.native_en_head_report is None:
+                raise SignificanceError(
+                    "--report-export needs --native-en-head-report: multi-seed hidden-head sides keep their seed "
+                    "in the file path, and the report does not record it"
+                )
+            seed_map = native_en_seed_map(json.loads(args.native_en_head_report.read_text(encoding="utf-8")))
+        out_dir = args.report_export
+        out_dir.mkdir(parents=True, exist_ok=True)
+        results, paired, notes = report_export_tables(payload, seed_map)
+        coverage = coverage_family_from_report(payload, family)
+        write_csv(out_dir / "significance_full.csv", flat_rows(payload))
+        write_csv(out_dir / "family_audit.csv", family_audit_rows(payload))
+        write_csv(out_dir / "coverage_report.csv", coverage_rows(coverage))
+        write_csv(out_dir / "results_table.csv", results)
+        write_csv(out_dir / "paired_subjects.csv", paired)
+        comparisons = len({row["comparison_id"] for row in results})
+        metadata = {
+            "schema_version": "audiollm.report_export.v1",
+            "source_report_path": str(args.from_report),
+            "source_report_sha256": sha256_file(args.from_report),
+            "family_path": str(args.family),
+            "family_sha256": payload["family_sha256"],
+            "evidence_path": payload.get("evidence_path"),
+            "evidence_sha256": payload.get("evidence_sha256"),
+            "alpha": alpha,
+            "analysis_status": "retrospective_exploratory",
+            "metrics": payload.get("metrics"),
+            "primary_metric": payload.get("primary_metric"),
+            "comparisons": comparisons,
+            "metric_tests": len(results),
+            "paired_rows": len(paired),
+            "delta_checks": {"matched": len(results) - len(notes), "mismatch": len(notes)},
+            "delta_check_notes": notes[:20],
+            "score_aggregation": "one metric value per seed over that seed's pooled subject rows, averaged across "
+                                 "seeds; this is the aggregation behind the report's observed_delta",
+            "headline_aggregation": "the deck and workbook headline cells are unweighted fold means, which is a "
+                                    "different aggregation",
+            "thresholds": "no decision threshold is tuned on the test set: the LLM backends decide by candidate-label "
+                          "argmax or likelihood margin sign, hidden heads use a fixed 0.5 probability threshold",
+            "correction": "Holm within each pre-specified scientific contrast family, per metric; exact McNemar is "
+                          "corrected separately within the same families",
+        }
+        (out_dir / "report_export.json").write_text(
+            json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        print(f"report export: {comparisons} comparisons, {len(results)} metric rows, {len(paired)} paired subject rows")
+        print(f"delta checks: {metadata['delta_checks']['matched']} matched, {metadata['delta_checks']['mismatch']} "
+              f"mismatched against the report's observed_delta")
+        print(f"wrote 5 tables and report_export.json under {out_dir}")
+        if notes:
+            for note in notes[:5]:
+                print(f"  mismatch: {note}")
+            return 1
+        return 0
     evidence = json.loads(args.evidence.read_text(encoding="utf-8"))
     joint = json.loads(args.joint_evidence.read_text(encoding="utf-8")) if args.joint_evidence else None
     native_en_report = (json.loads(args.native_en_head_report.read_text(encoding="utf-8"))
@@ -660,6 +1034,40 @@ def main() -> int:
     expand_generated_families(family, native_en_report)
 
     metrics = list(family.get("metrics", PRIMARY_METRICS))
+    alpha = float(family.get("alpha", 0.05))
+    if args.mcnemar_table is not None:
+        rows = mcnemar_rows(family, evidence, joint, alpha=alpha)
+        metadata = {
+            "schema_version": "audiollm.mcnemar_table.v1",
+            "family_path": str(args.family),
+            "family_sha256": sha256_file(args.family),
+            "evidence_path": str(args.evidence),
+            "evidence_sha256": sha256_file(args.evidence),
+            "native_en_head_report_path": str(args.native_en_head_report) if args.native_en_head_report else None,
+            "native_en_head_report_sha256": (
+                sha256_file(args.native_en_head_report) if args.native_en_head_report else None
+            ),
+            "alpha": alpha,
+            "analysis_status": "retrospective_exploratory",
+            "correction": "none",
+            "correction_note": "Uncorrected exact McNemar p-values over the whole frozen family; exploratory only. "
+                               "The family-wise Holm report stays in the --output-dir payload.",
+            "multi_seed_policy": "one exact McNemar per seed; several seeds do not define one final subject "
+                                 "correctness decision",
+            "test": "exact McNemar, two-sided, on paired subject hard predictions (correctness view, not macro-F1)",
+            "comparisons": len({row["comparison_id"] for row in rows}),
+            "p_values": len(rows),
+            "expected_false_positives_at_alpha": round(len(rows) * alpha, 2),
+        }
+        metadata_path = write_table(rows, args.mcnemar_table, metadata)
+        significant = sum(1 for row in rows if row["uncorrected_significant"])
+        per_seed = sum(1 for row in rows if row["seeds_in_comparison"] > 1)
+        print(f"mcnemar table: {len(rows)} tests over {metadata['comparisons']} comparisons "
+              f"({per_seed} from multi-seed comparisons)")
+        print(f"uncorrected p<{alpha}: {significant} | expected by chance: "
+              f"{metadata['expected_false_positives_at_alpha']}")
+        print(f"wrote {args.mcnemar_table} and {metadata_path}")
+        return 0
     if args.dry_run:
         checked = 0
         for block in family["families"]:
