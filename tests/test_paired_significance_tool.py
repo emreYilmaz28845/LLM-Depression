@@ -18,6 +18,8 @@ _spec.loader.exec_module(paired_significance)
 
 FAMILY_PATH = ROOT / "experiments/definitions/significance_family.yaml"
 
+from src.metrics import classification_metrics  # noqa: E402  (loaded after the tool inserts the repo root)
+
 
 def _write_csv(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -328,3 +330,162 @@ def test_metric_table_cli_writes_uncorrected_sidecar(tmp_path: Path, monkeypatch
     written = list(csv.DictReader(table_path.open(encoding="utf-8")))
     assert [row["metric"] for row in written] == ["macro_f1", "macro_recall"]
     assert "p_value_holm_global" not in written[0]
+
+
+def _report_fixture(
+    tmp_path: Path, *, baseline_prediction: int = 0, delta_offset: float = 0.0, invalid: bool = False
+) -> tuple[dict, Path, Path]:
+    """A minimal report payload plus the family and prediction files it points at."""
+    baseline = tmp_path / "baseline.csv"
+    comparison = tmp_path / "comparison.csv"
+    rows_baseline = [
+        {"subject_id": "s1", "label": 1, "prediction": 1},
+        {"subject_id": "s2", "label": 1, "prediction": baseline_prediction},
+        {"subject_id": "s3", "label": 0, "prediction": 0},
+        {"subject_id": "s4", "label": 0, "prediction": 0},
+    ]
+    if invalid:
+        rows_baseline[1] = {"subject_id": "s2", "label": 1, "prediction": -1}
+    rows_comparison = [
+        {"subject_id": "s1", "label": 1, "prediction": 1},
+        {"subject_id": "s2", "label": 1, "prediction": 1},
+        {"subject_id": "s3", "label": 0, "prediction": 0},
+        {"subject_id": "s4", "label": 0, "prediction": 0},
+    ]
+    _write_csv(baseline, rows_baseline)
+    _write_csv(comparison, rows_comparison)
+
+    def strict_score(rows: list[dict]) -> float:
+        return classification_metrics(
+            [int(row["label"]) for row in rows],
+            [int(row["prediction"]) if int(row["prediction"]) in (0, 1) else 1 - int(row["label"]) for row in rows],
+        )["macro_f1"]
+
+    scores = {"baseline": strict_score(rows_baseline), "comparison": strict_score(rows_comparison)}
+    permutation = {
+        "observed_delta": scores["comparison"] - scores["baseline"] + delta_offset,
+        "p_value": 0.03125,
+        "method": "exact_subject_paired",
+        "p_value_holm_family": 0.03125,
+        "p_value_holm_primary_family": 0.03125,
+        "p_value_holm_joint_block": 0.0625,
+        "p_value_holm_metric_block": 0.0625,
+        "p_value_holm_global": 1.0,
+        "primary_significant": True,
+    }
+    mcnemar = {
+        "status": "tested", "p_value": 1.0, "baseline_only_correct": 0, "comparison_only_correct": 1,
+        "p_value_holm_block": 1.0, "p_value_holm_primary_family": 1.0, "p_value_holm_global": 1.0,
+        "primary_significant": False,
+    }
+    payload = {
+        "schema_version": "audiollm.significance_report.v1",
+        "family_sha256": None,
+        "alpha": 0.05,
+        "metrics": ["macro_f1"],
+        "primary_metric": "macro_f1",
+        "results": {"blocks": [{
+            "id": "synthetic_block",
+            "comparisons": [{
+                "id": "synthetic|A vs B",
+                "dataset": "d3tec",
+                "n_subjects": 4,
+                "n_seeds": 1,
+                "correction_family": "F1|backbone|dataset=d3tec",
+                "baseline_files": [str(baseline)],
+                "baseline_file_sha256": {str(baseline): paired_significance.sha256_file(baseline)},
+                "comparison_files": [str(comparison)],
+                "comparison_file_sha256": {str(comparison): paired_significance.sha256_file(comparison)},
+                "metrics": {"macro_f1": {"permutation": permutation, "bootstrap": {"ci_low": -0.1, "ci_high": 0.5}}},
+                "mcnemar": mcnemar,
+            }],
+        }]},
+    }
+    return payload, baseline, comparison
+
+
+def _write_report_fixture(tmp_path: Path, payload: dict) -> tuple[Path, Path, Path]:
+    family_path = tmp_path / "family.yaml"
+    family_path.write_text(yaml.safe_dump({
+        "schema_version": "audiollm.significance_family.v1", "alpha": 0.05, "families": [],
+        "excluded": ["literature rows are not pairable"],
+    }), encoding="utf-8")
+    payload["family_sha256"] = paired_significance.sha256_file(family_path)
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text("{}\n", encoding="utf-8")
+    report_path = tmp_path / "report.json"
+    report_path.write_text(json.dumps(payload), encoding="utf-8")
+    return family_path, evidence_path, report_path
+
+
+def _run_report_export(tmp_path: Path, monkeypatch, family: Path, evidence: Path, report: Path) -> int:
+    monkeypatch.setattr(sys, "argv", [
+        "paired_significance.py", "--family", str(family), "--evidence", str(evidence),
+        "--from-report", str(report), "--report-export", str(tmp_path / "export"),
+    ])
+    return paired_significance.main()
+
+
+def test_report_export_writes_tables_and_checks_delta(tmp_path: Path, monkeypatch):
+    payload, _, _ = _report_fixture(tmp_path)
+    family, evidence, report = _write_report_fixture(tmp_path, payload)
+    assert _run_report_export(tmp_path, monkeypatch, family, evidence, report) == 0
+    out = tmp_path / "export"
+    for name in ("significance_full.csv", "family_audit.csv", "coverage_report.csv",
+                 "results_table.csv", "paired_subjects.csv", "report_export.json"):
+        assert (out / name).is_file(), name
+    metadata = json.loads((out / "report_export.json").read_text(encoding="utf-8"))
+    assert metadata["schema_version"] == "audiollm.report_export.v1"
+    assert metadata["delta_checks"] == {"matched": 1, "mismatch": 0}
+    assert metadata["comparisons"] == 1 and metadata["paired_rows"] == 4
+
+    results = list(csv.DictReader((out / "results_table.csv").open(encoding="utf-8")))
+    assert results[0]["delta_check"] == "matched"
+    assert float(results[0]["score_baseline"]) == pytest.approx(0.7333333333)
+    assert float(results[0]["score_comparison"]) == pytest.approx(1.0)
+    assert float(results[0]["delta"]) == pytest.approx(0.2666666667)
+    assert results[0]["adjusted_significant"] == "True"
+
+    paired = list(csv.DictReader((out / "paired_subjects.csv").open(encoding="utf-8")))
+    assert [row["subject_id"] for row in paired] == ["s1", "s2", "s3", "s4"]
+    assert paired[1]["baseline_prediction"] == "0" and paired[1]["baseline_correct"] == "0"
+    assert paired[1]["comparison_correct"] == "1"
+
+    coverage = list(csv.DictReader((out / "coverage_report.csv").open(encoding="utf-8")))
+    assert [row["status"] for row in coverage] == ["tested", "not_testable"]
+
+
+def test_report_export_flags_a_delta_mismatch(tmp_path: Path, monkeypatch):
+    payload, _, _ = _report_fixture(tmp_path, delta_offset=0.2)
+    family, evidence, report = _write_report_fixture(tmp_path, payload)
+    assert _run_report_export(tmp_path, monkeypatch, family, evidence, report) == 1
+    metadata = json.loads((tmp_path / "export" / "report_export.json").read_text(encoding="utf-8"))
+    assert metadata["delta_checks"]["mismatch"] == 1
+    results = list(csv.DictReader((tmp_path / "export" / "results_table.csv").open(encoding="utf-8")))
+    assert results[0]["delta_check"] == "mismatch"
+
+
+def test_load_verified_side_maps_invalid_to_the_wrong_class(tmp_path: Path):
+    payload, baseline, _ = _report_fixture(tmp_path, invalid=True)
+    comparison = payload["results"]["blocks"][0]["comparisons"][0]
+    rows = paired_significance.load_verified_side(
+        [str(baseline)], comparison["baseline_file_sha256"], "d3tec", "test",
+    )
+    by_subject = {row["subject_id"]: row for row in rows}
+    assert by_subject["s2"]["invalid_output"] is True
+    assert by_subject["s2"]["prediction"] == 0  # 1 - label, i.e. wrong for a positive subject
+    assert by_subject["s1"]["invalid_output"] is False
+
+
+def test_load_verified_side_uses_recorded_seeds(tmp_path: Path):
+    first = tmp_path / "seed_7.csv"
+    second = tmp_path / "seed_1337.csv"
+    rows = [{"subject_id": "s1", "label": 1, "prediction": 1}]
+    _write_csv(first, rows)
+    _write_csv(second, rows)
+    loaded = paired_significance.load_verified_side(
+        [str(first), str(second)], {}, None, "test", {str(first): 7, str(second): 1337},
+    )
+    assert sorted(row["seed"] for row in loaded) == [7, 1337]
+    with pytest.raises(paired_significance.SignificanceError, match="more than one fold file"):
+        paired_significance.load_verified_side([str(first), str(second)], {}, None, "test")
