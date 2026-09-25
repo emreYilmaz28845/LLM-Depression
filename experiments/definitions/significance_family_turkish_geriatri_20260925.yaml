@@ -1,0 +1,84 @@
+schema_version: audiollm.significance_family.v1
+analysis_status: prospective_prespecified
+prespecified_at: '2026-09-25'
+frozen_before_results: >-
+  Written before any four-source fold finished; the family membership, metrics,
+  test, correction and pairing rule were fixed in advance and must not change
+  after the numbers are seen.
+alpha: 0.05
+iterations: 1000000
+max_iterations: 10000000
+bootstrap_iterations: 100000
+seed: 1337
+metrics:
+- macro_f1
+- positive_f1
+- macro_recall
+metric_notes:
+  macro_f1: single primary metric; Holm-corrected across the three matched cells of this family
+  positive_f1: supporting effect-size metric; Depressed is positive
+  macro_recall: supporting UAR effect-size metric (unweighted average recall = balanced accuracy)
+tests:
+  metric_primary: paired_prediction_swap_permutation (two-sided)
+  effect_size: observed comparison-minus-baseline delta with unadjusted subject-cluster bootstrap 95% CI
+  mcnemar_primary: exact_mcnemar correctness view
+  correction: >-
+    Holm inside the single prespecified family turkish_four_source_vs_pooled; the
+    three metrics are corrected separately with identical family membership, and
+    the joint 3x3 block Holm is reported as a conservative sensitivity view.
+pairing: subject (subject_id); identical subject sets and labels required on both sides
+aggregation: >-
+  Pooled out-of-fold subject predictions restricted to the original participants,
+  the population both arms actually share. These significance results describe the
+  pooled subject view; the reported headline cells of the campaign are unweighted
+  five-fold means of the strict subject-level metrics, which is a different and
+  separately labelled aggregation. A significance result never replaces a headline
+  cell and never converts a fold-mean difference into a claim.
+sides:
+  baseline: >-
+    The freshly rerun pooled arm's original-participant subject predictions, one
+    file per cell, pooled out-of-fold by the derivation step.
+  treatment: >-
+    The four-source arm's full-222 subject-level predictions restricted to the
+    original participants, derived with the baseline's evaluation semantics from
+    the same completed runs (no retraining, no re-evaluation).
+excluded:
+- 'Full-222 treatment evaluation: different evaluation population from the baseline arm'
+- 'Geriatri-only subgroup: no baseline counterpart exists'
+- 'Fold-mean headline differences: reported descriptively, never tested here'
+- 'Any comparison not listed in this file: not prespecified, so no significance is claimed'
+families:
+- id: turkish_four_source_vs_pooled
+  description: >-
+    Matched original-participant comparison per model and modality: does adding the
+    geriatri cohort to training change performance on the same 120 participants?
+    Both sides come from the freshly rerun five-fold arms of the same deployment and
+    share the locked original folds.
+  comparisons:
+  - id: Qwen3.8-27B|T|pooled vs four-source
+    dataset: turkish
+    description: 'Qwen3.8-27B text-only: pooled 120-trained arm versus the four-source 222-trained arm, both scored on the original 120 participants'
+    baseline:
+      kind: path
+      path: outputs/significance/turkish_geriatri_20260925/qwen38_text_only/baseline_original_predictions_subject_level.csv
+    comparison:
+      kind: path
+      path: outputs/significance/turkish_geriatri_20260925/qwen38_text_only/treatment_original_predictions_subject_level.csv
+  - id: Qwen3-Omni|A|pooled vs four-source
+    dataset: turkish
+    description: 'Qwen3-Omni audio-only: pooled 120-trained arm versus the four-source 222-trained arm, both scored on the original 120 participants'
+    baseline:
+      kind: path
+      path: outputs/significance/turkish_geriatri_20260925/qwen3omni_audio_only/baseline_original_predictions_subject_level.csv
+    comparison:
+      kind: path
+      path: outputs/significance/turkish_geriatri_20260925/qwen3omni_audio_only/treatment_original_predictions_subject_level.csv
+  - id: Qwen3-Omni|A+T|pooled vs four-source
+    dataset: turkish
+    description: 'Qwen3-Omni audio+text: pooled 120-trained arm versus the four-source 222-trained arm, both scored on the original 120 participants'
+    baseline:
+      kind: path
+      path: outputs/significance/turkish_geriatri_20260925/qwen3omni_audio_text/baseline_original_predictions_subject_level.csv
+    comparison:
+      kind: path
+      path: outputs/significance/turkish_geriatri_20260925/qwen3omni_audio_text/treatment_original_predictions_subject_level.csv

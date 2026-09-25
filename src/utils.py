@@ -64,6 +64,11 @@ SUPPORTED_MODEL_BACKENDS = (
 # counts, LoRA target audit, dtype boundary) to the model it returns; the shared
 # train/evaluate writers pick it up from this attribute for provenance.
 MODEL_LOAD_AUDIT_ATTR = "_model_load_audit"
+# Turkish question-set variants carry one source row per participant and question
+# condition, keep both conditions in the same subject fold, and combine them into
+# one participant-level result. The four-source geriatri extension keeps the same
+# contract as the original pooled pair.
+TURKISH_QUESTION_CONDITIONED_VARIANTS = ("pooled_t17", "all_geriatri_t17")
 PREDICTION_MODE_LIKELIHOOD = "likelihood"
 PREDICTION_MODE_GENERATION = "generation"
 PREDICTION_MODE_ORIGINAL_TEACHER_FORCED = "original_teacher_forced"
@@ -117,6 +122,10 @@ GENERATION_PARSE_PREFIXES = (
     "classified as",
     "classification:",
 )
+
+
+def is_turkish_question_conditioned_variant(value: object) -> bool:
+    return str(value or "").strip() in TURKISH_QUESTION_CONDITIONED_VARIANTS
 
 
 def project_root() -> Path:

@@ -78,10 +78,18 @@ def _pairs() -> list[tuple[str, dict, dict]]:
     ]
 
 
+def _promptcontext_qwen38_configs(pattern: str) -> list[str]:
+    # The four-source Turkish extension reuses the same model suffix but is a
+    # separate family with its own definition and tests.
+    return sorted(
+        path.name for path in MAIN.glob(pattern) if "turkish_all_geriatri" not in path.name
+    )
+
+
 def test_exactly_five_new_configs_and_21_fits() -> None:
-    found = sorted(path.name for path in MAIN.glob("*_promptcontext_v1_qwen38_27b.yaml"))
+    found = _promptcontext_qwen38_configs("*_promptcontext_v1_qwen38_27b.yaml")
     assert found == sorted(NEW_CONFIG_NAMES)
-    assert sorted(path.name for path in MAIN.glob("*promptcontext*_qwen38_27b.yaml")) == sorted(
+    assert _promptcontext_qwen38_configs("*promptcontext*_qwen38_27b.yaml") == sorted(
         NEW_CONFIG_NAMES
     )
     matrix = _load(MATRIX)

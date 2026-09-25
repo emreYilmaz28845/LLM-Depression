@@ -187,14 +187,16 @@ Count the current inventory with `find configs/main -maxdepth 1 -type f -name '*
 
 ### Four-source Turkish and geriatri extension
 
-`turkish_all_geriatri_t17_*_qwen3asr.yaml` is a separate, native-Turkish
-comparison family for audio-only, text-only, and audio+text. Each config reads
-four sources: the existing Turkish positive and negative question sets, plus
-the geriatri positive and negative question sets. The source list in each YAML
-is the input contract. The two existing sets share their patient IDs and BDO
-scores. The two geriatri sets also share patients, but geriatri patient codes
-are reused independently of the existing cohort. Manifest IDs therefore use
-`geriatri:` for that cohort; both question sets stay in the same patient fold.
+`turkish_all_geriatri_t17_<modality>_harmonized_selmacrof1_likelihood_v1_*` is a
+separate, native-Turkish comparison family for audio-only, text-only, and
+audio+text. Each config reads four sources: the existing Turkish positive and
+negative question sets, plus the geriatri positive and negative question sets.
+The source list in each YAML is the input contract. The two existing sets share
+their patient IDs and BDO scores. The two geriatri sets also share patients, but
+geriatri patient codes are reused independently of the existing cohort. Manifest
+IDs therefore use `geriatri:` for that cohort; both question sets stay in the
+same patient fold. Config names mirror the pooled baseline cell of the same
+modality so the two arms read as one pair.
 
 Labels use `depresyon_skoru >= 17` from the source CSVs. The geriatri workbook
 is an audit reference: one BDO entry differs from both geriatri CSVs (14 in
@@ -203,6 +205,23 @@ and the CSV `label` category do not set the depression target. Geriatri WAV
 basenames are matched after Unicode normalization; the original filenames and
 audio paths are retained in the manifest. Both geriatri sets need their own
 Qwen3-ASR transcript JSONL before a combined manifest can be built.
+
+The family is fold-locked: `split.locked_original_folds_path` and
+`split.locked_original_folds_sha256` point at the canonical pooled folds file
+(sha256 `3262a009db52c6d049e223947a9be6ce119a31e816b5c3072ce84b3ad92ecd58`), the
+original 120 participants keep exactly those folds, and the geriatri participants
+are placed deterministically and balanced within label strata. The build fails
+closed when the declared hash, the original cohort membership, or the fold count
+disagrees, and it records the resulting fold-lock audit beside the split. The
+manifest is fold-agnostic, so a rebuild that only changes the split keeps the
+recorded four-source manifest content hash.
+
+Each config carries the baseline cell's recipe: the same model identity, prompt
+text and version, labels, LoRA policy, checkpoint selection, windowing,
+evaluation view, aggregation and effective global batch. Two runtime facts
+differ and are intentional: only the data contract changes, and the Qwen3-Omni
+cells declare two training nodes with accumulation 16 (the shape the baseline
+cells were submitted with) instead of one node with accumulation 32.
 
 This family has isolated manifest, split, and model output roots. It does not
 replace or rewrite the positive-only and negative-only experiments.

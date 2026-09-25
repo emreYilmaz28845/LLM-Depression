@@ -193,6 +193,8 @@ def resolve_merged_final(model: str, route: str, modality: str) -> list[tuple[Pa
 
 
 def resolve_record(evidence: dict[str, Any], ref: dict[str, Any]) -> list[tuple[Path, str | None]]:
+    if not evidence.get("records"):
+        raise SignificanceError("an evidence file with a records section is required for record sides")
     match = next(
         (row for row in evidence["records"]
          if (row["dataset"], row["modality"], row["condition"], row["model"], row["route"])
@@ -632,8 +634,8 @@ def coverage_rows(family: dict[str, Any]) -> list[dict[str, Any]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--family", type=Path, default=DEFAULT_FAMILY)
-    parser.add_argument("--evidence", type=Path, required=True,
-                        help="three_route_evidence.json (presentation evidence)")
+    parser.add_argument("--evidence", type=Path, default=None,
+                        help="three_route_evidence.json (presentation evidence); required when a side uses kind=record")
     parser.add_argument("--joint-evidence", type=Path, default=None,
                         help="joint_k4_evidence.json; required only for joint-K blocks")
     parser.add_argument("--native-en-head-report", type=Path, default=None,
@@ -642,6 +644,8 @@ def main() -> int:
     parser.add_argument("--iterations", type=int, default=10000)
     parser.add_argument("--bootstrap-iterations", type=int, default=None)
     parser.add_argument("--seed", type=int, default=1337)
+    parser.add_argument("--code-commit", default=None,
+                        help="full commit SHA of the code that produced this report; recorded in the payload")
     parser.add_argument("--dry-run", action="store_true",
                         help="resolve and validate every pair without running the tests")
     args = parser.parse_args()
@@ -651,7 +655,7 @@ def main() -> int:
     family = yaml.safe_load(args.family.read_text(encoding="utf-8"))
     if family.get("schema_version") != "audiollm.significance_family.v1":
         raise SignificanceError("unsupported family schema version")
-    evidence = json.loads(args.evidence.read_text(encoding="utf-8"))
+    evidence = json.loads(args.evidence.read_text(encoding="utf-8")) if args.evidence else {}
     joint = json.loads(args.joint_evidence.read_text(encoding="utf-8")) if args.joint_evidence else None
     native_en_report = (json.loads(args.native_en_head_report.read_text(encoding="utf-8"))
                         if args.native_en_head_report else None)
@@ -687,8 +691,9 @@ def main() -> int:
         "schema_version": "audiollm.significance_report.v1",
         "family_path": str(args.family),
         "family_sha256": sha256_file(args.family),
-        "evidence_path": str(args.evidence),
-        "evidence_sha256": sha256_file(args.evidence),
+        "code_commit": args.code_commit,
+        "evidence_path": str(args.evidence) if args.evidence else None,
+        "evidence_sha256": sha256_file(args.evidence) if args.evidence else None,
         "native_en_head_report_path": str(args.native_en_head_report) if args.native_en_head_report else None,
         "native_en_head_report_sha256": sha256_file(args.native_en_head_report) if args.native_en_head_report else None,
         "iterations": args.iterations,

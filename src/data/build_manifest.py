@@ -91,7 +91,9 @@ def manifest_build_signature(config: dict[str, Any]) -> dict[str, Any]:
     split_options = {
         key: value
         for key, value in (config.get("split") or {}).items()
-        if key not in {"cv_protocol", "fixed_protocol", "smoke_subject_limit"}
+        # The locked baseline fold path is environment-specific; the declared
+        # sha256 of that file stays in the signature and pins the content.
+        if key not in {"cv_protocol", "fixed_protocol", "smoke_subject_limit", "locked_original_folds_path"}
     }
     return {
         "builder_options": builder_options,
@@ -309,11 +311,25 @@ def build_for_config(config_path: str | Path, config_overrides: list[str] | None
     for result_key, filename in (
         ("chunk_window_audit", f"{dataset_name}_chunk_window_audit.json"),
         ("label_source_audit", f"{dataset_name}_label_source_audit.json"),
+        ("fold_lock", f"{dataset_name}_fold_lock_audit.json"),
     ):
         if result_key in result:
             artifact_path = split_dir / filename
             save_json(result[result_key], artifact_path)
             metadata[f"{result_key}_path"] = serialize_project_path(artifact_path)
+    if "fold_lock" in result:
+        fold_lock = result["fold_lock"]
+        metadata["fold_lock"] = {
+            "new_cohort_assignment_rule": fold_lock["new_cohort_assignment_rule"],
+            "locked_original_folds_file_sha256": fold_lock["locked_original_folds"]["file_sha256"],
+            "locked_original_folds_canonical_mapping_sha256": fold_lock["locked_original_folds"][
+                "canonical_mapping_sha256"
+            ],
+            "original_subject_count": fold_lock["original_subject_count"],
+            "new_subject_count": fold_lock["new_subject_count"],
+            "combined_mapping_canonical_sha256": fold_lock["combined_mapping_canonical_sha256"],
+            "new_assignment_canonical_sha256": fold_lock["new_assignment_canonical_sha256"],
+        }
     if "fold_hash" in result:
         metadata["fold_hash"] = result["fold_hash"]
     if "transcript_paths" in result:

@@ -1,0 +1,187 @@
+schema_version: audiollm.experiment_group.v1
+group_id: turkish-with-geriatri-standalone-20260925
+title: Turkish pooled baseline versus the four-source Turkish + geriatri arm
+research_question: >-
+  Does adding the geriatri cohort to training change the Turkish standalone result
+  on the same original participants? Three matched model/modality cells are rerun
+  in two data arms on the same locked patient folds: the baseline pooled arm
+  (original Turkish positive and negative question sets, 120 participants) and the
+  four-source arm (the same two question sets plus the geriatri positive and
+  negative question sets, 222 participants). The four-source arm is additionally
+  reported on its own full 222-participant evaluation and on its geriatri-only
+  subgroup, and the pooled out-of-fold significance view is reported separately
+  from the fold-mean headline cells.
+dataset: turkish
+baseline: >-
+  The freshly rerun pooled arm under the frozen canonical Turkish recipe:
+  configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml,
+  configs/main/turkish_pooled_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml
+  and configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml.
+  Five-fold patient CV (train_val), seed 1337, the locked pooled folds file with
+  sha256 3262a009db52c6d049e223947a9be6ce119a31e816b5c3072ce84b3ad92ecd58 served as a
+  prebuilt manifest/split pair, likelihood evaluation with
+  harmonized_all_windows_full_coverage, macro-F1 checkpoint selection
+  (inner_val_macro_f1, mode max), and the source recipe aggregation: text-only uses
+  turkish_pooled_text_pair_mean_margin_strict_v1, the audio cells use
+  response_subject subject-level metrics with mean score aggregation. On the
+  Turkish train_val protocol the outer fold is both the selection and the reported
+  partition, so every baseline number is a selected-validation five-fold mean, not
+  a held-out test result.
+treatment: >-
+  The four-source arm under the aligned configs
+  configs/main/turkish_all_geriatri_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml,
+  configs/main/turkish_all_geriatri_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml
+  and configs/main/turkish_all_geriatri_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml.
+  The same model identity, prompt-context recipe, labels, LoRA policy, checkpoint
+  selection, windowing, evaluation view, aggregation and effective global batch
+  (128) as the baseline cell of the same modality; only the data contract changes
+  (four sources, 222 participants) plus the Qwen3-Omni runtime shape of two nodes
+  with accumulation 16 that the baseline cells already used when submitted. The
+  original 120 participants keep the exact baseline fold assignment (declared
+  sha256), the 102 geriatri participants are placed deterministically and balanced
+  within label strata, and the manifest is built in the worker from the four
+  source roots. The arm's headline evaluation is the full 222-participant
+  five-fold result; the matched original-120 comparison is derived from those
+  subject-level predictions without retraining or re-evaluating.
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+runs:
+  - logical_run: turkish_pooled_baseline_text_only
+    dataset: turkish
+    dataset_variant: pooled_t17
+    modality: text_only
+    arm: baseline
+    config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml
+    folds: [0, 1, 2, 3, 4]
+    endpoint: selected_validation_view
+    folds_note: >-
+      Five-fold CV (train_val) over the locked pooled folds; reported as an
+      unweighted five-fold mean of the selected-validation partition.
+  - logical_run: turkish_four_source_text_only
+    dataset: turkish
+    dataset_variant: all_geriatri_t17
+    modality: text_only
+    arm: treatment
+    config: configs/main/turkish_all_geriatri_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml
+    folds: [0, 1, 2, 3, 4]
+    endpoint: selected_validation_view
+    folds_note: >-
+      Five-fold CV (train_val) over the locked original folds plus the balanced
+      geriatri placement; the headline is the full 222-participant five-fold mean and
+      the matched original-120 view is a labelled secondary derivation.
+  - logical_run: turkish_pooled_baseline_audio_only
+    dataset: turkish
+    dataset_variant: pooled_t17
+    modality: audio_only
+    arm: baseline
+    config: configs/main/turkish_pooled_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml
+    folds: [0, 1, 2, 3, 4]
+    endpoint: selected_validation_view
+    folds_note: Five-fold CV (train_val); response-subject subject-level metrics, unweighted five-fold mean.
+  - logical_run: turkish_four_source_audio_only
+    dataset: turkish
+    dataset_variant: all_geriatri_t17
+    modality: audio_only
+    arm: treatment
+    config: configs/main/turkish_all_geriatri_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml
+    folds: [0, 1, 2, 3, 4]
+    endpoint: selected_validation_view
+    folds_note: Five-fold CV (train_val); full-222 headline plus labelled original-120 derivation.
+  - logical_run: turkish_pooled_baseline_audio_text
+    dataset: turkish
+    dataset_variant: pooled_t17
+    modality: audio_text
+    arm: baseline
+    config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml
+    folds: [0, 1, 2, 3, 4]
+    endpoint: selected_validation_view
+    folds_note: Five-fold CV (train_val); response-subject subject-level metrics, unweighted five-fold mean.
+  - logical_run: turkish_four_source_audio_text
+    dataset: turkish
+    dataset_variant: all_geriatri_t17
+    modality: audio_text
+    arm: treatment
+    config: configs/main/turkish_all_geriatri_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml
+    folds: [0, 1, 2, 3, 4]
+    endpoint: selected_validation_view
+    folds_note: Five-fold CV (train_val); full-222 headline plus labelled original-120 derivation.
+run_naming:
+  baseline: turkish_pooled_baseline_<modality>_f<fold>_20260925
+  treatment: turkish_four_source_<modality>_f<fold>_20260925
+  note: Runs never reuse the earlier campaign run names; every rerun is a new attempt.
+fold_lock:
+  locked_folds_file_sha256: 3262a009db52c6d049e223947a9be6ce119a31e816b5c3072ce84b3ad92ecd58
+  original_subject_count: 120
+  new_subject_count: 102
+  new_cohort_rule: label_stratified_balanced_round_robin_v1
+  requirement: >-
+    Both arms must share the exact original-participant outer folds; the
+    four-source build fails closed when the declared folds file hash, the original
+    cohort membership, or the fold count disagree. The rebuilt original-cohort rows
+    must stay row-identical to the prebuilt pooled manifest rows apart from the
+    environment-specific audio path prefix.
+data_contract:
+  sources: [original_positive, original_negative, geriatri_positive, geriatri_negative]
+  score_authority: metadata_csv
+  label_rule: depresyon_skoru >= 17 from the geriatri CSVs (the workbook entry that disagrees is not used)
+  namespacing: geriatri participants carry the geriatri prefix; original identifiers are unchanged
+  privacy: subject identifiers and transcripts never leave local ignored artifacts or the private tables directory
+training_shapes:
+  text_only: 1 node x 4 H100 (world 4, per-rank batch 1, accumulation 32, effective batch 128)
+  audio_only: 2 nodes x 4 H100 (world 8, per-rank batch 1, accumulation 16, effective batch 128)
+  audio_text: 2 nodes x 4 H100 (world 8, per-rank batch 1, accumulation 16, effective batch 128)
+  evaluation: 1 node with 4 H100 in one device-map sharded process for the audio cells, 1 H100 for text-only
+comparison_rule: >-
+  The primary cross-arm comparison is paired, fold-aligned and population-matched:
+  the treatment's original-120 subset is derived from its completed full-222
+  subject-level predictions with the baseline's evaluation semantics, and it is
+  compared with the freshly rerun baseline on the same participants. The
+  full-222 treatment result and the geriatri-only subgroup are separate,
+  clearly named secondary populations and never share a column with the
+  original-120 comparison. Fold values and the unweighted five-fold mean are
+  reported together, never mixed with a pooled subject metric. The pooled
+  out-of-fold significance view is prespecified in
+  experiments/definitions/significance_family_turkish_geriatri_20260925.yaml,
+  corrected with Holm inside that single family, and labelled separately from the
+  fold-mean headline cells; no significance is claimed anywhere else.
+preflight_gates:
+  - The four-source build reproduces the locked original folds and the recorded four-source manifest content hash.
+  - The rebuilt original-cohort rows match the prebuilt pooled manifest rows on every field except the audio path prefix.
+  - The Qwen3-Omni arms are submitted with accumulation 16 (two nodes) exactly as the baseline cells were.
+  - Both arms are submitted from one clean committed deployment; any later source change creates a new deployment and new attempt identities.
+scope:
+  campaign_text_only: promptcontext_v1_qwen38_likelihood
+  campaign_audio_only: promptcontext_v1_qwen3omni_likelihood
+  campaign_audio_text: promptcontext_v1_qwen3omni_likelihood
+  checkpoint_role: best_model
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
+  storage_note: >-
+    The four-source arm writes under the same campaign/modality/turkish run root as
+    its baseline cell, distinguished by run name; the pooled prebuilt manifest and
+    split stay in the lane runtime and the four-source manifest is built into a
+    separate runtime subdirectory so the two arms can never read each other's data.
+exclusions:
+  - model_or_modality_expansion
+  - threshold_seed_or_dataset_expansion
+  - canonical_workbook_changes
+  - wandb_export
+  - hidden_classifier_or_optuna_work
+  - a_120_participant_replacement_of_the_full_222_evaluation
+  - reporting_any_number_without_local_artifacts
+github_issue: null
+github_pr: 266

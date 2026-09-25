@@ -2,7 +2,7 @@ dataset: turkish
 dataset_variant: all_geriatri_t17
 score_authority: metadata_csv
 seed: 1337
-recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1_promptcontext_v1_all_geriatri
+recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_qcond_v1_promptcontext_v1
 sources:
   - id: original_positive
     cohort: original
@@ -37,33 +37,35 @@ sources:
     audio_dir: negative
     transcript_file: whisper_transcripts_qwen3_asr_negative.jsonl
 threshold: 17
-model_name_or_path: ${QWEN3_OMNI_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen3-Omni-30B-A3B-Instruct}
+model_backend: qwen38
+model_name_or_path: ${QWEN38_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen3.8-27B}
+model_revision: 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
 quarantine_path: ${PROJECT_ROOT}/configs/quarantines.yaml
 output_dirs:
   manifest_dir: ${PROJECT_ROOT}/outputs/manifests_harmonized/turkish_all_geriatri_t17_qwen3asr
   split_dir: ${PROJECT_ROOT}/outputs/splits_harmonized/turkish_all_geriatri_t17_qwen3asr
-  run_root: ${PROJECT_ROOT}/output_model/promptcontext_v1_qwen3omni_likelihood/audio_only/turkish_all_geriatri_t17_qwen3asr
+  run_root: ${PROJECT_ROOT}/output_model/promptcontext_v1_qwen38_likelihood/text_only/turkish
 prompt:
   version: promptcontext_v1
   dataset_context: turkish_pooled
   question_context_version: promptcontext_v1
-  user_template: '{audio_context_block}
-
+  user_template: |-
+    {audio_context_block}
+    {question_context}
     {transcript_block}Based on the {decision_basis}, determine whether the subject is {label_descriptor}.
-
-    {label_instruction}'
+    {label_instruction}
   prompt_language: english
 labels:
   label_vocab_version: legacy_english_labels
 data:
-  use_audio: true
-  use_text: false
-  silence_audio: false
+  use_audio: false
+  use_text: true
   sample_mode: harmonized_response_windows
   segment_seconds: 30.0
   segment_partition: equal_duration
-  train_chunk_policy: all_windows_hierarchical_weighted
-  eval_chunk_policy: all_windows
+  audio_text_transcript_scope: full_subject
+  train_chunk_policy: none
+  eval_chunk_policy: subject
   transcript_max_chars: 0
   allow_empty_transcript: false
 split:
@@ -72,19 +74,18 @@ split:
   outer_folds: 5
   inner_val_ratio: 0.2
   seed: 1337
+  locked_original_folds_path: ${TURKISH_LOCKED_FOLDS_PATH:-/gpfs/projects/etur92/ozu647717/AudioLLM/experiment_runtime/exp-turkish-geriatri-20260925/locked_folds/turkish_folds.json}
+  locked_original_folds_sha256: 3262a009db52c6d049e223947a9be6ce119a31e816b5c3072ce84b3ad92ecd58
 lora:
   rank: 16
   alpha: 32
   dropout: 0.05
   bias: none
-  target_modules: ^model\.layers\.\d+\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))$
-audio_adapter:
-  enabled: false
-  adapter_dim: 512
-  dropout: 0.1
-  train_projector: false
+  target_modules: ^model\.language_model\.layers\.\d+\.(?:self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))$
 training:
   dist_timeout_minutes: 120
+  strategy: fsdp
+  activation_offload: cpu
   num_train_epochs: 20
   learning_rate: 0.0002
   weight_decay: 0.0
@@ -97,7 +98,6 @@ training:
   gradient_checkpointing: true
   run_final_eval_in_train: false
   dataloader_num_workers: 0
-  audio_budget_audit: true
   max_grad_norm: 1.0
   class_balance: none
   selection_metric: inner_val_macro_f1
@@ -108,21 +108,14 @@ training:
     mode: max
     patience: 3
     min_delta: 0.0
-  strategy: fsdp
-  activation_offload: cpu
 evaluation:
   sample_prediction_mode: likelihood
   headline_mode: likelihood
-  aggregation_level: response_subject
-  hierarchical_score_aggregation: mean
+  aggregation_level: subject
+  subject_score_aggregation: turkish_pooled_text_pair_mean_margin_strict_v1
   evaluation_view: harmonized_all_windows_full_coverage
   generation_max_new_tokens: 8
   num_beams: 1
   do_sample: false
   evaluate_last_checkpoint: false
   inference_dtype: bf16
-model_backend: qwen3omni
-model_attn_implementation: sdpa
-resources:
-  eval_nodes: 1
-  eval_gpus_per_node: 4
