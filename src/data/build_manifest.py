@@ -17,6 +17,7 @@ from src.data.d3tec import build_d3tec_manifest
 from src.data.edaic import build_edaic_manifest
 from src.data.eatd import build_eatd_manifest
 from src.data.turkish import build_turkish_manifest
+from src.data.turkish_combined import build_turkish_combined_manifest
 from src.data.validation import (
     assert_audio_exists,
     assert_clean_labels,
@@ -73,6 +74,10 @@ def manifest_build_signature(config: dict[str, Any]) -> dict[str, Any]:
     }
     if str((config.get("transcripts") or {}).get("variant", "original")).strip().lower() == "original":
         excluded_top_level.add("transcripts")
+    if config.get("sources"):
+        # Multi-source Turkish manifests are shared by all three modalities.
+        # These model/runtime settings cannot change source rows or folds.
+        excluded_top_level.update({"resources", "model_attn_implementation"})
     builder_options = {
         key: value
         for key, value in config.items()
@@ -202,7 +207,11 @@ def build_for_config(config_path: str | Path, config_overrides: list[str] | None
     elif dataset_name == "eatd":
         result = build_eatd_manifest(config, quarantine)
     elif dataset_name == "turkish":
-        result = build_turkish_manifest(config, quarantine)
+        result = (
+            build_turkish_combined_manifest(config, quarantine)
+            if config.get("sources")
+            else build_turkish_manifest(config, quarantine)
+        )
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
 

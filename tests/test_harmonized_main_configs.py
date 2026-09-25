@@ -19,6 +19,8 @@ def harmonized_configs():
         and "_qwen3omni_30b_a3b" not in path.name
         and "_officialdev" not in path.name
         and "turkish_negative_only" not in path.name
+        # The four-source geriatri extension has its own patient population.
+        and "turkish_all_geriatri" not in path.name
         # The pooled question-conditioned family is a separate locked recipe.
         and "turkish_pooled" not in path.name
         # Pre-rename canonical Turkish files stay as legacy history.
