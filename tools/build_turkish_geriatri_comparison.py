@@ -123,6 +123,30 @@ def secondary_table(audits: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
+def per_fold_table(audits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = []
+    for audit in audits:
+        cell = audit["cell"]
+        model, modality = CELL_LABELS.get(cell, (cell, cell))
+        for arm, arm_label in (("baseline", "pooled_120"), ("treatment", "four_source_120")):
+            values = audit["arms"][arm]["per_fold_metrics"].get("original") or {}
+            for fold in sorted(values, key=int):
+                metrics = values[fold]
+                rows.append(
+                    {
+                        "model": model,
+                        "modality": modality,
+                        "arm": arm_label,
+                        "fold": int(fold),
+                        "macro_f1": float(metrics["macro_f1"]),
+                        "positive_f1": float(metrics["positive_f1"]),
+                        "uar": float(metrics["uar"]),
+                        "invalid_subjects": metrics.get("invalid_subjects", 0),
+                    }
+                )
+    return rows
+
+
 def significance_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
     blocks = report.get("results", {}).get("blocks") or report.get("blocks") or []
     rows = []
@@ -162,6 +186,7 @@ def markdown_report(
     significance: list[dict[str, Any]],
     significance_provenance: dict[str, Any] | None,
     extra_provenance: dict[str, Any],
+    per_fold: list[dict[str, Any]] | None = None,
 ) -> str:
     lines = [
         "# Turkish four-source versus pooled comparison",
@@ -215,6 +240,22 @@ def markdown_report(
             f"{fmt(geriatri['positive_f1']) if geriatri else 'n/a'} | "
             f"{fmt(geriatri['uar']) if geriatri else 'n/a'} |"
         )
+    if per_fold:
+        lines += [
+            "",
+            "## Per-fold values, original participants",
+            "",
+            "The five-fold mean above is the headline; these are the fold values it averages. "
+            "Each row is one arm, one fold, on that fold's held-out original participants.",
+            "",
+            "| Model | Modality | Arm | Fold | Macro-F1 | Positive-F1 | UAR |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
+        for row in per_fold:
+            lines.append(
+                f"| {row['model']} | {row['modality']} | {row['arm']} | {row['fold']} | "
+                f"{fmt(row['macro_f1'])} | {fmt(row['positive_f1'])} | {fmt(row['uar'])} |"
+            )
     if significance:
         lines += [
             "",
@@ -303,6 +344,7 @@ def main(argv: list[str] | None = None) -> int:
 
     primary = primary_table(audits)
     secondary = secondary_table(audits)
+    per_fold = per_fold_table(audits)
     significance = significance_rows(significance_report) if significance_report else []
     significance_provenance = (
         {
@@ -320,7 +362,7 @@ def main(argv: list[str] | None = None) -> int:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "report.md").write_text(
-        markdown_report(primary, secondary, significance, significance_provenance, extra_provenance),
+        markdown_report(primary, secondary, significance, significance_provenance, extra_provenance, per_fold),
         encoding="utf-8",
     )
     with (output_dir / "comparison.csv").open("w", newline="", encoding="utf-8") as handle:
@@ -351,6 +393,13 @@ def main(argv: list[str] | None = None) -> int:
                         f"{values['macro_f1']:.6f}", f"{values['positive_f1']:.6f}", f"{values['uar']:.6f}",
                     ]
                 )
+        for row in per_fold:
+            writer.writerow(
+                [
+                    f"per_fold_f{row['fold']}", row["model"], row["modality"], row["arm"], "",
+                    f"{row['macro_f1']:.6f}", f"{row['positive_f1']:.6f}", f"{row['uar']:.6f}",
+                ]
+            )
     provenance = {
         "schema_version": "audiollm.turkish_comparison_provenance.v1",
         "inputs": inputs,
