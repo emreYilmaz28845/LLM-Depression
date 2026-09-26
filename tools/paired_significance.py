@@ -485,8 +485,16 @@ def format_markdown(payload: dict[str, Any], family: dict[str, Any]) -> str:
         "# Paired significance report",
         "",
         f"Family file: `{payload['family_path']}` (sha256 `{payload['family_sha256'][:16]}…`)",
-        f"Evidence: `{payload['evidence_path']}` (sha256 `{payload['evidence_sha256'][:16]}…`)",
-        "Retrospective exploratory analysis; the results were inspected before this final analysis specification.",
+        (
+            f"Evidence: `{payload['evidence_path']}` (sha256 `{payload['evidence_sha256'][:16]}…`)"
+            if payload.get("evidence_path")
+            else "Evidence: none required; every side is resolved by an explicit path in the family file."
+        ),
+        (
+            "Prespecified before results: the family membership, metrics, test, correction and pairing rule were fixed in advance."
+            if str(family.get("analysis_status", "")).startswith("prospective")
+            else "Retrospective exploratory analysis; the results were inspected before this final analysis specification."
+        ),
         f"Single-seed comparisons use exact paired swaps. Multi-seed comparisons use up to "
         f"{payload['iterations']} subject-clustered permutations, seed {payload['seed']}.",
         f"Bootstrap: {payload['bootstrap_iterations']} subject-clustered, label-stratified resamples.",
