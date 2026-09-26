@@ -124,8 +124,9 @@ def secondary_table(audits: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def significance_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
+    blocks = report.get("results", {}).get("blocks") or report.get("blocks") or []
     rows = []
-    for block in report.get("blocks", []):
+    for block in blocks:
         for comparison in block.get("comparisons", []):
             for metric in report.get("metrics", []):
                 values = comparison.get("metrics", {}).get(metric)
@@ -146,8 +147,8 @@ def significance_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
                         "p_uncorrected": permutation.get("p_value"),
                         "p_holm_primary_family": permutation.get("p_value_holm_primary_family"),
                         "p_holm_metric_block": permutation.get("p_value_holm_metric_block"),
-                        "mcnemar_b": mcnemar.get("b"),
-                        "mcnemar_c": mcnemar.get("c"),
+                        "mcnemar_b": mcnemar.get("baseline_only_correct"),
+                        "mcnemar_c": mcnemar.get("comparison_only_correct"),
                         "mcnemar_p": mcnemar.get("p_value"),
                         "mcnemar_p_holm": mcnemar.get("p_value_holm_primary_family"),
                     }
@@ -226,7 +227,7 @@ def markdown_report(
             "separately with the same membership). The uncorrected p-value and its bootstrap interval "
             "are shown for transparency only and are never the decision.",
             "",
-            "| Comparison | n | Metric | Δ (four-source − pooled) | 95% CI | p (uncorrected) | p (Holm, prespecified family) | McNemar b/c | McNemar p (Holm) |",
+            "| Comparison | n | Metric | Δ (four-source − pooled) | 95% CI | p (uncorrected) | p (Holm, prespecified family) | McNemar baseline-only / comparison-only correct | McNemar p (Holm) |",
             "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
         for row in significance:
@@ -253,7 +254,11 @@ def markdown_report(
             ]
     lines += ["", "## Provenance", ""]
     for key, value in extra_provenance.items():
-        lines.append(f"- **{key}**: {value}")
+        if isinstance(value, (dict, list)):
+            rendered = "`" + json.dumps(value, sort_keys=True) + "`"
+        else:
+            rendered = str(value)
+        lines.append(f"- **{key}**: {rendered}")
     lines += [
         "",
         "Caveats: on the Turkish train_val protocol the outer fold is both the selection and the "
