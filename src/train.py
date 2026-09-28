@@ -1150,10 +1150,6 @@ def _save_best_checkpoint(save_strategy: str) -> bool:
     return save_strategy in {"full", "best_only"}
 
 
-def _save_last_checkpoint(save_strategy: str) -> bool:
-    return save_strategy == "full"
-
-
 def _resolve_early_stopping(config: dict[str, Any]) -> dict[str, Any]:
     training_cfg = config["training"]
     early_cfg = training_cfg.get("early_stopping") or {}
@@ -1388,9 +1384,8 @@ def _finalize_tracking_artifacts(
         ("logs/peak_gpu_memory.json", "audit", "peak_gpu_memory"),
         ("logs/audio_budget_audit_train.json", "audit", "audio_budget_audit"),
     ]
-    for checkpoint in ("best_model", "last_model"):
-        if (run_root / checkpoint).is_dir():
-            records.append((checkpoint, "checkpoint", "checkpoint_dir"))
+    if (run_root / "best_model").is_dir():
+        records.append(("best_model", "checkpoint", "checkpoint_dir"))
     _update_artifacts_json(run_root, attempt_id, fold, records)
     slurm = context.get("slurm") if isinstance(context.get("slurm"), dict) else {}
     append_job_event(
@@ -1473,7 +1468,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--save_strategy",
         choices=("full", "best_only", "hpo_minimal"),
         default="full",
-        help="Artifact retention strategy. Use hpo_minimal for Optuna trials.",
+        help=(
+            "Artifact retention strategy. full and best_only both keep the selected "
+            "best_model checkpoint; last_model is never written. Use hpo_minimal for "
+            "Optuna trials."
+        ),
     )
     parser.add_argument(
         "--set",
@@ -1527,7 +1526,6 @@ def main() -> None:
     logs_dir = ensure_dir(run_root / "logs")
     eval_dir = run_root / "eval"
     best_dir = run_root / "best_model"
-    last_dir = run_root / "last_model"
 
     split_payload = save_partition_subjects(
         logs_dir / "split_used.json",
@@ -2532,7 +2530,7 @@ def main() -> None:
             torch.cuda.max_memory_reserved() / 1024**3,
             torch.cuda.mem_get_info()[0] / 1024**3,
         )
-    save_last_selected = False
+    save_best_at_end = False
     if accelerator.is_main_process:
         unwrapped = accelerator.unwrap_model(model)
         if objective == "subject_mean_margin_mil":
@@ -2577,22 +2575,15 @@ def main() -> None:
         peak_gpu_memory = _log_peak_gpu_memory(LOGGER, "final")
         if peak_gpu_memory is not None:
             save_json(peak_gpu_memory, logs_dir / "peak_gpu_memory.json")
-        if selection_enabled and _save_last_checkpoint(args.save_strategy):
-            if last_dir.exists():
-                shutil.rmtree(last_dir)
-            save_last_selected = True
-        if not selection_enabled:
-            if last_dir.exists():
-                shutil.rmtree(last_dir)
-            save_last_selected = True
-    save_last_selected = broadcast_flag(accelerator, save_last_selected)
-    if save_last_selected:
-        save_training_checkpoint(accelerator, model, processor, last_dir, config=config)
-    if accelerator.is_main_process:
         if not selection_enabled:
             if best_dir.exists():
                 shutil.rmtree(best_dir)
-            shutil.copytree(last_dir, best_dir)
+            save_best_at_end = True
+    save_best_at_end = broadcast_flag(accelerator, save_best_at_end)
+    if save_best_at_end:
+        save_training_checkpoint(accelerator, model, processor, best_dir, config=config)
+    if accelerator.is_main_process:
+        if not selection_enabled:
             best_epoch = completed_epochs
         run_final_eval_in_train = bool(config["training"].get("run_final_eval_in_train", False))
         if partition_plan["cv_protocol"] == CV_PROTOCOL_TRAIN_VAL:
@@ -2743,7 +2734,6 @@ def main() -> None:
                 "completed_epochs": int(completed_epochs),
                 "history_path": str(logs_dir / "training_history.json"),
                 "best_model_dir": str(best_dir) if best_dir.exists() else None,
-                "last_model_dir": str(last_dir) if last_dir.exists() else None,
                 "stopped_early": bool(stopped_early),
                 "stop_epoch": int(stop_epoch) if stop_epoch is not None else None,
                 "stop_reason": stop_reason,

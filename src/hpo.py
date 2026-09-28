@@ -251,7 +251,6 @@ def _launch_trial(
         trial.set_user_attr("best_epoch", result.get("best_epoch"))
         trial.set_user_attr("sample_prediction_mode", result.get("sample_prediction_mode"))
         trial.set_user_attr("best_model_dir", result.get("best_model_dir"))
-        trial.set_user_attr("last_model_dir", result.get("last_model_dir"))
         return metric_value
     finally:
         if process.poll() is None:

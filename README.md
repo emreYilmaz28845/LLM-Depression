@@ -126,7 +126,7 @@ python src/evaluate.py \
   --checkpoint_dir output_model/harmonized_v1_likelihood/audio_text/daic/<run-name>/fold_0/best_model
 ```
 
-`best_model` is the evaluated checkpoint (validation macro-F1 selection for harmonized runs) — never substitute `last_model` silently. Evaluation bypasses `AudioTextDataset` (deterministic, no augmentation).
+`best_model` is the only checkpoint a run writes (validation macro-F1 selection for harmonized runs); training never writes `last_model`, and `best_model` is the evaluated checkpoint. Evaluation bypasses `AudioTextDataset` (deterministic, no augmentation).
 
 Local 5-fold reproduction loops: `scripts/run_daic_5fold.sh`, `scripts/run_edaic_5fold.sh`, `scripts/run_cmdc_5fold.sh`, `scripts/run_turkish_5fold.sh`.
 
