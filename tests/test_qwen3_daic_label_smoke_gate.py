@@ -1,7 +1,7 @@
 """Tests for the smoke acceptance gate.
 
-The fixture builds the evidence, sidecar and log layout the campaign produces, so
-the gate's checks and its fail-closed behaviour are exercised without any real
+The fixture builds the evidence, sidecar and log layout the campaign produces,
+so the gate's checks and its fail-closed behaviour are exercised without any real
 run.
 """
 
@@ -18,6 +18,8 @@ from tools.qwen3_daic_label_vocab_matrix import SMOKE_CAMPAIGN, SOURCES, run_nam
 
 TEST_SUBJECTS = 47
 ARMS = ("ab", "01", "truefalse", "yesno", "en")
+MANIFEST_HASH = "72e2dd204b915ccba3ebf922f030531fe5678b3ea8c9c52b81b41242fe9dda17"
+SPLIT_HASH = "441333e0c88845eeacba9ea5355a8920cdd1f70e8cf7a7c15b9547b46da51473"
 
 
 def _write_fixture(tmp_path: Path, *, break_chain: tuple[str, str] | None = None) -> tuple[Path, Path, Path]:
@@ -28,31 +30,43 @@ def _write_fixture(tmp_path: Path, *, break_chain: tuple[str, str] | None = None
     split_metadata = logs_root / "daic_subject_partitions.json"
     split_metadata.write_text(
         json.dumps(
-            [{"subject_id": str(300 + index), "partition": "train" if index < 100 else "test", "label": index % 2, "label_text": "Depressed"} for index in range(100 + TEST_SUBJECTS)]
+            [
+                {"subject_id": str(300 + index), "partition": "train" if index < 100 else "test", "label": index % 2, "label_text": "Depressed"}
+                for index in range(100 + TEST_SUBJECTS)
+            ]
         )
         + "\n",
         encoding="utf-8",
     )
 
+    index = 0
     for modality in SOURCES:
         for arm in ARMS:
+            index += 1
             run = run_name(smoke=True, modality=modality, tag=arm, seed=1337)
             fold = evidence_root / SMOKE_CAMPAIGN / modality / "daic" / run / "fold_0"
             standalone = fold / "best_model" / "standalone_eval"
             standalone.mkdir(parents=True, exist_ok=True)
             broken_here = break_chain == (modality, arm)
+            train_job, eval_job = str(46758470 + index), str(46758570 + index)
+
             (fold / "run_config.yaml").write_text(
                 yaml.safe_dump(
                     {
-                        "dataset": "daic",
-                        "seed": 1337,
-                        "split": {"seed": 1337},
-                        "labels": {"label_vocab_version": "short_internal_ab_labels"},
-                        "output_dirs": {"run_root": f"/permanent/output_model/{SMOKE_CAMPAIGN}/{modality}/daic"},
-                        "evaluation": {
-                            "sample_prediction_mode": "likelihood",
-                            "evaluation_view": "harmonized_all_windows_full_coverage",
+                        "config": {
+                            "dataset": "daic",
+                            "seed": 1337,
+                            "split": {"seed": 1337},
+                            "labels": {"label_vocab_version": "short_internal_ab_labels"},
+                            "output_dirs": {"run_root": f"/permanent/output_model/{SMOKE_CAMPAIGN}/{modality}/daic"},
+                            "evaluation": {
+                                "sample_prediction_mode": "likelihood",
+                                "evaluation_view": "harmonized_all_windows_full_coverage",
+                            },
                         },
+                        "training_strategy": {"strategy": "fsdp", "world_size": 4},
+                        "manifest_hash": MANIFEST_HASH,
+                        "split_metadata_hash": SPLIT_HASH,
                     }
                 ),
                 encoding="utf-8",
@@ -63,8 +77,10 @@ def _write_fixture(tmp_path: Path, *, break_chain: tuple[str, str] | None = None
                 encoding="utf-8",
             )
             events = [
-                {"job_key": key, "event_type": "COMPLETED", "exit_code": "0:0"}
-                for key in ("train", "best_eval")
+                {"job_key": "train", "event_type": "SUBMITTED", "slurm_job_id": train_job},
+                {"job_key": "best_eval", "event_type": "SUBMITTED", "slurm_job_id": eval_job, "dependency_job_ids": [train_job]},
+                {"job_key": "train", "event_type": "COMPLETED", "exit_code": "0:0", "slurm_job_id": train_job},
+                {"job_key": "best_eval", "event_type": "COMPLETED", "exit_code": "0:0", "slurm_job_id": eval_job},
             ]
             (fold / "jobs.jsonl").write_text("\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8")
             (fold / "artifacts.json").write_text("{}\n", encoding="utf-8")
@@ -74,11 +90,12 @@ def _write_fixture(tmp_path: Path, *, break_chain: tuple[str, str] | None = None
                 json.dumps(
                     {
                         "aggregation_level": "subject",
-                        "headline_metrics": {
-                            "binary_strict_macro_f1": 0.5,
-                            "binary_strict_positive_f1": 0.4,
-                            "binary_strict_uar": 0.55,
-                        },
+                        "evaluation_view": "harmonized_all_windows_full_coverage",
+                        "checkpoint_name": "best_model",
+                        "num_subjects": TEST_SUBJECTS,
+                        "binary_strict_macro_f1": 0.5,
+                        "binary_strict_positive_f1": 0.4,
+                        "binary_strict_uar": 0.55,
                     }
                 ),
                 encoding="utf-8",
@@ -87,16 +104,16 @@ def _write_fixture(tmp_path: Path, *, break_chain: tuple[str, str] | None = None
             rows += [f"{300 + index},{index % 2},{'Depressed' if index % 2 else 'Non-depressed'}" for index in range(TEST_SUBJECTS)]
             (standalone / "predictions_subject_level.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
 
-            (logs_root / "slurm_train" / "daic" / f"train-1234-{run}.log").write_text(
+            (logs_root / "slurm_train" / "daic" / f"train-{train_job}-2026-09-28_18:28:51.log").write_text(
                 f"Run Name: {run}\n"
                 "Qwen3.8 LoRA audit | matched_modules=256 lora_trainable_params=79691776\n"
                 "trainable params: 79,691,776 || all params: 27,436,420,336 || trainable%: 0.2905\n"
                 "Training strategy | strategy=fsdp world_size=4 per_device_train_batch_size=1\n"
                 "Audio encoder frozen: whisper_tower requires_grad=False\n"
-                "{'loss': 1.234, 'epoch': 0.5}\n",
+                "2026-09-28 18:36:11,209 | INFO | epoch=1 step=25 loss=1.234\n",
                 encoding="utf-8",
             )
-            (logs_root / "slurm_eval" / "daic" / f"eval-5678-{run}.log").write_text(
+            (logs_root / "slurm_train" / "daic" / f"eval-{eval_job}-2026-09-28_18:43:56.log").write_text(
                 f"Run Name: {run}\n"
                 "Checkpoint Dir: /permanent/output_model/fold_0/best_model\n"
                 "'num_subjects': 47, 'aggregation_level': 'subject', \"checkpoint_name': 'best_model'\"\n"
@@ -116,6 +133,7 @@ def _run(tmp_path: Path, **kwargs):
             "--split-metadata", str(split_metadata),
             "--output", str(output),
         ]
+        + (kwargs.get("extra_args") or [])
     )
     return code, json.loads(output.read_text(encoding="utf-8"))
 
@@ -136,6 +154,22 @@ def test_gate_passes_on_a_complete_smoke_set(tmp_path: Path) -> None:
     assert first["train_log"]["audio_encoder_frozen"]["matched"] is True
     assert first["train_log"]["distributed_shape"]["matched"] is True
     assert first["train_losses"]["last"] == pytest.approx(1.234)
+    assert first["config_qualifiers"]["manifest_hash"] == MANIFEST_HASH
+    assert report["manifest_hashes"] == [MANIFEST_HASH]
+
+
+def test_gate_checks_the_expected_provenance_hashes(tmp_path: Path) -> None:
+    code, report = _run(
+        tmp_path,
+        extra_args=[
+            "--expected-manifest-hash", MANIFEST_HASH,
+            "--expected-split-metadata-hash", SPLIT_HASH,
+        ],
+    )
+    assert code == 0, report["failures"]
+    wrong, wrong_report = _run(tmp_path, extra_args=["--expected-manifest-hash", "0" * 64])
+    assert wrong == 1
+    assert any("differs from the expected" in message for message in wrong_report["failures"])
 
 
 def test_gate_fails_closed_when_a_chain_is_not_reportable(tmp_path: Path) -> None:
@@ -147,7 +181,8 @@ def test_gate_fails_closed_when_a_chain_is_not_reportable(tmp_path: Path) -> Non
 def test_gate_fails_on_missing_logs(tmp_path: Path) -> None:
     evidence_root, logs_root, split_metadata = _write_fixture(tmp_path)
     run = run_name(smoke=True, modality="text_only", tag="en", seed=1337)
-    (logs_root / "slurm_train" / "daic" / f"train-1234-{run}.log").unlink()
+    (logs_root / "slurm_train" / "daic" / "train-46758471-2026-09-28_18:28:51.log").unlink()
+    # The first chain (text_only/ab) is index 1, so its train job id is 46758471.
     output = tmp_path / "gate.json"
     code = gate.main(
         [
@@ -160,6 +195,7 @@ def test_gate_fails_on_missing_logs(tmp_path: Path) -> None:
     report = json.loads(output.read_text(encoding="utf-8"))
     assert code == 1
     assert any("missing training log" in message for message in report["failures"])
+    assert run  # the run name is only used to document which chain lost its log
 
 
 def test_gate_fails_on_non_finite_metric(tmp_path: Path) -> None:
@@ -167,7 +203,7 @@ def test_gate_fails_on_non_finite_metric(tmp_path: Path) -> None:
     run = run_name(smoke=True, modality="audio_text", tag="ab", seed=1337)
     metrics_path = evidence_root / SMOKE_CAMPAIGN / "audio_text" / "daic" / run / "fold_0" / "best_model" / "standalone_eval" / "metrics_likelihood.json"
     payload = json.loads(metrics_path.read_text(encoding="utf-8"))
-    payload["headline_metrics"]["binary_strict_macro_f1"] = None
+    payload["binary_strict_macro_f1"] = None
     metrics_path.write_text(json.dumps(payload), encoding="utf-8")
     output = tmp_path / "gate.json"
     code = gate.main(
@@ -203,7 +239,7 @@ def test_gate_fails_when_subject_coverage_is_short(tmp_path: Path) -> None:
     assert any("test subjects" in message for message in report["failures"])
 
 
-def test_gate_requires_the_token_audit_configs_to_be_present(tmp_path: Path) -> None:
+def test_gate_requires_the_token_audit_configs_to_be_present() -> None:
     """The gate reads the real generated configs, so a missing one breaks it."""
     from scripts.build_qwen3_daic_label_configs import generated_name
 
