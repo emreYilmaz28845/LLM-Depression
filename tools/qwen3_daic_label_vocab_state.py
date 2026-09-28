@@ -274,6 +274,22 @@ def command_hard_stop(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_pr(args: argparse.Namespace) -> int:
+    path = Path(args.ledger)
+    record = load_ledger(path)
+    record["lane"]["pull_request"] = {
+        "number": args.number,
+        "url": args.url,
+        "head_sha": args.head_sha,
+        "state": args.state,
+        "recorded_at_utc": utc_now(),
+    }
+    _record(record, {"event": "pull_request", "number": args.number, "head_sha": args.head_sha, "state": args.state})
+    save_ledger(path, record)
+    print(f"pull request {args.number} recorded ({args.state})")
+    return 0
+
+
 def command_show(args: argparse.Namespace) -> int:
     record = load_ledger(Path(args.ledger))
     lane = record["lane"]
@@ -365,6 +381,13 @@ def build_parser() -> argparse.ArgumentParser:
     hard_stop.add_argument("--evidence", action="append")
     hard_stop.add_argument("--decision", default="")
     hard_stop.set_defaults(func=command_hard_stop)
+
+    pull_request = sub.add_parser("pr")
+    pull_request.add_argument("--number", type=int, required=True)
+    pull_request.add_argument("--url", required=True)
+    pull_request.add_argument("--head-sha", required=True)
+    pull_request.add_argument("--state", default="OPEN")
+    pull_request.set_defaults(func=command_pr)
 
     show = sub.add_parser("show")
     show.set_defaults(func=command_show)

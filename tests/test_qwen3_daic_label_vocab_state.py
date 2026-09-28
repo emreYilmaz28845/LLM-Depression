@@ -120,3 +120,16 @@ def test_hard_stop_and_show(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     assert "HARD STOP: token gate failed" in output
     record = json.loads(ledger.read_text(encoding="utf-8"))
     assert record["decisions"][0]["text"] == "keep EN as legacy_english_labels"
+
+
+def test_pull_request_is_recorded_in_the_lane(tmp_path: Path) -> None:
+    ledger = _init(tmp_path)
+    assert main([
+        "--ledger", str(ledger), "pr", "--number", "267",
+        "--url", "https://github.com/example/pull/267",
+        "--head-sha", "37cd72e3622f2c881bbc8ce9948acc46ea300166",
+    ]) == 0
+    record = json.loads(ledger.read_text(encoding="utf-8"))
+    assert record["lane"]["pull_request"]["number"] == 267
+    assert record["lane"]["pull_request"]["state"] == "OPEN"
+    assert record["lane"]["pull_request"]["head_sha"].startswith("37cd72e")
