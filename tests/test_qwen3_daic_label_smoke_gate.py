@@ -88,14 +88,19 @@ def _write_fixture(tmp_path: Path, *, break_chain: tuple[str, str] | None = None
             (standalone / "predictions_subject_level.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
 
             (logs_root / "slurm_train" / "daic" / f"train-1234-{run}.log").write_text(
-                "Resolved LoRA target modules from the anchored pattern\n"
+                f"Run Name: {run}\n"
+                "Qwen3.8 LoRA audit | matched_modules=256 lora_trainable_params=79691776\n"
+                "trainable params: 79,691,776 || all params: 27,436,420,336 || trainable%: 0.2905\n"
+                "Training strategy | strategy=fsdp world_size=4 per_device_train_batch_size=1\n"
                 "Audio encoder frozen: whisper_tower requires_grad=False\n"
-                "world_size=4 rank=0\n"
                 "{'loss': 1.234, 'epoch': 0.5}\n",
                 encoding="utf-8",
             )
             (logs_root / "slurm_eval" / "daic" / f"eval-5678-{run}.log").write_text(
-                "Loading best_model adapter for standalone evaluation\n",
+                f"Run Name: {run}\n"
+                "Checkpoint Dir: /permanent/output_model/fold_0/best_model\n"
+                "'num_subjects': 47, 'aggregation_level': 'subject', \"checkpoint_name': 'best_model'\"\n"
+                "FINAL EVALUATION RESULT | split=test backend=likelihood aggregation=subject\n",
                 encoding="utf-8",
             )
     return evidence_root, logs_root, split_metadata

@@ -46,14 +46,22 @@ from tools.qwen3_daic_label_vocab_matrix import (  # noqa: E402
 
 REQUIRED_SIDECARS = ("run_config.yaml", "metadata.json", "status.json", "jobs.jsonl", "artifacts.json", "evaluations.json")
 HEADLINE_KEYS = ("binary_strict_macro_f1", "binary_strict_positive_f1", "binary_strict_uar")
-# Every pattern must match at least one line of the training log.
-TRAIN_LOG_PATTERNS = {
-    "lora_targets": (r"lora", r"target"),
-    "audio_encoder_frozen": (r"audio", r"froze"),
-    "distributed_shape": (r"world_size",),
-}
+AUDIO_CELLS = ("audio_only", "audio_text")
+# One of each pattern group must match the training log.
+LORA_AUDIT_PATTERNS = (
+    r"LoRA audit.*matched_modules=\d+",
+    r"Resolved \d+ LoRA target modules",
+)
+AUDIO_FREEZE_PATTERNS = (
+    r"audio.{0,80}frozen",
+    r"frozen.{0,80}audio",
+    r"encoder.{0,40}frozen",
+)
+TRAINABLE_PERCENT = re.compile(r"trainable%:\s*([0-9.]+)")
 EVAL_LOG_PATTERNS = {
-    "checkpoint_role": (r"best_model",),
+    "checkpoint_role": (r"checkpoint_name': 'best_model'",),
+    "final_result": (r"FINAL EVALUATION RESULT",),
+    "aggregation": (r"aggregation_level': 'subject'|aggregation=subject",),
 }
 
 
@@ -192,11 +200,30 @@ def check_chain(
         checks["train_log"] = {}
     else:
         text = train_log.read_text(encoding="utf-8", errors="replace")
-        log_checks = _log_matches(text, TRAIN_LOG_PATTERNS)
+        log_checks: dict[str, Any] = {}
+        if run not in text:
+            failures.append(f"{run}: training log does not name the run")
+        lora_hits = [line.strip() for line in text.splitlines() if any(re.search(p, line) for p in LORA_AUDIT_PATTERNS)]
+        log_checks["lora_targets"] = {"matched": bool(lora_hits), "examples": lora_hits[:2]}
+        if not lora_hits:
+            failures.append(f"{run}: training log has no LoRA target audit evidence")
+        freeze_hits = [line.strip() for line in text.splitlines() if any(re.search(p, line, re.IGNORECASE) for p in AUDIO_FREEZE_PATTERNS)]
+        log_checks["audio_encoder_frozen"] = {
+            "required": modality in AUDIO_CELLS,
+            "matched": bool(freeze_hits),
+            "examples": freeze_hits[:2],
+        }
+        if modality in AUDIO_CELLS and not freeze_hits:
+            failures.append(f"{run}: training log has no frozen-audio-encoder evidence")
+        shape_hits = [line.strip() for line in text.splitlines() if "world_size=4" in line]
+        log_checks["distributed_shape"] = {"matched": bool(shape_hits), "examples": shape_hits[:1]}
+        if not shape_hits:
+            failures.append(f"{run}: training log has no world_size=4 evidence")
+        trainable = [float(value) for value in TRAINABLE_PERCENT.findall(text)]
+        log_checks["trainable_percent"] = trainable[:1]
+        if trainable and min(trainable) >= 1.0:
+            failures.append(f"{run}: trainable parameter share is {min(trainable)}%, expected adapter-only training")
         checks["train_log"] = log_checks
-        for name, result in log_checks.items():
-            if not result["matched"]:
-                failures.append(f"{run}: training log has no {name} evidence")
         losses = [value for value in _train_losses(text) if _finite(value)]
         checks["train_losses"] = {"count": len(losses), "last": losses[-1] if losses else None}
         if not losses:
@@ -208,14 +235,37 @@ def check_chain(
     else:
         text = eval_log.read_text(encoding="utf-8", errors="replace")
         log_checks = _log_matches(text, EVAL_LOG_PATTERNS)
+        coverage = re.search(r"num_subjects':\s*(\d+)", text) or re.search(r"num_units':\s*(\d+)", text)
+        reported = int(coverage.group(1)) if coverage else None
+        log_checks["test_subject_coverage"] = {"matched": reported == test_subjects, "reported": reported}
+        if reported != test_subjects:
+            failures.append(f"{run}: evaluation log reports {reported} test subjects, expected {test_subjects}")
         checks["eval_log"] = log_checks
         for name, result in log_checks.items():
-            if not result["matched"]:
+            if isinstance(result, dict) and "matched" in result and not result["matched"]:
                 failures.append(f"{run}: evaluation log has no {name} evidence")
 
     checks["failures"] = failures
     checks["passed"] = not failures
     return checks
+
+
+def _find_log(logs_root: Path, run: str, prefix: str) -> Path:
+    """Find a synced Slurm log for one run.
+
+    The managed submit path exports one LOG_ROOT for both workers, so the
+    evaluation logs can sit beside the training logs in ``slurm_train`` as well as
+    under ``slurm_eval``. Both locations are searched, and the failure is explicit
+    when neither holds the log.
+    """
+    for job_type in ("slurm_train", "slurm_eval"):
+        directory = logs_root / job_type / "daic"
+        if not directory.is_dir():
+            continue
+        for candidate in sorted(directory.glob(f"{prefix}-*{run}*.log")) + sorted(directory.glob(f"{prefix}-*{run}*")):
+            if candidate.is_file() and candidate.suffix == ".log":
+                return candidate
+    return logs_root / "slurm_train" / "daic" / f"{prefix}-{run}.log"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -236,9 +286,6 @@ def main(argv: list[str] | None = None) -> int:
     for modality in SOURCES:
         for arm in ("ab", "01", "truefalse", "yesno", "en"):
             run = run_name(smoke=True, modality=modality, tag=arm, seed=args.seed)
-            train_logs = sorted((logs_root / "slurm_train" / "daic").glob(f"train-*-{run}.log")) if (logs_root / "slurm_train" / "daic").is_dir() else []
-            train_logs += sorted((logs_root / "slurm_train" / "daic").glob(f"*{run}*")) if (logs_root / "slurm_train" / "daic").is_dir() else []
-            eval_logs = sorted((logs_root / "slurm_eval" / "daic").glob(f"*{run}*")) if (logs_root / "slurm_eval" / "daic").is_dir() else []
             chains.append(
                 check_chain(
                     evidence_root=evidence_root,
@@ -247,8 +294,8 @@ def main(argv: list[str] | None = None) -> int:
                     arm=arm,
                     seed=args.seed,
                     test_subjects=test_subjects,
-                    train_log=train_logs[0] if train_logs else logs_root / "slurm_train" / "daic" / f"train-{run}.log",
-                    eval_log=eval_logs[0] if eval_logs else logs_root / "slurm_eval" / "daic" / f"eval-{run}.log",
+                    train_log=_find_log(logs_root, run, "train"),
+                    eval_log=_find_log(logs_root, run, "eval"),
                 )
             )
 
