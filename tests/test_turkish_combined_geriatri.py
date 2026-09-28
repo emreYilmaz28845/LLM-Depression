@@ -16,24 +16,25 @@ from src.data.turkish_combined import build_turkish_combined_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "configs/main"
+EXPERIMENTS = ROOT / "configs/experiments/turkish_all_geriatri"
 
 # The two arms of the four-source comparison. The baseline pooled configs are the
 # recipe authority; the four-source configs only change the data contract and the
 # runtime shape of the Qwen3-Omni cells (two nodes, accumulation 16).
 BASELINE_TREATMENT_PAIRS = (
     (
-        "turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml",
-        "turkish_all_geriatri_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml",
+        MAIN / "turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml",
+        EXPERIMENTS / "turkish_all_geriatri_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml",
         4,
     ),
     (
-        "turkish_pooled_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml",
-        "turkish_all_geriatri_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml",
+        MAIN / "turkish_pooled_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml",
+        EXPERIMENTS / "turkish_all_geriatri_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml",
         8,
     ),
     (
-        "turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml",
-        "turkish_all_geriatri_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml",
+        MAIN / "turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml",
+        EXPERIMENTS / "turkish_all_geriatri_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml",
         8,
     ),
 )
@@ -96,7 +97,7 @@ FROZEN_SPLIT = ("mode", "cv_protocol", "outer_folds", "inner_val_ratio", "seed")
 
 
 def test_treatment_configs_keep_four_sources_and_isolated_fold_lock() -> None:
-    configs = sorted(MAIN.glob("turkish_all_geriatri_t17_*.yaml"))
+    configs = sorted(EXPERIMENTS.glob("turkish_all_geriatri_t17_*.yaml"))
     assert len(configs) == 3
     expected_sources = {
         "original_positive", "original_negative", "geriatri_positive", "geriatri_negative"
@@ -122,9 +123,10 @@ def test_treatment_configs_keep_four_sources_and_isolated_fold_lock() -> None:
 
 
 def test_treatment_arms_keep_the_baseline_recipe_fields() -> None:
-    for baseline_name, treatment_name, world_size in BASELINE_TREATMENT_PAIRS:
-        baseline = yaml.safe_load((MAIN / baseline_name).read_text(encoding="utf-8"))
-        treatment = yaml.safe_load((MAIN / treatment_name).read_text(encoding="utf-8"))
+    for baseline_path, treatment_path, world_size in BASELINE_TREATMENT_PAIRS:
+        baseline_name = baseline_path.name
+        baseline = yaml.safe_load(baseline_path.read_text(encoding="utf-8"))
+        treatment = yaml.safe_load(treatment_path.read_text(encoding="utf-8"))
         for key in FROZEN_TOP_LEVEL:
             assert treatment[key] == baseline[key], (baseline_name, key)
         for key in FROZEN_LORA:
@@ -422,7 +424,7 @@ def test_combined_text_examples_pair_each_question_set(tmp_path: Path) -> None:
     result = build_turkish_combined_manifest(_config(tmp_path), {})
     config = yaml.safe_load(
         (
-            MAIN
+            EXPERIMENTS
             / "turkish_all_geriatri_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml"
         ).read_text(encoding="utf-8")
     )
@@ -439,7 +441,7 @@ def test_combined_audio_examples_keep_both_question_sets(tmp_path: Path) -> None
     result = build_turkish_combined_manifest(_config(tmp_path), {})
     config = yaml.safe_load(
         (
-            MAIN
+            EXPERIMENTS
             / "turkish_all_geriatri_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml"
         ).read_text(encoding="utf-8")
     )

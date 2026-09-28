@@ -29,9 +29,9 @@ baseline: >-
   a held-out test result.
 treatment: >-
   The four-source arm under the aligned configs
-  configs/main/turkish_all_geriatri_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml,
-  configs/main/turkish_all_geriatri_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml
-  and configs/main/turkish_all_geriatri_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml.
+  configs/experiments/turkish_all_geriatri/turkish_all_geriatri_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml,
+  configs/experiments/turkish_all_geriatri/turkish_all_geriatri_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml
+  and configs/experiments/turkish_all_geriatri/turkish_all_geriatri_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml.
   The same model identity, prompt-context recipe, labels, LoRA policy, checkpoint
   selection, windowing, evaluation view, aggregation and effective global batch
   (128) as the baseline cell of the same modality; only the data contract changes
@@ -74,7 +74,7 @@ runs:
     dataset_variant: all_geriatri_t17
     modality: text_only
     arm: treatment
-    config: configs/main/turkish_all_geriatri_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml
+    config: configs/experiments/turkish_all_geriatri/turkish_all_geriatri_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml
     folds: [0, 1, 2, 3, 4]
     endpoint: selected_validation_view
     folds_note: >-
@@ -95,7 +95,7 @@ runs:
     dataset_variant: all_geriatri_t17
     modality: audio_only
     arm: treatment
-    config: configs/main/turkish_all_geriatri_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml
+    config: configs/experiments/turkish_all_geriatri/turkish_all_geriatri_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml
     folds: [0, 1, 2, 3, 4]
     endpoint: selected_validation_view
     folds_note: Five-fold CV (train_val); full-222 headline plus labelled original-120 derivation.
@@ -113,7 +113,7 @@ runs:
     dataset_variant: all_geriatri_t17
     modality: audio_text
     arm: treatment
-    config: configs/main/turkish_all_geriatri_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml
+    config: configs/experiments/turkish_all_geriatri/turkish_all_geriatri_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml
     folds: [0, 1, 2, 3, 4]
     endpoint: selected_validation_view
     folds_note: Five-fold CV (train_val); full-222 headline plus labelled original-120 derivation.

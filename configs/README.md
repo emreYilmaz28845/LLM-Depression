@@ -187,9 +187,13 @@ Count the current inventory with `find configs/main -maxdepth 1 -type f -name '*
 
 ### Four-source Turkish and geriatri extension
 
-`turkish_all_geriatri_t17_<modality>_harmonized_selmacrof1_likelihood_v1_*` is a
-separate, native-Turkish comparison family for audio-only, text-only, and
-audio+text. Each config reads four sources: the existing Turkish positive and
+`configs/experiments/turkish_all_geriatri/turkish_all_geriatri_t17_<modality>_harmonized_selmacrof1_likelihood_v1_*`
+is a separate, native-Turkish comparison family for audio-only, text-only, and
+audio+text. It is a companion experiment, not the headline: the main Turkish
+result stays the pooled positive+negative question-set family in
+`configs/main/turkish_pooled_t17_*` (120 participants), and this family never
+replaces or rewrites it. Each config reads
+four sources: the existing Turkish positive and
 negative question sets, plus the geriatri positive and negative question sets.
 The source list in each YAML is the input contract. The two existing sets share
 their patient IDs and BDO scores. The two geriatri sets also share patients, but
@@ -224,12 +228,16 @@ cells declare two training nodes with accumulation 16 (the shape the baseline
 cells were submitted with) instead of one node with accumulation 32.
 
 This family has isolated manifest, split, and model output roots. It does not
-replace or rewrite the positive-only and negative-only experiments.
+replace or rewrite the positive-only and negative-only experiments, nor the
+pooled pos+neg main family.
 
 Canonical Turkish is positive-only: the `turkish_pos_only_t17_*` configs cover
 the question-set-1 recordings (filenames `*-1-*`). The name `mixed` was wrong
 and is retired; see `experiments/definitions/turkish_pos_only_rename_map.yaml`
-for the old→new map. Old `turkish_t17_*` files remain as legacy history.
+for the old→new map. Old `turkish_t17_*` files remain as legacy history. This
+names the canonical source family, not the reported main row: the main Turkish
+standalone result is the pooled pos+neg family
+(`configs/main/turkish_pooled_t17_*`), which is what the workbook carries.
 
 The `turkish_negative_only_t17_*` configs reuse the harmonized Turkish recipe
 for the negative-question recordings (filenames `*-2-*`). They are a secondary comparison, not an

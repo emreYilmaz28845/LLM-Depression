@@ -27,7 +27,7 @@ SUPERSEDES="${SUPERSEDES:-}"
 case "$CELL" in
   text_only)
     BASELINE_CONFIG="configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml"
-    TREATMENT_CONFIG="configs/main/turkish_all_geriatri_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml"
+    TREATMENT_CONFIG="configs/experiments/turkish_all_geriatri/turkish_all_geriatri_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml"
     CAMPAIGN="promptcontext_v1_qwen38_likelihood"
     MODALITY="text_only"
     TRAIN_NODES=1
@@ -37,7 +37,7 @@ case "$CELL" in
     ;;
   audio_only)
     BASELINE_CONFIG="configs/main/turkish_pooled_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml"
-    TREATMENT_CONFIG="configs/main/turkish_all_geriatri_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml"
+    TREATMENT_CONFIG="configs/experiments/turkish_all_geriatri/turkish_all_geriatri_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml"
     CAMPAIGN="promptcontext_v1_qwen3omni_likelihood"
     MODALITY="audio_only"
     TRAIN_NODES=2
@@ -46,7 +46,7 @@ case "$CELL" in
     ;;
   audio_text)
     BASELINE_CONFIG="configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml"
-    TREATMENT_CONFIG="configs/main/turkish_all_geriatri_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml"
+    TREATMENT_CONFIG="configs/experiments/turkish_all_geriatri/turkish_all_geriatri_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml"
     CAMPAIGN="promptcontext_v1_qwen3omni_likelihood"
     MODALITY="audio_text"
     TRAIN_NODES=2
