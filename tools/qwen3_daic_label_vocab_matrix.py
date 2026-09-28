@@ -38,7 +38,10 @@ from scripts.build_qwen3_daic_label_configs import (  # noqa: E402
 SCHEMA_VERSION = "audiollm.qwen3_daic_label_vocab.matrix.v1"
 SMOKE_CAMPAIGN = "qwen3_daic_label_vocab_smoke_v1"
 GROUP_ID = "qwen3-daic-label-vocab-20260928"
-SMOKE_GROUP_ID = "qwen3-daic-label-vocab-20260928-smoke"
+# Smoke and production share the lane's linked experiment group: the managed
+# submit path refuses any group id other than the linked one, and the smoke
+# separation is carried by the campaign and the run-name prefix instead.
+SMOKE_GROUP_ID = GROUP_ID
 CAMPAIGN_UTC_ID = "20260928T142540Z"
 PRODUCTION_SEEDS = (7, 1337, 2024)
 SMOKE_SEED = 1337
