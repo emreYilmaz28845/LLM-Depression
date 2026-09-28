@@ -1,10 +1,11 @@
 """Weights-free tests for the backend-aware label token audit.
 
 The audit is exercised with fake processors that reproduce the pinned Qwen3.8
-chat template and a whitespace tokenizer, so the tests run without model weights
-and without a GPU. They cover the single-token gate for the four short
-vocabularies, the shared-token and mask failures, the English exemption, and the
-rule that no transcript text may reach the report.
+chat template, a whitespace tokenizer, and the Qwen3-Omni requirement that an
+audio prompt is tokenized together with its audio. The tests need no model
+weights and no GPU. They cover the single-token gate for the four short
+vocabularies, the shared-token and mask failures, the English exemption, the
+audio-prompt path, and the rule that no transcript text may reach the report.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import json
 import re
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from scripts.build_qwen3_daic_label_configs import generated_name
@@ -82,6 +84,38 @@ class FakeProcessor:
         return text
 
 
+class FakeOmniFeatureExtractor:
+    sampling_rate = 16000
+
+
+class FakeOmniProcessor(FakeProcessor):
+    """Mimics the Qwen3-Omni processor: an audio prompt needs its audio.
+
+    The real processor raises ``StopIteration`` while expanding the audio
+    placeholder for a text-only call, which is exactly the failure the audit hit
+    on MN5 before it passed audio through.
+    """
+
+    def __init__(self, splits: dict[str, list[str]] | None = None, audio_tokens: int = 4) -> None:
+        super().__init__(splits)
+        self.feature_extractor = FakeOmniFeatureExtractor()
+        self._audio_tokens = audio_tokens
+
+    def __call__(self, text: str, return_tensors=None, padding=False, audio=None, sampling_rate=None, **kwargs):
+        if "<|audio_pad|>" in text:
+            if not audio:
+                raise StopIteration("no audio lengths available for the audio placeholder")
+            expanded = "<|audio_pad|>" * self._audio_tokens
+            text = text.replace("<|audio_pad|>", expanded)
+        ids = self.tokenizer.encode(text)
+        encoded = {"input_ids": [ids], "attention_mask": [[1] * len(ids)]}
+        if audio:
+            # The collator expects the mel features alongside the audio text.
+            encoded["input_features"] = np.zeros((len(audio), 4, 8), dtype=np.float32)
+            encoded["feature_attention_mask"] = np.ones((len(audio), 8), dtype=np.int64)
+        return encoded
+
+
 @pytest.fixture()
 def model_dir(tmp_path: Path) -> Path:
     directory = tmp_path / "fake-model"
@@ -90,20 +124,18 @@ def model_dir(tmp_path: Path) -> Path:
     return directory
 
 
-def _patch_processor(monkeypatch: pytest.MonkeyPatch, splits: dict[str, list[str]] | None = None) -> FakeProcessor:
-    processor = FakeProcessor(splits)
+def _patch_processor(monkeypatch: pytest.MonkeyPatch, processor) -> None:
     monkeypatch.setattr(audit, "load_processor", lambda model_path, config: processor)
-    return processor
 
 
 def _config_path(modality: str, arm: str) -> Path:
     return ROOT / "configs/labels" / generated_name(modality, arm)
 
 
-def _audit(monkeypatch: pytest.MonkeyPatch, *, arm: str, model_dir: Path, splits=None, **kwargs) -> dict:
-    _patch_processor(monkeypatch, splits)
+def _audit(monkeypatch: pytest.MonkeyPatch, *, arm: str, modality: str, model_dir: Path, processor, **kwargs) -> dict:
+    _patch_processor(monkeypatch, processor)
     return audit.audit_config(
-        _config_path("text_only", arm),
+        _config_path(modality, arm),
         model_path=str(model_dir),
         overrides=[],
         manifest=kwargs.get("manifest"),
@@ -114,7 +146,7 @@ def _audit(monkeypatch: pytest.MonkeyPatch, *, arm: str, model_dir: Path, splits
 
 
 def test_single_token_vocabulary_passes(monkeypatch: pytest.MonkeyPatch, model_dir: Path) -> None:
-    report = _audit(monkeypatch, arm="ab", model_dir=model_dir)
+    report = _audit(monkeypatch, arm="ab", modality="text_only", model_dir=model_dir, processor=FakeProcessor())
     assert report["passed"], report["failures"]
     assert report["checks"]["prompt_is_gold_independent"] is True
     positives = report["synthetic"][0]["labels"][1]
@@ -127,39 +159,50 @@ def test_single_token_vocabulary_passes(monkeypatch: pytest.MonkeyPatch, model_d
 
 
 def test_multi_token_short_label_fails_closed(monkeypatch: pytest.MonkeyPatch, model_dir: Path) -> None:
-    report = _audit(monkeypatch, arm="truefalse", model_dir=model_dir, splits={"True": ["Tru", "e"]})
+    report = _audit(
+        monkeypatch, arm="truefalse", modality="text_only", model_dir=model_dir,
+        processor=FakeProcessor({"True": ["Tru", "e"]}),
+    )
     assert not report["passed"]
     assert any("tokens at the prompt boundary" in message for message in report["failures"]), report["failures"]
 
 
 def test_classes_may_not_share_a_token(monkeypatch: pytest.MonkeyPatch, model_dir: Path) -> None:
-    report = _audit(monkeypatch, arm="ab", model_dir=model_dir, splits={"A": ["shared"], "B": ["shared"]})
+    report = _audit(
+        monkeypatch, arm="ab", modality="text_only", model_dir=model_dir,
+        processor=FakeProcessor({"A": ["shared"], "B": ["shared"]}),
+    )
     assert not report["passed"]
     assert any("share the same continuation token ids" in message for message in report["failures"])
 
 
 def test_english_vocabulary_may_span_several_tokens(monkeypatch: pytest.MonkeyPatch, model_dir: Path) -> None:
     report = _audit(
-        monkeypatch,
-        arm="en",
-        model_dir=model_dir,
-        splits={"Depressed": ["Dep", "ressed"], "Non-depressed": ["Non", "-", "depressed"]},
+        monkeypatch, arm="en", modality="text_only", model_dir=model_dir,
+        processor=FakeProcessor({"Depressed": ["Dep", "ressed"], "Non-depressed": ["Non", "-", "depressed"]}),
     )
     assert report["passed"], report["failures"]
     assert report["single_token_required"] is False
-    lengths = {
-        entry["text"]: entry["length"] for entry in report["synthetic"][0]["labels"].values()
-    }
+    lengths = {entry["text"]: entry["length"] for entry in report["synthetic"][0]["labels"].values()}
     assert lengths == {"Depressed": 2, "Non-depressed": 3}
 
 
-def test_mask_mismatch_is_reported(monkeypatch: pytest.MonkeyPatch, model_dir: Path) -> None:
-    report = _audit(monkeypatch, arm="ab", model_dir=model_dir)
-    assert report["passed"]
-    # The synthetic checks already prove the mask keeps the candidate tokens; a
-    # mismatch would surface as a failure entry with the mask wording.
-    assert report["synthetic"][0]["mask"]["answer_tokens"] == 1
-    assert not any("training label mask" in message for message in report["failures"])
+def test_audio_prompts_are_tokenized_with_their_audio(monkeypatch: pytest.MonkeyPatch, model_dir: Path) -> None:
+    """The omni processor needs the audio; the audit must pass it through."""
+    for modality in ("audio_only", "audio_text"):
+        report = _audit(
+            monkeypatch, arm="ab", modality=modality, model_dir=model_dir, processor=FakeOmniProcessor(),
+        )
+        assert report["passed"], (modality, report["failures"])
+        assert report["checks"]["audio_source"] == "synthetic_silence"
+        assert report["synthetic"][0]["mask"]["answer_tokens"] == 1
+        assert report["synthetic"][0]["terminator_tokens"] == 1
+
+
+def test_audio_processor_without_audio_would_fail(monkeypatch: pytest.MonkeyPatch, model_dir: Path) -> None:
+    processor = FakeOmniProcessor()
+    with pytest.raises(StopIteration):
+        processor(text="Audio 1: <|audio_start|><|audio_pad|><|audio_end|>", return_tensors=None, padding=False)
 
 
 def test_report_never_carries_transcript_text(monkeypatch: pytest.MonkeyPatch, model_dir: Path, tmp_path: Path) -> None:
@@ -188,7 +231,10 @@ def test_report_never_carries_transcript_text(monkeypatch: pytest.MonkeyPatch, m
     ]
     manifest.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
 
-    report = _audit(monkeypatch, arm="ab", model_dir=model_dir, manifest=str(manifest))
+    report = _audit(
+        monkeypatch, arm="ab", modality="text_only", model_dir=model_dir,
+        processor=FakeProcessor(), manifest=str(manifest),
+    )
     assert report["passed"], report["failures"]
     assert len(report["real"]["train"]) == 2
     serialized = json.dumps(report)
@@ -198,7 +244,7 @@ def test_report_never_carries_transcript_text(monkeypatch: pytest.MonkeyPatch, m
 
 
 def test_unsupported_backend_is_refused(monkeypatch: pytest.MonkeyPatch, model_dir: Path) -> None:
-    _patch_processor(monkeypatch)
+    _patch_processor(monkeypatch, FakeProcessor())
     with pytest.raises(audit.AuditError):
         audit.audit_config(
             _config_path("audio_only", "ab"),

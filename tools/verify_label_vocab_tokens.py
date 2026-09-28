@@ -36,6 +36,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -43,6 +45,7 @@ if str(ROOT) not in sys.path:
 from src.data.runtime import (  # noqa: E402
     _base_example_from_row,
     build_examples,
+    load_audio_array,
     resolve_audio_placeholder,
 )
 from src.model.runtime import build_collator, load_processor, prepare_backend_examples  # noqa: E402
@@ -75,12 +78,57 @@ class AuditError(RuntimeError):
     """Raised when the audit cannot run at all (fail closed)."""
 
 
-def _token_ids(processor, text: str) -> list[int]:
-    encoded = processor(text=text, return_tensors=None, padding=False)
+def _token_ids(processor, text: str, *, audio=None, sampling_rate: int | None = None) -> list[int]:
+    kwargs: dict[str, Any] = {"text": text, "return_tensors": None, "padding": False}
+    if audio is not None:
+        # The multimodal processor expands the audio placeholder from the audio
+        # features, so an audio prompt must be tokenized with its audio: the
+        # training and evaluation paths always pass it.
+        kwargs["audio"] = audio
+        kwargs["sampling_rate"] = int(sampling_rate) if sampling_rate is not None else None
+    encoded = processor(**kwargs)
     ids = encoded["input_ids"]
     if ids and isinstance(ids[0], list):
         ids = ids[0]
     return [int(token_id) for token_id in ids]
+
+
+def _processor_sampling_rate(processor) -> int:
+    extractor = getattr(processor, "feature_extractor", None)
+    if extractor is None:
+        raise AuditError("audio examples require a processor with a feature extractor")
+    return int(extractor.sampling_rate)
+
+
+def _example_audio(config: dict[str, Any], processor, example: dict[str, Any]) -> tuple[list[Any] | None, str]:
+    """Return the audio the processor must see, and where it came from.
+
+    Real manifest rows use their own window file; synthetic examples use a silent
+    window of the configured chunk length. The audit never invents audio content:
+    it only needs the length the processor expands the placeholder with.
+    """
+    if example.get("input_modality") == INPUT_MODALITY_TEXT_ONLY:
+        return None, "none"
+    sampling_rate = _processor_sampling_rate(processor)
+    paths = [path for path in example.get("audio_paths", []) if path]
+    if paths and Path(paths[0]).exists():
+        start_times = example.get("audio_start_times") or [None]
+        end_times = example.get("audio_end_times") or [None]
+        array = load_audio_array(
+            paths[0],
+            sampling_rate,
+            None,
+            False,
+            start_times[0],
+            end_times[0],
+        )
+        return [np.asarray(array, dtype=np.float32)], "real_window_file"
+    samples = int(config.get("data", {}).get("participant_chunk_samples", 0) or 0)
+    if samples <= 0:
+        raise AuditError(
+            "synthetic audio prompts need data.participant_chunk_samples to size the silent window"
+        )
+    return [np.zeros(samples, dtype=np.float32)], "synthetic_silence"
 
 
 def _decode(processor, token_ids: list[int]) -> str:
@@ -128,17 +176,21 @@ def _example_checks(
     arm: str,
     failures: list[str],
     source: str,
+    audio: list[Any] | None = None,
+    sampling_rate: int | None = None,
 ) -> dict[str, Any]:
     tokenizer = getattr(processor, "tokenizer", processor)
     prompt_text = example["prompt_text"]
     training_text = example["training_text"]
-    prompt_ids = _token_ids(processor, prompt_text)
+    prompt_ids = _token_ids(processor, prompt_text, audio=audio, sampling_rate=sampling_rate)
 
     result: dict[str, Any] = {"source": source, "prompt_tokens": len(prompt_ids), "labels": {}}
     continuation_by_label: dict[int, list[int]] = {}
     for label in (1, 0):
         candidate = internal_label_text_from_int(config, label)
-        full_ids = _token_ids(processor, prompt_text + candidate)
+        full_ids = _token_ids(
+            processor, prompt_text + candidate, audio=audio, sampling_rate=sampling_rate
+        )
         if full_ids[: len(prompt_ids)] != prompt_ids:
             failures.append(f"{source}: candidate {candidate!r} changes the prompt token prefix")
         continuation = full_ids[len(prompt_ids) :]
@@ -173,7 +225,7 @@ def _example_checks(
 
     collator = build_collator(config, processor, debug=True)
     prepared = dict(example)
-    prepared["audio_arrays"] = []
+    prepared["audio_arrays"] = list(audio) if audio else []
     collator([prepared])
     debug = collator.last_debug_example or {}
     training_ids = debug.get("input_ids", [])
@@ -280,10 +332,20 @@ def audit_config(
         if example["prompt_text"].rstrip().endswith(candidate):
             failures.append(f"synthetic: the prompt ends with the gold label text {candidate!r}")
     checks["audio_placeholder"] = resolve_audio_placeholder(config)
+    positive_audio, audio_source = _example_audio(config, processor, positives)
+    negative_audio, _ = _example_audio(config, processor, negatives)
+    checks["audio_source"] = audio_source
+    sampling_rate = _processor_sampling_rate(processor) if positive_audio is not None else None
 
     synthetic_reports = [
-        _example_checks(config, processor, positives, arm=arm, failures=failures, source="synthetic-label-1"),
-        _example_checks(config, processor, negatives, arm=arm, failures=failures, source="synthetic-label-0"),
+        _example_checks(
+            config, processor, positives, arm=arm, failures=failures, source="synthetic-label-1",
+            audio=positive_audio, sampling_rate=sampling_rate,
+        ),
+        _example_checks(
+            config, processor, negatives, arm=arm, failures=failures, source="synthetic-label-0",
+            audio=negative_audio, sampling_rate=sampling_rate,
+        ),
     ]
 
     real_reports: dict[str, list[dict[str, Any]]] = {}
@@ -297,17 +359,21 @@ def audit_config(
             limit=real_limit,
         )
         for partition, examples in real_examples.items():
-            real_reports[partition] = [
-                _example_checks(
+            real_reports[partition] = []
+            for index, example in enumerate(examples):
+                example_audio, example_source = _example_audio(config, processor, example)
+                report = _example_checks(
                     config,
                     processor,
                     example,
                     arm=arm,
                     failures=failures,
                     source=f"real-{partition}-{index}",
+                    audio=example_audio,
+                    sampling_rate=sampling_rate,
                 )
-                for index, example in enumerate(examples)
-            ]
+                report["audio_source"] = example_source
+                real_reports[partition].append(report)
 
     tokenizer = getattr(processor, "tokenizer", processor)
     tokenizer_json = Path(resolved_model) / "tokenizer.json"
