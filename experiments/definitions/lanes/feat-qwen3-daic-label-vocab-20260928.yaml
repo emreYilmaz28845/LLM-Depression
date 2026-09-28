@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: feat-qwen3-daic-label-vocab-20260928
+slug: qwen3-daic-label-vocab
+tier: 2
+branch: agent/feat-qwen3-daic-label-vocab
+worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-feat-qwen3-daic-label-vocab
+parent_branch: origin/main
+parent_sha: 10fc786bf99cd0e7c7b1c0571339a8a7944ea4d6
+created_at_utc: "2026-09-28T14:25:40Z"
+experiment_group_path: experiments/definitions/qwen3-daic-label-vocab-20260928.yaml
+type: complementary
