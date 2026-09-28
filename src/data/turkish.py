@@ -24,7 +24,16 @@ DEFAULT_TRANSCRIPT_FILE = "whisper_transcripts_repaired.jsonl"
 SOURCE_THRESHOLD = 25.0
 METADATA_SCHEMA_LEGACY_T25 = "legacy_t25"
 METADATA_SCHEMA_MINIMAL_T17 = "minimal_t17"
-SUPPORTED_METADATA_SCHEMAS = (METADATA_SCHEMA_LEGACY_T25, METADATA_SCHEMA_MINIMAL_T17)
+METADATA_SCHEMA_GERIATRI_BDO_T17 = "geriatri_bdo_t17"
+SUPPORTED_METADATA_SCHEMAS = (
+    METADATA_SCHEMA_LEGACY_T25,
+    METADATA_SCHEMA_MINIMAL_T17,
+    METADATA_SCHEMA_GERIATRI_BDO_T17,
+)
+
+
+def _basename_key(value: str) -> str:
+    return unicodedata.normalize("NFC", Path(value).name).casefold()
 
 
 def _optional_float(value: Any) -> float | None:
@@ -57,6 +66,8 @@ def _required_metadata_fields(schema: str) -> set[str]:
             "label_t17",
             "target_t17",
         }
+    if schema == METADATA_SCHEMA_GERIATRI_BDO_T17:
+        return {"file_name", "depresyon_skoru"}
     raise ValueError(
         f"Unsupported Turkish metadata_schema={schema!r}. "
         f"Expected one of {', '.join(SUPPORTED_METADATA_SCHEMAS)}."
@@ -84,6 +95,10 @@ def _validated_source_label(
         label_field = "label_t17"
         target_field = "target_t17"
         source_threshold = 17.0
+    elif schema == METADATA_SCHEMA_GERIATRI_BDO_T17:
+        if threshold != 17.0:
+            raise ValueError("Turkish geriatri_bdo_t17 metadata requires threshold=17.")
+        return int(score >= threshold)
     else:  # guarded by _required_metadata_fields; keep this helper fail-closed.
         raise ValueError(f"Unsupported Turkish metadata_schema={schema!r}.")
 
@@ -110,9 +125,10 @@ def _load_whisper_transcripts(path: Path) -> dict[str, dict[str, Any]]:
             basename = Path(str(payload.get("audio_path", ""))).name
             if not basename:
                 raise ValueError(f"Turkish transcript row {line_number} has no audio basename.")
-            if basename in transcripts:
+            key = _basename_key(basename)
+            if key in transcripts:
                 raise ValueError(f"Duplicate Turkish transcript basename: {basename}")
-            transcripts[basename] = {
+            transcripts[key] = {
                 "transcript": str(payload.get("transcript", "")).strip(),
                 "language": str(payload.get("language", "")).strip(),
                 "repair_status": str(payload.get("repair_status", "")).strip(),
@@ -121,8 +137,16 @@ def _load_whisper_transcripts(path: Path) -> dict[str, dict[str, Any]]:
 
 
 def _parse_chunk_id(basename: str, subject_id: str) -> str:
+    basename = unicodedata.normalize("NFC", basename)
+    subject_id = unicodedata.normalize("NFC", subject_id)
     pattern = re.compile(rf"^{re.escape(subject_id)}-[^-]+-([^-]+)-.+\.wav$", re.IGNORECASE)
     match = pattern.match(basename)
+    if match is None:
+        short_match = re.fullmatch(
+            rf"{re.escape(subject_id)}-(?:[^-]+-)?([^-]+)\.wav", basename, re.IGNORECASE
+        )
+        if short_match is not None:
+            return short_match.group(1)
     if match is None:
         raise ValueError(
             f"Turkish filename does not match patient_id | patient_id={subject_id!r} file={basename!r}"
@@ -152,7 +176,7 @@ def verify_turkish_split_integrity(
             raise ValueError(f"Turkish subject has mixed labels: {subject_id}")
         labels[subject_id] = label
         sample_subjects[str(row["sample_id"])].add(subject_id)
-        file_subjects[Path(str(row["audio_path"])).name].add(subject_id)
+        file_subjects[str(row["audio_path"])].add(subject_id)
 
     duplicate_samples = {key: value for key, value in sample_subjects.items() if len(value) != 1}
     if duplicate_samples:
@@ -202,6 +226,8 @@ def build_turkish_manifest(
         config.get("metadata_schema", METADATA_SCHEMA_LEGACY_T25)
     ).strip().lower()
     dataset_variant = str(config.get("dataset_variant", "")).strip()
+    subject_namespace = str(config.get("subject_namespace", "")).strip()
+    sample_namespace = str(config.get("sample_namespace", "")).strip()
     if dataset_variant == "pooled_t17":
         raise ValueError(
             "The raw Turkish manifest builder refuses dataset_variant=pooled_t17; "
@@ -220,6 +246,12 @@ def build_turkish_manifest(
         raise FileNotFoundError(f"Turkish audio directory not found: {audio_dir}")
 
     transcripts = _load_whisper_transcripts(transcript_path)
+    disk_audio = {}
+    for path in audio_dir.glob("*.wav"):
+        key = _basename_key(path.name)
+        if key in disk_audio:
+            raise ValueError(f"Duplicate normalized Turkish audio basename: {path.name}")
+        disk_audio[key] = path
     csv.field_size_limit(max(csv.field_size_limit(), 10**9))
 
     manifest_rows: list[dict[str, Any]] = []
@@ -240,20 +272,27 @@ def build_turkish_manifest(
             basename = Path(str(source_row["file_name"])).name
             if not basename:
                 raise ValueError(f"Turkish metadata row {row_number} has an empty file_name.")
-            if basename in metadata_basenames:
+            basename_key = _basename_key(basename)
+            if basename_key in metadata_basenames:
                 raise ValueError(f"Duplicate Turkish metadata basename: {basename}")
-            metadata_basenames.add(basename)
+            metadata_basenames.add(basename_key)
 
             sample_id = Path(basename).stem
-            source_subject_id = str(source_row["patient_id"]).strip()
+            source_subject_id = str(source_row.get("patient_id") or "").strip()
+            if metadata_schema == METADATA_SCHEMA_GERIATRI_BDO_T17:
+                source_subject_id = source_subject_id or basename.split("-", 1)[0]
             if not source_subject_id:
                 raise ValueError(f"Turkish metadata row {row_number} has an empty patient_id.")
             chunk_id = _parse_chunk_id(basename, source_subject_id)
             # The original Turkish metadata uses decomposed Unicode. Keep that
             # canonical form so equivalent subjects receive identical CV folds.
             subject_id = unicodedata.normalize("NFD", source_subject_id)
-            audio_path = audio_dir / basename
-            transcript_payload = transcripts.get(basename)
+            if subject_namespace:
+                subject_id = f"{subject_namespace}:{subject_id}"
+            if sample_namespace:
+                sample_id = f"{sample_namespace}:{sample_id}"
+            audio_path = disk_audio.get(basename_key, audio_dir / basename)
+            transcript_payload = transcripts.get(basename_key)
             transcript = str((transcript_payload or {}).get("transcript", "")).strip()
             language = str((transcript_payload or {}).get("language", "")).strip()
             repair_status = str((transcript_payload or {}).get("repair_status", "")).strip().upper()
@@ -331,9 +370,18 @@ def build_turkish_manifest(
             if previous_label != label:
                 raise ValueError(f"Turkish subject has mixed labels: {subject_id}")
 
-            comorbid = _optional_int(source_row.get("label"))
-            anxiety_score = _optional_float(source_row.get("anksiyete_skoru"))
-            w2v2_predicted_score = _optional_float(source_row.get("w2v2_predicted_score"))
+            comorbid = (
+                _optional_int(source_row.get("label"))
+                if metadata_schema == METADATA_SCHEMA_LEGACY_T25 else None
+            )
+            anxiety_score = (
+                _optional_float(source_row.get("anksiyete_skoru"))
+                if metadata_schema == METADATA_SCHEMA_LEGACY_T25 else None
+            )
+            w2v2_predicted_score = (
+                _optional_float(source_row.get("w2v2_predicted_score"))
+                if metadata_schema == METADATA_SCHEMA_LEGACY_T25 else None
+            )
             subject_metadata.setdefault(
                 subject_id,
                 {
@@ -379,9 +427,10 @@ def build_turkish_manifest(
                 manifest_row["dataset_variant"] = dataset_variant
             manifest_rows.append(manifest_row)
 
-    disk_audio_basenames = {path.name for path in audio_dir.glob("*.wav")}
-    for basename in sorted(disk_audio_basenames - metadata_basenames):
-        transcript_payload = transcripts.get(basename)
+    disk_audio_basenames = set(disk_audio)
+    for key in sorted(disk_audio_basenames - metadata_basenames):
+        basename = disk_audio[key].name
+        transcript_payload = transcripts.get(key)
         extra_file_audit.append(
             {
                 "file": basename,
@@ -392,7 +441,8 @@ def build_turkish_manifest(
                 "language": str((transcript_payload or {}).get("language", "")).strip(),
             }
         )
-    for basename in sorted(set(transcripts) - metadata_basenames - disk_audio_basenames):
+    for key in sorted(set(transcripts) - metadata_basenames - disk_audio_basenames):
+        basename = key
         extra_file_audit.append(
             {
                 "file": basename,
@@ -400,7 +450,7 @@ def build_turkish_manifest(
                 "reason": "transcript_without_audio_or_label",
                 "audio_found": False,
                 "transcript_found": True,
-                "language": transcripts[basename]["language"],
+                "language": transcripts[key]["language"],
             }
         )
 

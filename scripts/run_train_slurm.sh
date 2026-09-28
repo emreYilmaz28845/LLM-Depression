@@ -182,7 +182,9 @@ effective_batch_size = per_device * grad_acc * world_size
 
 print("dataset", dataset)
 print("effective_batch_size", effective_batch_size)
-print("dataset_root", config["dataset_root"])
+print("dataset_root", config.get("dataset_root", "<multi-source>"))
+if config.get("sources"):
+    print("sources", json.dumps(config["sources"], sort_keys=True))
 print("transcript_file", config.get("transcript_file", "<default>"))
 print("sample_prediction_mode", config["evaluation"]["sample_prediction_mode"])
 print("audio_adapter", json.dumps(config.get("audio_adapter", {}), sort_keys=True))

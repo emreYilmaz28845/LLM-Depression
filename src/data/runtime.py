@@ -39,6 +39,7 @@ from src.utils import (
     INPUT_MODALITY_TEXT_ONLY,
     MODEL_BACKEND_QWEN3OMNI,
     internal_label_text_from_int,
+    is_turkish_question_conditioned_variant,
     prompt_label_descriptor,
     prompt_label_instruction,
     read_jsonl,
@@ -577,7 +578,7 @@ def _harmonized_subject_transcripts(
 def _is_turkish_pooled_text_only(config: dict[str, Any]) -> bool:
     return (
         str(config.get("dataset", "")).lower() == "turkish"
-        and str(config.get("dataset_variant", "")).strip() == "pooled_t17"
+        and is_turkish_question_conditioned_variant(config.get("dataset_variant"))
         and resolve_input_modality(config) == INPUT_MODALITY_TEXT_ONLY
     )
 

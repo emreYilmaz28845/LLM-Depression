@@ -71,6 +71,7 @@ from src.utils import (
     evaluation_protocol_name,
     get_logger,
     internal_label_text_from_int,
+    is_turkish_question_conditioned_variant,
     label_text_from_int,
     load_yaml_with_overrides,
     log_resolved_config,
@@ -803,7 +804,7 @@ def evaluate_examples(
     condition_breakdowns: dict[str, Any] = {}
     if (
         str(config.get("dataset", "")).lower() == "turkish"
-        and str(config.get("dataset_variant", "")).strip() == "pooled_t17"
+        and is_turkish_question_conditioned_variant(config.get("dataset_variant"))
         and mode in (PREDICTION_MODE_ORIGINAL_TEACHER_FORCED, PREDICTION_MODE_LIKELIHOOD)
     ):
         condition_values = {str(row.get("question_condition", "")).strip() for row in sample_rows}
