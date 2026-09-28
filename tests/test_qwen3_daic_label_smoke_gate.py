@@ -109,7 +109,8 @@ def _write_fixture(tmp_path: Path, *, break_chain: tuple[str, str] | None = None
                 "Qwen3.8 LoRA audit | matched_modules=256 lora_trainable_params=79691776\n"
                 "trainable params: 79,691,776 || all params: 27,436,420,336 || trainable%: 0.2905\n"
                 "Training strategy | strategy=fsdp world_size=4 per_device_train_batch_size=1\n"
-                "Audio encoder frozen: whisper_tower requires_grad=False\n"
+                "Audio-encoder freeze guard: 0 trainable LoRA params under audio_tower (encoder frozen).\n"
+                "Trainable parameter summary | total=13369344 lora=13369344 adapter=0 projector=0 other=0\n"
                 "2026-09-28 18:36:11,209 | INFO | epoch=1 step=25 loss=1.234\n",
                 encoding="utf-8",
             )
@@ -237,6 +238,30 @@ def test_gate_fails_when_subject_coverage_is_short(tmp_path: Path) -> None:
     report = json.loads(output.read_text(encoding="utf-8"))
     assert code == 1
     assert any("test subjects" in message for message in report["failures"])
+
+
+def test_gate_fails_when_the_trainable_summary_is_not_adapter_only(tmp_path: Path) -> None:
+    evidence_root, logs_root, split_metadata = _write_fixture(tmp_path)
+    run = run_name(smoke=True, modality="audio_only", tag="ab", seed=1337)
+    log = logs_root / "slurm_train" / "daic" / "train-46758471-2026-09-28_18:28:51.log"
+    log.write_text(
+        log.read_text(encoding="utf-8")
+        + "Trainable parameter summary | total=13369344 lora=13369344 adapter=0 projector=64 other=0\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "gate.json"
+    code = gate.main(
+        [
+            "--evidence-root", str(evidence_root),
+            "--logs-root", str(logs_root),
+            "--split-metadata", str(split_metadata),
+            "--output", str(output),
+        ]
+    )
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert code == 1
+    assert any("not adapter-only" in message for message in report["failures"])
+    assert run
 
 
 def test_gate_requires_the_token_audit_configs_to_be_present() -> None:

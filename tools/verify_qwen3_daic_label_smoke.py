@@ -51,11 +51,16 @@ LORA_AUDIT_PATTERNS = (
     r"Resolved \d+ LoRA target modules",
 )
 AUDIO_FREEZE_PATTERNS = (
-    r"audio.{0,80}frozen",
-    r"frozen.{0,80}audio",
+    r"audio.{0,160}frozen",
+    r"frozen.{0,160}audio",
     r"encoder.{0,40}frozen",
 )
 TRAINABLE_PERCENT = re.compile(r"trainable%:\s*([0-9.]+)")
+# Qwen3-Omni logs the adapter-only accounting explicitly; Qwen3.8 logs the
+# adapter-only percentage. At least one of the two must appear.
+TRAINABLE_SUMMARY = re.compile(
+    r"Trainable parameter summary \| total=(\d+) lora=(\d+) adapter=(\d+) projector=(\d+) other=(\d+)"
+)
 # The repo logs ``epoch=1 step=25 loss=0.178806`` itself; the HuggingFace trainer
 # dict line is accepted as well because it can also reach the log.
 LOSS_PATTERNS = (
@@ -302,6 +307,16 @@ def check_chain(
         log_checks["trainable_percent"] = trainable[:1]
         if trainable and min(trainable) >= 1.0:
             failures.append(f"{run}: trainable parameter share is {min(trainable)}%, expected adapter-only training")
+        summaries = TRAINABLE_SUMMARY.findall(text)
+        log_checks["trainable_summary"] = summaries[:1]
+        for total, lora, adapter, projector, other in summaries:
+            if int(total) != int(lora) or any(int(value) for value in (adapter, projector, other)):
+                failures.append(
+                    f"{run}: trainable summary is not adapter-only "
+                    f"(total={total} lora={lora} adapter={adapter} projector={projector} other={other})"
+                )
+        if not trainable and not summaries:
+            failures.append(f"{run}: training log has no trainable-parameter evidence")
         checks["train_log"] = log_checks
         losses = [value for value in _train_losses(text) if _finite(value)]
         checks["train_losses"] = {"count": len(losses), "last": losses[-1] if losses else None}
