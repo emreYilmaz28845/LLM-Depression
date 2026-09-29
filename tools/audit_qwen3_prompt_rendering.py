@@ -9,8 +9,12 @@ CPU only, no model weights. Two layers of checks:
 * backend rendering, when ``--model-path`` points at the pinned Qwen3.8
   snapshot: the text-only cells are rendered through the real chat template
   (thinking disabled), the generation prompt and the training text must agree on
-  the label boundary (the backend raises otherwise), each answer label must be a
-  single token, and the prompt must fit the model context.
+  the label boundary (the backend raises otherwise), each answer label must be
+  non-empty and round-trip exactly through the tokenizer (the two labels must
+  differ), and the prompt must fit the model context. ``--require-single-token-labels``
+  additionally demands one-token labels; that property belongs to the dedicated
+  single-token label-vocabulary experiments, not to the canonical label set,
+  whose likelihood path scores multi-token label spans.
 
 The pool manifests come from the task runtime built by
 ``scripts/build_turkish_pooled_manifest.py``.
@@ -138,21 +142,34 @@ def audit_cell(
 
 
 def _qwen38_context_limit(model_path: Path, tokenizer) -> int:
-    """Declared text context length, or 0 when the snapshot does not declare a usable one."""
-    from transformers import AutoConfig
+    """Declared text context length, or 0 when the snapshot does not declare a usable one.
 
-    config = AutoConfig.from_pretrained(str(model_path), local_files_only=True)
-    candidates = [config, getattr(config, "text_config", None)]
-    for candidate in candidates:
-        value = getattr(candidate, "max_position_embeddings", None)
-        if isinstance(value, int) and 0 < value < 10**9:
-            return int(value)
+    Read from ``config.json`` directly so the audit does not depend on the
+    installed transformers knowing the qwen3_5 architecture registry entries.
+    """
+    config_path = model_path / "config.json"
+    if config_path.is_file():
+        raw = json.loads(config_path.read_text(encoding="utf-8"))
+        text_config = raw.get("text_config") if isinstance(raw.get("text_config"), dict) else {}
+        nested = (
+            text_config.get("text_config")
+            if isinstance(text_config.get("text_config"), dict)
+            else {}
+        )
+        for candidate in (text_config, nested, raw):
+            value = candidate.get("max_position_embeddings")
+            if isinstance(value, int) and 0 < value < 10**9:
+                return int(value)
     value = int(getattr(tokenizer, "model_max_length", 0) or 0)
     return value if 0 < value < 10**9 else 0
 
 
 def audit_qwen38_rendering(
-    model_path: Path, records: list[dict[str, Any]], samples: dict[str, dict[str, Any]]
+    model_path: Path,
+    records: list[dict[str, Any]],
+    samples: dict[str, dict[str, Any]],
+    *,
+    require_single_token_labels: bool = False,
 ) -> dict[str, Any]:
     from src.model.qwen38_lora import (
         load_processor,
@@ -181,12 +198,23 @@ def audit_qwen38_rendering(
         for name in ("internal_positive_label", "internal_negative_label"):
             label_text = labels_cfg[name]
             token_ids = tokenizer.encode(label_text, add_special_tokens=False)
-            if len(token_ids) != 1:
+            if not token_ids:
+                raise AuditError(f"{record['config']}: answer label {label_text!r} encodes to no tokens")
+            if tokenizer.decode(token_ids) != label_text:
+                raise AuditError(
+                    f"{record['config']}: answer label {label_text!r} does not round-trip through "
+                    "the tokenizer"
+                )
+            if require_single_token_labels and len(token_ids) != 1:
                 raise AuditError(
                     f"{record['config']}: answer label {label_text!r} is {len(token_ids)} tokens, "
-                    "not one"
+                    "not one (required by --require-single-token-labels)"
                 )
-            label_tokens[label_text] = token_ids[0]
+            label_tokens[label_text] = {"token_ids": token_ids, "token_count": len(token_ids)}
+        if labels_cfg["internal_positive_label"] == labels_cfg["internal_negative_label"]:
+            raise AuditError(f"{record['config']}: the two answer labels are identical")
+        if len({tuple(value["token_ids"]) for value in label_tokens.values()}) != 2:
+            raise AuditError(f"{record['config']}: the two answer labels tokenize identically")
         training_text = render_qwen38_training_text(
             processor, system_text, user_text, labels_cfg["internal_negative_label"]
         )
@@ -215,6 +243,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model-path", type=Path,
                         help="pinned Qwen3.8 snapshot for tokenizer/render checks (no weights)")
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--require-single-token-labels",
+        action="store_true",
+        help="also require one-token answer labels (single-token label-vocabulary experiments only)",
+    )
     args = parser.parse_args(argv)
 
     runtime_root = args.runtime_root.resolve()
@@ -243,13 +276,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.model_path is not None:
         try:
             payload["qwen38_rendering"] = audit_qwen38_rendering(
-                args.model_path.resolve(), text_only_records, samples_by_language["native"]
+                args.model_path.resolve(),
+                text_only_records,
+                samples_by_language["native"],
+                require_single_token_labels=args.require_single_token_labels,
             )
             # The English text-only cell must render with the English transcripts.
             payload["qwen38_rendering"]["english_text_only"] = audit_qwen38_rendering(
                 args.model_path.resolve(),
                 [record for record in text_only_records if record["language"] == "english"],
                 samples_by_language["english"],
+                require_single_token_labels=args.require_single_token_labels,
             )["cells"]
         except AuditError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
