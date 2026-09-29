@@ -1,0 +1,86 @@
+schema_version: audiollm.qwen3_daic_label_vocab.significance_family.v1
+analysis_status: prespecified
+frozen_utc: "2026-09-28T14:25:40Z"
+freeze_note: >-
+  Frozen before the first production submission. The family, its members, the
+  metric set, the correction rule, the iteration counts and the analysis seed are
+  part of the experiment contract and must not change after any result is known.
+dataset: daic
+backend: likelihood
+evaluation_view: harmonized_all_windows_full_coverage
+aggregation: subject_level
+metrics_namespace: headline/binary_strict
+campaign: qwen3_daic_label_vocab_v1
+smoke_campaign: qwen3_daic_label_vocab_smoke_v1
+fold: 0
+seeds:
+  - 7
+  - 1337
+  - 2024
+arm_order:
+  - ab
+  - '01'
+  - truefalse
+  - yesno
+  - en
+contrast_rule: >-
+  For every cell, all ten unordered pairs of the arm order. Delta and the paired
+  tests are always (later arm in the order) minus (earlier arm). Nothing is
+  compared across cells or across seeds.
+contrast_count: 30
+metrics:
+  - macro_f1
+  - positive_f1
+  - macro_recall
+primary_metric: macro_f1
+secondary_metrics:
+  - positive_f1
+  - macro_recall
+metric_notes:
+  macro_f1: single primary metric
+  positive_f1: supporting effect-size metric; Depressed is positive
+  macro_recall: unweighted average recall (balanced accuracy), INVALID counted as wrong
+alpha: 0.05
+multiple_comparison:
+  rule: >-
+    Holm step-down inside each metric's own 30-member family. Macro-F1, Positive-F1
+    and UAR are corrected separately over the same 30 members; the family never
+    changes after a result is known.
+  mcnemar: >-
+    Exact two-sided McNemar per contrast and seed, 90 tests in total, corrected
+    separately as its own 90-test Holm family. It is a supporting view and never
+    replaces the primary permutation decision.
+tests:
+  primary: paired_prediction_swap_permutation
+  primary_sidedness: two_sided
+  primary_clustering: subject_clustered
+  iteration_counts:
+    permutation: 1000000
+    bootstrap: 100000
+  bootstrap_rule: label_stratified_subject_clustered
+  analysis_seed: 1337
+interval_rule: >-
+  Bootstrap intervals are unadjusted 95% percentile intervals. They are labelled
+  as such everywhere and are never treated as equivalent to a corrected p-value
+  decision.
+seed_aggregation: >-
+  Metrics are computed per seed first; the reported main value is the arithmetic
+  mean over the three seeds with the standard deviation at ddof=1. Seed rows are
+  never concatenated into one population, and no best-seed selection or
+  majority-vote ensemble is allowed.
+cells:
+  - id: text_only_qwen38_27b
+    modality: text_only
+    model: qwen38_27b
+  - id: audio_only_qwen3omni_30b_a3b
+    modality: audio_only
+    model: qwen3omni_30b_a3b
+  - id: audio_text_qwen3omni_30b_a3b
+    modality: audio_text
+    model: qwen3omni_30b_a3b
+evidence_rule: >-
+  Only locally validated REPORTABLE attempts are analysed. Every metric is
+  recomputed locally from subject-level predictions with INVALID counted as wrong,
+  and a missing or non-REPORTABLE run, a duplicate (subject, seed) key, a missing
+  seed or a label mismatch across the two sides of a contrast is an analysis
+  error, never a silently dropped row.

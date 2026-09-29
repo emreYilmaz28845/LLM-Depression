@@ -1,0 +1,227 @@
+schema_version: audiollm.experiment_group.v1
+group_id: qwen3-daic-label-vocab-20260928
+title: Qwen3 DAIC label-vocabulary campaign - five answer-label arms over three model/modality cells
+research_question: >-
+  On DAIC fold 0 (the fixed official test partition), with the likelihood backend,
+  the promptcontext_v1 prompt and every other recipe element held fixed, how does the
+  answer-label vocabulary change subject-level depression-classification performance?
+  Five arms are trained: ab (A/B), 01 (1/0), truefalse (True/False), yesno (Yes/No) and
+  en (Depressed/Non-depressed). Each arm runs over three cells - Qwen3.8-27B text-only,
+  Qwen3-Omni Thinker audio-only, Qwen3-Omni Thinker audio+text - and three training
+  seeds (7, 1337, 2024).
+dataset: daic
+baseline: >-
+  Ordering within each cell is ab, 01, truefalse, yesno, en, and every contrast is a
+  paired comparison between two arms of the same cell, training seed and fold over the
+  same DAIC test subjects. Delta is always (later arm in the order) minus (earlier arm).
+  There is no cross-cell and no cross-seed comparison, and no arm is a shared external
+  reference. No historical Qwen2 run serves as an arm: all 45 production runs are newly
+  trained under this campaign, and historical Qwen2 results stay historical context that
+  never shares a comparison column with these results.
+treatment: >-
+  Fifteen configs under configs/labels/ named
+  daic_<modality>_harmonized_selmacrof1_likelihood_<model>_<tag>_v1.yaml, for tag in
+  {ab, 01, truefalse, yesno, en} and modality in {text_only, audio_only, audio_text}.
+  Each config is the corresponding canonical DAIC config with only three changes: the
+  labels block, recipe_id and output_dirs.run_root, so the answer-label vocabulary and
+  its legend/instruction rendering is the only treatment difference between the arms of
+  a cell. Training seed is a submission override and never part of the config diff.
+expected_seeds:
+  - 7
+  - 1337
+  - 2024
+expected_folds:
+  - 0
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+runs:
+  - logical_run: daic_text_only_qwen38_27b_ab
+    dataset: daic
+    modality: text_only
+    config: configs/labels/daic_text_only_harmonized_selmacrof1_likelihood_qwen38_27b_ab_v1.yaml
+    folds: [0]
+    endpoint: official_test_partition
+  - logical_run: daic_text_only_qwen38_27b_01
+    dataset: daic
+    modality: text_only
+    config: configs/labels/daic_text_only_harmonized_selmacrof1_likelihood_qwen38_27b_01_v1.yaml
+    folds: [0]
+    endpoint: official_test_partition
+  - logical_run: daic_text_only_qwen38_27b_truefalse
+    dataset: daic
+    modality: text_only
+    config: configs/labels/daic_text_only_harmonized_selmacrof1_likelihood_qwen38_27b_truefalse_v1.yaml
+    folds: [0]
+    endpoint: official_test_partition
+  - logical_run: daic_text_only_qwen38_27b_yesno
+    dataset: daic
+    modality: text_only
+    config: configs/labels/daic_text_only_harmonized_selmacrof1_likelihood_qwen38_27b_yesno_v1.yaml
+    folds: [0]
+    endpoint: official_test_partition
+  - logical_run: daic_text_only_qwen38_27b_en
+    dataset: daic
+    modality: text_only
+    config: configs/labels/daic_text_only_harmonized_selmacrof1_likelihood_qwen38_27b_en_v1.yaml
+    folds: [0]
+    endpoint: official_test_partition
+  - logical_run: daic_audio_only_qwen3omni_30b_a3b_ab
+    dataset: daic
+    modality: audio_only
+    config: configs/labels/daic_audio_only_harmonized_selmacrof1_likelihood_qwen3omni_30b_a3b_ab_v1.yaml
+    folds: [0]
+    endpoint: official_test_partition
+  - logical_run: daic_audio_only_qwen3omni_30b_a3b_01
+    dataset: daic
+    modality: audio_only
+    config: configs/labels/daic_audio_only_harmonized_selmacrof1_likelihood_qwen3omni_30b_a3b_01_v1.yaml
+    folds: [0]
+    endpoint: official_test_partition
+  - logical_run: daic_audio_only_qwen3omni_30b_a3b_truefalse
+    dataset: daic
+    modality: audio_only
+    config: configs/labels/daic_audio_only_harmonized_selmacrof1_likelihood_qwen3omni_30b_a3b_truefalse_v1.yaml
+    folds: [0]
+    endpoint: official_test_partition
+  - logical_run: daic_audio_only_qwen3omni_30b_a3b_yesno
+    dataset: daic
+    modality: audio_only
+    config: configs/labels/daic_audio_only_harmonized_selmacrof1_likelihood_qwen3omni_30b_a3b_yesno_v1.yaml
+    folds: [0]
+    endpoint: official_test_partition
+  - logical_run: daic_audio_only_qwen3omni_30b_a3b_en
+    dataset: daic
+    modality: audio_only
+    config: configs/labels/daic_audio_only_harmonized_selmacrof1_likelihood_qwen3omni_30b_a3b_en_v1.yaml
+    folds: [0]
+    endpoint: official_test_partition
+  - logical_run: daic_audio_text_qwen3omni_30b_a3b_ab
+    dataset: daic
+    modality: audio_text
+    config: configs/labels/daic_audio_text_harmonized_selmacrof1_likelihood_qwen3omni_30b_a3b_ab_v1.yaml
+    folds: [0]
+    endpoint: official_test_partition
+  - logical_run: daic_audio_text_qwen3omni_30b_a3b_01
+    dataset: daic
+    modality: audio_text
+    config: configs/labels/daic_audio_text_harmonized_selmacrof1_likelihood_qwen3omni_30b_a3b_01_v1.yaml
+    folds: [0]
+    endpoint: official_test_partition
+  - logical_run: daic_audio_text_qwen3omni_30b_a3b_truefalse
+    dataset: daic
+    modality: audio_text
+    config: configs/labels/daic_audio_text_harmonized_selmacrof1_likelihood_qwen3omni_30b_a3b_truefalse_v1.yaml
+    folds: [0]
+    endpoint: official_test_partition
+  - logical_run: daic_audio_text_qwen3omni_30b_a3b_yesno
+    dataset: daic
+    modality: audio_text
+    config: configs/labels/daic_audio_text_harmonized_selmacrof1_likelihood_qwen3omni_30b_a3b_yesno_v1.yaml
+    folds: [0]
+    endpoint: official_test_partition
+  - logical_run: daic_audio_text_qwen3omni_30b_a3b_en
+    dataset: daic
+    modality: audio_text
+    config: configs/labels/daic_audio_text_harmonized_selmacrof1_likelihood_qwen3omni_30b_a3b_en_v1.yaml
+    folds: [0]
+    endpoint: official_test_partition
+label_arms:
+  order:
+    - ab
+    - 01
+    - truefalse
+    - yesno
+    - en
+  vocabularies:
+    ab: {label_vocab_version: short_internal_ab_labels, internal_positive_label: A, internal_negative_label: B}
+    '01': {label_vocab_version: binary_01_labels, internal_positive_label: '1', internal_negative_label: '0'}
+    truefalse: {label_vocab_version: truefalse_labels, internal_positive_label: 'True', internal_negative_label: 'False'}
+    yesno: {label_vocab_version: yesno_labels, internal_positive_label: 'Yes', internal_negative_label: 'No'}
+    en: {label_vocab_version: legacy_english_labels, internal_positive_label: Depressed, internal_negative_label: Non-depressed}
+  external_labels: Depressed / Non-depressed in every arm
+  en_caveat: >-
+    The four short arms render the four-line label legend in the prompt. The EN arm keeps
+    the canonical answer-only English instruction and therefore has no legend line. Every
+    contrast that involves EN therefore bundles the vocabulary change with a legend and
+    instruction-style change, and must be reported as such. No per-vocabulary hint about
+    True/False or Yes/No is added anywhere.
+prompt_contract:
+  prompt_context_version: promptcontext_v1
+  dataset_context_key: daic
+  user_template: the canonical DAIC template, unchanged from the canonical configs
+model_contract:
+  text_only:
+    backend: qwen38
+    model: Qwen3.8-27B
+    model_path: /gpfs/projects/etur92/ozu647717/models/Qwen3.8-27B
+    model_revision: 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+  audio_only_and_audio_text:
+    backend: qwen3omni
+    model: Qwen3-Omni-30B-A3B-Instruct Thinker only (the Talker is never built, saved or evaluated)
+    model_path: /gpfs/projects/etur92/ozu647717/models/Qwen3-Omni-30B-A3B-Instruct
+    attention_implementation: sdpa
+  training_shape: one node x four H100s, world size 4, per-rank batch 1, accumulation 32, effective global batch 128
+  evaluation_shape: >-
+    text_only declares no resources block, so the standalone evaluation keeps its default
+    single GPU; the two audio cells declare resources.eval_gpus_per_node 4 and run as one
+    process with a device map over one node, never as a four-rank FSDP job.
+  seed_policy: >-
+    The training seed is the submission override (--seed 7, 1337 or 2024). split.seed stays
+    1337 in every config and every submission, so the quarantine list, manifest and split
+    are identical across seeds; the top-level seed is excluded from the manifest build
+    signature.
+statistics_family:
+  file: experiments/definitions/significance_family_qwen3_daic_label_vocab_20260928.yaml
+  contract: >-
+    Thirty paired contrasts: for each of the three cells, all ten unordered pairs of the
+    five arms, with delta defined as (later arm in the order ab, 01, truefalse, yesno, en)
+    minus (earlier arm). Macro-F1 is primary; Positive-F1 and UAR are secondary. Each
+    metric gets its own Holm correction over the same 30 members at alpha 0.05. Tests are
+    a two-sided subject-clustered paired prediction-swap permutation with 1,000,000
+    iterations and a label-stratified subject-clustered bootstrap with 100,000 iterations,
+    analysis seed 1337. All seed records of one subject move together in every resample.
+    Metrics are computed per seed and then averaged over seeds; seed rows are never
+    concatenated into one population. McNemar is a supporting analysis: exact test per
+    contrast and seed, 90 tests total, with its own separate 90-test Holm family. There is
+    no seed majority-vote ensemble. Bootstrap intervals are labelled unadjusted 95% and are
+    never treated as equivalent to a corrected p-value decision.
+comparison_rule: >-
+  One reader-facing row per cell and training seed, five arm columns, reporting Macro-F1,
+  Positive-F1 and UAR from headline/binary_strict metrics with INVALID counted as wrong. A
+  separate three-row summary gives the per-metric mean and standard deviation (ddof=1)
+  over the three seeds for each cell. Likelihood and teacher-forced views never share a
+  column, smoke and failed or superseded attempts are never headline evidence, and a value
+  that cannot be locally verified is blank with its reason rather than estimated.
+scope:
+  campaign: qwen3_daic_label_vocab_v1
+  smoke_campaign: qwen3_daic_label_vocab_smoke_v1
+  checkpoint_role: best_model
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
+  manifest_policy: prebuilt
+  storage_note: >-
+    Checkpoints are LoRA adapters of a 27B/30B base. The task collects compact evidence only
+    and never bulk-downloads checkpoints.
+exclusions:
+  - teacher_forced_backend
+  - qwen2_or_gemma_backbones
+  - non_daic_datasets
+  - turkish_pooled_or_geriatri
+  - merged_configs
+  - translated_transcript_condition
+  - hidden_classifier_work
+  - optuna
+  - canonical_label_change
+  - canonical_workbook_replacement
+  - prompt_knowledge_infusion
+  - new_questions_or_propositions
+  - wandb_export
+  - PR_merge
+github_issue: null
+github_pr: null

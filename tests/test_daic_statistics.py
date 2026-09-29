@@ -210,3 +210,59 @@ def test_holm_adjust_steps_down_and_validates():
     assert holm_adjust([0.5]) == pytest.approx([0.5])
     with pytest.raises(ValueError, match="p-values in"):
         holm_adjust([1.2])
+
+
+def test_multiseed_permutation_swaps_all_seed_records_of_one_subject_together():
+    """A subject's seed records are one resampling unit, not independent rows.
+
+    Every permutation swaps whole subjects, so swapping a subject mirrors the
+    observed delta exactly and every permuted delta keeps the observed magnitude:
+    the p-value is exactly 1.0. An implementation that swapped the two seed rows
+    of the active subject independently could produce a smaller permuted delta and
+    would report a p-value below 1.0.
+    """
+    baseline = []
+    for seed in (0, 1):
+        baseline.append({"subject_id": "inert-positive", "label": 1, "prediction": 1, "seed": seed})
+        baseline.append({"subject_id": "inert-negative", "label": 0, "prediction": 0, "seed": seed})
+        baseline.append({"subject_id": "active", "label": 1, "prediction": 1, "seed": seed})
+    comparison = [dict(row) for row in baseline]
+    for row in comparison:
+        if row["subject_id"] == "active" and row["seed"] == 1:
+            row["prediction"] = 0
+
+    observed = paired_prediction_swap_permutation_many(
+        baseline, comparison, metrics=("macro_f1", "positive_f1", "macro_recall"), iterations=500, seed=1337
+    )
+    for metric, result in observed.items():
+        assert result["subjects"] == 3, metric
+        assert result["keys"] == 6, metric
+        assert result["p_value"] == 1.0, metric
+
+
+def test_multiseed_bootstrap_resamples_subjects_not_seed_rows():
+    """The bootstrap draws subjects and keeps all their seed records together.
+
+    One subject per label means every resample contains both subjects, so with
+    subject-level resampling the delta is constant and the interval collapses onto
+    it. An implementation that resampled seed rows independently could split the
+    two seed records of the positive subject and would report a wider interval.
+    """
+    baseline = [
+        {"subject_id": "s1", "label": 1, "prediction": 1, "seed": 0},
+        {"subject_id": "s1", "label": 1, "prediction": 1, "seed": 1},
+        {"subject_id": "s2", "label": 0, "prediction": 0, "seed": 0},
+        {"subject_id": "s2", "label": 0, "prediction": 0, "seed": 1},
+    ]
+    comparison = [
+        {"subject_id": "s1", "label": 1, "prediction": 1, "seed": 0},
+        {"subject_id": "s1", "label": 1, "prediction": 0, "seed": 1},
+        {"subject_id": "s2", "label": 0, "prediction": 0, "seed": 0},
+        {"subject_id": "s2", "label": 0, "prediction": 0, "seed": 1},
+    ]
+
+    result = stratified_paired_bootstrap_many(baseline, comparison, iterations=400, seed=11, chunk_size=17)
+    for metric, item in result.items():
+        assert item["mean_delta"] < 0.0, metric
+        assert item["ci_low"] == pytest.approx(item["mean_delta"], abs=1e-12), metric
+        assert item["ci_high"] == pytest.approx(item["mean_delta"], abs=1e-12), metric
