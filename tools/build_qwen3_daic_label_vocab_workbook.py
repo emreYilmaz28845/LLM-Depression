@@ -152,8 +152,60 @@ def sheet_mcnemar(workbook: Workbook, payload: dict[str, Any]) -> None:
     _autosize(worksheet)
 
 
-def sheet_provenance(workbook: Workbook, payload: dict[str, Any]) -> None:
+def sheet_provenance(workbook: Workbook, payload: dict[str, Any], run_provenance: dict[str, Any] | None = None) -> None:
     worksheet = workbook.create_sheet("Provenance")
+    if run_provenance:
+        _header(
+            worksheet,
+            [
+                "key", "run name", "attempt id", "lifecycle state", "subjects",
+                "strict Macro-F1", "strict Positive-F1", "strict UAR",
+                "label vocabulary", "model backend", "model revision", "model path",
+                "git commit", "deployment id", "deployed source sha256",
+                "manifest hash", "split metadata hash",
+                "fold dir", "run_config path", "run_config sha256",
+                "predictions path", "predictions sha256",
+                "train job id", "best_eval job id",
+            ],
+        )
+        for key, record in sorted(run_provenance.get("runs", {}).items()):
+            strict = record.get("strict_headline") or {}
+            job_ids = record.get("job_ids") or {}
+            worksheet.append([
+                key,
+                record.get("run_name"),
+                record.get("attempt_id"),
+                record.get("state"),
+                record.get("subjects"),
+                strictly(strict, "binary_strict_macro_f1"),
+                strictly(strict, "binary_strict_positive_f1"),
+                strictly(strict, "binary_strict_uar"),
+                record.get("label_vocab_version"),
+                record.get("model_backend"),
+                record.get("model_revision"),
+                record.get("model_path"),
+                record.get("git_commit"),
+                record.get("deployment_id"),
+                record.get("deployed_source_sha256"),
+                record.get("manifest_hash"),
+                record.get("split_metadata_hash"),
+                record.get("fold_dir"),
+                record.get("run_config_path"),
+                record.get("run_config_sha256"),
+                record.get("predictions_path"),
+                record.get("predictions_sha256"),
+                (job_ids.get("train") or [None])[0],
+                (job_ids.get("best_eval") or [None])[0],
+            ])
+        worksheet.append([])
+        worksheet.append([
+            "Run evidence comes from the frozen run_provenance payload written by "
+            "tools/qwen3_daic_label_vocab_analysis.py --verify-records; recorded sha256 values are "
+            "recomputed and compared against the run's own artifacts.json, and no run evidence is "
+            "modified by the analysis or the workbook."
+        ])
+        _autosize(worksheet)
+        return
     _header(
         worksheet,
         [
@@ -230,15 +282,20 @@ def sheet_notes(workbook: Workbook, payload: dict[str, Any]) -> None:
     _autosize(worksheet)
 
 
-def build(*, analysis_dir: Path, output: Path, jobs_path: Path | None) -> Path:
+def build(*, analysis_dir: Path, output: Path, jobs_path: Path | None, run_provenance_path: Path | None = None) -> Path:
     payload = load_analysis(analysis_dir)
+    run_provenance = None
+    if run_provenance_path is not None:
+        if not run_provenance_path.is_file():
+            raise SystemExit(f"missing run provenance payload: {run_provenance_path}")
+        run_provenance = json.loads(run_provenance_path.read_text(encoding="utf-8"))
     workbook = Workbook()
     workbook.remove(workbook.active)
     sheet_fixed_test(workbook, payload)
     sheet_seed_summary(workbook, payload)
     sheet_contrasts(workbook, payload)
     sheet_mcnemar(workbook, payload)
-    sheet_provenance(workbook, payload)
+    sheet_provenance(workbook, payload, run_provenance)
     sheet_jobs(workbook, jobs_path)
     sheet_notes(workbook, payload)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -251,11 +308,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--analysis-dir", default=str(DEFAULT_ANALYSIS))
     parser.add_argument("--output", required=True)
     parser.add_argument("--jobs", default=None, help="JSON list of reconciled job rows")
+    parser.add_argument(
+        "--run-provenance",
+        default=None,
+        help="run_provenance.json from qwen3_daic_label_vocab_analysis.py --verify-records",
+    )
     args = parser.parse_args(argv)
     path = build(
         analysis_dir=Path(args.analysis_dir),
         output=Path(args.output),
         jobs_path=Path(args.jobs) if args.jobs else None,
+        run_provenance_path=Path(args.run_provenance) if args.run_provenance else None,
     )
     print(f"wrote {path}")
     return 0

@@ -48,12 +48,18 @@ from src.daic_statistics import (  # noqa: E402
     stratified_paired_bootstrap_many,
 )
 from src.experiment_tracking.validate import recompute_strict_headline  # noqa: E402
-from tools.qwen3_daic_label_vocab_matrix import run_name  # noqa: E402
+from scripts.build_qwen3_daic_label_configs import ARMS  # noqa: E402
+from tools.qwen3_daic_label_vocab_matrix import SOURCES, run_name  # noqa: E402
 
 DEFAULT_FAMILY = ROOT / "experiments/definitions/significance_family_qwen3_daic_label_vocab_20260928.yaml"
 EXPECTED_SCHEMA = "audiollm.qwen3_daic_label_vocab.significance_family.v1"
 PREDICTIONS_RELATIVE = Path("best_model/standalone_eval/predictions_subject_level.csv")
+PREDICTIONS_ROLE = "standalone_eval_predictions"
+RUN_CONFIG_ROLE = "run_config"
 METRIC_KEYS = {"macro_f1": "binary_strict_macro_f1", "positive_f1": "binary_strict_positive_f1", "macro_recall": "binary_strict_uar"}
+EXPECTED_LABEL_KEYS = ("label_vocab_version", "internal_positive_label", "internal_negative_label", "external_positive_label", "external_negative_label")
+EXPECTED_EVALUATION_VIEW = "harmonized_all_windows_full_coverage"
+EXPECTED_SPLIT_SEED = 1337
 
 
 class AnalysisError(RuntimeError):
@@ -128,7 +134,214 @@ def _read_status(fold_dir: Path) -> dict[str, Any]:
     return json.loads(status_path.read_text(encoding="utf-8"))
 
 
-def load_seed_rows(fold_dir: Path, *, seed: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _recorded_artifacts(fold_dir: Path) -> dict[str, dict[str, Any]]:
+    """Role -> recorded artifact record (path and sha256) from artifacts.json."""
+    artifacts_path = fold_dir / "artifacts.json"
+    if not artifacts_path.is_file():
+        raise AnalysisError(f"{fold_dir}: missing artifacts.json; recorded evidence is required")
+    payload = json.loads(artifacts_path.read_text(encoding="utf-8"))
+    records = payload.get("artifacts")
+    if not isinstance(records, list) or not records:
+        raise AnalysisError(f"{artifacts_path}: no recorded artifacts")
+    by_role: dict[str, dict[str, Any]] = {}
+    for record in records:
+        role = str(record.get("role") or "")
+        if role:
+            by_role.setdefault(role, record)
+    return by_role
+
+
+def _require_recorded_file(
+    *, fold_dir: Path, role: str, path: Path, recorded: dict[str, dict[str, Any]]
+) -> str:
+    """Reject a file whose bytes do not match the recorded evidence hash."""
+    record = recorded.get(role)
+    if record is None:
+        raise AnalysisError(f"{fold_dir}: no recorded artifact with role {role!r}")
+    expected = str(record.get("sha256") or "")
+    if not expected:
+        raise AnalysisError(f"{fold_dir}: recorded artifact {role!r} has no sha256")
+    actual = _sha256(path)
+    if actual != expected:
+        raise AnalysisError(
+            f"{path}: sha256 {actual} does not match the recorded evidence hash {expected}; "
+            "the analysis never rewrites run evidence"
+        )
+    return actual
+
+
+def verify_run_record(
+    *,
+    fold_dir: Path,
+    modality: str,
+    arm: str,
+    seed: int,
+    campaign: str,
+    dataset: str = "daic",
+) -> dict[str, Any]:
+    """Compare one run against the campaign contract and its recorded evidence.
+
+    Checks the expected seed, model backend, model revision and label vocabulary
+    against the run's own ``run_config.yaml``, the resolved run root and modality,
+    and the recorded artifact hashes in ``artifacts.json``. A missing sidecar, a
+    missing recorded artifact, a hash mismatch or a contradicting record is an
+    error; nothing here writes to the run directory.
+    """
+    recorded = _recorded_artifacts(fold_dir)
+    run_config_path = fold_dir / "run_config.yaml"
+    if not run_config_path.is_file():
+        raise AnalysisError(f"{fold_dir}: missing run_config.yaml")
+    predictions_path = fold_dir / PREDICTIONS_RELATIVE
+    if not predictions_path.is_file():
+        raise AnalysisError(f"{fold_dir}: missing {PREDICTIONS_RELATIVE}")
+
+    run_config_sha = _require_recorded_file(
+        fold_dir=fold_dir, role=RUN_CONFIG_ROLE, path=run_config_path, recorded=recorded
+    )
+    predictions_sha = _require_recorded_file(
+        fold_dir=fold_dir, role=PREDICTIONS_ROLE, path=predictions_path, recorded=recorded
+    )
+
+    document = yaml.safe_load(run_config_path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise AnalysisError(f"{run_config_path}: not a mapping")
+    config = document.get("config") if isinstance(document.get("config"), dict) else document
+    evaluation = config.get("evaluation") or {}
+    labels = config.get("labels") or {}
+    split = config.get("split") or {}
+    tracking = document.get("tracking") or {}
+
+    def require(condition: bool, message: str) -> None:
+        if not condition:
+            raise AnalysisError(f"{fold_dir}: {message}")
+
+    expected_backend = SOURCES[modality][2]
+    expected_vocab, expected_positive, expected_negative = ARMS[arm]
+    require(config.get("dataset") == dataset, f"run_config dataset is {config.get('dataset')!r}, expected {dataset!r}")
+    require(int(config.get("seed", -1)) == int(seed), f"run_config seed is {config.get('seed')!r}, expected {seed}")
+    require(
+        int(split.get("seed", -1)) == EXPECTED_SPLIT_SEED,
+        f"run_config split.seed is {split.get('seed')!r}, expected {EXPECTED_SPLIT_SEED}",
+    )
+    require(
+        config.get("model_backend") == expected_backend,
+        f"run_config backend is {config.get('model_backend')!r}, expected {expected_backend!r}",
+    )
+    require(
+        str(config.get("input_modality") or document.get("input_modality") or "") == modality,
+        f"run_config input_modality is {config.get('input_modality') or document.get('input_modality')!r}, "
+        f"expected {modality!r}",
+    )
+    require(
+        evaluation.get("sample_prediction_mode") == "likelihood",
+        f"run_config backend is {evaluation.get('sample_prediction_mode')!r}, expected likelihood",
+    )
+    require(
+        evaluation.get("evaluation_view") == EXPECTED_EVALUATION_VIEW,
+        f"run_config evaluation view is {evaluation.get('evaluation_view')!r}, expected {EXPECTED_EVALUATION_VIEW!r}",
+    )
+    require(
+        evaluation.get("aggregation_level") in {"subject", "subject_level"},
+        f"run_config aggregation is {evaluation.get('aggregation_level')!r}, expected subject level",
+    )
+    require(
+        set(labels) == set(EXPECTED_LABEL_KEYS),
+        f"run_config labels block keys are {sorted(labels)}, expected {sorted(EXPECTED_LABEL_KEYS)}",
+    )
+    require(
+        labels.get("label_vocab_version") == expected_vocab,
+        f"run_config label vocabulary is {labels.get('label_vocab_version')!r}, expected {expected_vocab!r}",
+    )
+    require(
+        labels.get("internal_positive_label") == expected_positive
+        and labels.get("internal_negative_label") == expected_negative,
+        f"run_config internal labels are {labels.get('internal_positive_label')!r}/"
+        f"{labels.get('internal_negative_label')!r}, expected {expected_positive!r}/{expected_negative!r}",
+    )
+    expected_run_root_suffix = f"output_model/{campaign}/{modality}/{dataset}"
+    run_root = str((config.get("output_dirs") or {}).get("run_root") or "")
+    require(
+        run_root.endswith(expected_run_root_suffix),
+        f"run_config run_root is {run_root!r}, expected it to end with {expected_run_root_suffix!r}",
+    )
+    if expected_backend == "qwen38":
+        require(bool(config.get("model_revision")), "run_config has no model_revision for the pinned Qwen3.8 snapshot")
+
+    attempt_ids = {
+        "status": _read_status(fold_dir).get("attempt_id"),
+        "artifacts": json.loads((fold_dir / "artifacts.json").read_text(encoding="utf-8")).get("attempt_id"),
+        "run_config": tracking.get("attempt_id"),
+    }
+    present = {key: value for key, value in attempt_ids.items() if value}
+    require(len(set(present.values())) <= 1, f"attempt ids disagree between sidecars: {attempt_ids}")
+
+    metadata_path = fold_dir / "metadata.json"
+    source: dict[str, Any] = {}
+    if metadata_path.is_file():
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        source = metadata.get("source") or {}
+        metadata_attempt = metadata.get("attempt_id")
+        if metadata_attempt:
+            require(
+                not present or metadata_attempt in set(present.values()),
+                f"metadata attempt id {metadata_attempt!r} disagrees with {sorted(set(present.values()))}",
+            )
+
+    job_ids: dict[str, list[str]] = {}
+    jobs_path = fold_dir / "jobs.jsonl"
+    if jobs_path.is_file():
+        for line in jobs_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            job_id = event.get("slurm_job_id")
+            if not job_id:
+                continue
+            key = str(event.get("job_key"))
+            recorded_ids = job_ids.setdefault(key, [])
+            if str(job_id) not in recorded_ids:
+                recorded_ids.append(str(job_id))
+
+    return {
+        "run_name": run_name(smoke=False, modality=modality, tag=arm, seed=int(seed)),
+        "attempt_id": present.get("run_config") or present.get("status"),
+        "state": _read_status(fold_dir).get("state"),
+        "fold_dir": str(fold_dir),
+        "run_config_path": str(run_config_path),
+        "run_config_sha256": run_config_sha,
+        "recorded_run_config_sha256": str((recorded.get(RUN_CONFIG_ROLE) or {}).get("sha256") or ""),
+        "predictions_path": str(predictions_path),
+        "predictions_sha256": predictions_sha,
+        "recorded_predictions_sha256": str((recorded.get(PREDICTIONS_ROLE) or {}).get("sha256") or ""),
+        "manifest_hash": document.get("manifest_hash"),
+        "split_metadata_hash": document.get("split_metadata_hash"),
+        "manifest_path": document.get("manifest_path"),
+        "split_metadata_path": document.get("split_metadata_path"),
+        "model_backend": config.get("model_backend"),
+        "model_path": config.get("model_name_or_path") or document.get("resolved_model_name_or_path"),
+        "model_revision": config.get("model_revision"),
+        "label_vocab_version": labels.get("label_vocab_version"),
+        "git_commit": source.get("git_commit"),
+        "git_branch": source.get("git_branch"),
+        "git_dirty": source.get("git_dirty"),
+        "deployment_id": source.get("deployment_id"),
+        "deployed_source_sha256": source.get("deployed_source_sha256"),
+        "job_ids": job_ids,
+    }
+
+
+def load_seed_rows(
+    fold_dir: Path,
+    *,
+    seed: int,
+    modality: str | None = None,
+    arm: str | None = None,
+    campaign: str | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Load strict subject rows for one run; INVALID predictions count as wrong."""
     status = _read_status(fold_dir)
     if status.get("state") != "REPORTABLE":
@@ -136,6 +349,11 @@ def load_seed_rows(fold_dir: Path, *, seed: int) -> tuple[list[dict[str, Any]], 
     predictions = fold_dir / PREDICTIONS_RELATIVE
     if not predictions.is_file():
         raise AnalysisError(f"{fold_dir}: missing {PREDICTIONS_RELATIVE}")
+    verified: dict[str, Any] = {}
+    if modality is not None and arm is not None and campaign is not None:
+        verified = verify_run_record(
+            fold_dir=fold_dir, modality=modality, arm=arm, seed=int(seed), campaign=campaign
+        )
     strict = recompute_strict_headline(predictions)
     rows: list[dict[str, Any]] = []
     with predictions.open(newline="", encoding="utf-8") as handle:
@@ -162,10 +380,11 @@ def load_seed_rows(fold_dir: Path, *, seed: int) -> tuple[list[dict[str, Any]], 
     if len(keys) != len(rows):
         raise AnalysisError(f"{predictions}: duplicate (subject_id, seed) rows")
     provenance = {
+        **verified,
         "fold_dir": str(fold_dir),
         "attempt_id": status.get("attempt_id"),
         "state": status.get("state"),
-        "predictions_sha256": hashlib.sha256(predictions.read_bytes()).hexdigest(),
+        "predictions_sha256": _sha256(predictions),
         "subjects": len(rows),
         "strict_headline": strict,
     }
@@ -211,10 +430,55 @@ def load_all_rows(
             for seed in family["seeds"]:
                 fold_dir = evidence_fold_dir(evidence_root, family, cell=cell, arm=str(arm), seed=int(seed))
                 key = (cell["id"], str(arm), int(seed))
-                rows, run_provenance = load_seed_rows(fold_dir, seed=int(seed))
+                rows, run_provenance = load_seed_rows(
+                    fold_dir,
+                    seed=int(seed),
+                    modality=cell["modality"],
+                    arm=str(arm),
+                    campaign=family["campaign"],
+                )
                 rows_by_key[key] = rows
                 provenance[f"{cell['id']}|{arm}|{seed}"] = {**run_provenance, "run_name": fold_dir.parent.name}
     return rows_by_key, provenance
+
+
+def verify_all_records(evidence_root: Path, family: dict[str, Any]) -> dict[str, Any]:
+    """Verify every expected run against the campaign contract and recorded evidence.
+
+    Read-only: it reads the fold sidecars and hashes the files it verifies, and it
+    never writes into a run directory. The returned payload is the provenance the
+    workbook consumes.
+    """
+    records: dict[str, Any] = {}
+    for cell in family["cells"]:
+        for arm in family["arm_order"]:
+            for seed in family["seeds"]:
+                fold_dir = evidence_fold_dir(evidence_root, family, cell=cell, arm=str(arm), seed=int(seed))
+                record = verify_run_record(
+                    fold_dir=fold_dir,
+                    modality=cell["modality"],
+                    arm=str(arm),
+                    seed=int(seed),
+                    campaign=family["campaign"],
+                )
+                status = _read_status(fold_dir)
+                if status.get("state") != "REPORTABLE":
+                    raise AnalysisError(
+                        f"{fold_dir}: lifecycle state is {status.get('state')!r}, not REPORTABLE"
+                    )
+                record["subjects"] = _subject_rows(fold_dir / PREDICTIONS_RELATIVE)
+                record["strict_headline"] = recompute_strict_headline(fold_dir / PREDICTIONS_RELATIVE)
+                record["cell"] = cell["id"]
+                record["modality"] = cell["modality"]
+                record["arm"] = str(arm)
+                record["seed"] = int(seed)
+                records[f"{cell['id']}|{arm}|{seed}"] = record
+    return records
+
+
+def _subject_rows(predictions: Path) -> int:
+    with predictions.open(newline="", encoding="utf-8") as handle:
+        return sum(1 for _ in csv.DictReader(handle))
 
 
 def _mean_std(values: list[float]) -> tuple[float, float]:
@@ -433,11 +697,48 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--permutations", type=int, default=None, help="development override; recorded in the report")
     parser.add_argument("--bootstrap-iterations", type=int, default=None, help="development override; recorded in the report")
     parser.add_argument("--check-family", action="store_true")
+    parser.add_argument(
+        "--verify-records",
+        action="store_true",
+        help="verify every run against the campaign contract and recorded evidence, then write the provenance payload; no statistics are computed",
+    )
+    parser.add_argument(
+        "--provenance-output",
+        default=None,
+        help="where --verify-records writes its payload (default: <output-dir>/run_provenance.json)",
+    )
     args = parser.parse_args(argv)
 
     family_path = Path(args.family)
     family = load_family(family_path)
     validate_family(family)
+    if args.verify_records:
+        records = verify_all_records(Path(args.evidence_root), family)
+        payload = {
+            "schema_version": "audiollm.qwen3_daic_label_vocab.run_provenance.v1",
+            "campaign": family["campaign"],
+            "dataset": family["dataset"],
+            "fold": family["fold"],
+            "family": {
+                "path": str(family_path.relative_to(ROOT)) if str(family_path).startswith(str(ROOT)) else str(family_path),
+                "sha256": hashlib.sha256(family_path.read_bytes()).hexdigest(),
+            },
+            "runs": records,
+            "run_count": len(records),
+            "passed": True,
+        }
+        target = Path(args.provenance_output) if args.provenance_output else (
+            Path(args.output_dir) / "run_provenance.json" if args.output_dir else None
+        )
+        if target is None:
+            raise AnalysisError("--output-dir or --provenance-output is required with --verify-records")
+        if target.exists():
+            raise AnalysisError(f"refusing to overwrite the existing provenance file {target}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        print(f"verified {len(records)} runs; provenance written to {target}")
+        return 0
+
     if args.check_family:
         print(
             f"family ok: {len(contrasts(family))} contrasts, {len(mcnemar_members(family))} McNemar tests, "

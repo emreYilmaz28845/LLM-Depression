@@ -82,6 +82,84 @@ def _payload() -> dict:
     }
 
 
+def test_provenance_sheet_uses_the_run_provenance_payload(tmp_path: Path) -> None:
+    analysis = tmp_path / "analysis"
+    analysis.mkdir()
+    (analysis / "analysis.json").write_text(json.dumps(_payload()), encoding="utf-8")
+    provenance_payload = {
+        "schema_version": "audiollm.qwen3_daic_label_vocab.run_provenance.v1",
+        "run_count": 1,
+        "passed": True,
+        "runs": {
+            "text_only_qwen38_27b|ab|7": {
+                "run_name": "q3dlv_text_only_ab_s7",
+                "attempt_id": "att-1",
+                "state": "REPORTABLE",
+                "subjects": 47,
+                "strict_headline": {
+                    "binary_strict_macro_f1": 0.7123,
+                    "binary_strict_positive_f1": 0.6,
+                    "binary_strict_uar": 0.75,
+                },
+                "label_vocab_version": "short_internal_ab_labels",
+                "model_backend": "qwen38",
+                "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+                "model_path": "/models/Qwen3.8-27B",
+                "git_commit": "d520573d068f9016d564bdc25a42235c5206a497",
+                "deployment_id": "feat-qwen3-daic-label-vocab-20260928-1",
+                "deployed_source_sha256": "9" * 64,
+                "manifest_hash": "7" * 64,
+                "split_metadata_hash": "8" * 64,
+                "fold_dir": "/evidence/fold_0",
+                "run_config_path": "/evidence/fold_0/run_config.yaml",
+                "run_config_sha256": "a" * 64,
+                "predictions_path": "/evidence/fold_0/best_model/standalone_eval/predictions_subject_level.csv",
+                "predictions_sha256": "b" * 64,
+                "job_ids": {"train": ["46761712"], "best_eval": ["46761713"]},
+            }
+        },
+    }
+    provenance_path = tmp_path / "run_provenance.json"
+    provenance_path.write_text(json.dumps(provenance_payload), encoding="utf-8")
+
+    output = build(
+        analysis_dir=analysis,
+        output=tmp_path / "workbook_with_provenance.xlsx",
+        jobs_path=None,
+        run_provenance_path=provenance_path,
+    )
+    sheet = load_workbook(output)["Provenance"]
+    header = [cell.value for cell in sheet[1]]
+    for column in (
+        "run_config path", "run_config sha256", "predictions path", "predictions sha256",
+        "manifest hash", "split metadata hash", "model revision", "git commit",
+        "deployment id", "deployed source sha256", "train job id", "best_eval job id",
+    ):
+        assert column in header, column
+    values = [cell.value for cell in sheet[2]]
+    row = dict(zip(header, values))
+    assert row["label vocabulary"] == "short_internal_ab_labels"
+    assert row["model revision"].startswith("1d4bf0f2")
+    assert row["run_config sha256"] == "a" * 64
+    assert row["predictions sha256"] == "b" * 64
+    assert row["manifest hash"] == "7" * 64
+    assert row["split metadata hash"] == "8" * 64
+    assert row["deployment id"].endswith("-1")
+    assert row["train job id"] == "46761712"
+    assert row["best_eval job id"] == "46761713"
+
+
+def test_provenance_sheet_falls_back_without_the_payload(tmp_path: Path) -> None:
+    analysis = tmp_path / "analysis"
+    analysis.mkdir()
+    (analysis / "analysis.json").write_text(json.dumps(_payload()), encoding="utf-8")
+    output = build(analysis_dir=analysis, output=tmp_path / "workbook.xlsx", jobs_path=None)
+    sheet = load_workbook(output)["Provenance"]
+    header = [cell.value for cell in sheet[1]]
+    assert "run_config sha256" not in header
+    assert "predictions sha256" in header
+
+
 def test_workbook_has_the_expected_sheets_and_rows(tmp_path: Path) -> None:
     analysis = tmp_path / "analysis"
     analysis.mkdir()
