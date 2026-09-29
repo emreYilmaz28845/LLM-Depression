@@ -43,6 +43,21 @@ def test_default_label_configs_for_new_vocabs() -> None:
         assert resolved["external_negative_label"] == "Non-depressed"
 
 
+def test_a_config_without_a_labels_block_defaults_to_the_english_labels() -> None:
+    """The main answer vocabulary is English; short arms must opt in explicitly."""
+    resolved = resolve_label_config({})
+    assert resolved["label_vocab_version"] == LABEL_VOCAB_VERSION_LEGACY
+    assert resolved["internal_positive_label"] == "Depressed"
+    assert resolved["internal_negative_label"] == "Non-depressed"
+    assert resolved["external_positive_label"] == "Depressed"
+    assert resolved["external_negative_label"] == "Non-depressed"
+    assert prompt_label_instruction({}) == "Answer with exactly one label: Depressed or Non-depressed."
+
+    explicit_short_arm = resolve_label_config({"labels": {"label_vocab_version": LABEL_VOCAB_VERSION_SHORT_AB}})
+    assert explicit_short_arm["label_vocab_version"] == LABEL_VOCAB_VERSION_SHORT_AB
+    assert explicit_short_arm["internal_positive_label"] == "A"
+
+
 def test_legend_rendering_for_every_legend_style_vocab() -> None:
     for version, (positive, negative) in LEGEND_VOCABS.items():
         config = {"labels": {"label_vocab_version": version}}
