@@ -199,8 +199,17 @@ def _default_label_config_for_version(version: str) -> dict[str, str]:
 
 
 def resolve_label_config(config: dict[str, Any]) -> dict[str, str]:
+    """Resolve the answer-label vocabulary for a config.
+
+    A config that does not declare ``labels.label_vocab_version`` uses the English
+    labels (``Depressed`` / ``Non-depressed``): that is the main, canonical answer
+    vocabulary, and the short internal vocabularies (A/B, 1/0, True/False, Yes/No)
+    are explicit experiment arms that must opt in. The label-vocabulary campaign
+    found no significant difference between the arms on DAIC, so no canonical
+    config or default should prefer a short vocabulary.
+    """
     labels_cfg = dict(config.get("labels", {}))
-    version = str(labels_cfg.get("label_vocab_version", LABEL_VOCAB_VERSION_SHORT_AB)).strip()
+    version = str(labels_cfg.get("label_vocab_version", LABEL_VOCAB_VERSION_LEGACY)).strip()
     defaults = _default_label_config_for_version(version)
     resolved = dict(defaults)
     # Apply explicit customizations only when they do not simply mirror the
