@@ -81,9 +81,14 @@ def _pairs() -> list[tuple[str, dict, dict]]:
 def test_exactly_five_new_configs_and_21_fits() -> None:
     found = sorted(path.name for path in MAIN.glob("*_promptcontext_v1_qwen38_27b.yaml"))
     assert found == sorted(NEW_CONFIG_NAMES)
-    assert sorted(path.name for path in MAIN.glob("*promptcontext*_qwen38_27b.yaml")) == sorted(
-        NEW_CONFIG_NAMES
+    # The Qwen3 English family uses its own `_en_qwen38_27b` names; nothing else
+    # of the prompt-context qwen38 shape may exist.
+    other = sorted(
+        path.name
+        for path in MAIN.glob("*promptcontext*_qwen38_27b.yaml")
+        if "_en_qwen38_27b" not in path.name
     )
+    assert other == sorted(NEW_CONFIG_NAMES)
     matrix = _load(MATRIX)
     assert len(matrix["experiments"]) == 5
     assert sum(len(cell["folds"]) for cell in matrix["experiments"]) == 21

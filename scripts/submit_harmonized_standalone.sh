@@ -13,7 +13,7 @@ MAX_CONCURRENT_TRAINS="${MAX_CONCURRENT_TRAINS:-63}"
 MAX_CONCURRENT_AUX="${MAX_CONCURRENT_AUX:-63}"
 PREFLIGHT_AUDIT="${PREFLIGHT_AUDIT:-$PROJECT_ROOT/outputs/harmonized_mn5_preflight/$RUN_ID/audit.json}"
 PREFLIGHT_COMPONENTS="${PREFLIGHT_COMPONENTS:-5}"
-PREFLIGHT_MERGED="${PREFLIGHT_MERGED:-3}"
+PREFLIGHT_MERGED="${PREFLIGHT_MERGED:-4}"
 TRAIN_WORKER="${TRAIN_WORKER:-$PROJECT_ROOT/scripts/run_train_slurm.sh}"
 EVAL_WORKER="${EVAL_WORKER:-$PROJECT_ROOT/scripts/run_eval_slurm.sh}"
 HIDDEN_WORKER="${HIDDEN_WORKER:-$PROJECT_ROOT/scripts/run_qwen_hidden_extract_slurm.sh}"
@@ -76,7 +76,8 @@ PY
 fi
 
 cd "$PROJECT_ROOT"
-mapfile -t TASKS < <(python - "$MATRIX" "$PROJECT_ROOT" "$EXPECTED_TRAIN_TASKS" "$EXPECTED_EVAL_TASKS" <<'PY'
+TASKS_FILE="$(mktemp)"
+if ! python - "$MATRIX" "$PROJECT_ROOT" "$EXPECTED_TRAIN_TASKS" "$EXPECTED_EVAL_TASKS" >"$TASKS_FILE" <<'PY'
 import sys, yaml
 from pathlib import Path
 root = Path(sys.argv[2])
@@ -118,7 +119,13 @@ if count != expected_train or eval_count != expected_eval:
         f"{expected_eval} separate evals, found {count}/{eval_count}"
     )
 PY
-)
+then
+    echo "Harmonized matrix validation failed; refusing to submit: $MATRIX" >&2
+    rm -f "$TASKS_FILE"
+    exit 5
+fi
+mapfile -t TASKS < "$TASKS_FILE"
+rm -f "$TASKS_FILE"
 
 submit() {
     if [ "$DRY_RUN" = 1 ]; then

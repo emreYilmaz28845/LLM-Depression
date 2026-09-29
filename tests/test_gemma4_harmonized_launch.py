@@ -314,8 +314,9 @@ def test_qwen_launchers_keep_their_behavior() -> None:
         env=env,
     )
     assert en.returncode == 0, en.stderr
-    assert en.stderr.count("DRY_RUN ") == 100
-    assert "run_qwen_hidden_extract_slurm.sh" in en.stderr
+    # The default Qwen3 English family defers head execution: 40 train + 20 eval.
+    assert en.stderr.count("DRY_RUN ") == 60
+    assert "run_qwen_hidden_extract_slurm.sh" not in en.stderr
 
 
 def test_backend_env_helper_routing() -> None:
@@ -395,6 +396,26 @@ def test_gemma_preflight_audit_rejects_when_processor_unavailable(
         }
 
     monkeypatch.setattr(preflight, "validate_manifest", fake_validate)
+    # Keep the native merged-protocol loop hermetic: it needs component manifests
+    # (and, for the pooled Turkish components, the task runtime's built pooled
+    # manifests) that a checkout does not carry.
+    import src.merged.protocol as merged_protocol
+
+    monkeypatch.setattr(
+        merged_protocol,
+        "load_component_records",
+        lambda config, require_files=True: [],
+    )
+    monkeypatch.setattr(
+        merged_protocol,
+        "save_protocol_artifacts",
+        lambda config, records, output_dir, seed, inner_val_ratio: {
+            "split_audit": {"status": "passed"},
+            "manifest_file_sha256": "0" * 64,
+            "protocol": {"split_hash": "0" * 64},
+            "artifact_hash": "0" * 64,
+        },
+    )
     audit = preflight.prepare(
         run_id="t2_local",
         build=False,

@@ -19,10 +19,11 @@ PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depre
 ENV_ACTIVATE="${ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_rebuilt/bin/activate}"
 DATASET_BASE_ROOT="${DATASET_BASE_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/Datasets}"
 RUN_ID="${RUN_ID:?RUN_ID is required}"
+POOLED_RUNTIME_ROOT="${POOLED_RUNTIME_ROOT:-}"
 HARMONIZED_SOURCE_COMMIT="${HARMONIZED_SOURCE_COMMIT:-$(tr -d '\n' < "$PROJECT_ROOT/.provenance/git_commit.txt")}"
 HARMONIZED_SOURCE_BRANCH="${HARMONIZED_SOURCE_BRANCH:-$(tr -d '\n' < "$PROJECT_ROOT/.provenance/git_branch.txt")}"
 
-export PROJECT_ROOT DATASET_BASE_ROOT HARMONIZED_SOURCE_COMMIT HARMONIZED_SOURCE_BRANCH
+export PROJECT_ROOT DATASET_BASE_ROOT HARMONIZED_SOURCE_COMMIT HARMONIZED_SOURCE_BRANCH POOLED_RUNTIME_ROOT
 export DAIC_UNPROCESSED_ROOT="${DAIC_UNPROCESSED_ROOT:-$DATASET_BASE_ROOT/DAIC-WOZ/unprocessed}"
 export DAIC_LABEL_ROOT="${DAIC_LABEL_ROOT:-$DATASET_BASE_ROOT/DAIC-WOZ/minimal_zips}"
 export CMDC_DATASET_ROOT="${CMDC_DATASET_ROOT:-$DATASET_BASE_ROOT/CMDC}"
@@ -48,6 +49,8 @@ mkdir -p "$LOG_ROOT"
 exec > >(tee -a "$LOG_ROOT/preflight-${SLURM_JOB_ID}.out")
 exec 2> >(tee -a "$LOG_ROOT/preflight-${SLURM_JOB_ID}.err" >&2)
 
-python "$PROJECT_ROOT/scripts/prepare_harmonized_mn5.py" \
-    --run-id "$RUN_ID" \
-    --required-path-prefix "$DATASET_BASE_ROOT"
+preflight_args=(--run-id "$RUN_ID" --required-path-prefix "$DATASET_BASE_ROOT")
+if [ -n "$POOLED_RUNTIME_ROOT" ]; then
+    preflight_args+=(--pooled-runtime-root "$POOLED_RUNTIME_ROOT")
+fi
+python "$PROJECT_ROOT/scripts/prepare_harmonized_mn5.py" "${preflight_args[@]}"
