@@ -47,13 +47,17 @@ def is_qwen3_backend(backend: str | None) -> bool:
 
 
 def head_support_ready(backend: str | None) -> bool:
-    """Whether hidden-feature extraction and the head stage are ready.
+    """Whether hidden-feature extraction and the head stage may run for a route.
 
-    Qwen3 hidden features are a separate support task, so every Qwen3 merged
-    route completes its postprocess with evaluation evidence only and its head
-    kind stays execute-blocked until that support lands.
+    Qwen3 merged checkpoints are extracted through the same merged postprocess
+    path as every other family: the extractor resolves the backend, the sharded
+    device map and the route-specific hidden dimension from the checkpoint's own
+    contract, and the extracted dimension is validated against the backend's
+    recorded hidden size. Route-level *production* readiness is separate and
+    lives in the submission guard's per-route ``head_ready`` table, which stays
+    closed until that route's own bounded audit has run.
     """
-    return not is_qwen3_backend(backend)
+    return True
 
 
 def _evaluation_field(record: dict[str, Any], field: str) -> str:

@@ -121,13 +121,26 @@ def test_fsdp_resource_mismatch_fails_closed() -> None:
         validate_merged_resources(config, records)
 
 
-def test_head_support_is_deferred_for_qwen3_backends() -> None:
+def test_head_support_covers_every_backend_family() -> None:
+    """The code path is ready everywhere; per-route production readiness is the guard's."""
     assert is_qwen3_backend("qwen38") is True
     assert is_qwen3_backend("qwen3omni") is True
     assert is_qwen3_backend("qwen2audio") is False
-    assert head_support_ready("qwen38") is False
-    assert head_support_ready("qwen3omni") is False
+    assert head_support_ready("qwen38") is True
+    assert head_support_ready("qwen3omni") is True
     assert head_support_ready("qwen2audio") is True
+    assert head_support_ready(None) is True
+
+
+def test_merged_feature_dimensions_must_match_the_backend() -> None:
+    from src.merged.postprocess import validate_feature_dimensions
+
+    validate_feature_dimensions({5120}, "qwen38")
+    validate_feature_dimensions({2048}, "qwen3omni")
+    validate_feature_dimensions(set(), "qwen38")
+    validate_feature_dimensions({1234}, "unlisted_backend")
+    with pytest.raises(ValueError, match="does not match the recorded hidden size"):
+        validate_feature_dimensions({2048}, "qwen38")
 
 
 def test_english_audio_text_contract_mirrors_the_english_text_contract() -> None:
