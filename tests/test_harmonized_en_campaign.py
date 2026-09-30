@@ -83,7 +83,17 @@ def test_english_configs_are_derived_only_from_native_bases() -> None:
         assert changed, slug
         assert changed <= english_configs.ALLOWED_DIFF_PATHS, (slug, sorted(changed))
         assert target["recipe_id"] == f"{source['recipe_id']}_en"
-        for key in ("prompt", "split", "data", "training", "evaluation", "labels", "lora", "model_backend",
+        # The English cell inherits the whole native prompt with exactly one
+        # documented addition: the versioned translation notice. Native prompts
+        # stay byte-identical, so the estimand is "translated transcript plus
+        # explicit translation notice".
+        target_prompt = dict(target["prompt"])
+        assert (
+            target_prompt.pop("translation_notice_version")
+            == english_configs.TRANSLATION_NOTICE_VERSION
+        )
+        assert target_prompt == source["prompt"], slug
+        for key in ("split", "data", "training", "evaluation", "labels", "lora", "model_backend",
                     "model_name_or_path", "model_revision"):
             assert target.get(key) == source.get(key), (slug, key)
         assert target["labels"]["label_vocab_version"] == "legacy_english_labels"

@@ -20,6 +20,7 @@ prompt:
     {transcript_block}Based on the {decision_basis}, determine whether the subject is {label_descriptor}.
     {label_instruction}
   prompt_language: english
+  translation_notice_version: translation_notice_v1
 labels:
   label_vocab_version: legacy_english_labels
 data:
