@@ -75,7 +75,7 @@ def _omni_example(*, with_audio: bool = True) -> dict:
     return example
 
 
-def _write_fake_qwen38_checkpoint(tmp_path: Path) -> dict:
+def _write_fake_qwen38_checkpoint(tmp_path: Path, *, eval_gpus_per_node: int = 1) -> dict:
     """Write a minimal but contract-shaped pooled Qwen3.8 checkpoint tree."""
     base = tmp_path / "base_model"
     base.mkdir()
@@ -119,7 +119,7 @@ def _write_fake_qwen38_checkpoint(tmp_path: Path) -> dict:
             "model_backend": "qwen38",
             "split": {"cv_protocol": "train_val"},
             "evaluation": {"evaluation_view": "harmonized_all_windows_full_coverage"},
-            "resources": {"eval_gpus_per_node": 1},
+            "resources": {"eval_gpus_per_node": eval_gpus_per_node},
             "model_name_or_path": str(base),
         },
         "resolved_model_name_or_path": str(base),
@@ -412,3 +412,97 @@ class TestRetryHelperGate:
         assert result.returncode == 0, result.stderr
         assert "Skipping fixed-head dispatch" in result.stderr
         assert "hrh-" not in result.stderr
+
+
+class TestSmokeSubmitterResume:
+    """Submit-mode behaviour against a fake sbatch on PATH."""
+
+    def _fake_sbatch(self, tmp_path: Path):
+        bindir = tmp_path / "bin"
+        bindir.mkdir()
+        log = tmp_path / "sbatch_calls.log"
+        counter = tmp_path / "sbatch_calls.count"
+        script = bindir / "sbatch"
+        script.write_text(
+            "#!/usr/bin/env bash\n"
+            f"count=0\n[ -f '{counter}' ] && count=$(cat '{counter}')\n"
+            "count=$((count + 1))\n"
+            f"echo $count > '{counter}'\n"
+            f"printf '%s\\n' \"$*\" >> '{log}'\n"
+            "echo \"7000$count\"\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        return bindir, log
+
+    def _matrix(self, tmp_path: Path, fixture: dict, *, gpus: int = 1) -> Path:
+        matrix = {
+            "schema_version": "audiollm.qwen3_hidden_smoke.v1",
+            "jobs": [
+                {
+                    "name": "fake_text_smoke",
+                    "backend": "qwen38",
+                    "condition": "text_only",
+                    "config": QWEN38_POOLED_CONFIG,
+                    "checkpoint_dir": str(fixture["best"]),
+                    "gpus": gpus,
+                    "train_per_label": 2,
+                    "eval_per_label": 2,
+                }
+            ],
+        }
+        path = tmp_path / "smoke_matrix.yaml"
+        path.write_text(yaml.safe_dump(matrix, sort_keys=False), encoding="utf-8")
+        return path
+
+    def _run(self, tmp_path: Path, matrix: Path, bindir: Path) -> subprocess.CompletedProcess:
+        env = _env(
+            PROJECT_ROOT=ROOT,
+            MATRIX=matrix,
+            EVIDENCE_ROOT=tmp_path / "evidence",
+            DRY_RUN="0",
+            QWEN3_HEADS_ENABLED="1",
+        )
+        env["PATH"] = f"{bindir}:{env['PATH']}"
+        return subprocess.run(
+            ["bash", str(ROOT / "scripts/submit_qwen3_hidden_smoke.sh")],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+
+    def test_scaled_cpus_and_resume_without_duplicates(self, tmp_path: Path):
+        fixture = _write_fake_qwen38_checkpoint(tmp_path, eval_gpus_per_node=4)
+        matrix = self._matrix(tmp_path, fixture, gpus=4)
+        bindir, log = self._fake_sbatch(tmp_path)
+        first = self._run(tmp_path, matrix, bindir)
+        assert first.returncode == 0, first.stderr
+        calls = log.read_text(encoding="utf-8").splitlines()
+        assert len(calls) == 2
+        assert "--gres=gpu:4" in calls[0]
+        assert "--cpus-per-task=80" in calls[0]
+        assert "afterok:70001" in calls[1]
+        registry = (tmp_path / "evidence" / "jobs.tsv").read_text(encoding="utf-8")
+        assert registry.count("\n") == 3  # header + two rows
+        second = self._run(tmp_path, matrix, bindir)
+        assert second.returncode == 0, second.stderr
+        assert "already submitted: fake_text_smoke" in second.stdout
+        assert len(log.read_text(encoding="utf-8").splitlines()) == 2
+
+    def test_half_registered_job_submits_only_the_classifier(self, tmp_path: Path):
+        fixture = _write_fake_qwen38_checkpoint(tmp_path)
+        matrix = self._matrix(tmp_path, fixture)
+        bindir, log = self._fake_sbatch(tmp_path)
+        first = self._run(tmp_path, matrix, bindir)
+        assert first.returncode == 0, first.stderr
+        registry_path = tmp_path / "evidence" / "jobs.tsv"
+        header, extraction_row, _ = registry_path.read_text(encoding="utf-8").splitlines()
+        registry_path.write_text(header + "\n" + extraction_row + "\n", encoding="utf-8")
+        second = self._run(tmp_path, matrix, bindir)
+        assert second.returncode == 0, second.stderr
+        assert "keeping registered extraction job" in second.stdout
+        calls = log.read_text(encoding="utf-8").splitlines()
+        assert len(calls) == 3
+        assert "afterok:70001" in calls[2]
+        assert "q3hc-" in calls[2]

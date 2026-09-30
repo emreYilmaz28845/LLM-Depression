@@ -11,11 +11,20 @@
 #      run_config declares the matrix backend, the recorded GPU shape
 #      (`resources.eval_gpus_per_node`), a resolvable base model and an
 #      evaluation view;
-#   2. refuses existing cache / fit output paths (no overwrite);
+#   2. refuses existing cache / fit output paths for jobs it has not submitted
+#      yet (no overwrite);
 #   3. builds (or verifies / previews) the deterministic isolated-smoke subject
 #      selection that the extraction hashes into its cache identity;
 #   4. in submit mode, submits ONE GPU extraction job (SKIP_CLASSIFIERS=1) and
 #      ONE CPU-only classifier job that runs after it (afterok).
+#
+# The extraction sbatch scales `--cpus-per-task` with the requested GPUs
+# because the cluster enforces 20 CPUs per GPU on this partition; the worker's
+# own 20-CPU default is only valid for its default single-GPU shape.
+#
+# Submit mode is registry-resumable: `$EVIDENCE_ROOT/jobs.tsv` is written after
+# each sbatch, and a re-run skips fully registered jobs, submits only the
+# missing classifier for a half-registered job, and never duplicates a job.
 #
 # Required environment:
 #   PROJECT_ROOT         code root (deployment `code` dir or permanent checkout)
@@ -36,6 +45,8 @@ QWEN3_HEADS_ENABLED="${QWEN3_HEADS_ENABLED:-0}"
 QWEN_HIDDEN_DEPS="${QWEN_HIDDEN_DEPS:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/.deps/qwen_hidden}"
 CLASSIFIER_WORKER="${CLASSIFIER_WORKER:-$PROJECT_ROOT/scripts/run_qwen_hidden_classifier_slurm.sh}"
 SELECTION_BUILDER="${SELECTION_BUILDER:-$PROJECT_ROOT/scripts/build_qwen3_smoke_subject_selection.py}"
+CPUS_PER_GPU="${CPUS_PER_GPU:-20}"
+REGISTRY_HEADER=$'job\tkind\tslurm_job_id\tdependency\tcheckpoint\tcache_dir\tclassifier_dir'
 
 case "$DRY_RUN" in 0|1) ;; *) echo "DRY_RUN must be 0 or 1" >&2; exit 2;; esac
 if [ "$DRY_RUN" = "0" ] && [ "$QWEN3_HEADS_ENABLED" != "1" ]; then
@@ -134,9 +145,6 @@ for item in jobs:
     cache_dir = evidence_root / name / "cache"
     classifier_dir = evidence_root / name / "classifiers"
     selection_path = evidence_root / name / "subject_selection.json"
-    for path in (cache_dir, classifier_dir):
-        if path.exists():
-            raise SystemExit(f"{name}: refusing existing output path: {path}")
     print("\t".join((
         name,
         declared_backend,
@@ -172,11 +180,26 @@ submit() {
 }
 job_id() { printf '%s' "${1%%;*}"; }
 
+declare -A REGISTERED_EXTRACTION=()
+declare -A REGISTERED_CLASSIFIER=()
 registry="$EVIDENCE_ROOT/jobs.tsv"
 if [ "$DRY_RUN" = 0 ]; then
-    [ ! -e "$registry" ] || { echo "Refusing existing smoke registry: $registry" >&2; exit 4; }
     mkdir -p "$EVIDENCE_ROOT"
-    printf 'job\tkind\tslurm_job_id\tdependency\tcheckpoint\tcache_dir\tclassifier_dir\n' > "$registry"
+    if [ -e "$registry" ]; then
+        read -r registry_first_line < "$registry"
+        if [ "$registry_first_line" != "$REGISTRY_HEADER" ]; then
+            echo "Refusing unrecognized smoke registry: $registry" >&2
+            exit 4
+        fi
+        while IFS=$'\t' read -r job kind slurm_job_id dependency checkpoint cache_dir classifier_dir; do
+            case "$kind" in
+                extraction) REGISTERED_EXTRACTION["$job"]="$slurm_job_id" ;;
+                classifier) REGISTERED_CLASSIFIER["$job"]="$slurm_job_id" ;;
+            esac
+        done < <(tail -n +2 "$registry")
+    else
+        printf '%s\n' "$REGISTRY_HEADER" > "$registry"
+    fi
 fi
 
 echo "Qwen3 hidden-extraction smoke plan"
@@ -187,9 +210,18 @@ echo "  matrix: $MATRIX"
 echo "  evidence root: $EVIDENCE_ROOT"
 echo "  dry_run: $DRY_RUN (QWEN3_HEADS_ENABLED=$QWEN3_HEADS_ENABLED)"
 echo "  jobs: $(( ${#TASKS[@]} * 2 )) ($(( ${#TASKS[@]} )) extraction + $(( ${#TASKS[@]} )) classifier)"
+if [ "$DRY_RUN" = 0 ]; then
+    echo "  registry: $registry (already registered: ${#REGISTERED_EXTRACTION[@]} extraction, ${#REGISTERED_CLASSIFIER[@]} classifier)"
+fi
 
 for task in "${TASKS[@]}"; do
     IFS=$'\t' read -r name backend condition config_path checkpoint run_config_path run_config_sha adapter_sha cache_dir classifier_dir selection_path gpus train_per_label eval_per_label <<< "$task"
+    registered_extraction="${REGISTERED_EXTRACTION[$name]:-}"
+    registered_classifier="${REGISTERED_CLASSIFIER[$name]:-}"
+    if [ "$DRY_RUN" = 0 ] && [ -n "$registered_extraction" ] && [ -n "$registered_classifier" ]; then
+        echo "already submitted: $name extraction=$registered_extraction classifier=$registered_classifier"
+        continue
+    fi
     backend_vars="$(bash "$PROJECT_ROOT/scripts/harmonized_backend_env.sh" "$config_path" "$PROJECT_ROOT")"
     eval "$backend_vars"
     if [ "$MODEL_BACKEND" != "$backend" ]; then
@@ -204,12 +236,22 @@ for task in "${TASKS[@]}"; do
     echo "  run_config: $run_config_path (sha256 $run_config_sha)"
     echo "  adapter_model.safetensors sha256: $adapter_sha"
     echo "  gpus: $gpus (recorded eval_gpus_per_node)"
+    echo "  cpus: $((CPUS_PER_GPU * gpus)) (cluster minimum 20 CPUs per GPU)"
     echo "  worker env: $ENV_ACTIVATE"
     echo "  cache: $cache_dir"
     echo "  fit output: $classifier_dir"
     echo "  subject selection: $selection_path (train_per_label=$train_per_label eval_per_label=$eval_per_label)"
     echo "  logs: $log_root"
     echo "  classifier variants: $CLASSIFIER_VARIANTS"
+
+    if [ "$DRY_RUN" = 0 ]; then
+        for path in "$cache_dir" "$classifier_dir"; do
+            if [ -e "$path" ]; then
+                echo "$name: refusing existing output path: $path" >&2
+                exit 7
+            fi
+        done
+    fi
 
     selection_flags=(--checkpoint-dir "$checkpoint" --train-per-label "$train_per_label" --eval-per-label "$eval_per_label")
     if [ "$DRY_RUN" = 1 ]; then
@@ -221,23 +263,36 @@ for task in "${TASKS[@]}"; do
         python "$SELECTION_BUILDER" "${selection_flags[@]}" --output "$selection_path"
     fi
 
-    extraction_export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CHECKPOINT_DIR=$checkpoint,CACHE_DIR=$cache_dir,CONDITION=$condition,SKIP_CLASSIFIERS=1,SUBJECT_SELECTION=$selection_path,ENV_ACTIVATE=$ENV_ACTIVATE,LOG_ROOT=$log_root,QWEN_HIDDEN_DEPS=$QWEN_HIDDEN_DEPS"
-    if [ -n "$MODEL_PATH" ]; then
-        extraction_export="$extraction_export,MODEL_PATH=$MODEL_PATH"
+    if [ -n "$registered_extraction" ]; then
+        extraction_job="$registered_extraction"
+        echo "keeping registered extraction job: $name extraction=$extraction_job"
+    else
+        extraction_export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CHECKPOINT_DIR=$checkpoint,CACHE_DIR=$cache_dir,CONDITION=$condition,SKIP_CLASSIFIERS=1,SUBJECT_SELECTION=$selection_path,ENV_ACTIVATE=$ENV_ACTIVATE,LOG_ROOT=$log_root,QWEN_HIDDEN_DEPS=$QWEN_HIDDEN_DEPS"
+        if [ -n "$MODEL_PATH" ]; then
+            extraction_export="$extraction_export,MODEL_PATH=$MODEL_PATH"
+        fi
+        extraction_cmd=(sbatch --parsable --job-name="q3h-$(printf '%s' "$name" | cut -c1-24)" --gres="gpu:$gpus" --cpus-per-task=$((CPUS_PER_GPU * gpus)) --chdir="$PROJECT_ROOT" --export="$extraction_export" "$HIDDEN_WORKER")
+        extraction_raw="$(submit "${extraction_cmd[@]}")"
+        extraction_job="$(job_id "$extraction_raw")"
+        if [ "$DRY_RUN" = 0 ]; then
+            printf '%s\textraction\t%s\t-\t%s\t%s\t%s\n' "$name" "$extraction_job" "$checkpoint" "$cache_dir" "$classifier_dir" >> "$registry"
+        fi
     fi
-    extraction_cmd=(sbatch --parsable --job-name="q3h-$(printf '%s' "$name" | cut -c1-24)" --gres="gpu:$gpus" --chdir="$PROJECT_ROOT" --export="$extraction_export" "$HIDDEN_WORKER")
-    extraction_raw="$(submit "${extraction_cmd[@]}")"
-    extraction_job="$(job_id "$extraction_raw")"
 
-    classifier_export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CACHE_DIR=$cache_dir,CLASSIFIER_DIR=$classifier_dir,CLASSIFIER_VARIANTS=$CLASSIFIER_VARIANTS,LOG_ROOT=$log_root,QWEN_HIDDEN_DEPS=$QWEN_HIDDEN_DEPS"
-    classifier_cmd=(sbatch --parsable --job-name="q3hc-$(printf '%s' "$name" | cut -c1-23)" --dependency="afterok:$extraction_job" --chdir="$PROJECT_ROOT" --export="$classifier_export" "$CLASSIFIER_WORKER")
-    classifier_raw="$(submit "${classifier_cmd[@]}")"
-    classifier_job="$(job_id "$classifier_raw")"
+    if [ -n "$registered_classifier" ]; then
+        echo "keeping registered classifier job: $name classifier=$registered_classifier"
+    else
+        classifier_export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CACHE_DIR=$cache_dir,CLASSIFIER_DIR=$classifier_dir,CLASSIFIER_VARIANTS=$CLASSIFIER_VARIANTS,LOG_ROOT=$log_root,QWEN_HIDDEN_DEPS=$QWEN_HIDDEN_DEPS"
+        classifier_cmd=(sbatch --parsable --job-name="q3hc-$(printf '%s' "$name" | cut -c1-23)" --dependency="afterok:$extraction_job" --chdir="$PROJECT_ROOT" --export="$classifier_export" "$CLASSIFIER_WORKER")
+        classifier_raw="$(submit "${classifier_cmd[@]}")"
+        classifier_job="$(job_id "$classifier_raw")"
+        if [ "$DRY_RUN" = 0 ]; then
+            printf '%s\tclassifier\t%s\tafterok:%s\t%s\t%s\t%s\n' "$name" "$classifier_job" "$extraction_job" "$checkpoint" "$cache_dir" "$classifier_dir" >> "$registry"
+        fi
+    fi
 
     if [ "$DRY_RUN" = 0 ]; then
-        printf '%s\textraction\t%s\t-\t%s\t%s\t%s\n' "$name" "$extraction_job" "$checkpoint" "$cache_dir" "$classifier_dir" >> "$registry"
-        printf '%s\tclassifier\t%s\tafterok:%s\t%s\t%s\t%s\n' "$name" "$classifier_job" "$extraction_job" "$checkpoint" "$cache_dir" "$classifier_dir" >> "$registry"
-        echo "submitted: $name extraction=$extraction_job classifier=$classifier_job"
+        echo "submitted: $name extraction=$extraction_job classifier=${classifier_job:-$registered_classifier}"
     fi
 done
 
