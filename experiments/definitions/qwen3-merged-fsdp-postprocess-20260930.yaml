@@ -1,0 +1,108 @@
+schema_version: audiollm.experiment_group.v1
+group_id: qwen3-merged-fsdp-postprocess-20260930
+title: Qwen3 merged FSDP training and postprocess smoke chains (Qwen3.8 text, Qwen3-Omni audio+text)
+research_question: >-
+  Can the symmetric-merged pipeline train the Qwen3 pooled contracts with FSDP
+  and complete the merged postprocess evaluation with the contracts' declared
+  likelihood decision rule and evidence view, producing strict subject-level
+  evidence for all five components on an isolated deployment?
+dataset: >-
+  The five-component merged protocol: daic (participant packed30), cmdc, d3tec,
+  androids_interview and turkish_pooled_t17 (pooled pos+neg, BDI>=17).
+baseline: >-
+  The DDP-era symmetric-merged pipeline, whose submission route refuses a
+  contract that resolves to a Qwen3 backbone, and the four declared Qwen3
+  pooled merged contracts that are blocked until their own Python/config/route
+  preflight and bounded GPU smoke chains pass.
+treatment: >-
+  One merged contract per run, trained with the FSDP recipe
+  (training.strategy=fsdp, CPU activation offload, four ranks, effective global
+  batch 128) and evaluated by the merged postprocess with the declared
+  evaluation.sample_prediction_mode=likelihood and
+  evaluation.evaluation_view=harmonized_all_windows_full_coverage: native
+  text_only on Qwen3.8-27B (one postprocess GPU) and native audio_text on the
+  Qwen3-Omni-30B-A3B Thinker (sharded postprocess on four GPUs via the declared
+  device map). Hidden-feature extraction and the head kind stay deferred for
+  Qwen3 merged routes, so the smoke completes with evaluation evidence only.
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+runs:
+  - logical_run: qwen38_native_text_only_merged_smoke
+    dataset: symmetric_merged_native_text_only
+    modality: text_only
+    config: configs/experiments/merged/symmetric_merged_qwen3_pooled_native_text_only.yaml
+    folds:
+      - 0
+    endpoint: smoke
+    folds_note: >-
+      Fold 0 of the merged protocol with the bounded smoke cohort (two subjects
+      per class per component, one epoch). The run is smoke evidence for the
+      route, never a headline and never a workbook value.
+  - logical_run: qwen3omni_native_audio_text_merged_smoke
+    dataset: symmetric_merged_native_audio_text
+    modality: audio_text
+    config: configs/experiments/merged/symmetric_merged_qwen3_pooled_native_audio_text.yaml
+    folds:
+      - 0
+    endpoint: smoke
+    folds_note: >-
+      Same merged protocol and smoke cohort as the text route; the audio path
+      exercises the Thinker processor, the frozen audio encoder and the
+      declared four-GPU device-map evaluation. Smoke evidence only.
+prompt_contract:
+  prompt_context_version: promptcontext_v1
+  modality_honest_rendering: >-
+    Each component keeps its own prompt and rendering contract; Qwen3.8 and
+    Gemma-style templates are re-rendered by the backend dispatch the training
+    and evaluation paths share, and the audio components keep their native or
+    accepted-English transcript contract unchanged.
+  label_contract: Depressed / Non-depressed (legacy_english_labels, unchanged)
+model_contract:
+  backend: qwen38_and_qwen3omni
+  trainable_class: Qwen3_5ForConditionalGeneration (text) / Qwen3OmniMoeThinkerForConditionalGeneration (audio)
+  model_path: /gpfs/projects/etur92/ozu647717/models/Qwen3.8-27B and .../Qwen3-Omni-30B-A3B-Instruct
+  precision: bf16
+  training_strategy: fsdp
+  evaluation_shape: >-
+    Declared by the merged contract (execution.postprocess_gpus, matched against
+    the components' resources.eval_gpus_per_node): one GPU for the text route,
+    a four-GPU device map for the audio route.
+comparison_rule: >-
+  Smoke only: each chain proves train -> best_model -> postprocess on a bounded
+  cohort under the declared decision rule and view. The two chains are not a
+  model comparison, no headline is produced, and likelihood and
+  teacher-forced results are never mixed. The merged selection rule stays
+  mean_dataset_macro_f1 over the components' strict subject-level metrics.
+scope:
+  campaign: qwen3_merged_fsdp_postprocess
+  checkpoint_role: best_model
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
+  storage_note: >-
+    The merged protocol artifact, training output and postprocess evidence stay
+    under the permanent merged roots on GPFS; the local lane receives compact
+    evidence only, and adapter weights are not copied locally.
+exclusions:
+  - production_merged_campaigns
+  - extra_seeds_or_folds
+  - head_or_classifier_work
+  - standalone_training
+  - translation_generation
+  - package_install
+  - shared_environment_or_dataset_change
+  - headline_or_workbook_changes
+  - wandb_cloud_export
+  - evidence_overwrite_or_deletion
+  - pr_merge
+github_issue: null
+github_pr: 271
