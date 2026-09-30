@@ -15,7 +15,8 @@ default routes drift:
 * the four merged contracts resolve each of their five components to one Qwen3
   backend family, keep the mean-dataset-macro-F1 selection contract, and stay
   explicitly blocked for GPU execution until the support task lands;
-* head execution stays deferred while any default cell uses a Qwen3 backbone.
+* head execution stays explicit-only: the default matrices never declare fixed
+  heads, and Qwen3 head jobs run only through the dedicated smoke submitter.
 
 ``--emit`` writes the machine-readable map next to the private task outputs; the
 validators themselves are the tracked contract.
@@ -85,7 +86,7 @@ READINESS = (
     ("turkish/english/audio_text", "data and config ready; Qwen3-Omni processor audit prepared"),
     ("merged/native", "data and config ready; Qwen3 merged FSDP/postprocess deferred"),
     ("merged/english", "data and config ready; Qwen3 merged FSDP/postprocess deferred"),
-    ("heads", "deferred: Qwen3 hidden extraction is a separate support task"),
+    ("heads", "explicit-only: Qwen3 hidden extraction landed; Qwen3 head jobs run through the dedicated smoke submitter"),
 )
 
 
@@ -180,7 +181,7 @@ def validate_native_matrix() -> list[str]:
     if len(selected) != len(set(selected)):
         failures.append("native matrix selects a config twice")
     if matrix.get("fixed_heads") != []:
-        failures.append("native matrix must not declare fixed heads (Qwen3 head execution deferred)")
+        failures.append("native matrix must not declare fixed heads (Qwen3 head execution is explicit-only)")
     for item in matrix["experiments"]:
         rel = str(item["config"])
         config = load_config(rel)
@@ -306,13 +307,13 @@ def validate_merged_contracts() -> list[str]:
     return failures
 
 
-def validate_head_deferral() -> list[str]:
+def validate_head_scope() -> list[str]:
     failures: list[str] = []
     for rel in list(POOLED_TURKISH_NATIVE.values()) + list(POOLED_TURKISH_ENGLISH.values()):
         config = load_config(rel)
         if str(config.get("model_backend") or "") in NEW_MODEL_BACKENDS:
             continue
-        failures.append(f"{rel}: expected a Qwen3 backbone while head execution is deferred")
+        failures.append(f"{rel}: expected a Qwen3 backbone for the pooled default cell")
     return failures
 
 
@@ -322,7 +323,7 @@ def validate_all() -> dict[str, list[str]]:
         "english_matrix": validate_english_matrix(),
         "turkish_cells": validate_turkish_cells(),
         "merged_contracts": validate_merged_contracts(),
-        "head_deferral": validate_head_deferral(),
+        "head_scope": validate_head_scope(),
     }
 
 

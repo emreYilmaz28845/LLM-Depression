@@ -112,10 +112,11 @@ for item in matrix["experiments"]:
         )
     if declared_heads and config_backend in ("qwen38", "qwen3omni"):
         raise SystemExit(
-            "Qwen3 hidden-extraction prerequisite incomplete: head execution is not "
-            f"supported for model_backend={config_backend!r} ({config_path}). "
-            "Declare fixed_heads: [] for the Qwen3 English family or wait for the "
-            "separate backend-support task."
+            "Qwen3 fixed heads are explicit-only: this launcher never dispatches "
+            f"Qwen3 head jobs (model_backend={config_backend!r}, {config_path}). Keep "
+            "fixed_heads: [] here and use the explicit Qwen3 hidden-extraction smoke "
+            "submitter (scripts/submit_qwen3_hidden_smoke.sh) for a reviewed Qwen3 "
+            "head job."
         )
     dataset = str(config["dataset"])
     if dataset in ("daic", "edaic"):

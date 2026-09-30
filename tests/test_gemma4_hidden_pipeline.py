@@ -264,7 +264,13 @@ class TestBackendHiddenSizes:
         assert _decoder_hidden_size(model, {}) == 4096
 
     def test_backend_size_tables_are_exact(self):
-        assert BACKEND_HIDDEN_SIZES == {"gemma4": {3840}, "qwen2audio": {4096}, "text": {3584}}
+        assert BACKEND_HIDDEN_SIZES == {
+            "gemma4": {3840},
+            "qwen2audio": {4096},
+            "text": {3584},
+            "qwen38": {5120},
+            "qwen3omni": {2048},
+        }
         assert QWEN_HIDDEN_SIZES == {3584, 4096}
 
 

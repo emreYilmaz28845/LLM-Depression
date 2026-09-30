@@ -328,9 +328,11 @@ Four Qwen3 pooled merged contracts are defined under
 audio+text, English text-only). Each names five components, one backend family
 and the mean-dataset-macro-F1 selection contract. Their GPU execution is
 blocked: `scripts/submit_symmetric_merged.py` refuses a config whose components
-resolve to a Qwen3 backbone (dry-runs report the blocked plan), and the hidden
-extractor (`src/features/extract_qwen_hidden.py`) refuses Qwen3 checkpoints
-until the separate backend-support tasks land. Writing `strategy: fsdp` into a
+resolve to a Qwen3 backbone (dry-runs report the blocked plan). The hidden
+extractor (`src/features/extract_qwen_hidden.py`) supports Qwen3 checkpoints for
+the hidden-head path; Qwen3 fixed heads are explicit-only and run through
+`scripts/submit_qwen3_hidden_smoke.sh` (`QWEN3_HEADS_ENABLED=1`), never through
+the harmonized launchers. Writing `strategy: fsdp` into a
 merged config is not readiness, and no route falls back to the old DDP loader.
 
 Validators and generation:
@@ -353,7 +355,7 @@ Issue #20 tracks the English-transcript comparison. The default English family i
 
 Every English config keeps the `transcripts:` policy (`variant: english`, `minimum_status: automatic_low`, `require_complete: true`, `include_failed: false`). The D3TEC, Androids and CMDC cells point at `${TRANSLATION_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/translations}/harmonized_en_complete_v1/<dataset>/accepted.jsonl`; the pooled Turkish cells keep the inert `pooled_source_manifest_translations` placeholder because their manifest is prebuilt by the pooled builder. Only audio+text and text-only exist for D3TEC, Androids, CMDC, and Turkish. No English audio-only, DAIC, or E-DAIC configs.
 
-The default English matrix is `configs/experiments/harmonized/english_translation_matrix.yaml`: 8 experiments, 40 training folds, 20 separate evaluation folds (D3TEC, Androids), `fixed_heads: []` because Qwen3 head execution is deferred, exactly 60 jobs, no Optuna, no merged training, no audio-only cells. The launcher fails closed when a Qwen3 cell is combined with declared fixed heads.
+The default English matrix is `configs/experiments/harmonized/english_translation_matrix.yaml`: 8 experiments, 40 training folds, 20 separate evaluation folds (D3TEC, Androids), `fixed_heads: []` because Qwen3 head execution is explicit-only, exactly 60 jobs, no Optuna, no merged training, no audio-only cells. The launcher fails closed when a Qwen3 cell is combined with declared fixed heads; Qwen3 head jobs run only through `scripts/submit_qwen3_hidden_smoke.sh`.
 
 The pre-Qwen3 English family is preserved behind `configs/experiments/harmonized/english_translation_matrix_legacy_qwen2.yaml` (the Qwen2-era `*_en.yaml` configs, recipe `harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_en_v1`, 40 train + 20 eval + 40 head folds = 100 jobs), derived only from the native harmonized counterparts and never from `configs/experiments/translation_en/` (historical recipe, do not reuse). Submit it explicitly with `MATRIX=.../english_translation_matrix_legacy_qwen2.yaml`; the retry helper belongs to that legacy route.
 

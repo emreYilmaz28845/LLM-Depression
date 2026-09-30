@@ -1,0 +1,38 @@
+# Explicit Qwen3 hidden-extraction smoke matrix (isolated evidence only).
+#
+# One small extraction job per backend/modality cell, each followed by one
+# CPU-only fixed-head classifier job on the same cache. The matrix is never
+# part of the production harmonized matrices; scripts/submit_qwen3_hidden_smoke.sh
+# refuses to submit unless QWEN3_HEADS_ENABLED=1 is set explicitly, and its
+# dry-run prints the exact checkpoint, backend, worker environment, cache and
+# fit outputs, source identity, and job count.
+#
+# GPU shape: `gpus` pins the recorded `resources.eval_gpus_per_node` of the
+# checkpoint's own run_config.yaml (1 for the Qwen3.8 text cell, 4 for both
+# sharded Qwen3-Omni cells). A mismatch is refused.
+schema_version: audiollm.qwen3_hidden_smoke.v1
+jobs:
+  - name: qwen38_text_turkish_pooled_f0
+    backend: qwen38
+    condition: text_only
+    config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml
+    checkpoint_dir: /gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/turkish/turkish_pooled_baseline_text_only_f0_20260925/fold_0/best_model
+    gpus: 1
+    train_per_label: 2
+    eval_per_label: 2
+  - name: qwen3omni_audio_only_turkish_pooled_f0
+    backend: qwen3omni
+    condition: audio_only
+    config: configs/main/turkish_pooled_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml
+    checkpoint_dir: /gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen3omni_likelihood/audio_only/turkish/turkish_pooled_baseline_audio_only_f0_20260925/fold_0/best_model
+    gpus: 4
+    train_per_label: 1
+    eval_per_label: 1
+  - name: qwen3omni_audio_text_turkish_pooled_f0
+    backend: qwen3omni
+    condition: audio_text
+    config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml
+    checkpoint_dir: /gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen3omni_likelihood/audio_text/turkish/turkish_pooled_baseline_audio_text_f0_20260925/fold_0/best_model
+    gpus: 4
+    train_per_label: 1
+    eval_per_label: 1

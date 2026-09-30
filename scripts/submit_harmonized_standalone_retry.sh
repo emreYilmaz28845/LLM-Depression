@@ -8,6 +8,11 @@
 # CANCELLED, see ORIGINAL_TERMINAL_EVENT) for the original attempt's jobs
 # and the new attempt's SUBMITTED events to the fold's append-only
 # jobs.jsonl.
+#
+# Fixed-head dispatch follows the matrix: head jobs are submitted only when
+# the matrix declares a non-empty `fixed_heads`. A Qwen3 cell combined with
+# declared heads is refused outright; Qwen3 fixed heads are explicit-only and
+# run through scripts/submit_qwen3_hidden_smoke.sh.
 set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
@@ -79,12 +84,18 @@ fi
 
 cd "$PROJECT_ROOT"
 # Resolve the matrix so a cell can find its config path, run root, and
-# separate-eval flag. A cell that names an unknown dataset/modality stops.
-mapfile -t CELL_SPECS < <(python - "$MATRIX" "$PROJECT_ROOT" "$CELLS" <<'PY'
+# separate-eval flag. A cell that names an unknown dataset/modality stops, and a
+# cell whose backend is Qwen3 stops when the matrix declares fixed heads: Qwen3
+# fixed heads are explicit-only and never dispatched by this helper. The
+# resolution runs into a file so a nonzero exit is propagated (a process
+# substitution would swallow it).
+CELL_SPECS_FILE="$(mktemp)"
+if ! python - "$MATRIX" "$PROJECT_ROOT" "$CELLS" >"$CELL_SPECS_FILE" <<'PY'
 import sys, yaml
 from pathlib import Path
 root = Path(sys.argv[2])
 matrix = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+fixed_heads = [str(item) for item in (matrix.get("fixed_heads") or [])]
 cells = []
 for line in Path(sys.argv[3]).read_text(encoding="utf-8").splitlines():
     line = line.strip()
@@ -114,15 +125,28 @@ for item in matrix["experiments"]:
         continue
     matched.add(key)
     run_root = str(config["output_dirs"]["run_root"]).replace("${PROJECT_ROOT}", str(root))
+    config_backend = str(config.get("model_backend") or "")
+    if fixed_heads and config_backend in ("qwen38", "qwen3omni"):
+        raise SystemExit(
+            "Qwen3 fixed heads are explicit-only: this retry helper never dispatches "
+            f"Qwen3 head jobs (model_backend={config_backend!r}, {config_path}). Use the "
+            "explicit Qwen3 hidden-extraction smoke submitter instead."
+        )
     for cell in cells:
         if (cell[0], cell[1]) == key:
             terms = [cell[i] if len(cell) > i else "" for i in (7, 8, 9)]
-            print("\t".join((str(config_path), run_root, "1" if item["separate_eval"] else "0", cell[0], cell[1], cell[2], cell[3], cell[4], cell[5], cell[6] if len(cell) > 6 else "", *terms)))
+            print("\t".join((str(config_path), run_root, "1" if item["separate_eval"] else "0", cell[0], cell[1], cell[2], cell[3], cell[4], cell[5], cell[6] if len(cell) > 6 else "", *terms, "1" if fixed_heads else "0", config_backend)))
 missing = wanted - matched
 if missing:
     raise SystemExit(f"Cells reference unknown dataset/modality: {sorted(missing)}")
 PY
-)
+then
+    echo "Retry cell resolution failed; refusing to submit: $MATRIX" >&2
+    rm -f "$CELL_SPECS_FILE"
+    exit 5
+fi
+mapfile -t CELL_SPECS < "$CELL_SPECS_FILE"
+rm -f "$CELL_SPECS_FILE"
 
 submit() {
     if [ "$DRY_RUN" = 1 ]; then
@@ -163,6 +187,7 @@ names = [
     "config", "run_root", "separate_eval", "dataset", "modality", "fold",
     "train_ok", "failed_train", "failed_eval", "failed_hidden",
     "train_term", "eval_term", "hidden_term",
+    "heads_enabled", "config_backend",
 ]
 for index, name in enumerate(names):
     print(f"{name}={shlex.quote(fields[index] if index < len(fields) else '')}")
@@ -262,26 +287,31 @@ PY
         chain_job="$eval_job"
     fi
 
-    aux_lane=$((aux_index % MAX_CONCURRENT_AUX))
-    aux_throttle="${aux_lanes[$aux_lane]:-}"
-    # dependency_arg returns 1 for an empty value; the || true mirrors the
-    # eval line above so an empty chain/throttle cannot trip set -e.
-    hidden_dep="$(dependency_arg "$chain_job" "$aux_throttle" || true)"
-    if [ "$train_ok" = "1" ]; then
-        cache="$FEATURES_ROOT/$dataset/${run_name_base}_${RETRY_TAG}/fold_$fold"
-        classifiers="$CLASSIFIERS_ROOT/$dataset/${run_name_base}_${RETRY_TAG}/fold_$fold"
+    hidden_job=""
+    if [ "$heads_enabled" = "1" ]; then
+        aux_lane=$((aux_index % MAX_CONCURRENT_AUX))
+        aux_throttle="${aux_lanes[$aux_lane]:-}"
+        # dependency_arg returns 1 for an empty value; the || true mirrors the
+        # eval line above so an empty chain/throttle cannot trip set -e.
+        hidden_dep="$(dependency_arg "$chain_job" "$aux_throttle" || true)"
+        if [ "$train_ok" = "1" ]; then
+            cache="$FEATURES_ROOT/$dataset/${run_name_base}_${RETRY_TAG}/fold_$fold"
+            classifiers="$CLASSIFIERS_ROOT/$dataset/${run_name_base}_${RETRY_TAG}/fold_$fold"
+        else
+            cache="$FEATURES_ROOT/$dataset/$run_name/fold_$fold"
+            classifiers="$CLASSIFIERS_ROOT/$dataset/$run_name/fold_$fold"
+        fi
+        hidden_cmd=(sbatch --parsable --job-name="hrh-${dataset:0:4}-${modality:0:2}-f$fold")
+        [ -n "$hidden_dep" ] && hidden_cmd+=("$hidden_dep")
+        hidden_cmd+=(--export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CHECKPOINT_DIR=$fold_dir/best_model,CACHE_DIR=$cache,CLASSIFIER_DIR=$classifiers,MODEL_PATH=$MODEL_PATH,CONDITION=$modality,CLASSIFIER_VARIANTS=$CLASSIFIER_VARIANTS" "$HIDDEN_WORKER")
+        hidden_raw="$(submit "${hidden_cmd[@]}")"
+        hidden_job="$(job_id "$hidden_raw")"
+        aux_lanes[$aux_lane]="$hidden_job"
+        aux_index=$((aux_index + 1))
+        [ "$DRY_RUN" = 1 ] || printf '%s\t%s\t%s\thidden_fixed\t%s\t%s,%s\t%s\n' "$dataset" "$modality" "$fold" "$hidden_job" "$chain_job" "$aux_throttle" "$failed_hidden" >> "$registry"
     else
-        cache="$FEATURES_ROOT/$dataset/$run_name/fold_$fold"
-        classifiers="$CLASSIFIERS_ROOT/$dataset/$run_name/fold_$fold"
+        echo "Skipping fixed-head dispatch for $dataset/$modality fold $fold: the matrix declares fixed_heads: []" >&2
     fi
-    hidden_cmd=(sbatch --parsable --job-name="hrh-${dataset:0:4}-${modality:0:2}-f$fold")
-    [ -n "$hidden_dep" ] && hidden_cmd+=("$hidden_dep")
-    hidden_cmd+=(--export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CHECKPOINT_DIR=$fold_dir/best_model,CACHE_DIR=$cache,CLASSIFIER_DIR=$classifiers,MODEL_PATH=$MODEL_PATH,CONDITION=$modality,CLASSIFIER_VARIANTS=$CLASSIFIER_VARIANTS" "$HIDDEN_WORKER")
-    hidden_raw="$(submit "${hidden_cmd[@]}")"
-    hidden_job="$(job_id "$hidden_raw")"
-    aux_lanes[$aux_lane]="$hidden_job"
-    aux_index=$((aux_index + 1))
-    [ "$DRY_RUN" = 1 ] || printf '%s\t%s\t%s\thidden_fixed\t%s\t%s,%s\t%s\n' "$dataset" "$modality" "$fold" "$hidden_job" "$chain_job" "$aux_throttle" "$failed_hidden" >> "$registry"
 
     if [ "$DRY_RUN" = 0 ]; then
         python - "$context_path" "$fold_dir" "$chain_job" "${eval_raw:-}" "$hidden_job" "$train_ok" "$failed_train" "$failed_eval" "$failed_hidden" "$PROJECT_ROOT" <<'PY'
@@ -319,12 +349,13 @@ if eval_job:
         dependency_job_ids=[] if train_ok == "1" else [chain_job], status="PENDING",
         resubmission_of_job_id=failed_eval or None,
     ))
-events.append(lifecycle.new_job_event(
-    job_key="hidden_fixed", job_type="hidden_classifier", event_type="SUBMITTED",
-    attempt_id=attempt, fold=fold_n,
-    slurm_job_id=hidden_job, dependency_job_ids=[eval_job or chain_job], status="PENDING",
-    resubmission_of_job_id=failed_hidden or None,
-))
+if hidden_job:
+    events.append(lifecycle.new_job_event(
+        job_key="hidden_fixed", job_type="hidden_classifier", event_type="SUBMITTED",
+        attempt_id=attempt, fold=fold_n,
+        slurm_job_id=hidden_job, dependency_job_ids=[eval_job or chain_job], status="PENDING",
+        resubmission_of_job_id=failed_hidden or None,
+    ))
 for event in events:
     lifecycle.append_job_event(run_root / "jobs.jsonl", event)
 PY
