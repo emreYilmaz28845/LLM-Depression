@@ -3,8 +3,8 @@ protocol: symmetric_merged
 recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1_promptcontext_v1
 modality: audio_only
 seed: 1337
-status: smoke_only
-status_reason: Qwen3 merged FSDP/postprocess implementation landed; the audio+text route carries the GPU smoke chain, so the audio-only route keeps its production guard and its CPU/config/processor route tests until it passes its own chain.
+status: execute_verified
+status_reason: 'Qwen3 merged FSDP/postprocess GPU smoke chain passed (run qwen3_multiseed_smoke_audio_only_20260930_r1: train 46852252 and postprocess 46852253 COMPLETED 0:0; deployment feat-qwen3-multiseed-matrix-readiness-20260930-20260930T183953Z-4ff77c53-521d2e6a, source 4ff77c53ebd3808671af551a58287136bd1726e5), so the cv and final stages are executable; the head kind is opened per route only after its own bounded hidden-feature audit.'
 model_backend: qwen3omni
 model_name_or_path: ${QWEN3_OMNI_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen3-Omni-30B-A3B-Instruct}
 model_attn_implementation: sdpa

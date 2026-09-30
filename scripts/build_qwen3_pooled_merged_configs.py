@@ -88,22 +88,33 @@ CELL_STATUS: dict[str, tuple[str, str]] = {
         "kind stays deferred until Qwen3 hidden-feature support is verified for merged checkpoints.",
     ),
     "native_audio_only": (
-        SMOKE_ONLY_STATUS,
-        "Qwen3 merged FSDP/postprocess implementation landed; the audio+text route carries the "
-        "GPU smoke chain, so the audio-only route keeps its production guard and its "
-        "CPU/config/processor route tests until it passes its own chain.",
+        EXECUTE_VERIFIED_STATUS,
+        "Qwen3 merged FSDP/postprocess GPU smoke chain passed (run "
+        "qwen3_multiseed_smoke_audio_only_20260930_r1: train 46852252 and postprocess 46852253 "
+        "COMPLETED 0:0; deployment "
+        "feat-qwen3-multiseed-matrix-readiness-20260930-20260930T183953Z-4ff77c53-521d2e6a, source "
+        "4ff77c53ebd3808671af551a58287136bd1726e5), so the cv and final stages are executable; "
+        "the head kind is opened per route only after its own bounded hidden-feature audit.",
     ),
     "english_text_only": (
-        SMOKE_ONLY_STATUS,
-        "Qwen3 merged FSDP/postprocess implementation landed; the English text contract keeps "
-        "its production guard and its CPU/config/processor route tests until it passes its own "
-        "GPU smoke chain.",
+        EXECUTE_VERIFIED_STATUS,
+        "Qwen3 merged FSDP/postprocess GPU smoke chain passed (run "
+        "qwen3_multiseed_smoke_en_text_20260930_r1: train 46852254 and postprocess 46852255 "
+        "COMPLETED 0:0; deployment "
+        "feat-qwen3-multiseed-matrix-readiness-20260930-20260930T183953Z-4ff77c53-521d2e6a, source "
+        "4ff77c53ebd3808671af551a58287136bd1726e5), so the cv and final stages are executable; "
+        "the four translated components render the versioned translation notice and the head kind "
+        "is opened per route only after its own bounded hidden-feature audit.",
     ),
     "english_audio_text": (
-        SMOKE_ONLY_STATUS,
-        "Qwen3 merged FSDP/postprocess implementation landed; the English audio+text contract "
-        "keeps its production guard, its CPU/config/processor route tests and its merged "
-        "English-render audit until it passes its own GPU smoke chain.",
+        EXECUTE_VERIFIED_STATUS,
+        "Qwen3 merged FSDP/postprocess GPU smoke chain passed (run "
+        "qwen3_multiseed_smoke_en_audio_text_20260930_r1: train 46852256 and postprocess 46852257 "
+        "COMPLETED 0:0; deployment "
+        "feat-qwen3-multiseed-matrix-readiness-20260930-20260930T183953Z-4ff77c53-521d2e6a, source "
+        "4ff77c53ebd3808671af551a58287136bd1726e5), so the cv and final stages are executable; the "
+        "English components carry the translation notice with original-language audio and the head "
+        "kind is opened per route only after its own bounded hidden-feature audit.",
     ),
 }
 
@@ -466,10 +477,30 @@ def render(config: dict[str, Any]) -> str:
     return yaml.safe_dump(config, sort_keys=False, allow_unicode=True, width=1000)
 
 
-def emit(target: Path, content: str, *, check_only: bool, failures: list[str]) -> None:
+def emit(
+    target: Path,
+    content: str,
+    *,
+    check_only: bool,
+    failures: list[str],
+    replace: bool = False,
+    replacements: list[str] | None = None,
+) -> None:
+    """Write the derived content, refusing to change an existing file silently.
+
+    An existing file with different content is a failure unless the caller
+    passes the explicit one-time ``replace`` transition, which records the
+    replaced path so the audit shows exactly what changed.
+    """
     if target.is_file():
         if target.read_text(encoding="utf-8") != content:
-            failures.append(f"existing file differs from derived content: {target}")
+            if replace and not check_only:
+                target.write_text(content, encoding="utf-8")
+                print(f"replaced {target.relative_to(PROJECT_ROOT)}")
+                if replacements is not None:
+                    replacements.append(str(target.relative_to(PROJECT_ROOT)))
+            else:
+                failures.append(f"existing file differs from derived content: {target}")
         return
     if check_only:
         failures.append(f"missing derived file: {target}")
@@ -483,6 +514,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="verify without writing")
     parser.add_argument(
+        "--replace-contracts",
+        action="store_true",
+        help=(
+            "one-time transition: replace existing generated contracts even when they differ from "
+            "the derived content (for example a readiness status flip backed by a recorded smoke "
+            "chain); the replaced paths are recorded in the audit"
+        ),
+    )
+    parser.add_argument(
         "--audit-output",
         type=Path,
         default=DEFAULT_AUDIT_OUTPUT,
@@ -491,6 +531,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     failures: list[str] = []
+    replacements: list[str] = []
     audit: dict[str, Any] = {
         "schema_version": "audiollm.qwen3_pooled_merged_config_diff.v1",
         "allowed_paths": sorted(ALLOWED_DIFF_PATHS),
@@ -509,7 +550,15 @@ def main(argv: list[str] | None = None) -> int:
         if yaml.safe_load(rendered) != config:
             raise GenerationError(f"{slug}: rendered config does not round-trip")
         target = MERGED / target_name
-        emit(target, rendered, check_only=args.check, failures=failures)
+        emit(
+            target,
+            rendered,
+            check_only=args.check,
+            failures=failures,
+            replace=args.replace_contracts,
+            replacements=replacements,
+        )
+        audit["contracts_replaced"] = replacements
         audit["configs"].append(
             {
                 "cell_id": slug,

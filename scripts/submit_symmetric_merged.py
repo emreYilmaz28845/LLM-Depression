@@ -86,35 +86,50 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
     "symmetric_merged_qwen3_pooled_native_audio_only": {
         "backend": "qwen3omni",
         "modality": "audio_only",
-        "production_ready": False,
-        "production_block_reason": (
-            "the audio-only route has no GPU smoke chain in this task; it is covered by "
-            "CPU/config/processor route tests only"
-        ),
+        "production_ready": True,
+        "production_block_reason": None,
         "head_ready": False,
-        "evidence": None,
+        "evidence": (
+            "GPU smoke chain passed: run qwen3_multiseed_smoke_audio_only_20260930_r1. Train job "
+            "46852252 COMPLETED 0:0 (30:49) and postprocess job 46852253 COMPLETED 0:0 (4:39), both "
+            "from the immutable deployment "
+            "feat-qwen3-multiseed-matrix-readiness-20260930-20260930T183953Z-4ff77c53-521d2e6a "
+            "(source 4ff77c53ebd3808671af551a58287136bd1726e5). Likelihood subject-level evidence "
+            "was collected locally for all five components and the strict metrics were recomputed "
+            "from the stored subject predictions with an exact match."
+        ),
     },
     "symmetric_merged_qwen3_pooled_english_text_only": {
         "backend": "qwen38",
         "modality": "text_only",
-        "production_ready": False,
-        "production_block_reason": (
-            "the English text contract has no GPU smoke chain in this task; it is covered by "
-            "CPU/config/processor route tests only"
-        ),
+        "production_ready": True,
+        "production_block_reason": None,
         "head_ready": False,
-        "evidence": None,
+        "evidence": (
+            "GPU smoke chain passed: run qwen3_multiseed_smoke_en_text_20260930_r1. Train job "
+            "46852254 COMPLETED 0:0 (6:40) and postprocess job 46852255 COMPLETED 0:0 (2:37), both "
+            "from the immutable deployment "
+            "feat-qwen3-multiseed-matrix-readiness-20260930-20260930T183953Z-4ff77c53-521d2e6a "
+            "(source 4ff77c53ebd3808671af551a58287136bd1726e5). The four translated components "
+            "render the versioned translation notice and DAIC keeps its native English input; "
+            "likelihood subject-level evidence was locally verified for all five components."
+        ),
     },
     "symmetric_merged_qwen3_pooled_english_audio_text": {
         "backend": "qwen3omni",
         "modality": "audio_text",
-        "production_ready": False,
-        "production_block_reason": (
-            "the English audio+text contract has no GPU smoke chain yet; it is covered by its "
-            "CPU/config/processor route tests and the merged English-render audit only"
-        ),
+        "production_ready": True,
+        "production_block_reason": None,
         "head_ready": False,
-        "evidence": None,
+        "evidence": (
+            "GPU smoke chain passed: run qwen3_multiseed_smoke_en_audio_text_20260930_r1. Train job "
+            "46852256 COMPLETED 0:0 (32:43) and postprocess job 46852257 COMPLETED 0:0 (5:42), both "
+            "from the immutable deployment "
+            "feat-qwen3-multiseed-matrix-readiness-20260930-20260930T183953Z-4ff77c53-521d2e6a "
+            "(source 4ff77c53ebd3808671af551a58287136bd1726e5). The English components carry the "
+            "translation notice with original-language audio; likelihood subject-level evidence was "
+            "locally verified for all five components."
+        ),
     },
 }
 

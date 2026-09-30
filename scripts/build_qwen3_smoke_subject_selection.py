@@ -4,16 +4,20 @@
 The smoke extraction runs on a tiny, predeclared subset of the checkpoint's own
 saved split. This builder resolves that split exactly the way the extractor does
 (``_load_saved_run`` + ``_resolve_subject_partitions``), then picks, per label
-stratum, the first subjects (sorted) that carry every required question
-condition in the pooled manifest.
+stratum, the first subjects (sorted) that qualify.
+
+For the pooled Turkish family (``dataset_variant: pooled_t17``) a subject
+qualifies only when it carries every required question condition, so the pooled
+pairing and the two-condition identity are preserved. Any other cell has no
+question-condition contract and the selection is by label only.
 
 The output JSON is what ``src/features/extract_qwen_hidden.py
 --subject-selection`` accepts. Its sha256 becomes part of the cache identity, so
 a smoke cache can never collide with a production cache. ``--preview`` prints
 the same selection without writing anything.
 
-This tool exists for the pooled Turkish smoke cells (``dataset_variant:
-pooled_t17``); it refuses any other checkpoint contract.
+This tool is smoke-only: the production head orchestration resolves its parents
+from recorded attempts and never uses this small selection.
 """
 
 from __future__ import annotations
@@ -68,7 +72,7 @@ def _select_per_label(
         for subject_id in sorted(candidates):
             if labels.get(subject_id) != label_value:
                 continue
-            if conditions.get(subject_id, set()) != required:
+            if required and conditions.get(subject_id, set()) != required:
                 continue
             chosen.append(subject_id)
             taken += 1
@@ -93,20 +97,21 @@ def build_selection(
     if train_per_label < 1 or eval_per_label < 1:
         raise SelectionError("Train/eval subjects per label must be positive.")
     saved, config, run_config_path, split_path = _load_saved_run(checkpoint_dir)
-    if str(config.get("dataset_variant", "")) != "pooled_t17":
-        raise SelectionError(
-            "The smoke selection builder is scoped to the pooled Turkish family "
-            f"(dataset_variant pooled_t17); got {config.get('dataset_variant')!r}."
-        )
+    pooled = str(config.get("dataset_variant", "")) == "pooled_t17"
+    if pooled:
+        required = set(conditions)
+        if not required:
+            raise SelectionError("At least one required question condition is needed.")
+    else:
+        # A non-pooled cell has no question-condition contract, so the smoke
+        # selection is by label only; the pooled family keeps its exact pairing.
+        required = set()
     resolved_manifest = manifest_path or _saved_path(saved["manifest_path"])
     if not resolved_manifest.is_file():
         raise SelectionError(f"Manifest is unavailable: {resolved_manifest}")
     split_payload = read_json(split_path)
     partitions, provenance = _resolve_subject_partitions(saved, config, split_payload)
     condition_map, labels = _subject_conditions(read_jsonl(resolved_manifest))
-    required = set(conditions)
-    if not required:
-        raise SelectionError("At least one required question condition is needed.")
     selection = {
         "outer_train": _select_per_label(
             partitions["outer_train"], labels, condition_map, required,
