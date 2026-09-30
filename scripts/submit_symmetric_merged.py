@@ -55,11 +55,17 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
         "production_block_reason": None,
         "head_ready": False,
         "evidence": (
-            "GPU smoke chain passed: run qwen3_merged_smoke_text_only_20260930_r3, train job "
-            "46844006 COMPLETED 0:0 and postprocess job 46845076 COMPLETED 0:0 on deployment "
+            "GPU smoke chain passed: run qwen3_merged_smoke_text_only_20260930_r3. Train job "
+            "46844006 COMPLETED 0:0 and postprocess job 46845076 COMPLETED 0:0 both ran from the "
+            "immutable deployment "
             "feat-qwen3-merged-fsdp-postprocess-20260930-20260930T142929Z-c41d8e76-91bf3e5a "
-            "(source c41d8e76c12979c358499a8b84fce035f67b6478); likelihood subject-level "
-            "evidence locally verified for all five components."
+            "(source c41d8e76c12979c358499a8b84fce035f67b6478). The completed train output was "
+            "relocated from that deployment's "
+            "output_model/symmetric_merged/qwen3_pooled_native_likelihood/text_only/"
+            "qwen3_merged_smoke_text_only_20260930_r3/smoke/fold_0 to the same relative path under "
+            "the permanent checkout (identical files; earlier failed attempts and their logs are "
+            "preserved). Likelihood subject-level evidence was locally verified for all five "
+            "components."
         ),
     },
     "symmetric_merged_qwen3_pooled_native_audio_text": {
@@ -69,11 +75,12 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
         "production_block_reason": None,
         "head_ready": False,
         "evidence": (
-            "GPU smoke chain passed: run qwen3_merged_smoke_audio_text_20260930_r2, train job "
-            "46846648 COMPLETED 0:0 and postprocess job 46846649 COMPLETED 0:0 on deployment "
+            "GPU smoke chain passed: run qwen3_merged_smoke_audio_text_20260930_r2. Train job "
+            "46846648 COMPLETED 0:0 and postprocess job 46846649 COMPLETED 0:0 both ran from the "
+            "immutable deployment "
             "feat-qwen3-merged-fsdp-postprocess-20260930-20260930T153509Z-b50cc61e-5c61506c "
-            "(source b50cc61edc3b1737b860e59fc61baf86131d643e); likelihood subject-level "
-            "evidence locally verified for all five components."
+            "(source b50cc61edc3b1737b860e59fc61baf86131d643e); likelihood subject-level evidence "
+            "was locally verified for all five components."
         ),
     },
     "symmetric_merged_qwen3_pooled_native_audio_only": {
