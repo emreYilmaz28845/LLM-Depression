@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the four Qwen3 pooled merged contracts.
+"""Generate the five Qwen3 pooled merged contracts.
 
 The contracts are derived from the existing symmetric-merged configs, so the
 merged methodology is inherited by construction and the diff audit proves it:
@@ -12,9 +12,10 @@ contract fields change:
   30B-A3B Thinker for the audio modalities) with the pinned model path and, for
   Qwen3.8, the pinned revision;
 * the five components point at the current native default cells; the Turkish
-  component is the pooled Qwen3 config, and the English text-only contract swaps
-  the four translated datasets to their Qwen3 English cells while DAIC keeps its
-  native English input;
+  component is the pooled Qwen3 config, and the English contracts swap the four
+  translated datasets to their Qwen3 English cells while DAIC keeps its native
+  English input (text-only and audio+text; no English audio-only contract,
+  which would be input-identical to its native counterpart);
 * the pooled English component keeps the prebuilt manifest contract;
 * isolated merged roots under ``symmetric_merged/qwen3_pooled_{native,english}``;
 * the explicit FSDP training recipe (``training.strategy: fsdp`` with CPU
@@ -45,6 +46,8 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts import build_qwen3_english_configs as english_configs  # noqa: E402
 
 MERGED = PROJECT_ROOT / "configs/experiments/merged"
 MAIN = PROJECT_ROOT / "configs/main"
@@ -95,6 +98,12 @@ CELL_STATUS: dict[str, tuple[str, str]] = {
         "Qwen3 merged FSDP/postprocess implementation landed; the English text contract keeps "
         "its production guard and its CPU/config/processor route tests until it passes its own "
         "GPU smoke chain.",
+    ),
+    "english_audio_text": (
+        SMOKE_ONLY_STATUS,
+        "Qwen3 merged FSDP/postprocess implementation landed; the English audio+text contract "
+        "keeps its production guard, its CPU/config/processor route tests and its merged "
+        "English-render audit until it passes its own GPU smoke chain.",
     ),
 }
 
@@ -173,39 +182,63 @@ def native_components(modality: str) -> list[dict[str, str]]:
     ]
 
 
-def english_text_only_components() -> list[dict[str, str]]:
-    return [
+def english_components(modality: str) -> list[dict[str, str]]:
+    """The five English components for one modality, in the merged order.
+
+    DAIC keeps its native English input; the other four datasets use their
+    generated English cells (their config name and English manifest/split roots
+    come from the English generator's cell table, so the two generators cannot
+    drift apart silently).
+    """
+    english_cells = {
+        cell[4]: (cell[2], cell[3])
+        for cell in english_configs.CELLS
+        if cell[5] == modality
+    }
+    missing = {"cmdc", "d3tec", "androids_interview", "turkish"} - set(english_cells)
+    if missing:
+        raise GenerationError(
+            f"the English generator has no {modality} cell for {sorted(missing)}"
+        )
+    components: list[dict[str, str]] = [
         {
             "name": "daic",
-            "config": "configs/main/daic_text_only_harmonized_selmacrof1_likelihood_v1.yaml",
+            "config": f"configs/main/daic_{modality}_harmonized_selmacrof1_likelihood_v1.yaml",
             "manifest_path": "outputs/manifests_harmonized/daic/daic_manifest.jsonl",
             "metadata_path": "outputs/splits_harmonized/daic/daic_manifest_metadata.json",
         },
         {
             "name": "cmdc",
-            "config": "configs/main/cmdc_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen38_27b.yaml",
-            "manifest_path": "outputs/manifests_harmonized_en/cmdc/cmdc_manifest.jsonl",
-            "metadata_path": "outputs/splits_harmonized_en/cmdc/cmdc_manifest_metadata.json",
+            "config": f"configs/main/{english_cells['cmdc'][0]}",
+            "manifest_path": f"outputs/manifests_harmonized_en/{english_cells['cmdc'][1]}/cmdc_manifest.jsonl",
+            "metadata_path": f"outputs/splits_harmonized_en/{english_cells['cmdc'][1]}/cmdc_manifest_metadata.json",
         },
         {
             "name": "turkish",
-            "config": POOLED_COMPONENT_EN["text_only"],
+            "config": POOLED_COMPONENT_EN[modality],
             "manifest_path": POOLED_MANIFEST["english"][0],
             "metadata_path": POOLED_MANIFEST["english"][1],
         },
         {
             "name": "d3tec",
-            "config": "configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen38_27b.yaml",
-            "manifest_path": "outputs/manifests_harmonized_en/d3tec/d3tec_manifest.jsonl",
-            "metadata_path": "outputs/splits_harmonized_en/d3tec/d3tec_manifest_metadata.json",
+            "config": f"configs/main/{english_cells['d3tec'][0]}",
+            "manifest_path": f"outputs/manifests_harmonized_en/{english_cells['d3tec'][1]}/d3tec_manifest.jsonl",
+            "metadata_path": f"outputs/splits_harmonized_en/{english_cells['d3tec'][1]}/d3tec_manifest_metadata.json",
         },
         {
             "name": "androids_interview",
-            "config": "configs/main/androids_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen38_27b.yaml",
-            "manifest_path": "outputs/manifests_harmonized_en/androids/androids_interview_manifest.jsonl",
-            "metadata_path": "outputs/splits_harmonized_en/androids/androids_interview_manifest_metadata.json",
+            "config": f"configs/main/{english_cells['androids_interview'][0]}",
+            "manifest_path": (
+                "outputs/manifests_harmonized_en/"
+                f"{english_cells['androids_interview'][1]}/androids_interview_manifest.jsonl"
+            ),
+            "metadata_path": (
+                "outputs/splits_harmonized_en/"
+                f"{english_cells['androids_interview'][1]}/androids_interview_manifest_metadata.json"
+            ),
         },
     ]
+    return components
 
 
 # (slug, legacy source config, target config, modality, backend, language)
@@ -240,6 +273,14 @@ CELLS = (
         "symmetric_merged_qwen3_pooled_english_text_only.yaml",
         "text_only",
         "qwen38",
+        "english",
+    ),
+    (
+        "english_audio_text",
+        "symmetric_merged_harmonized_audio_text_likelihood_v1.yaml",
+        "symmetric_merged_qwen3_pooled_english_audio_text.yaml",
+        "audio_text",
+        "qwen3omni",
         "english",
     ),
 )
@@ -330,7 +371,7 @@ def derive(source: dict[str, Any], cell: tuple) -> dict[str, Any]:
 
     config["recipe_id"] = NATIVE_RECIPE if language == "native" else ENGLISH_RECIPE
     config["components"] = (
-        english_text_only_components() if language == "english" else native_components(modality)
+        english_components(modality) if language == "english" else native_components(modality)
     )
     campaign = "qwen3_pooled_native" if language == "native" else "qwen3_pooled_english"
     config["output_dirs"]["merged_root"] = (
@@ -348,7 +389,7 @@ def derive(source: dict[str, Any], cell: tuple) -> dict[str, Any]:
         config.setdefault("execution", {})["postprocess_gpus"] = 4
     config["status"], config["status_reason"] = CELL_STATUS[slug]
     if language == "english":
-        config["name"] = "symmetric_merged_qwen3_pooled_english_text_only"
+        config["name"] = f"symmetric_merged_qwen3_pooled_english_{modality}"
     else:
         config["name"] = f"symmetric_merged_qwen3_pooled_native_{modality}"
 

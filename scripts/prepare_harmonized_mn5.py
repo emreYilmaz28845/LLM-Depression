@@ -15,7 +15,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.data.build_manifest import build_for_config, manifest_build_signature
+from scripts import build_qwen3_pooled_merged_configs as pooled_merged_configs  # noqa: E402
+from src.data.build_manifest import build_for_config, manifest_build_signature  # noqa: E402
 from src.experiment_tracking.manifest_policy import (
     MANIFEST_POLICY_PREBUILT,
     prebuilt_manifest_files,
@@ -39,14 +40,13 @@ COMPONENT_CONFIGS = (
     "configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_v1.yaml",
     "configs/main/cmdc_audio_text_harmonized_selmacrof1_likelihood_v1.yaml",
 )
-# The four Qwen3 pooled merged contracts. Their GPU execution is blocked until the
-# Qwen3 merged FSDP/postprocess support task lands; CPU preparation (protocol
-# artifacts) is allowed and needs the pooled manifests from the task runtime.
-MERGED_CONFIGS = (
-    "configs/experiments/merged/symmetric_merged_qwen3_pooled_native_audio_text.yaml",
-    "configs/experiments/merged/symmetric_merged_qwen3_pooled_native_audio_only.yaml",
-    "configs/experiments/merged/symmetric_merged_qwen3_pooled_native_text_only.yaml",
-    "configs/experiments/merged/symmetric_merged_qwen3_pooled_english_text_only.yaml",
+# The declared Qwen3 pooled merged contracts, derived from the merged generator so
+# the two cannot drift apart. Their CPU preparation (protocol artifacts) runs here;
+# whether a contract may execute its GPU stages is decided by
+# scripts/submit_symmetric_merged.py and its recorded readiness table, never by
+# this preflight.
+MERGED_CONFIGS = tuple(
+    f"configs/experiments/merged/{cell[2]}" for cell in pooled_merged_configs.CELLS
 )
 POOLED_COMPONENT_NAME = "turkish"
 

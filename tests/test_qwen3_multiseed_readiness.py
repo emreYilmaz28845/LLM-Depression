@@ -211,7 +211,7 @@ def test_inventory_reports_missing_cells(synthetic_project: Path) -> None:
     assert inventory_data["summary"]["cell_verdicts"]["missing"] == 1
 
 
-def test_selection_map_carries_every_route_and_the_open_merged_routes() -> None:
+def test_selection_map_carries_every_route_and_every_merged_contract() -> None:
     selection_map = planning.build_selection_map()
     native = [route for route in selection_map["routes"] if route["language"] == "native"]
     english = [route for route in selection_map["routes"] if route["language"] == "english"]
@@ -223,9 +223,20 @@ def test_selection_map_carries_every_route_and_the_open_merged_routes() -> None:
         "merged_native_audio_only",
         "merged_native_audio_text",
         "merged_english_text_only",
+        "merged_english_audio_text",
     }
-    assert planning.check_selection_map(selection_map, require_english_audio_text=False) == []
-    failures = planning.check_selection_map(selection_map, require_english_audio_text=True)
+    assert planning.check_selection_map(selection_map, require_english_audio_text=True) == []
+
+
+def test_selection_map_requires_the_english_audio_text_contract_when_asked() -> None:
+    selection_map = planning.build_selection_map()
+    without = json.loads(json.dumps(selection_map))
+    without["merged_routes"] = [
+        route
+        for route in without["merged_routes"]
+        if route["route_id"] != "merged_english_audio_text"
+    ]
+    failures = planning.check_selection_map(without, require_english_audio_text=True)
     assert any("merged_english_audio_text" in failure for failure in failures)
 
 

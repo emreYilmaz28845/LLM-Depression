@@ -92,8 +92,14 @@ READINESS = (
     ),
     (
         "merged/english",
-        "implementation landed; the English text contract waits for its own GPU smoke chain, and the merged head "
-        "kind stays deferred until Qwen3 hidden-feature support is verified for merged checkpoints",
+        "implementation landed; the English text and English audio+text contracts wait for "
+        "their own GPU smoke chains, and the merged head kind stays deferred until Qwen3 "
+        "hidden-feature support is verified for merged checkpoints",
+    ),
+    (
+        "merged/head",
+        "deferred for every Qwen3 merged route until Qwen3 hidden-feature support is verified "
+        "for merged checkpoints",
     ),
     ("heads", "explicit-only: Qwen3 hidden extraction landed; Qwen3 head jobs run through the dedicated smoke submitter"),
 )
@@ -380,7 +386,7 @@ def main(argv: list[str] | None = None) -> int:
     if total:
         print(f"Qwen3 pooled default selection has {total} failure(s).", file=sys.stderr)
         return 1
-    print("Qwen3 pooled default selection is consistent (native 15, English 8, four merged contracts).")
+    print("Qwen3 pooled default selection is consistent (native 15, English 8, five merged contracts).")
     return 0
 
 

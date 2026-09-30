@@ -210,7 +210,7 @@ def test_selection_map_records_cells_contracts_and_readiness(tmp_path: Path) -> 
     payload = json.loads(target.read_text(encoding="utf-8"))
     turkish = [cell for cell in payload["cells"] if cell["family"] == "turkish_pooled"]
     assert len(turkish) == 5
-    assert len(payload["merged"]) == 4
+    assert len(payload["merged"]) == 5
     assert payload["readiness"]
     assert any("deferred" in item["state"] for item in payload["readiness"])
     heads_state = next(item["state"] for item in payload["readiness"] if item["contract"] == "heads")

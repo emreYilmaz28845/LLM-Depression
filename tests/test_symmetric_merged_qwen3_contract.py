@@ -36,6 +36,7 @@ POOLED = {
     "native_audio_only": MERGED / "symmetric_merged_qwen3_pooled_native_audio_only.yaml",
     "native_audio_text": MERGED / "symmetric_merged_qwen3_pooled_native_audio_text.yaml",
     "english_text_only": MERGED / "symmetric_merged_qwen3_pooled_english_text_only.yaml",
+    "english_audio_text": MERGED / "symmetric_merged_qwen3_pooled_english_audio_text.yaml",
 }
 
 
@@ -129,12 +130,45 @@ def test_head_support_is_deferred_for_qwen3_backends() -> None:
     assert head_support_ready("qwen2audio") is True
 
 
-def test_route_readiness_covers_exactly_the_four_pooled_contracts() -> None:
+def test_english_audio_text_contract_mirrors_the_english_text_contract() -> None:
+    """DAIC keeps its native English input; the other four cells carry the notice."""
+    text = _merged("english_text_only")
+    audio = _merged("english_audio_text")
+    assert audio["name"] == "symmetric_merged_qwen3_pooled_english_audio_text"
+    assert audio["modality"] == "audio_text"
+    assert audio["model_backend"] == "qwen3omni"
+    assert audio["recipe_id"].endswith("_en")
+    assert (audio["execution"] or {}).get("postprocess_gpus") == 4
+    assert (audio["training"] or {}).get("strategy") == "fsdp"
+    assert (audio["protocol_settings"] or {}).get("selection_metric") == "mean_dataset_macro_f1"
+    assert audio["seed"] == text["seed"]
+    assert [component["name"] for component in audio["components"]] == [
+        component["name"] for component in text["components"]
+    ]
+    assert audio["components"][0]["config"] == (
+        "configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_v1.yaml"
+    )
+    assert "manifests_harmonized/daic" in audio["components"][0]["manifest_path"]
+    for component in audio["components"][1:]:
+        config = yaml.safe_load((ROOT / component["config"]).read_text(encoding="utf-8"))
+        assert component["config"].endswith("_en_qwen3omni_30b_a3b.yaml"), component["name"]
+        assert config["transcripts"]["variant"] == "english", component["name"]
+        assert (
+            config["prompt"]["translation_notice_version"]
+            == "translation_notice_v1"
+        ), component["name"]
+        assert "manifests_harmonized_en" in component["manifest_path"], component["name"]
+    assert audio["output_dirs"]["merged_root"].endswith("qwen3_pooled_english/audio_text")
+    assert audio["output_dirs"]["run_root"].endswith("qwen3_pooled_english_likelihood/audio_text")
+
+
+def test_route_readiness_covers_exactly_the_five_pooled_contracts() -> None:
     expected_names = {f"symmetric_merged_qwen3_pooled_{name}" for name in (
         "native_text_only",
         "native_audio_only",
         "native_audio_text",
         "english_text_only",
+        "english_audio_text",
     )}
     assert set(QWEN3_CONTRACT_READINESS) == expected_names
     for name, path in POOLED.items():

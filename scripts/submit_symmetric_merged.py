@@ -43,7 +43,7 @@ NEW_MODEL_BACKENDS = frozenset({"qwen38", "qwen3omni"})
 QWEN3_MERGED_PREREQUISITE = "Qwen3 merged FSDP/postprocess prerequisite incomplete"
 QWEN3_HEAD_PREREQUISITE = "Qwen3 merged head support prerequisite incomplete"
 
-# Readiness of the four declared Qwen3 pooled merged contracts. Only a route
+# Readiness of the five declared Qwen3 pooled merged contracts. Only a route
 # that passed its own bounded GPU smoke chain may be marked production-ready;
 # the others keep their production guard (and their CPU/config/processor route
 # tests) until they pass their own chain.
@@ -101,6 +101,17 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
         "production_block_reason": (
             "the English text contract has no GPU smoke chain in this task; it is covered by "
             "CPU/config/processor route tests only"
+        ),
+        "head_ready": False,
+        "evidence": None,
+    },
+    "symmetric_merged_qwen3_pooled_english_audio_text": {
+        "backend": "qwen3omni",
+        "modality": "audio_text",
+        "production_ready": False,
+        "production_block_reason": (
+            "the English audio+text contract has no GPU smoke chain yet; it is covered by its "
+            "CPU/config/processor route tests and the merged English-render audit only"
         ),
         "head_ready": False,
         "evidence": None,
