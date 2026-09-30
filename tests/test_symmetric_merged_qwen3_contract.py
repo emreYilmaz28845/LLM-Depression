@@ -175,6 +175,24 @@ def test_runtime_override_tokens_repoint_component_inputs() -> None:
     assert _normalized_extra_overrides(["a.b=1", "--set=x=2", " "]) == ["--set=a.b=1", "--set=x=2"]
 
 
+def test_merged_roots_honor_absolute_overrides(tmp_path) -> None:
+    """An absolute merged root override must not be relocated onto the checkout.
+
+    ``resolve_project_path`` moves an absolute path that does not exist yet onto
+    the current project root; a runtime override can point outside the checkout
+    and be created later by the job, so the runtime layout helpers must keep it
+    literal while ${PROJECT_ROOT}-relative values still resolve normally.
+    """
+
+    from src.merged.runtime import merged_aux_root, merged_fold_root, protocol_artifact_path
+
+    absolute = tmp_path / "elsewhere" / "run_root"
+    config = {"output_dirs": {"run_root": str(absolute), "merged_root": str(absolute / "merged")}}
+    assert merged_fold_root(config, run_id="r", stage="smoke", fold=0) == absolute / "r" / "smoke" / "fold_0"
+    assert merged_aux_root(config, run_id="r", stage="smoke", fold=0) == absolute / "merged" / "r" / "smoke" / "fold_0"
+    assert protocol_artifact_path(config) == absolute / "merged" / "merged_protocol.json"
+
+
 def test_audio_and_text_routes_resolve_their_declared_gpu_shapes() -> None:
     text = _merged("native_text_only")
     audio = _merged("native_audio_text")
