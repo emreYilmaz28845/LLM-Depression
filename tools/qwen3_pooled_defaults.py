@@ -84,8 +84,17 @@ READINESS = (
     ("turkish/native/audio_text", "ready: existing REPORTABLE pooled Qwen3 runs"),
     ("turkish/english/text_only", "data and config ready; Qwen3.8 rendering audit prepared"),
     ("turkish/english/audio_text", "data and config ready; Qwen3-Omni processor audit prepared"),
-    ("merged/native", "data and config ready; Qwen3 merged FSDP/postprocess deferred"),
-    ("merged/english", "data and config ready; Qwen3 merged FSDP/postprocess deferred"),
+    (
+        "merged/native",
+        "implementation landed; native text_only and audio_text run their bounded GPU smoke chains in this task, "
+        "native audio_only waits for its own chain, and the merged head kind stays deferred until Qwen3 "
+        "hidden-feature support is verified for merged checkpoints",
+    ),
+    (
+        "merged/english",
+        "implementation landed; the English text contract waits for its own GPU smoke chain, and the merged head "
+        "kind stays deferred until Qwen3 hidden-feature support is verified for merged checkpoints",
+    ),
     ("heads", "explicit-only: Qwen3 hidden extraction landed; Qwen3 head jobs run through the dedicated smoke submitter"),
 )
 
@@ -274,10 +283,30 @@ def validate_turkish_cells() -> list[str]:
 
 def validate_merged_contracts() -> list[str]:
     failures: list[str] = []
+    expected_status = {
+        f"configs/experiments/merged/{cell[2]}": merged_configs.CELL_STATUS[cell[0]]
+        for cell in merged_configs.CELLS
+    }
     for rel in MERGED_CONTRACTS:
         config = load_config(rel)
-        if config.get("status") != merged_configs.BLOCKED_STATUS:
-            failures.append(f"{rel}: merged contract must stay blocked until the support task lands")
+        status, _reason = expected_status[rel]
+        if config.get("status") != status:
+            failures.append(
+                f"{rel}: merged contract status must stay {status!r} until its own GPU smoke chain passes"
+            )
+        if not str(config.get("status_reason") or "").strip():
+            failures.append(f"{rel}: merged contract needs a status_reason")
+        training = config.get("training") or {}
+        if str(training.get("strategy") or "") != "fsdp":
+            failures.append(f"{rel}: merged contract must declare training.strategy=fsdp")
+        if str(training.get("activation_offload") or "") != "cpu":
+            failures.append(f"{rel}: merged contract must declare training.activation_offload=cpu")
+        modality = str(config.get("modality") or "")
+        expected_gpus = 1 if modality == "text_only" else 4
+        if int((config.get("execution") or {}).get("postprocess_gpus", 1)) != expected_gpus:
+            failures.append(
+                f"{rel}: execution.postprocess_gpus must be {expected_gpus} for modality {modality!r}"
+            )
         settings = config.get("protocol_settings") or {}
         if settings.get("selection_metric") != "mean_dataset_macro_f1":
             failures.append(f"{rel}: merged selection metric must stay mean_dataset_macro_f1")

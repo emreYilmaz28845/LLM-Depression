@@ -185,6 +185,7 @@ def validate_qwen3omni_config(config: dict[str, Any]) -> None:
         if not ok:
             errors.append(message)
 
+    merged = bool(config.get("merged", False))
     data_cfg = config.get("data", {})
     _require(bool(data_cfg.get("use_audio", False)), "data.use_audio must be true")
     training_cfg = config.get("training", {})
@@ -201,10 +202,14 @@ def validate_qwen3omni_config(config: dict[str, Any]) -> None:
         not bool(training_cfg.get("run_final_eval_in_train", False)),
         "training.run_final_eval_in_train must be false under the fsdp strategy",
     )
-    _require(
-        str(training_cfg.get("selection_metric", "")) == "inner_val_macro_f1",
-        "training.selection_metric must be inner_val_macro_f1",
-    )
+    if not merged:
+        # Standalone runs select on inner_val_macro_f1. The symmetric-merged
+        # resolved config selects on mean_dataset_macro_f1, so only the
+        # backend-level invariants apply to it.
+        _require(
+            str(training_cfg.get("selection_metric", "")) == "inner_val_macro_f1",
+            "training.selection_metric must be inner_val_macro_f1",
+        )
     _require(
         str(training_cfg.get("selection_metric_mode", "")).lower() == "max",
         "training.selection_metric_mode must be max",

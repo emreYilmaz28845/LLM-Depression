@@ -3,8 +3,8 @@ protocol: symmetric_merged
 recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1_promptcontext_v1
 modality: text_only
 seed: 1337
-status: blocked_prerequisite
-status_reason: 'Qwen3 merged execution is not implemented yet: the merged trainer is still the DDP path and the hidden/postprocess steps do not support Qwen3.8/Qwen3-Omni shards or processors. The submission route refuses GPU jobs for this contract until the separate Qwen3 merged FSDP/postprocess support task lands.'
+status: execute_verified
+status_reason: 'Qwen3 merged FSDP/postprocess GPU smoke chain passed (run qwen3_merged_smoke_text_only_20260930_r3: train 46844006 and postprocess 46845076 COMPLETED 0:0; deployment feat-qwen3-merged-fsdp-postprocess-20260930-20260930T142929Z-c41d8e76-91bf3e5a, source c41d8e76c12979c358499a8b84fce035f67b6478), so the cv and final stages are executable; the head kind stays deferred until Qwen3 hidden-feature support is verified for merged checkpoints.'
 model_backend: qwen38
 model_name_or_path: ${QWEN38_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen3.8-27B}
 model_revision: 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
@@ -58,6 +58,8 @@ training:
     enabled: true
     patience: 3
     min_delta: 0.0
+  strategy: fsdp
+  activation_offload: cpu
 heads:
   fixed_xgb:
     n_estimators: 300

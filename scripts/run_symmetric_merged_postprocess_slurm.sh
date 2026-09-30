@@ -47,6 +47,15 @@ if [ ! -f "$ENV_ACTIVATE" ]; then
 fi
 # shellcheck disable=SC1090
 source "$ENV_ACTIVATE"
+# The interpreter of the activated environment runs the evaluation: the Qwen3
+# overlay venvs carry no console scripts of their own, and a bare `python` can
+# resolve through the inherited PATH to a different environment.
+if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+    PYTHON_BIN="$VIRTUAL_ENV/bin/python"
+else
+    PYTHON_BIN="$(command -v python)"
+fi
+echo "[merged-postprocess] env=$ENV_ACTIVATE interpreter=$PYTHON_BIN transformers=$("$PYTHON_BIN" -c 'import transformers; print(transformers.__version__)' 2>/dev/null || echo unknown)"
 cd "$PROJECT_ROOT"
 if [ -n "$OVERRIDES_JSON_B64" ]; then
     mapfile -t OVERRIDE_ARGS < <(python - "$OVERRIDES_JSON_B64" <<'PY'
@@ -63,7 +72,7 @@ exec > >(tee -a "$LOG_ROOT/postprocess-${SLURM_JOB_ID}.out")
 exec 2> >(tee -a "$LOG_ROOT/postprocess-${SLURM_JOB_ID}.err" >&2)
 export PROJECT_ROOT PYTHONHASHSEED="${PYTHONHASHSEED:-0}"
 export PYTHONPATH="$PROJECT_ROOT/.deps/qwen_hidden:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
-CMD=(python -m src.merged.postprocess \
+CMD=("$PYTHON_BIN" -m src.merged.postprocess \
     --config "$CONFIG" --stage "$STAGE" --fold "$FOLD" --run-id "$RUN_ID" \
     --checkpoint-dir "$CHECKPOINT_DIR")
 if [ -n "$SUBJECTS_PER_CLASS" ]; then CMD+=(--subjects-per-class "$SUBJECTS_PER_CLASS"); fi

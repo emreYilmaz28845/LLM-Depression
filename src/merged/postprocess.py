@@ -27,7 +27,7 @@ from src.merged.runtime import (
     make_fold_partitions,
     merged_aux_root,
 )
-from src.merged.configuration import model_config as _model_config
+from src.merged.configuration import head_support_ready, model_config as _model_config
 from src.merged.provenance import write_slurm_provenance
 from src.model.runtime import (
     load_model_for_inference,
@@ -206,6 +206,12 @@ def postprocess_merged_fold(
         merged_config, run_id=run_id, stage=stage, fold=int(fold)
     )
     features_dir = output_root / "features"
+    model_backend = str(model_config.get("model_backend") or "")
+    evaluation_contract = model_config.get("merged_evaluation_contract") or {}
+    prediction_mode = str(evaluation_contract.get("sample_prediction_mode") or "") or "original_teacher_forced"
+    evaluation_view = str(evaluation_contract.get("evaluation_view") or "")
+    head_ready = head_support_ready(model_backend)
+    expected_features_status = "extracted" if head_ready else "deferred_prerequisite"
     identity = {
         "schema_version": "symmetric_merged_postprocess_identity.v1",
         "config_name": merged_config.get("name"),
@@ -221,15 +227,22 @@ def postprocess_merged_fold(
         "fold_hash": protocol["protocol"].get("folds", {}).get(str(int(fold)), {}).get("fold_hash"),
         "expected_holdout_datasets": list(expected_holdouts),
         "subjects_per_class": subjects_per_class if stage == "smoke" else None,
-        "model_backend": str(model_config.get("model_backend") or ""),
+        "model_backend": model_backend,
+        "sample_prediction_mode": prediction_mode,
+        "evaluation_view": evaluation_view or None,
+        "hidden_features": expected_features_status,
     }
     identity_path = output_root / "postprocess_identity.json"
     complete_path = output_root / "postprocess_complete.json"
     if complete_path.is_file() and identity_path.is_file():
         existing = read_json(identity_path)
-        # Historical Qwen outputs predate the model_backend identity field;
-        # treat a missing field as the Qwen default so they stay readable.
+        # Historical Qwen outputs predate the model_backend and evaluation
+        # identity fields; treat a missing field as the historical default so
+        # they stay readable and reusable.
         existing.setdefault("model_backend", "")
+        existing.setdefault("sample_prediction_mode", "original_teacher_forced")
+        existing.setdefault("evaluation_view", None)
+        existing.setdefault("hidden_features", "extracted")
         if existing != identity:
             raise ValueError(f"Incompatible merged postprocess output: {output_root}")
         return {"status": "skipped_compatible_complete", "output_root": str(output_root)}
@@ -270,8 +283,17 @@ def postprocess_merged_fold(
     processor = load_processor(checkpoint, model_config)
     model = load_model_for_inference(model_name, checkpoint, model_config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dtype = torch.bfloat16 if device.type == "cuda" and bool(model_config["training"].get("bf16", False)) else None
-    model.to(device=device, dtype=dtype)
+    if getattr(model, "hf_device_map", None):
+        # A contract that declares a sharded evaluation shape loads the model
+        # with a device map; moving it onto one device would undo the sharding.
+        print(
+            "Merged postprocess model is sharded across "
+            f"{len(set(model.hf_device_map.values()))} device(s); keeping the declared placement.",
+            flush=True,
+        )
+    else:
+        dtype = torch.bfloat16 if device.type == "cuda" and bool(model_config["training"].get("bf16", False)) else None
+        model.to(device=device, dtype=dtype)
     model.eval()
     sampling_rate = resolve_processor_sampling_rate(processor)
     # Backend-dispatched prompt preparation (Gemma re-renders the prompt from
@@ -306,77 +328,111 @@ def postprocess_merged_fold(
             component_config,
             eval_dir,
             checkpoint_name="selected_checkpoint",
-            sample_prediction_mode="original_teacher_forced",
+            sample_prediction_mode=prediction_mode,
         )
+        active_backend = str(metrics["active_backend"])
+        if active_backend != prediction_mode:
+            raise ValueError(
+                f"Merged postprocess resolved prediction backend {active_backend!r} for {dataset}, "
+                f"expected {prediction_mode!r}."
+            )
         qwen_summary[dataset] = {
-            "metrics": metrics["backend_results"]["original_teacher_forced"]["headline_metrics"],
+            "metrics": metrics["backend_results"][active_backend]["headline_metrics"],
+            "sample_prediction_mode": active_backend,
+            "evaluation_view": evaluation_view or None,
             "output_dir": str(eval_dir),
             "subject_count": len({str(example["subject_id"]) for example in examples}),
             "sample_count": len(examples),
         }
     save_json(qwen_summary, output_root / eval_subdir / "summary.json")
 
-    train_examples = [example for dataset in DATASETS for example in train_grouped.get(dataset, [])]
-    holdout_examples = [example for dataset in expected_holdouts for example in holdout_grouped.get(dataset, [])]
-    _, train_rows, train_summary = _extract_partition(
-        model,
-        processor,
-        train_examples,
-        output_dir=features_dir,
-        partition="outer_train",
-        sampling_rate=sampling_rate,
-        silence_audio=bool(model_config["data"].get("silence_audio", False)),
-        gemma_backend=gemma_backend,
-        expected_hidden_size=expected_hidden_size,
-    )
-    _, holdout_rows, holdout_summary = _extract_partition(
-        model,
-        processor,
-        holdout_examples,
-        output_dir=features_dir,
-        partition="outer_holdout",
-        sampling_rate=sampling_rate,
-        silence_audio=bool(model_config["data"].get("silence_audio", False)),
-        gemma_backend=gemma_backend,
-        expected_hidden_size=expected_hidden_size,
-    )
-    dimensions = {int(row["vector_dimension"]) for row in train_rows + holdout_rows}
-    if len(dimensions) > 1:
-        raise ValueError(f"Merged hidden feature dimensions disagree: {sorted(dimensions)}")
-    feature_metadata = {
-        "schema_version": "symmetric_merged_hidden_features.v1",
-        "stage": stage,
-        "fold": int(fold),
-        "modality": merged_config["modality"],
-        "checkpoint_dir": str(checkpoint),
-        "checkpoint_hashes": _checkpoint_hashes(checkpoint),
-        "config_identity": identity["config_name"],
-        "manifest_hash": protocol["manifest"]["manifest_hash"],
-        "split_hash": protocol["protocol"]["split_hash"],
-        "feature_dimension": next(iter(dimensions)) if dimensions else 0,
-        "merged_config_sha256": identity["merged_config_sha256"],
-        "fold_hash": identity["fold_hash"],
-        "pooling": "last_valid_prompt_token",
-        "model_backend": str(model_config.get("model_backend") or ""),
-        "partitions": {"outer_train": train_summary, "outer_holdout": holdout_summary},
-        "gold_label_protection": {"labels_passed_to_model": False, "generation_used": False},
-        "row_hashes": {
-            "outer_train": canonical_sha256(train_rows),
-            "outer_holdout": canonical_sha256(holdout_rows),
-        },
-    }
-    save_json(feature_metadata, features_dir / "feature_metadata.json")
+    if head_ready:
+        train_examples = [example for dataset in DATASETS for example in train_grouped.get(dataset, [])]
+        holdout_examples = [example for dataset in expected_holdouts for example in holdout_grouped.get(dataset, [])]
+        _, train_rows, train_summary = _extract_partition(
+            model,
+            processor,
+            train_examples,
+            output_dir=features_dir,
+            partition="outer_train",
+            sampling_rate=sampling_rate,
+            silence_audio=bool(model_config["data"].get("silence_audio", False)),
+            gemma_backend=gemma_backend,
+            expected_hidden_size=expected_hidden_size,
+        )
+        _, holdout_rows, holdout_summary = _extract_partition(
+            model,
+            processor,
+            holdout_examples,
+            output_dir=features_dir,
+            partition="outer_holdout",
+            sampling_rate=sampling_rate,
+            silence_audio=bool(model_config["data"].get("silence_audio", False)),
+            gemma_backend=gemma_backend,
+            expected_hidden_size=expected_hidden_size,
+        )
+        dimensions = {int(row["vector_dimension"]) for row in train_rows + holdout_rows}
+        if len(dimensions) > 1:
+            raise ValueError(f"Merged hidden feature dimensions disagree: {sorted(dimensions)}")
+        feature_metadata = {
+            "schema_version": "symmetric_merged_hidden_features.v1",
+            "stage": stage,
+            "fold": int(fold),
+            "modality": merged_config["modality"],
+            "checkpoint_dir": str(checkpoint),
+            "checkpoint_hashes": _checkpoint_hashes(checkpoint),
+            "config_identity": identity["config_name"],
+            "manifest_hash": protocol["manifest"]["manifest_hash"],
+            "split_hash": protocol["protocol"]["split_hash"],
+            "feature_dimension": next(iter(dimensions)) if dimensions else 0,
+            "merged_config_sha256": identity["merged_config_sha256"],
+            "fold_hash": identity["fold_hash"],
+            "pooling": "last_valid_prompt_token",
+            "model_backend": model_backend,
+            "partitions": {"outer_train": train_summary, "outer_holdout": holdout_summary},
+            "gold_label_protection": {"labels_passed_to_model": False, "generation_used": False},
+            "row_hashes": {
+                "outer_train": canonical_sha256(train_rows),
+                "outer_holdout": canonical_sha256(holdout_rows),
+            },
+        }
+        save_json(feature_metadata, features_dir / "feature_metadata.json")
+        features_payload: dict[str, Any] = {
+            "status": "extracted",
+            "feature_metadata": str(features_dir / "feature_metadata.json"),
+            "feature_dimension": int(feature_metadata["feature_dimension"]),
+        }
+    else:
+        # Qwen3 hidden-feature extraction and the head stage are a separate
+        # support task: this route completes with its evaluation evidence and
+        # records the deferred prerequisite instead of writing unverified
+        # feature matrices.
+        features_payload = {
+            "status": "deferred_prerequisite",
+            "backend": model_backend,
+            "reason": (
+                "Qwen3 hidden-feature extraction and the head stage are a separate support task; "
+                "this route completes with its evaluation evidence only and its head kind stays "
+                "execute-blocked until that support lands."
+            ),
+        }
     save_json(
         {
             "status": "completed",
             "identity": identity,
             "qwen_summary": qwen_summary,
-            "feature_metadata": str(features_dir / "feature_metadata.json"),
-            "feature_dimension": feature_metadata["feature_dimension"],
+            "feature_metadata": features_payload.get("feature_metadata"),
+            "feature_dimension": features_payload.get("feature_dimension"),
+            "features": features_payload,
         },
         complete_path,
     )
-    return {"status": "completed", "output_root": str(output_root), "feature_dimension": feature_metadata["feature_dimension"]}
+    return {
+        "status": "completed",
+        "output_root": str(output_root),
+        "feature_dimension": features_payload.get("feature_dimension"),
+        "features": features_payload["status"],
+    }
 
 
 def parse_args() -> argparse.Namespace:

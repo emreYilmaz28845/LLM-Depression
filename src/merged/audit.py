@@ -290,6 +290,7 @@ def audit_symmetric_run(
     train_stage_root = Path(config["output_dirs"]["run_root"]) / run_id / stage
     fold_results: list[dict[str, Any]] = []
     omitted_heavy_artifacts: list[str] = []
+    deferred_head_support: list[str] = []
     expected_final_epoch: int | None = None
     expected_head_inner_folds = resolve_head_inner_folds(config, stage)
     expected_head_methods = _expected_head_methods(config)
@@ -310,13 +311,25 @@ def audit_symmetric_run(
         train_complete = train_fold_root / "training_complete.json"
         post_complete = fold_root / "postprocess_complete.json"
         head_complete = fold_root / "heads" / "heads_complete.json"
-        for path, label in (
+        post_identity_path = fold_root / "postprocess_identity.json"
+        post_identity = read_json(post_identity_path) if post_identity_path.is_file() else {}
+        # A route whose hidden-feature and head support is deferred completes
+        # its postprocess with evaluation evidence only, so the audit checks the
+        # recorded deferred state instead of demanding absent head artifacts.
+        features_expected = str(post_identity.get("hidden_features", "extracted")) == "extracted"
+        if not features_expected:
+            deferred_head_support.append(
+                f"fold_{fold}:{post_identity.get('model_backend', '') or 'unknown'}"
+            )
+        required_complete = [
             (train_complete, "training_complete"),
             (post_complete, "postprocess_complete"),
-            (head_complete, "heads_complete"),
-        ):
+        ]
+        if features_expected:
+            required_complete.append((head_complete, "heads_complete"))
+        for path, label in required_complete:
             _check_required(path, failures, f"fold_{fold}:{label}")
-        for path, label in (
+        required_files = [
             (train_fold_root / "training_identity.json", "training_identity"),
             (train_fold_root / "resolved_merged_config.json", "training_resolved_config"),
             (train_fold_root / "slurm_provenance.json", "train_provenance"),
@@ -328,25 +341,34 @@ def audit_symmetric_run(
             (fold_root / "postprocess_identity.json", "postprocess_identity"),
             (fold_root / "resolved_merged_config.json", "postprocess_resolved_config"),
             (fold_root / "slurm_provenance.json", "postprocess_provenance"),
-            (fold_root / "features" / "outer_train_rows.jsonl", "outer_train_feature_rows"),
-            (fold_root / "features" / "outer_holdout_rows.jsonl", "outer_holdout_feature_rows"),
-            (fold_root / "features" / "feature_metadata.json", "feature_metadata"),
             (fold_root / "qwen" / "summary.json", "qwen_summary"),
-            (fold_root / "heads" / "summary.json", "heads_summary"),
-            (fold_root / "heads" / "resolved_merged_config.json", "heads_resolved_config"),
-            (fold_root / "heads" / "inner_folds.json", "head_inner_folds"),
-            (fold_root / "heads" / "slurm_provenance.json", "head_provenance"),
-        ):
-            _check_required(path, failures, f"fold_{fold}:{label}")
-        heavy_paths = (
-            (train_fold_root / "best_model", "best_model"),
-            (fold_root / "features" / "outer_train.npz", "outer_train_features"),
-            (fold_root / "features" / "outer_holdout.npz", "outer_holdout_features"),
-        )
-        for method in expected_head_methods:
-            heavy_paths += (
-                (fold_root / "heads" / method / "classifier.joblib", f"{method}:classifier"),
+        ]
+        if features_expected:
+            required_files.extend(
+                [
+                    (fold_root / "features" / "outer_train_rows.jsonl", "outer_train_feature_rows"),
+                    (fold_root / "features" / "outer_holdout_rows.jsonl", "outer_holdout_feature_rows"),
+                    (fold_root / "features" / "feature_metadata.json", "feature_metadata"),
+                    (fold_root / "heads" / "summary.json", "heads_summary"),
+                    (fold_root / "heads" / "resolved_merged_config.json", "heads_resolved_config"),
+                    (fold_root / "heads" / "inner_folds.json", "head_inner_folds"),
+                    (fold_root / "heads" / "slurm_provenance.json", "head_provenance"),
+                ]
             )
+        for path, label in required_files:
+            _check_required(path, failures, f"fold_{fold}:{label}")
+        heavy_paths = [
+            (train_fold_root / "best_model", "best_model"),
+        ]
+        if features_expected:
+            heavy_paths += [
+                (fold_root / "features" / "outer_train.npz", "outer_train_features"),
+                (fold_root / "features" / "outer_holdout.npz", "outer_holdout_features"),
+            ]
+            for method in expected_head_methods:
+                heavy_paths += (
+                    (fold_root / "heads" / method / "classifier.joblib", f"{method}:classifier"),
+                )
         for path, label in heavy_paths:
             if path.exists():
                 continue
@@ -354,11 +376,15 @@ def audit_symmetric_run(
                 omitted_heavy_artifacts.append(f"fold_{fold}:{label}")
             else:
                 _check_required(path, failures, f"fold_{fold}:{label}")
-        for path, label, worker in (
+        provenance_checks = [
             (train_fold_root / "slurm_provenance.json", "train", "src.merged.train"),
             (fold_root / "slurm_provenance.json", "postprocess", "src.merged.postprocess"),
-            (fold_root / "heads" / "slurm_provenance.json", "heads", "src.merged.heads"),
-        ):
+        ]
+        if features_expected:
+            provenance_checks.append(
+                (fold_root / "heads" / "slurm_provenance.json", "heads", "src.merged.heads")
+            )
+        for path, label, worker in provenance_checks:
             _audit_provenance(path, failures, f"fold_{fold}:{label}", worker)
         _audit_training_artifacts(
             train_fold_root,
@@ -411,10 +437,10 @@ def audit_symmetric_run(
                 != protocol["protocol"].get("folds", {}).get(str(fold), {}).get("fold_hash")
             ):
                 failures.append(f"postprocess_identity_mismatch:{fold}")
-        if head_complete.is_file() and read_json(head_complete).get("status") != "completed":
+        if features_expected and head_complete.is_file() and read_json(head_complete).get("status") != "completed":
             failures.append(f"heads_not_completed:{fold}")
         head_identity_path = fold_root / "heads" / "heads_identity.json"
-        if head_identity_path.is_file():
+        if features_expected and head_identity_path.is_file():
             head_identity = read_json(head_identity_path)
             if (
                 head_identity.get("stage") != stage
@@ -428,7 +454,7 @@ def audit_symmetric_run(
         feature_metadata_path = fold_root / "features" / "feature_metadata.json"
         feature_subjects: dict[str, set[str]] = {}
         feature_samples: dict[str, set[str]] = {}
-        if feature_metadata_path.is_file():
+        if features_expected and feature_metadata_path.is_file():
             feature_metadata = read_json(feature_metadata_path)
             if feature_metadata.get("manifest_hash") != protocol["manifest"]["manifest_hash"]:
                 failures.append(f"feature_manifest_hash_mismatch:{fold}")
@@ -523,7 +549,7 @@ def audit_symmetric_run(
                 )
                 _check_required(prediction_path, failures, f"fold_{fold}:qwen_predictions:{dataset}")
         heads_summary_path = fold_root / "heads" / "summary.json"
-        if heads_summary_path.is_file():
+        if features_expected and heads_summary_path.is_file():
             heads = read_json(heads_summary_path)
             if set(heads) != set(expected_head_methods):
                 failures.append(f"head_method_coverage:{fold}:found={sorted(heads)}")
@@ -576,7 +602,7 @@ def audit_symmetric_run(
             if str(row.get("modality")) == str(config.get("modality"))
             and str(row.get("stage")) == stage
         ]
-        expected_jobs = fold_count * 3
+        expected_jobs = fold_count * (2 if deferred_head_support else 3)
         if len(matching_jobs) != expected_jobs:
             failures.append(f"job_registry_coverage:found={len(matching_jobs)}:expected={expected_jobs}")
         failed_states = {"failed", "cancelled", "timeout", "oom", "out_of_memory", "node_fail", "preempted"}
@@ -607,6 +633,7 @@ def audit_symmetric_run(
         "failures": failures,
         "allow_omitted_heavy_artifacts": bool(allow_omitted_heavy_artifacts),
         "omitted_heavy_artifacts": sorted(omitted_heavy_artifacts),
+        "deferred_head_support": sorted(deferred_head_support),
         "folds": fold_results,
         "job_registry": str(registry_path) if registry is not None else None,
         "requirements": {

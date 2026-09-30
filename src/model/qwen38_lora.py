@@ -276,15 +276,20 @@ def validate_qwen38_config(config: dict[str, Any]) -> None:
         "data.use_audio must be false",
     )
     training_cfg = config.get("training", {})
+    merged = bool(config.get("merged", False))
     _require(bool(training_cfg.get("bf16", False)), "training.bf16 must be true")
     _require(
         bool(training_cfg.get("gradient_checkpointing", False)),
         "training.gradient_checkpointing must be true",
     )
-    _require(
-        str(training_cfg.get("selection_metric", "")) == "inner_val_macro_f1",
-        "training.selection_metric must be inner_val_macro_f1",
-    )
+    if not merged:
+        # Standalone runs select on inner_val_macro_f1. The symmetric-merged
+        # resolved config selects on mean_dataset_macro_f1, so only the
+        # backend-level invariants apply to it.
+        _require(
+            str(training_cfg.get("selection_metric", "")) == "inner_val_macro_f1",
+            "training.selection_metric must be inner_val_macro_f1",
+        )
     _require(
         str(training_cfg.get("selection_metric_mode", "")).lower() == "max",
         "training.selection_metric_mode must be max",

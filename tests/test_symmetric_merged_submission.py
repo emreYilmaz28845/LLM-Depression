@@ -426,7 +426,12 @@ def test_source_commit_comparison_accepts_git_abbreviations_only() -> None:
 def test_qwen_worker_uses_all_allocated_gpus() -> None:
     worker = Path("scripts/run_symmetric_merged_train_slurm.sh").read_text(encoding="utf-8")
     assert "#SBATCH --gres=gpu:4" in worker
-    assert "torchrun --standalone" in worker
+    # The selected environment's own interpreter drives the process group: the
+    # Qwen3 overlay venvs ship no torchrun console script, and a bare torchrun
+    # resolved through the inherited PATH once ran another environment's python.
+    assert "PYTHON_BIN=\"$VIRTUAL_ENV/bin/python\"" in worker
+    assert "torchrun --standalone" not in worker
+    assert 'CMD=("$PYTHON_BIN" -m torch.distributed.run' in worker
     assert "--nproc_per_node=\"$NPROC_PER_NODE\"" in worker
     assert "python -m src.merged.train" not in worker
 
@@ -445,9 +450,11 @@ def test_merged_train_preflight_does_not_self_create_an_incomplete_run() -> None
 def test_merged_train_extends_process_group_timeout_for_rank_zero_selection() -> None:
     source = Path("src/merged/train.py").read_text(encoding="utf-8")
 
-    assert "InitProcessGroupKwargs(" in source
-    assert 'dist_timeout_minutes' in source
-    assert "timeout=timedelta(" in source
+    # The process group is pre-initialized with the configured timeout before
+    # Accelerate builds its own group (the standalone FSDP recipe does the same).
+    assert "torch.distributed.init_process_group(" in source
+    assert "dist_timeout_minutes" in source
+    assert "timeout=_datetime.timedelta(minutes=dist_timeout_minutes)" in source
     assert "TORCH_DISTRIBUTED_DEFAULT_TIMEOUT" not in Path(
         "scripts/run_symmetric_merged_train_slurm.sh"
     ).read_text(encoding="utf-8")

@@ -34,12 +34,27 @@ def load_merged_config(
     return config
 
 
+def _merged_root_path(value: str | Path) -> Path:
+    """Resolve a configured merged root, honoring explicit absolute paths.
+
+    ``resolve_project_path`` relocates an absolute path that does not exist yet
+    onto the current project root (the checkout-portability anchors). A merged
+    runtime override can legitimately point outside the checkout and be created
+    later by the job, so an absolute path stays exactly as declared; relative
+    and ``${PROJECT_ROOT}``-style values still resolve against the project root.
+    """
+    path = Path(str(value)).expanduser()
+    if path.is_absolute():
+        return path
+    return resolve_project_path(path)
+
+
 def merged_fold_root(
     config: dict[str, Any], *, run_id: str, stage: str, fold: int
 ) -> Path:
     """Resolve one merged training fold, preserving legacy layout by default."""
 
-    root = resolve_project_path(config["output_dirs"]["run_root"])
+    root = _merged_root_path(config["output_dirs"]["run_root"])
     if str(config.get("output_dirs", {}).get("layout", "legacy")) == "canonical_v2":
         return root / run_id / f"fold_{int(fold)}"
     return root / run_id / stage / f"fold_{int(fold)}"
@@ -50,14 +65,14 @@ def merged_aux_root(
 ) -> Path:
     """Resolve merged feature/evaluation artifacts with the same layout rule."""
 
-    root = resolve_project_path(config["output_dirs"]["merged_root"])
+    root = _merged_root_path(config["output_dirs"]["merged_root"])
     if str(config.get("output_dirs", {}).get("layout", "legacy")) == "canonical_v2":
         return root / run_id / f"fold_{int(fold)}"
     return root / run_id / stage / f"fold_{int(fold)}"
 
 
 def protocol_artifact_path(config: dict[str, Any]) -> Path:
-    return resolve_project_path(config["output_dirs"]["merged_root"]) / "merged_protocol.json"
+    return _merged_root_path(config["output_dirs"]["merged_root"]) / "merged_protocol.json"
 
 
 def load_protocol_artifact(config: dict[str, Any]) -> dict[str, Any]:
