@@ -326,11 +326,17 @@ run roots.
 Four Qwen3 pooled merged contracts are defined under
 `configs/experiments/merged/` (native text-only, native audio-only, native
 audio+text, English text-only). Each names five components, one backend family
-and the mean-dataset-macro-F1 selection contract. Their GPU execution is
-blocked: `scripts/submit_symmetric_merged.py` refuses a config whose components
-resolve to a Qwen3 backbone (dry-runs report the blocked plan). The hidden
-extractor (`src/features/extract_qwen_hidden.py`) supports Qwen3 checkpoints for
-the hidden-head path; Qwen3 fixed heads are explicit-only and run through
+and the mean-dataset-macro-F1 selection contract. `scripts/submit_symmetric_merged.py`
+keys its gate on the resolved contract identity (config name + backend +
+modality) and on its own recorded readiness table, not on the YAML `status`
+field: a Qwen3-backed contract that is not declared there is refused outright,
+the bounded `smoke` stage is how a declared route is verified, and the
+multi-fold `cv` and `final` stages additionally require that route's recorded
+GPU smoke chain. Native text-only and native audio+text passed their chains
+(`execute_verified`); native audio-only and English text-only still carry
+`smoke_only`, so their cv and final stages stay refused until they pass their
+own chain. The hidden-feature and head kind stays deferred for every Qwen3
+merged route, and Qwen3 fixed heads are explicit-only: they run through
 `scripts/submit_qwen3_hidden_smoke.sh` (`QWEN3_HEADS_ENABLED=1`), never through
 the harmonized launchers. Writing `strategy: fsdp` into a
 merged config is not readiness, and no route falls back to the old DDP loader.
