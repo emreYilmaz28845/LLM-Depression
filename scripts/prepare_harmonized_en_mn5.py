@@ -418,7 +418,7 @@ def recipe_and_scope_audit() -> dict[str, Any]:
     if matrix.get("fixed_heads") != []:
         failures.append(
             "the Qwen3 English default matrix must declare fixed_heads: [] "
-            "(Qwen3 head execution is deferred)"
+            "(Qwen3 head execution is explicit-only)"
         )
     if matrix.get("max_epochs") != 20 or matrix.get("checkpoint_selection") != "inner_val_macro_f1":
         failures.append("matrix recipe fields differ from the plan")
@@ -600,7 +600,7 @@ def prepare(*, run_id: str, build: bool, required_path_prefix: Path | None,
             )
             for path in ALL_EN_CONFIGS
         },
-        "head_execution": "deferred: the Qwen3 hidden-extraction prerequisite is pending",
+        "head_execution": "explicit-only: Qwen3 fixed heads run through the dedicated smoke submitter, never through this matrix",
         "components": components,
         "translations": translations,
         "equivalence": equivalences,

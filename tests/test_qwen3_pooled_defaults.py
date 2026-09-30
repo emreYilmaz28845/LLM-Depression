@@ -66,7 +66,7 @@ def test_selection_validator_passes() -> None:
         "english_matrix",
         "turkish_cells",
         "merged_contracts",
-        "head_deferral",
+        "head_scope",
     }
     assert failures == {section: [] for section in failures}
 
@@ -165,10 +165,19 @@ def test_prepare_routes_are_pooled_aware() -> None:
     )
 
 
-def test_hidden_extraction_guard_refuses_qwen3_backends(tmp_path: Path) -> None:
-    for backend in ("qwen38", "qwen3omni"):
-        with pytest.raises(ValueError, match="Qwen3 hidden-extraction prerequisite incomplete"):
+def test_hidden_extraction_guard_validates_qwen3_backend_contracts(tmp_path: Path) -> None:
+    # An under-specified Qwen3 config is refused by the backend's own validator.
+    for backend, match in (
+        ("qwen38", "Qwen3.8 hidden extraction refused"),
+        ("qwen3omni", "Qwen3-Omni hidden extraction refused"),
+    ):
+        with pytest.raises(ValueError, match=match):
             ensure_hidden_extraction_supported({"model_backend": backend}, tmp_path / "run_config.yaml")
+    # The canonical pooled defaults pass the same gate unchanged.
+    for name in POOLED_NATIVE_CONFIG_SHA256:
+        ensure_hidden_extraction_supported(
+            load_config(f"configs/main/{name}"), tmp_path / "run_config.yaml"
+        )
     for backend in ("text", "qwen2audio", "gemma4"):
         ensure_hidden_extraction_supported({"model_backend": backend}, tmp_path / "run_config.yaml")
     ensure_hidden_extraction_supported({}, tmp_path / "run_config.yaml")
@@ -204,6 +213,8 @@ def test_selection_map_records_cells_contracts_and_readiness(tmp_path: Path) -> 
     assert len(payload["merged"]) == 4
     assert payload["readiness"]
     assert any("deferred" in item["state"] for item in payload["readiness"])
+    heads_state = next(item["state"] for item in payload["readiness"] if item["contract"] == "heads")
+    assert "explicit-only" in heads_state
     assert all(cell["backend"] in {"qwen38", "qwen3omni"} for cell in payload["cells"])
 
 

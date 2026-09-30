@@ -29,6 +29,7 @@ CLASSIFIER_DIR="${CLASSIFIER_DIR:-${CACHE_DIR/hidden_features/hidden_classifiers
 MODEL_PATH="${MODEL_PATH:-}"
 MAX_EXAMPLES="${MAX_EXAMPLES:-}"
 CONDITION="${CONDITION:-}"
+SUBJECT_SELECTION="${SUBJECT_SELECTION:-}"
 EMOTION_SOURCE="${EMOTION_SOURCE:-}"
 EMOTION_LANGUAGE="${EMOTION_LANGUAGE:-}"
 SKIP_CLASSIFIERS="${SKIP_CLASSIFIERS:-0}"
@@ -48,6 +49,7 @@ CMD=(python "$PROJECT_ROOT/src/features/extract_qwen_hidden.py" --checkpoint-dir
 if [ -n "$MODEL_PATH" ]; then CMD+=(--model-name-or-path "$MODEL_PATH"); fi
 if [ -n "$MAX_EXAMPLES" ]; then CMD+=(--max-examples "$MAX_EXAMPLES"); fi
 if [ -n "$CONDITION" ]; then CMD+=(--condition "$CONDITION"); fi
+if [ -n "$SUBJECT_SELECTION" ]; then CMD+=(--subject-selection "$SUBJECT_SELECTION"); fi
 if [ -n "$EMOTION_SOURCE" ]; then CMD+=(--emotion-source "$EMOTION_SOURCE"); fi
 if [ -n "$EMOTION_LANGUAGE" ]; then CMD+=(--emotion-language "$EMOTION_LANGUAGE"); fi
 printf 'Extraction command: '; printf '%q ' "${CMD[@]}"; printf '\n'

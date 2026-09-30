@@ -76,6 +76,43 @@ class PromptOnlyExtractionCollator:
         return model_inputs, metadata
 
 
+QWEN3OMNI_MODEL_INPUT_KEYS = {
+    "input_ids",
+    "attention_mask",
+    "input_features",
+    "feature_attention_mask",
+}
+
+
+class Qwen3OmniPromptOnlyExtractionCollator(PromptOnlyExtractionCollator):
+    """Prompt-only extraction collator for the Qwen3-Omni Thinker.
+
+    The Thinker processor returns exactly ``input_ids``, ``attention_mask``,
+    ``input_features`` and ``feature_attention_mask`` for one unpadded prompt
+    (the preflight processor audit pins those keys and shapes). Audio is
+    mandatory on this path: the Qwen3-Omni extraction contract covers the
+    audio-only and audio+text cells, and a missing feature tensor must fail
+    closed instead of silently extracting a text-only sequence.
+    """
+
+    def __call__(self, batch: list[dict]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        if len(batch) != 1:
+            raise ValueError("Primary hidden extraction requires batch size 1.")
+        example = batch[0]
+        if not example.get("audio_arrays"):
+            raise ValueError(
+                "Qwen3-Omni hidden extraction requires audio input; "
+                f"sample_id={example.get('sample_id', '')} carries no waveform."
+            )
+        model_inputs, metadata = super().__call__(batch)
+        missing = QWEN3OMNI_MODEL_INPUT_KEYS - set(model_inputs)
+        if missing:
+            raise AssertionError(
+                f"Qwen3-Omni processor output is missing required keys: {sorted(missing)}"
+            )
+        return model_inputs, metadata
+
+
 def load_prompt_audio(example: dict[str, Any], sampling_rate: int | None, silence_audio: bool) -> dict[str, Any]:
     """Attach the deterministic evaluation audio arrays expected by the collator."""
     from src.data.runtime import (

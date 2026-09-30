@@ -33,7 +33,11 @@ from src.features.gemma4_hidden_collator import (
     Gemma4PromptOnlyExtractionCollator,
 )
 from src.features.pooling import aligned_attention_mask, last_valid_token
-from src.features.qwen_hidden_collator import PromptOnlyExtractionCollator, load_prompt_audio
+from src.features.qwen_hidden_collator import (
+    PromptOnlyExtractionCollator,
+    Qwen3OmniPromptOnlyExtractionCollator,
+    load_prompt_audio,
+)
 from src.model.runtime import (
     load_model_for_inference,
     load_processor,
@@ -60,11 +64,14 @@ BACKEND_HIDDEN_SIZES: dict[str, set[int]] = {
     MODEL_BACKEND_GEMMA4: {3840},
     MODEL_BACKEND_QWEN2AUDIO: {4096},
     MODEL_BACKEND_TEXT: {3584},
+    MODEL_BACKEND_QWEN38: {5120},
+    MODEL_BACKEND_QWEN3OMNI: {2048},
 }
 QWEN_HIDDEN_SIZES = {3584, 4096}
 POOLING_NAME = "last_valid_prompt_token"
 CONDITION_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_]*$")
 CACHE_SCHEMA_VERSION_QWEN = "qwen_hidden_cache.v2"
+CACHE_SCHEMA_VERSION_QWEN3 = "qwen3_hidden_cache.v1"
 CACHE_SCHEMA_VERSION_GEMMA4 = "gemma4_hidden_cache.v1"
 CACHE_ARTIFACT_NAMES = (
     "outer_train.npz",
@@ -187,20 +194,47 @@ def _package_version(name: str) -> str | None:
         return None
 
 
+def _hidden_size_candidates(config):
+    """Yield the nested configs that may declare the decoder hidden size.
+
+    The Qwen3.8 text decoder hides behind ``text_config``; the Qwen3-Omni
+    Thinker nests its text decoder under ``thinker_config.text_config``. The
+    search mirrors the snapshot structure metadata reader so both layouts work
+    against the loaded model object, not just the on-disk snapshot.
+    """
+    candidates = []
+    seen: set[int] = set()
+
+    def push(node) -> None:
+        if node is not None and id(node) not in seen:
+            seen.add(id(node))
+            candidates.append(node)
+
+    push(config)
+    for attribute in ("text_config", "thinker_config", "language_config", "language_model_config"):
+        nested = getattr(config, attribute, None)
+        push(nested)
+        if nested is not None:
+            for inner in ("text_config", "language_config", "language_model_config"):
+                push(getattr(nested, inner, None))
+    return candidates
+
+
 def _decoder_hidden_size(model, config: dict[str, Any] | None = None) -> int:
     backend = resolve_model_backend(config or {})
     supported = BACKEND_HIDDEN_SIZES.get(backend, QWEN_HIDDEN_SIZES)
-    configs = [getattr(model, "config", None)]
+    model_configs = [getattr(model, "config", None)]
     base_model = getattr(model, "base_model", None)
     if base_model is not None:
-        configs.append(getattr(base_model, "config", None))
-        configs.append(getattr(getattr(base_model, "model", None), "config", None))
-    for config in configs:
-        if config is None:
+        model_configs.append(getattr(base_model, "config", None))
+        model_configs.append(getattr(getattr(base_model, "model", None), "config", None))
+    for model_config in model_configs:
+        if model_config is None:
             continue
-        text_config = getattr(config, "text_config", None)
-        hidden_size = getattr(text_config, "hidden_size", None) or getattr(config, "hidden_size", None)
-        if hidden_size is not None:
+        for candidate in _hidden_size_candidates(model_config):
+            hidden_size = getattr(candidate, "hidden_size", None)
+            if hidden_size is None:
+                continue
             hidden_size = int(hidden_size)
             if hidden_size not in supported:
                 raise ValueError(
@@ -212,9 +246,31 @@ def _decoder_hidden_size(model, config: dict[str, Any] | None = None) -> int:
 
 
 def _backend_cache_schema(config: dict[str, Any]) -> str:
-    if resolve_model_backend(config) == MODEL_BACKEND_GEMMA4:
+    backend = resolve_model_backend(config)
+    if backend == MODEL_BACKEND_GEMMA4:
         return CACHE_SCHEMA_VERSION_GEMMA4
+    if backend in (MODEL_BACKEND_QWEN38, MODEL_BACKEND_QWEN3OMNI):
+        return CACHE_SCHEMA_VERSION_QWEN3
     return CACHE_SCHEMA_VERSION_QWEN
+
+
+def _base_snapshot_identity(model_name: str) -> dict[str, Any]:
+    """Snapshot identity of the resolved base model, for the cache contract.
+
+    Qwen3.8 pins ``model_revision`` in the config; Qwen3-Omni loads a local
+    snapshot. The snapshot config hash plus the resolved path identify the exact
+    base weights a cache belongs to, so a different snapshot can never reuse it.
+    """
+    root = Path(model_name)
+    config_path = root / "config.json"
+    identity: dict[str, Any] = {
+        "snapshot_dir": str(root),
+        "config_path": str(config_path),
+        "config_sha256": None,
+    }
+    if config_path.is_file():
+        identity["config_sha256"] = sha256_file(config_path)
+    return identity
 
 
 def _parent_attempt_id(checkpoint_dir: Path) -> str | None:
@@ -615,6 +671,37 @@ def _validate_saved_split(
     return split_metadata_path
 
 
+def _place_model_for_extraction(model, config: dict[str, Any]) -> None:
+    """Place the freshly loaded model without undoing a declared sharded load.
+
+    The Qwen3-Omni backend loads a device-mapped model when the saved config
+    declares a sharded evaluation shape (``resources.eval_gpus_per_node > 1``).
+    Moving such a model onto a single device would undo that placement, so the
+    declared sharding is kept; every other backend keeps the existing
+    single-device placement with the training dtype. This mirrors the
+    standalone evaluation loader in ``src/evaluate.py``.
+    """
+    hf_device_map = getattr(model, "hf_device_map", None)
+    if hf_device_map:
+        print(
+            json.dumps(
+                {
+                    "status": "kept_declared_device_map",
+                    "devices": len(set(hf_device_map.values())),
+                }
+            ),
+            flush=True,
+        )
+        return
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    dtype = (
+        torch.bfloat16
+        if device.type == "cuda" and bool(config.get("training", {}).get("bf16", False))
+        else None
+    )
+    model.to(device=device, dtype=dtype)
+
+
 def _extract_partition(
     *,
     model,
@@ -629,15 +716,17 @@ def _extract_partition(
 ) -> dict[str, Any]:
     device = next(model.parameters()).device
     sampling_rate = resolve_processor_sampling_rate(processor)
-    gemma_backend = resolve_model_backend(config) == MODEL_BACKEND_GEMMA4
-    collator = (
-        Gemma4PromptOnlyExtractionCollator(
+    backend = resolve_model_backend(config)
+    gemma_backend = backend == MODEL_BACKEND_GEMMA4
+    if gemma_backend:
+        collator = Gemma4PromptOnlyExtractionCollator(
             processor,
             require_unit_range=str(config.get("dataset", "")).lower() == "daic",
         )
-        if gemma_backend
-        else PromptOnlyExtractionCollator(processor)
-    )
+    elif backend == MODEL_BACKEND_QWEN3OMNI:
+        collator = Qwen3OmniPromptOnlyExtractionCollator(processor)
+    else:
+        collator = PromptOnlyExtractionCollator(processor)
     vectors: list[np.ndarray] = []
     rows: list[dict[str, Any]] = []
     mask_sources: dict[str, int] = {}
@@ -1020,14 +1109,33 @@ def _existing_cache_decision(
 
 
 def ensure_hidden_extraction_supported(config: dict[str, Any], run_config_path: Path) -> None:
-    """Fail closed for Qwen3 backends: the extractor support lands in a separate task."""
+    """Validate the backend contract before any model code runs.
+
+    The Qwen3.8 (text-only) and Qwen3-Omni (audio) hidden-state paths landed in
+    the Qwen3 hidden-head support task. Extraction still fails closed: a Qwen3
+    checkpoint must pass its own training/evaluation config validator, so a
+    checkpoint whose backend contract is broken is refused here instead of being
+    extracted through the wrong pipeline.
+    """
     backend = resolve_model_backend(config)
-    if backend in (MODEL_BACKEND_QWEN38, MODEL_BACKEND_QWEN3OMNI):
-        raise ValueError(
-            f"Qwen3 hidden-extraction prerequisite incomplete: model_backend={backend!r} "
-            f"is not supported by the hidden-state extractor yet (run config: "
-            f"{run_config_path}). This is a separate backend-support task; refusing to extract."
-        )
+    if backend == MODEL_BACKEND_QWEN38:
+        from src.model.qwen38_lora import validate_qwen38_config
+
+        try:
+            validate_qwen38_config(config)
+        except ValueError as error:
+            raise ValueError(
+                f"Qwen3.8 hidden extraction refused for {run_config_path}: {error}"
+            ) from error
+    elif backend == MODEL_BACKEND_QWEN3OMNI:
+        from src.model.qwen3omni_lora import validate_qwen3omni_config
+
+        try:
+            validate_qwen3omni_config(config)
+        except ValueError as error:
+            raise ValueError(
+                f"Qwen3-Omni hidden extraction refused for {run_config_path}: {error}"
+            ) from error
 
 
 def main() -> None:
@@ -1035,9 +1143,8 @@ def main() -> None:
     checkpoint_dir = args.checkpoint_dir.resolve()
     output_dir = args.output_dir.resolve()
     saved, config, run_config_path, split_path = _load_saved_run(checkpoint_dir)
-    # Head execution gate: the Qwen3.8 and Qwen3-Omni hidden-state paths need
-    # shard/processor support that lands in a separate task. Fail closed before
-    # any model code runs instead of silently extracting with the wrong pipeline.
+    # Backend gate: the Qwen3.8 (text-only) and Qwen3-Omni (audio) paths must
+    # pass their own training/evaluation contract before any model code runs.
     ensure_hidden_extraction_supported(config, run_config_path)
     config = json.loads(json.dumps(config))
     if args.eval_chunk_policy:
@@ -1073,7 +1180,11 @@ def main() -> None:
     if saved.get("manifest_hash") and canonical_manifest_hash != saved["manifest_hash"]:
         raise ValueError("Current manifest hash does not match the checkpoint's saved manifest hash.")
     condition = resolve_condition(args.condition, saved.get("input_modality"), use_emotion(config))
-    gemma_backend = resolve_model_backend(config) == MODEL_BACKEND_GEMMA4
+    backend = resolve_model_backend(config)
+    gemma_backend = backend == MODEL_BACKEND_GEMMA4
+    qwen3_backend = backend in (MODEL_BACKEND_QWEN38, MODEL_BACKEND_QWEN3OMNI)
+    model_name = args.model_name_or_path or saved.get("resolved_model_name_or_path") or config["model_name_or_path"]
+    base_snapshot = _base_snapshot_identity(str(model_name)) if qwen3_backend else None
     subject_selection = load_subject_selection(args.subject_selection)
     cache_config = {
         "schema_version": _backend_cache_schema(config),
@@ -1126,6 +1237,15 @@ def main() -> None:
         cache_config["parent_checkpoint_role"] = "best_model"
         cache_config["parent_checkpoint_path"] = str(checkpoint_dir)
         cache_config["source_git_sha256"] = _git_commit()
+    if qwen3_backend:
+        cache_config["model_backend"] = backend
+        cache_config["base_model"] = str(model_name)
+        cache_config["base_model_revision"] = str(config.get("model_revision", ""))
+        cache_config["base_model_snapshot"] = base_snapshot
+        cache_config["parent_attempt_id"] = _parent_attempt_id(checkpoint_dir)
+        cache_config["parent_checkpoint_role"] = "best_model"
+        cache_config["parent_checkpoint_path"] = str(checkpoint_dir)
+        cache_config["source_git_commit"] = _git_commit()
     cache_config_sha256 = sha256_text(
         json.dumps(cache_config, sort_keys=True, separators=(",", ":"))
     )
@@ -1158,16 +1278,13 @@ def main() -> None:
     examples, joint_head_fit_provenance = _partition_examples(
         manifest_rows, config, partition_subject_ids, fold, checkpoint_dir=checkpoint_dir
     )
-    model_name = args.model_name_or_path or saved.get("resolved_model_name_or_path") or config["model_name_or_path"]
     processor = load_processor(checkpoint_dir, config)
     for partition in examples:
         examples[partition] = prepare_backend_examples(
             examples[partition], config, processor
         )
     model = load_model_for_inference(str(model_name), checkpoint_dir, config)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dtype = torch.bfloat16 if device.type == "cuda" and bool(config.get("training", {}).get("bf16", False)) else None
-    model.to(device=device, dtype=dtype)
+    _place_model_for_extraction(model, config)
     model.eval()
     expected_hidden_size = _decoder_hidden_size(model, config)
     partition_summaries = {}
@@ -1195,6 +1312,9 @@ def main() -> None:
         "adapter_config_sha256": sha256_file(checkpoint_dir / "adapter_config.json"),
         "adapter_sha256": sha256_file(checkpoint_dir / "adapter_model.safetensors"),
         "base_model": str(model_name),
+        "base_model_revision": str(config.get("model_revision", "")),
+        "base_model_snapshot": base_snapshot,
+        "parent_attempt_id": _parent_attempt_id(checkpoint_dir),
         "saved_run_config": str(run_config_path),
         "saved_run_config_sha256": sha256_file(run_config_path),
         "saved_split": str(split_path),
