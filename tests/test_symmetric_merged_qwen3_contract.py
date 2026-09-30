@@ -184,3 +184,52 @@ def test_audio_and_text_routes_resolve_their_declared_gpu_shapes() -> None:
         assert config["training"]["strategy"] == "fsdp"
         assert config["training"]["activation_offload"] == "cpu"
         assert config["status"] in {"smoke_only", "execute_verified"}
+
+
+def test_worker_exports_the_job_level_resolved_overrides(monkeypatch) -> None:
+    """A deployed worker must receive the per-config resolved token array.
+
+    The registry-level ``overrides`` list only holds the explicit extra --set
+    tokens; the component input redirection lives on the job's own resolved
+    tokens. Exporting the wrong list silently falls back to PROJECT_ROOT-relative
+    component manifests inside the deployment.
+    """
+
+    import base64
+    import json
+
+    import scripts.submit_symmetric_merged as planner
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_check_output(arguments, cwd=None, text=None):
+        captured["argv"] = list(arguments)
+        return "12345\n"
+
+    monkeypatch.setattr(planner.subprocess, "check_output", fake_check_output)
+    job = {
+        "kind": "train",
+        "config": "/deployed/config.yaml",
+        "stage": "smoke",
+        "fold": 0,
+        "run_id": "r",
+        "model_backend": "qwen38",
+        "resource": {"gpus": 4, "cpus": 80, "time": 10},
+        "overrides": ["--set=components.0.manifest_path=/prebuilt/x.jsonl"],
+    }
+    job_id = planner._submit_job(
+        job,
+        worker=Path("scripts/run_symmetric_merged_train_slurm.sh"),
+        dependency_id=None,
+        throttle_dependency_id=None,
+        overrides=job["overrides"],
+    )
+    assert job_id == "12345"
+    export = next(argument for argument in captured["argv"] if str(argument).startswith("--export="))
+    encoded = export.split("OVERRIDES_JSON_B64=", 1)[1].split(",", 1)[0]
+    assert json.loads(base64.b64decode(encoded).decode("utf-8")) == job["overrides"]
+    assert "NPROC_PER_NODE=4" in export
+    assert "--gres=gpu:4" in captured["argv"]
+    # The call site must prefer the job's resolved tokens over the registry list.
+    source = (ROOT / "scripts/submit_symmetric_merged.py").read_text(encoding="utf-8")
+    assert 'overrides=job.get("overrides") or registry.get("overrides") or []' in source

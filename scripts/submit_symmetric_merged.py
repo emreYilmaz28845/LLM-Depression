@@ -890,7 +890,12 @@ def submit_registry(registry: dict[str, Any], *, dry_run: bool) -> dict[str, Any
                 worker=worker_by_kind[job["kind"]],
                 dependency_id=dependency_id,
                 throttle_dependency_id=throttle_dependency_id,
-                overrides=registry.get("overrides") or [],
+                # The per-config resolved tokens carry the isolated-runtime
+                # component input paths; the registry-level list is only the
+                # explicit extra --set overrides. Prefer the job's own tokens so
+                # a deployed worker never falls back to PROJECT_ROOT-relative
+                # component paths.
+                overrides=job.get("overrides") or registry.get("overrides") or [],
             )
         job["job_id"] = submitted_id
         if dependency_id:
