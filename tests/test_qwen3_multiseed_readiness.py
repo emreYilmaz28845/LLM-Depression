@@ -250,6 +250,77 @@ def test_selection_map_checks_fail_closed_on_drift() -> None:
     assert any("evaluation shape must be" in failure for failure in failures)
 
 
+def test_production_manifest_plans_three_seeds_and_marks_reuse() -> None:
+    selection_map = planning.build_selection_map()
+    inventory = {
+        "cells": [
+            {
+                "cell_id": "d3tec_text_only_qwen38",
+                "dataset": "d3tec",
+                "modality": "text_only",
+                "cell_verdict": "reusable",
+                "folds": [
+                    {"fold": 0, "selected_run": "run_f0", "selected_attempt_id": "attempt-f0"},
+                ],
+            },
+            {
+                "cell_id": "d3tec_audio_text_qwen3omni",
+                "dataset": "d3tec",
+                "modality": "audio_text",
+                "cell_verdict": "reusable_pending_shape_decision",
+                "folds": [],
+            },
+        ]
+    }
+    manifest = planning.build_production_manifest(selection_map, inventory=inventory)
+    assert manifest["status"] == "planned_not_submitted"
+    assert manifest["seeds"] == [7, 1337, 2024]
+    assert manifest["summary"]["standalone_jobs"] == 468
+    assert manifest["summary"]["merged_jobs"] == 180
+    assert manifest["summary"]["total_planned_jobs"] == manifest["summary"]["standalone_jobs"] + manifest["summary"]["merged_jobs"]
+    d3tec_text = next(
+        route for route in manifest["standalone"] if route["route_id"] == "d3tec_text_only_native"
+    )
+    seed_1337 = [job for job in d3tec_text["jobs"] if job["seed"] == 1337 and job["kind"] == "train"]
+    assert seed_1337[0]["reuse_seed_1337"]["attempt_id"] == "attempt-f0"
+    assert seed_1337[0]["reuse_seed_1337"]["open_decision"] is None
+    other_seed = [
+        job for job in d3tec_text["jobs"] if job["seed"] == 2024 and job["kind"] == "train"
+    ]
+    assert other_seed[0]["reuse_seed_1337"] is None
+    # No merged route has an open head kind yet, so the merged plan carries no head job.
+    assert all(not route["head_ready"] for route in manifest["merged"])
+    assert all(
+        job["kind"] in {"train", "postprocess"}
+        for route in manifest["merged"]
+        for job in route["jobs"]
+    )
+
+
+def test_production_manifest_records_waiting_head_jobs() -> None:
+    selection_map = planning.build_selection_map()
+    head_matrix = {
+        "routes": [
+            {
+                "route_id": "d3tec_text_only_native",
+                "config": "configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v1.yaml",
+                "jobs": [
+                    {
+                        "seed": 1337,
+                        "fold": 0,
+                        "parent_status": "waiting_for_checkpoint",
+                        "reason": "checkpoint not present",
+                    }
+                ],
+            }
+        ]
+    }
+    manifest = planning.build_production_manifest(selection_map, head_matrix=head_matrix)
+    assert manifest["summary"]["standalone_head_jobs_planned"] == 0
+    assert manifest["summary"]["standalone_head_jobs_waiting"] == 1
+    assert manifest["standalone_heads"][0]["status"] == "waiting_for_checkpoint"
+
+
 def test_selection_map_records_templates_not_expanded_paths() -> None:
     selection_map = planning.build_selection_map()
     manifest_dirs = {route["manifest"]["dir"] for route in selection_map["routes"]}

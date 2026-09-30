@@ -226,6 +226,188 @@ def build_selection_map() -> dict[str, Any]:
     }
 
 
+def build_production_manifest(
+    selection_map: dict[str, Any],
+    *,
+    inventory: dict[str, Any] | None = None,
+    head_matrix: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The exact three-seed job plan. Planned only; nothing here is submitted."""
+    seeds = list(selection_map["planned_seeds"])
+    native_matrix_folds = _matrix_entries("configs/experiments/harmonized/standalone_matrix.yaml")
+    english_matrix_folds = _matrix_entries("configs/experiments/harmonized/english_translation_matrix.yaml")
+
+    reuse_by_cell: dict[tuple[str, str, str], dict[str, Any]] = {}
+    if inventory is not None:
+        for cell in inventory.get("cells") or []:
+            if cell.get("cell_verdict") not in {"reusable", "reusable_pending_shape_decision"}:
+                continue
+            reuse_by_cell[(str(cell["dataset"]), str(cell["modality"]), "native")] = {
+                "verdict": cell["cell_verdict"],
+                "open_decision": (
+                    "the recorded parallel shape differs from the config-declared shape; reuse needs "
+                    "an explicit decision"
+                    if cell["cell_verdict"] == "reusable_pending_shape_decision"
+                    else None
+                ),
+                "folds": [
+                    {
+                        "fold": record["fold"],
+                        "run_name": record["selected_run"],
+                        "attempt_id": record["selected_attempt_id"],
+                    }
+                    for record in cell["folds"] or []
+                    if record.get("selected_run")
+                ],
+            }
+
+    standalone: list[dict[str, Any]] = []
+    for route in selection_map["routes"]:
+        entries = (native_matrix_folds if route["language"] == "native" else english_matrix_folds)
+        separate_eval = bool(entries.get(route["config"], {}).get("separate_eval"))
+        jobs: list[dict[str, Any]] = []
+        for seed in seeds:
+            for fold in route["folds"]:
+                reuse = None
+                cell_reuse = reuse_by_cell.get(
+                    (str(route["dataset"]), str(route["modality"]), route["language"])
+                )
+                if seed == SPLIT_SEED and cell_reuse is not None:
+                    match = next(
+                        (item for item in cell_reuse["folds"] if item["fold"] == fold), None
+                    )
+                    if match is not None:
+                        reuse = {
+                            "run_name": match["run_name"],
+                            "attempt_id": match["attempt_id"],
+                            "verdict": cell_reuse["verdict"],
+                            "open_decision": cell_reuse["open_decision"],
+                        }
+                run_name = (
+                    f"{route['dataset']}_{route['modality']}_{route['language']}_s{seed}_f{fold}"
+                )
+                jobs.append(
+                    {
+                        "kind": "train",
+                        "seed": seed,
+                        "fold": fold,
+                        "run_name": run_name,
+                        "run_root": route["run_root"],
+                        "shape": {"strategy": route["training"]["strategy"], "gpus": 4},
+                        "reuse_seed_1337": reuse,
+                        "status": "planned",
+                    }
+                )
+                if separate_eval:
+                    jobs.append(
+                        {
+                            "kind": "eval",
+                            "seed": seed,
+                            "fold": fold,
+                            "run_name": run_name,
+                            "checkpoint_role": "best_model",
+                            "shape": {"gpus": route["resources"]["eval_gpus_per_node"]},
+                            "dependency": "train",
+                            "status": "planned",
+                        }
+                    )
+        standalone.append({"route_id": route["route_id"], **{k: route[k] for k in (
+            "config", "dataset", "modality", "language", "model_backend", "model_revision",
+            "model_name_or_path", "prompt", "manifest", "split", "evaluation", "resources",
+            "training", "run_root", "folds")}, "separate_eval": separate_eval, "jobs": jobs})
+
+    merged: list[dict[str, Any]] = []
+    for contract in selection_map["merged_routes"]:
+        jobs = []
+        head_ready = bool((contract["guard"] or {}).get("head_ready"))
+        for seed in seeds:
+            for stage, folds in (("cv", [0, 1, 2, 3, 4]), ("final", [0])):
+                for fold in folds:
+                    run_name = f"{contract['route_id']}_s{seed}_{stage}_f{fold}"
+                    train_shape = {"strategy": (contract["training"] or {}).get("strategy"),
+                                   "gpus": (contract["execution"] or {}).get("qwen_gpus", 4)}
+                    jobs.append({"kind": "train", "seed": seed, "stage": stage, "fold": fold,
+                                 "run_name": run_name, "shape": train_shape,
+                                 "dependency": None, "status": "planned"})
+                    jobs.append({"kind": "postprocess", "seed": seed, "stage": stage, "fold": fold,
+                                 "run_name": run_name,
+                                 "shape": {"gpus": (contract["execution"] or {}).get("postprocess_gpus", 1)},
+                                 "dependency": "train", "status": "planned"})
+                    if head_ready:
+                        jobs.append({"kind": "head", "seed": seed, "stage": stage, "fold": fold,
+                                     "run_name": run_name, "shape": {"gpus": 0},
+                                     "dependency": "postprocess", "status": "planned"})
+        merged.append(
+            {
+                "route_id": contract["route_id"],
+                "config": contract["config"],
+                "backend": contract["backend"],
+                "modality": contract["modality"],
+                "language": contract["language"],
+                "components": contract["components"],
+                "protocol_settings": contract["protocol_settings"],
+                "readiness": contract["guard"],
+                "head_ready": head_ready,
+                "jobs": jobs,
+            }
+        )
+
+    standalone_heads: list[dict[str, Any]] = []
+    if head_matrix is not None:
+        for route in head_matrix.get("routes") or []:
+            for job in route["jobs"]:
+                standalone_heads.append(
+                    {
+                        "route_id": route["route_id"],
+                        "config": route["config"],
+                        "seed": job["seed"],
+                        "fold": job["fold"],
+                        "parent_status": job["parent_status"],
+                        "parent_attempt_id": (job.get("parent") or {}).get("attempt_id"),
+                        "checkpoint_dir": (job.get("parent") or {}).get("checkpoint_dir"),
+                        "extract": job.get("extract"),
+                        "heads": job.get("heads"),
+                        "status": "planned" if job["parent_status"] == "resolved" else "waiting_for_checkpoint",
+                    }
+                )
+
+    total_jobs = sum(len(route["jobs"]) for route in standalone) + sum(
+        len(contract["jobs"]) for contract in merged
+    ) + sum(1 for job in standalone_heads if job["status"] == "planned")
+    return {
+        "schema_version": "audiollm.qwen3_multiseed_production_manifest.v1",
+        "plan": "docs/QWEN3_MULTISEED_MATRIX_READINESS_SINGLE_AGENT_PLAN.md",
+        "seeds": seeds,
+        "split_seed": SPLIT_SEED,
+        "status": "planned_not_submitted",
+        "standalone": standalone,
+        "merged": merged,
+        "standalone_heads": standalone_heads,
+        "summary": {
+            "standalone_jobs": sum(len(route["jobs"]) for route in standalone),
+            "merged_jobs": sum(len(contract["jobs"]) for contract in merged),
+            "standalone_head_jobs_planned": sum(
+                1 for job in standalone_heads if job["status"] == "planned"
+            ),
+            "standalone_head_jobs_waiting": sum(
+                1 for job in standalone_heads if job["status"] == "waiting_for_checkpoint"
+            ),
+            "total_planned_jobs": total_jobs,
+        },
+    }
+
+
+def _matrix_entries(matrix_rel: str) -> dict[str, dict[str, Any]]:
+    matrix = yaml.safe_load((PROJECT_ROOT / matrix_rel).read_text(encoding="utf-8")) or {}
+    return {
+        str(entry["config"]): {
+            "folds": [int(fold) for fold in entry.get("folds") or []],
+            "separate_eval": bool(entry.get("separate_eval")),
+        }
+        for entry in matrix.get("experiments") or []
+    }
+
+
 def check_selection_map(selection_map: dict[str, Any], *, require_english_audio_text: bool) -> list[str]:
     failures: list[str] = []
     routes = selection_map["routes"]
@@ -308,6 +490,9 @@ def check_selection_map(selection_map: dict[str, Any], *, require_english_audio_
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--emit-selection-map", type=Path, default=None)
+    parser.add_argument("--emit-production-manifest", type=Path, default=None)
+    parser.add_argument("--inventory", type=Path, default=None, help="Phase A baseline inventory")
+    parser.add_argument("--head-matrix", type=Path, default=None, help="head matrix plan")
     parser.add_argument("--check", action="store_true")
     parser.add_argument(
         "--require-english-audio-text-contract",
@@ -334,6 +519,22 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(selection_map, indent=2, sort_keys=False) + "\n", encoding="utf-8"
         )
         print(f"wrote {args.emit_selection_map}")
+    production_manifest = None
+    if args.emit_production_manifest is not None:
+        inventory = (
+            json.loads(args.inventory.read_text(encoding="utf-8")) if args.inventory else None
+        )
+        head_matrix = (
+            json.loads(args.head_matrix.read_text(encoding="utf-8")) if args.head_matrix else None
+        )
+        production_manifest = build_production_manifest(
+            selection_map, inventory=inventory, head_matrix=head_matrix
+        )
+        args.emit_production_manifest.parent.mkdir(parents=True, exist_ok=True)
+        args.emit_production_manifest.write_text(
+            json.dumps(production_manifest, indent=2, sort_keys=False) + "\n", encoding="utf-8"
+        )
+        print(f"wrote {args.emit_production_manifest}")
     for failure in failures:
         print(f"ERROR: {failure}", file=sys.stderr)
     if args.check or failures:
