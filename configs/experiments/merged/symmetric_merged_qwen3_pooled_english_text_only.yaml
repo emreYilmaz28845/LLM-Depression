@@ -3,8 +3,8 @@ protocol: symmetric_merged
 recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1_promptcontext_v1_en
 modality: text_only
 seed: 1337
-status: blocked_prerequisite
-status_reason: 'Qwen3 merged execution is not implemented yet: the merged trainer is still the DDP path and the hidden/postprocess steps do not support Qwen3.8/Qwen3-Omni shards or processors. The submission route refuses GPU jobs for this contract until the separate Qwen3 merged FSDP/postprocess support task lands.'
+status: smoke_only
+status_reason: Qwen3 merged FSDP/postprocess implementation landed; the English text contract keeps its production guard and its CPU/config/processor route tests until it passes its own GPU smoke chain.
 model_backend: qwen38
 model_name_or_path: ${QWEN38_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen3.8-27B}
 model_revision: 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
@@ -58,6 +58,8 @@ training:
     enabled: true
     patience: 3
     min_delta: 0.0
+  strategy: fsdp
+  activation_offload: cpu
 heads:
   fixed_xgb:
     n_estimators: 300

@@ -3,9 +3,10 @@
 
 The contracts are derived from the existing symmetric-merged configs, so the
 merged methodology is inherited by construction and the diff audit proves it:
-protocol settings, selection metric (``mean_dataset_macro_f1``), folds, heads
-config, training shape and execution block stay byte-identical. Only the
-documented contract fields change:
+protocol settings, selection metric (``mean_dataset_macro_f1``), folds and heads
+config stay byte-identical, and the training/execution shape changes only by the
+explicit FSDP recipe and evaluation shape documented below. Only the documented
+contract fields change:
 
 * explicit ``model_backend`` identity (Qwen3.8-27B for text-only, Qwen3-Omni
   30B-A3B Thinker for the audio modalities) with the pinned model path and, for
@@ -16,10 +17,14 @@ documented contract fields change:
   native English input;
 * the pooled English component keeps the prebuilt manifest contract;
 * isolated merged roots under ``symmetric_merged/qwen3_pooled_{native,english}``;
-* an explicit ``status: blocked_prerequisite`` line, because Qwen3 merged
-  execution (FSDP training and postprocess) is not implemented yet. The config
-  field is documentation; the submission route blocks by component backend and
-  ignores nothing here.
+* the explicit FSDP training recipe (``training.strategy: fsdp`` with CPU
+  activation offload) and, for the audio routes, the sharded evaluation shape
+  (``execution.postprocess_gpus: 4``) that matches the components' declared
+  ``resources.eval_gpus_per_node``;
+* a per-contract ``status`` line (``smoke_only`` until the route passes its own
+  bounded GPU smoke chain, then ``execute_verified``). The config field is
+  documentation; the submission guard keys on the contract identity and its own
+  readiness table and ignores nothing here.
 
 The script is deterministic and idempotent: ``--check`` reports every difference
 without writing, and an existing file with different content is never overwritten
@@ -53,12 +58,39 @@ QWEN3OMNI_MODEL_PATH = (
 QWEN3OMNI_ATTN_IMPLEMENTATION = "sdpa"
 
 BLOCKED_STATUS = "blocked_prerequisite"
-BLOCKED_REASON = (
-    "Qwen3 merged execution is not implemented yet: the merged trainer is still the DDP "
-    "path and the hidden/postprocess steps do not support Qwen3.8/Qwen3-Omni shards or "
-    "processors. The submission route refuses GPU jobs for this contract until the "
-    "separate Qwen3 merged FSDP/postprocess support task lands."
-)
+SMOKE_ONLY_STATUS = "smoke_only"
+EXECUTE_VERIFIED_STATUS = "execute_verified"
+
+# Per-contract readiness. ``smoke_only`` means the bounded smoke stage is the
+# verification mechanism and the multi-fold production guard stays closed; a
+# route moves to ``execute_verified`` only after its own GPU smoke chain
+# passed. The submission guard reads its own readiness table (contract name +
+# resolved backend + modality), so this field is documentation and is kept in
+# sync with it.
+CELL_STATUS: dict[str, tuple[str, str]] = {
+    "native_text_only": (
+        SMOKE_ONLY_STATUS,
+        "Qwen3 merged FSDP/postprocess implementation landed; the bounded native text-only "
+        "GPU smoke chain is pending in this task, so only the smoke stage is executable.",
+    ),
+    "native_audio_text": (
+        SMOKE_ONLY_STATUS,
+        "Qwen3 merged FSDP/postprocess implementation landed; the bounded native audio+text "
+        "GPU smoke chain is pending in this task, so only the smoke stage is executable.",
+    ),
+    "native_audio_only": (
+        SMOKE_ONLY_STATUS,
+        "Qwen3 merged FSDP/postprocess implementation landed; the audio+text route carries the "
+        "GPU smoke chain, so the audio-only route keeps its production guard and its "
+        "CPU/config/processor route tests until it passes its own chain.",
+    ),
+    "english_text_only": (
+        SMOKE_ONLY_STATUS,
+        "Qwen3 merged FSDP/postprocess implementation landed; the English text contract keeps "
+        "its production guard and its CPU/config/processor route tests until it passes its own "
+        "GPU smoke chain.",
+    ),
+}
 
 NATIVE_RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1_promptcontext_v1"
 ENGLISH_RECIPE = f"{NATIVE_RECIPE}_en"
@@ -218,6 +250,12 @@ ALLOWED_DIFF_PATHS = frozenset(
         "status_reason",
         "output_dirs.merged_root",
         "output_dirs.run_root",
+        # The Qwen3 contracts carry their FSDP recipe and evaluation shape
+        # explicitly so the planner, the workers and the guard all read the same
+        # declared contract.
+        "training.strategy",
+        "training.activation_offload",
+        "execution.postprocess_gpus",
     }
 )
 COMPONENT_PATHS = ("config", "manifest_path", "metadata_path")
@@ -295,8 +333,14 @@ def derive(source: dict[str, Any], cell: tuple) -> dict[str, Any]:
     config["output_dirs"]["run_root"] = (
         f"${{PROJECT_ROOT}}/output_model/symmetric_merged/{campaign}_likelihood/{modality}"
     )
-    config["status"] = BLOCKED_STATUS
-    config["status_reason"] = BLOCKED_REASON
+    # The merged contract carries its FSDP recipe explicitly, and the audio
+    # routes declare the sharded evaluation shape their components require (the
+    # 30B Thinker does not fit one H100 in bf16).
+    config.setdefault("training", {})["strategy"] = "fsdp"
+    config["training"]["activation_offload"] = "cpu"
+    if modality != "text_only":
+        config.setdefault("execution", {})["postprocess_gpus"] = 4
+    config["status"], config["status_reason"] = CELL_STATUS[slug]
     if language == "english":
         config["name"] = "symmetric_merged_qwen3_pooled_english_text_only"
     else:
