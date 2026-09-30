@@ -250,7 +250,7 @@ def test_english_launcher_refuses_qwen3_head_execution(tmp_path: Path) -> None:
         capture_output=True,
     )
     assert result.returncode == 5
-    assert "Qwen3 hidden-extraction prerequisite incomplete" in result.stderr
+    assert "Qwen3 fixed heads are explicit-only" in result.stderr
     assert "refusing to submit" in result.stderr
 
 

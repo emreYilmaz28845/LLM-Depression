@@ -1,0 +1,118 @@
+schema_version: audiollm.experiment_group.v1
+group_id: qwen3-hidden-head-support-20260930
+title: Qwen3 hidden-extraction and fixed-head support smokes (Qwen3.8 text, Qwen3-Omni audio)
+research_question: >-
+  Can the prompt-only final-hidden extraction run on the Qwen3.8-27B text-only
+  and Qwen3-Omni-30B-A3B Thinker best_model LoRA checkpoints of the Turkish
+  pooled pos+neg family, and can the existing fixed Logistic Regression /
+  XGBoost head path consume those caches under the locked cache, split and
+  subject-level evaluation contract?
+dataset: turkish_pooled_t17
+baseline: >-
+  The Qwen2-Audio/Qwen2-era fixed-head pipeline: the prompt-only extractor
+  (src/features/extract_qwen_hidden.py), the fixed-head classifier
+  (baselines/qwen_hidden_classifier.py), and the pooled Turkish pos+neg
+  contract (both question conditions per subject, strict paired text
+  aggregation turkish_pooled_text_pair_mean_margin_strict_v1). The smoke cells
+  are the same family the exhausted Qwen2 hidden heads used, so the new
+  backends compare against the existing cache and classifier semantics.
+treatment: >-
+  model_backend qwen38 (text-only) and qwen3omni (audio-only, audio+text) on the
+  Turkish pooled fold-0 checkpoints
+  turkish_pooled_baseline_text_only_f0_20260925,
+  turkish_pooled_baseline_audio_only_f0_20260925 and
+  turkish_pooled_baseline_audio_text_f0_20260925, on a tiny predeclared smoke
+  subject selection (per-label train/eval subjects that carry both question
+  conditions), a dedicated qwen3_hidden_cache.v1 cache identity that pins the
+  base snapshot and adapter hashes, and sharded Qwen3-Omni inference on the
+  checkpoint's recorded resources.eval_gpus_per_node shape (4 GPUs; the Qwen3.8
+  text cell stays on 1 GPU).
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: qwen_hidden_classifier
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+runs:
+  - logical_run: qwen38_text_turkish_pooled_hidden_smoke
+    dataset: turkish_pooled_t17
+    modality: text_only
+    config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml
+    folds:
+      - 0
+    endpoint: smoke_subject_selection
+    folds_note: >-
+      Fold 0 of the pooled Turkish family; fit and evaluation run on a
+      predeclared two-label subset (two subjects per label per partition, both
+      question conditions) whose sha256 is part of the cache identity, so the
+      numbers are smoke evidence and never a headline.
+  - logical_run: qwen3omni_audio_only_turkish_pooled_hidden_smoke
+    dataset: turkish_pooled_t17
+    modality: audio_only
+    config: configs/main/turkish_pooled_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml
+    folds:
+      - 0
+    endpoint: smoke_subject_selection
+    folds_note: >-
+      Same split and question-condition contract as the text cell; sharded
+      Thinker extraction on the recorded 4-GPU evaluation shape.
+  - logical_run: qwen3omni_audio_text_turkish_pooled_hidden_smoke
+    dataset: turkish_pooled_t17
+    modality: audio_text
+    config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml
+    folds:
+      - 0
+    endpoint: smoke_subject_selection
+    folds_note: >-
+      Same subjects, split and conditions as the audio-only cell; the two
+      modalities must share the smoke subject partitions.
+prompt_contract:
+  prompt_context_version: promptcontext_v1
+  modality_honest_rendering: >-
+    Text-only renders no audio placeholder; audio-only renders no transcript
+    block; audio+text renders the native full-subject transcript. The Qwen3.8
+    prompt is re-rendered through its own chat template with thinking disabled
+    by the same helper the training and evaluation paths use.
+  label_contract: Depressed / Non-depressed (legacy_english_labels, unchanged)
+model_contract:
+  backend: qwen38_and_qwen3omni
+  trainable_class: Qwen3_5ForConditionalGeneration (text) / Qwen3OmniMoeThinkerForConditionalGeneration (audio)
+  model_path: /gpfs/projects/etur92/ozu647717/models/Qwen3.8-27B and .../Qwen3-Omni-30B-A3B-Instruct
+  precision: bf16
+  training_strategy: fsdp (checkpoints were trained by the pooling-defaults lane; this group only extracts and fits heads)
+  evaluation_shape: >-
+    Declared by each checkpoint's resources.eval_gpus_per_node; the extraction
+    keeps the declared device map instead of forcing one device.
+comparison_rule: >-
+  Smoke only: the three cells prove the extraction and fixed-head chain on a
+  predeclared subset. No headline, no workbook value and no model comparison is
+  produced; every cache carries the smoke subject-selection hash and cannot be
+  confused with a production cache. Likelihood and teacher-forced views are
+  never mixed.
+scope:
+  campaign: qwen3_hidden_head_support
+  checkpoint_role: best_model
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
+  storage_note: >-
+    Smoke caches, fixed-head fits and logs stay under the lane deployment's
+    experiment_runtime root; the trained adapters stay on GPFS and are not
+    copied locally.
+exclusions:
+  - production_head_matrices
+  - extra_seeds_or_folds
+  - optuna_hpo
+  - merged_training
+  - model_finetuning
+  - translation_generation
+  - headline_or_workbook_changes
+  - wandb_cloud_export
+  - PR_merge
+github_issue: null
+github_pr: 270

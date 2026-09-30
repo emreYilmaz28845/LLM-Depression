@@ -25,8 +25,8 @@ policy, FSDP training shape, likelihood evaluation view/dtype, split protocol,
 seed, label contract, windowing and aggregation.
 
 The script also writes the default English matrix (eight cells, fixed heads
-empty because head execution is deferred until the Qwen3 hidden-extraction
-support task lands) and is idempotent: ``--check`` reports every difference
+empty because Qwen3 head execution is explicit-only and never dispatched by the
+harmonized launchers) and is idempotent: ``--check`` reports every difference
 without writing, and an existing file with different content is never
 overwritten silently. The structured diff audit is written under ``outputs/``
 (not tracked).
