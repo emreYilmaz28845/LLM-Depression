@@ -60,6 +60,17 @@ def test_native_matrix_legacy_copy_keeps_the_pos_only_selection() -> None:
     assert all("turkish_pos_only_t17" in rel for rel in turkish)
 
 
+def test_merged_head_worker_uses_the_project_local_hidden_deps() -> None:
+    """The head stage needs the project-local Optuna/XGBoost/scikit-learn deps.
+
+    A managed deployment does not carry ``.deps/qwen_hidden``, so the worker must
+    accept an explicit path exactly like the standalone classifier worker.
+    """
+    text = (ROOT / "scripts/run_symmetric_merged_head_slurm.sh").read_text(encoding="utf-8")
+    assert 'QWEN_HIDDEN_DEPS="${QWEN_HIDDEN_DEPS:-$PROJECT_ROOT/.deps/qwen_hidden}"' in text
+    assert 'export PYTHONPATH="$QWEN_HIDDEN_DEPS:$PROJECT_ROOT' in text
+
+
 def test_merged_planner_gates_qwen3_contracts_by_route_readiness() -> None:
     configs = [QWEN3_POOLED_MERGED]
     assert merged_blocked_backends(load_merged_config(QWEN3_POOLED_MERGED)) == ["qwen38"]
