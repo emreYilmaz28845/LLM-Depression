@@ -96,10 +96,27 @@ def test_merged_planner_gates_qwen3_contracts_by_route_readiness() -> None:
     )
     assert verified["blocked_prerequisite"] == []
     assert all(not job["blocked_prerequisite"] for job in verified["jobs"])
-    # 5 folds x (train + postprocess): the head kind stays deferred.
+    # 5 folds x (train + postprocess): the head kind is opened per route later.
     assert len(verified["jobs"]) == 10
-    unverified = ROOT / "configs/experiments/merged/symmetric_merged_qwen3_pooled_native_audio_only.yaml"
-    with pytest.raises(ValueError, match="Qwen3 merged FSDP/postprocess prerequisite incomplete"):
+    # Every declared route whose own smoke chain passed may run cv, including the
+    # routes that were opened after the first two.
+    opened = ROOT / "configs/experiments/merged/symmetric_merged_qwen3_pooled_native_audio_only.yaml"
+    opened_registry = build_job_specs(
+        [opened],
+        stage="cv",
+        run_id="qwen3_opened",
+        dry_run=False,
+        smoke_subjects=2,
+        smoke_epochs=1,
+        smoke_trials=0,
+        github_issue=12,
+        github_pr=10,
+    )
+    assert opened_registry["blocked_prerequisite"] == []
+    assert all(not job["blocked_prerequisite"] for job in opened_registry["jobs"])
+    assert {job["kind"] for job in opened_registry["jobs"]} == {"train", "postprocess"}
+    unverified = ROOT / "configs/experiments/merged/symmetric_merged_harmonized_audio_only_likelihood_v1.yaml"
+    with pytest.raises(ValueError, match="not a declared Qwen3 merged contract"):
         build_job_specs(
             [unverified],
             stage="cv",
