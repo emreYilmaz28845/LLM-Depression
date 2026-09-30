@@ -48,6 +48,17 @@ if [ ! -f "$ENV_ACTIVATE" ]; then
 fi
 # shellcheck disable=SC1090
 source "$ENV_ACTIVATE"
+# The interpreter of the activated environment drives the ranks: the Qwen3
+# overlay venvs carry no console scripts of their own, and a bare torchrun
+# resolves through the inherited PATH and can silently run a different
+# environment's python. Derive the interpreter from the activation and log the
+# resolved versions so every job records which environment it ran.
+if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+    PYTHON_BIN="$VIRTUAL_ENV/bin/python"
+else
+    PYTHON_BIN="$(command -v python)"
+fi
+echo "[merged-train] env=$ENV_ACTIVATE interpreter=$PYTHON_BIN transformers=$("$PYTHON_BIN" -c 'import transformers; print(transformers.__version__)' 2>/dev/null || echo unknown)"
 cd "$PROJECT_ROOT"
 if [ -n "$OVERRIDES_JSON_B64" ]; then
     mapfile -t OVERRIDE_ARGS < <(python - "$OVERRIDES_JSON_B64" <<'PY'
@@ -73,8 +84,8 @@ fi
 # The job's resource shape travels with the submission contract (four FSDP
 # ranks for the Qwen3 pooled routes). A plain `python` invocation would
 # initialize one process on only one of the allocated GPUs, so launch the local
-# process group explicitly.
-CMD=(torchrun --standalone --nnodes=1 --nproc_per_node="$NPROC_PER_NODE" -m src.merged.train
+# process group explicitly through the selected environment's interpreter.
+CMD=("$PYTHON_BIN" -m torch.distributed.run --standalone --nnodes=1 --nproc_per_node="$NPROC_PER_NODE" -m src.merged.train
     --config "$CONFIG" --stage "$STAGE" --fold "$FOLD" --run-id "$RUN_ID")
 if [ -n "$EPOCHS" ]; then CMD+=(--epochs "$EPOCHS"); fi
 if [ -n "$SUBJECTS_PER_CLASS" ]; then CMD+=(--subjects-per-class "$SUBJECTS_PER_CLASS"); fi

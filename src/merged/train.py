@@ -154,13 +154,16 @@ def _relaunch_multi_gpu_slurm_worker() -> None:
             f"NPROC_PER_NODE={process_count} exceeds the Slurm allocation of "
             f"{allocated_gpu_count} GPU(s)."
         )
-    torchrun = shutil.which("torchrun")
-    if not torchrun:
-        raise RuntimeError(
-            "A multi-GPU merged Slurm job was launched without torchrun in PATH."
-        )
+    # Launch through the current interpreter's torch.distributed.run: a bare
+    # torchrun resolves through PATH and can belong to a different environment
+    # (the Qwen3 overlay venvs ship no console scripts of their own, and a
+    # wrong-environment torchrun silently ran transformers 4.55.0 once).
+    if not sys.executable:
+        raise RuntimeError("sys.executable is unavailable; cannot relaunch the process group.")
     command = [
-        torchrun,
+        sys.executable,
+        "-m",
+        "torch.distributed.run",
         "--standalone",
         "--nnodes=1",
         f"--nproc_per_node={process_count}",
@@ -169,10 +172,10 @@ def _relaunch_multi_gpu_slurm_worker() -> None:
         *sys.argv[1:],
     ]
     LOGGER.warning(
-        "Direct multi-GPU Slurm invocation detected; relaunching under torchrun: %s",
+        "Direct multi-GPU Slurm invocation detected; relaunching under torch.distributed.run: %s",
         " ".join(command),
     )
-    os.execvpe(torchrun, command, os.environ.copy())
+    os.execvpe(sys.executable, command, os.environ.copy())
 
 
 def _component_examples(partitions: dict[str, Any], partition: str) -> dict[str, list[dict[str, Any]]]:

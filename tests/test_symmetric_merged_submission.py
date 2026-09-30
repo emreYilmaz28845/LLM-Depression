@@ -426,7 +426,12 @@ def test_source_commit_comparison_accepts_git_abbreviations_only() -> None:
 def test_qwen_worker_uses_all_allocated_gpus() -> None:
     worker = Path("scripts/run_symmetric_merged_train_slurm.sh").read_text(encoding="utf-8")
     assert "#SBATCH --gres=gpu:4" in worker
-    assert "torchrun --standalone" in worker
+    # The selected environment's own interpreter drives the process group: the
+    # Qwen3 overlay venvs ship no torchrun console script, and a bare torchrun
+    # resolved through the inherited PATH once ran another environment's python.
+    assert "PYTHON_BIN=\"$VIRTUAL_ENV/bin/python\"" in worker
+    assert "torchrun --standalone" not in worker
+    assert 'CMD=("$PYTHON_BIN" -m torch.distributed.run' in worker
     assert "--nproc_per_node=\"$NPROC_PER_NODE\"" in worker
     assert "python -m src.merged.train" not in worker
 
