@@ -213,6 +213,7 @@ def test_worker_exports_the_job_level_resolved_overrides(monkeypatch) -> None:
         "stage": "smoke",
         "fold": 0,
         "run_id": "r",
+        "modality": "text_only",
         "model_backend": "qwen38",
         "resource": {"gpus": 4, "cpus": 80, "time": 10},
         "overrides": ["--set=components.0.manifest_path=/prebuilt/x.jsonl"],
