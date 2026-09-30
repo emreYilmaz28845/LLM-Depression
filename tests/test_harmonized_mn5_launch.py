@@ -8,7 +8,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from scripts.submit_symmetric_merged import _head_trials, build_job_specs, merged_blocked_backends
+from scripts.submit_symmetric_merged import (
+    _head_trials,
+    build_job_specs,
+    merged_blocked_backends,
+    merged_route_decision,
+)
 from src.merged.audit import _expected_head_methods, _job_registry_path
 from src.merged.runtime import load_merged_config
 
@@ -55,9 +60,29 @@ def test_native_matrix_legacy_copy_keeps_the_pos_only_selection() -> None:
     assert all("turkish_pos_only_t17" in rel for rel in turkish)
 
 
-def test_merged_planner_refuses_qwen3_components_on_execute() -> None:
+def test_merged_planner_gates_qwen3_contracts_by_route_readiness() -> None:
     configs = [QWEN3_POOLED_MERGED]
     assert merged_blocked_backends(load_merged_config(QWEN3_POOLED_MERGED)) == ["qwen38"]
+    # The bounded smoke stage is how a declared route is verified, and the head
+    # kind is deferred for every Qwen3 route.
+    smoke = build_job_specs(
+        configs,
+        stage="smoke",
+        run_id="qwen3_smoke",
+        dry_run=True,
+        smoke_subjects=2,
+        smoke_epochs=1,
+        smoke_trials=0,
+        github_issue=12,
+        github_pr=10,
+    )
+    assert {job["kind"] for job in smoke["jobs"]} == {"train", "postprocess"}
+    assert all(
+        job["head_deferred"] == "Qwen3 merged head support prerequisite incomplete"
+        for job in smoke["jobs"]
+    )
+    assert smoke["route_readiness"][str(QWEN3_POOLED_MERGED)]["allowed"] is True
+    # Production (cv/final) stays closed until the route's own smoke passes.
     with pytest.raises(ValueError, match="Qwen3 merged FSDP/postprocess prerequisite incomplete"):
         build_job_specs(
             configs,
@@ -82,11 +107,17 @@ def test_merged_planner_refuses_qwen3_components_on_execute() -> None:
         github_pr=10,
     )
     assert registry["blocked_prerequisite"] == [str(QWEN3_POOLED_MERGED)]
-    assert registry["blocked_reason"] == "Qwen3 merged FSDP/postprocess prerequisite incomplete"
+    assert registry["blocked_reason"].startswith(
+        "Qwen3 merged FSDP/postprocess prerequisite incomplete"
+    )
     assert all(job["blocked_prerequisite"] for job in registry["jobs"])
     # The legacy merged configs also resolve to Qwen3 components after the
-    # canonical backbone conversion, so the component-level guard blocks them too.
+    # canonical backbone conversion, but they are not declared contracts with
+    # recorded readiness, so every stage (including smoke) is refused.
     assert merged_blocked_backends(load_merged_config(MERGED["audio_text"])) == ["qwen3omni"]
+    legacy_decision = merged_route_decision(load_merged_config(MERGED["audio_text"]), stage="smoke")
+    assert legacy_decision["allowed"] is False
+    assert "not a declared Qwen3 merged contract" in legacy_decision["reason"]
 
 
 def test_harmonized_merged_configs_use_only_harmonized_components() -> None:
@@ -124,8 +155,10 @@ def test_merged_planner_disables_optuna_and_applies_64_gpu_lanes() -> None:
         github_pr=10,
     )
     jobs = registry["jobs"]
-    assert len(jobs) == 45
-    assert {job["trials"] for job in jobs if job["kind"] == "head"} == {0}
+    # The Qwen3-backed contracts plan train + postprocess only (head deferred).
+    assert len(jobs) == 30
+    assert {job["kind"] for job in jobs} == {"train", "postprocess"}
+    assert all(job["head_deferred"] for job in jobs)
     trains = [job for job in jobs if job["kind"] == "train"]
     posts = [job for job in jobs if job["kind"] == "postprocess"]
     assert {job["concurrency_lane"] for job in trains} == set(range(15))
@@ -152,12 +185,12 @@ def test_harmonized_smoke_keeps_custom_config_and_zero_trials() -> None:
         github_issue=12,
         github_pr=10,
     )
-    # The smoke stage now covers all three modalities (runbook Section 13:
-    # one merged smoke per modality): 3 modalities x train/postprocess/head.
-    assert len(registry["jobs"]) == 9
+    # The smoke stage covers all three modalities: train + postprocess per
+    # modality; the Qwen3-backed contracts defer the head kind.
+    assert len(registry["jobs"]) == 6
     assert {job["config"] for job in registry["jobs"]} == {str(path) for path in MERGED.values()}
-    assert {job["kind"] for job in registry["jobs"]} == {"train", "postprocess", "head"}
-    assert all(next(job for job in registry["jobs"] if job["kind"] == "head" and job["modality"] == modality)["trials"] == 0 for modality in ("audio_text", "audio_only", "text_only"))
+    assert {job["kind"] for job in registry["jobs"]} == {"train", "postprocess"}
+    assert all(job["head_deferred"] for job in registry["jobs"])
 
 
 def test_harmonized_auditor_requires_only_enabled_heads_and_global_registry() -> None:

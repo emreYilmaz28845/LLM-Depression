@@ -18,7 +18,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import torch
 from accelerate import Accelerator, DistributedDataParallelKwargs
-from accelerate.utils import InitProcessGroupKwargs
 from torch.optim import AdamW
 from transformers import get_linear_schedule_with_warmup
 
@@ -42,12 +41,21 @@ from src.merged.runtime import (
 )
 from src.model.runtime import (
     build_collator,
+    fsdp_wrap_policy_names,
     load_model_for_training,
     load_processor,
     prepare_backend_examples,
     resolve_processor_sampling_rate,
     restore_model_for_training,
-    save_adapter_and_processor,
+)
+from src.training_strategy import (
+    TRAINING_STRATEGY_FSDP,
+    _force_gradient_sync_in_accumulation,
+    align_fsdp_model_dtypes,
+    build_fsdp_plugin,
+    broadcast_flag,
+    resolve_training_strategy,
+    save_training_checkpoint,
 )
 from src.utils import (
     configure_logging,
@@ -107,14 +115,15 @@ def _unexpected_incomplete_output_entries(run_root: Path) -> list[Path]:
     ]
 
 
-def _relaunch_four_gpu_slurm_worker() -> None:
+def _relaunch_multi_gpu_slurm_worker() -> None:
     """Guard against a stale plain-Python batch-script submission.
 
-    ``sbatch`` stores the script body at submission time.  If an older
-    submission still invokes this module with plain ``python`` while holding
-    a four-GPU allocation, relaunch the same arguments through a local
-    ``torchrun`` process group.  Torchrun children expose ``LOCAL_RANK`` and
-    therefore pass through without recursively spawning another group.
+    ``sbatch`` stores the script body at submission time.  If a submission still
+    invokes this module with plain ``python`` while holding a multi-GPU
+    allocation, relaunch the same arguments through a local ``torchrun`` process
+    group sized by ``NPROC_PER_NODE`` (or by the Slurm allocation). Torchrun
+    children expose ``LOCAL_RANK`` and therefore pass through without
+    recursively spawning another group.
     """
 
     if os.environ.get("LOCAL_RANK") is not None:
@@ -130,24 +139,37 @@ def _relaunch_four_gpu_slurm_worker() -> None:
         allocated_gpu_count = int(str(raw_gpu_count).split("(", 1)[0].split(";", 1)[0])
     except ValueError:
         allocated_gpu_count = 0
-    if allocated_gpu_count != 4:
+    raw_ranks = str(os.environ.get("NPROC_PER_NODE", "")).strip()
+    if raw_ranks:
+        try:
+            process_count = int(raw_ranks)
+        except ValueError as exc:
+            raise RuntimeError(f"Invalid NPROC_PER_NODE={raw_ranks!r}.") from exc
+    else:
+        process_count = allocated_gpu_count
+    if process_count <= 1:
         return
+    if allocated_gpu_count and process_count > allocated_gpu_count:
+        raise RuntimeError(
+            f"NPROC_PER_NODE={process_count} exceeds the Slurm allocation of "
+            f"{allocated_gpu_count} GPU(s)."
+        )
     torchrun = shutil.which("torchrun")
     if not torchrun:
         raise RuntimeError(
-            "A four-GPU merged Slurm job was launched without torchrun in PATH."
+            "A multi-GPU merged Slurm job was launched without torchrun in PATH."
         )
     command = [
         torchrun,
         "--standalone",
         "--nnodes=1",
-        "--nproc_per_node=4",
+        f"--nproc_per_node={process_count}",
         "-m",
         "src.merged.train",
         *sys.argv[1:],
     ]
     LOGGER.warning(
-        "Direct four-GPU Slurm invocation detected; relaunching under torchrun: %s",
+        "Direct multi-GPU Slurm invocation detected; relaunching under torchrun: %s",
         " ".join(command),
     )
     os.execvpe(torchrun, command, os.environ.copy())
@@ -219,6 +241,9 @@ def train_merged_fold(
     merged_config = load_merged_config(config_path, overrides)
     records, protocol = load_records_and_protocol(merged_config)
     model_config = _model_config(merged_config, records)
+    evaluation_contract = model_config.get("merged_evaluation_contract") or {}
+    prediction_mode = str(evaluation_contract.get("sample_prediction_mode") or "") or "original_teacher_forced"
+    evaluation_view = str(evaluation_contract.get("evaluation_view") or "")
     resolved_config_path = resolve_project_path(config_path)
     set_seed(int(merged_config.get("seed", 1337)), deterministic=True)
 
@@ -260,20 +285,62 @@ def train_merged_fold(
         train_examples, expected_datasets=DATASETS
     )
 
-    accelerator = Accelerator(
-        mixed_precision="bf16" if bool(model_config["training"].get("bf16", False)) else "no",
-        kwargs_handlers=[
-            DistributedDataParallelKwargs(find_unused_parameters=True),
-            # Only rank 0 runs the five-dataset selection evaluation. Other
-            # ranks wait at the following broadcast, so the NCCL process
-            # group must allow longer than its 10-minute default here.
-            InitProcessGroupKwargs(
-                timeout=timedelta(
-                    minutes=int(merged_config.get("training", {}).get("dist_timeout_minutes", 30) or 30)
-                )
+    strategy = resolve_training_strategy(model_config)
+    dist_timeout_minutes = int(merged_config.get("training", {}).get("dist_timeout_minutes", 30) or 30)
+    if dist_timeout_minutes > 0 and not torch.distributed.is_initialized():
+        # A slow collective (the five-dataset selection evaluation or an FSDP
+        # all-gather) can hold the other ranks at the next collective longer
+        # than torch's default NCCL watchdog timeout. Pre-initialize the process
+        # group with a longer timeout; Accelerate reuses an initialized group.
+        import datetime as _datetime
+
+        torch.distributed.init_process_group(
+            backend="nccl", timeout=_datetime.timedelta(minutes=dist_timeout_minutes)
+        )
+    model_name = str(resolve_model_name_or_path(None, model_config))
+    processor = load_processor(model_name, model_config)
+    sampling_rate = resolve_processor_sampling_rate(processor)
+    # The FSDP plugin resolves the wrap policy from the loaded model, so the
+    # model is created before the Accelerator.
+    model = load_model_for_training(model_name, model_config)
+    fsdp_plugin = None
+    training_kwargs_handlers: list[Any] = []
+    if strategy == TRAINING_STRATEGY_FSDP:
+        if bool(model_config["training"].get("run_final_eval_in_train", False)):
+            raise ValueError(
+                "training.run_final_eval_in_train must be false under the fsdp strategy: the "
+                "merged selection evaluation runs through the sharded model."
+            )
+        align_fsdp_model_dtypes(
+            model,
+            dtype=(
+                torch.bfloat16
+                if bool(model_config["training"].get("bf16", False)) and torch.cuda.is_available()
+                else None
             ),
-        ],
+        )
+        fsdp_plugin = build_fsdp_plugin(
+            model_config,
+            model,
+            wrap_policy_names=lambda wrapped_model: fsdp_wrap_policy_names(model_config, wrapped_model),
+        )
+    else:
+        training_kwargs_handlers.append(DistributedDataParallelKwargs(find_unused_parameters=True))
+    accelerator = Accelerator(
+        mixed_precision=(
+            "no"
+            if strategy == TRAINING_STRATEGY_FSDP
+            else ("bf16" if bool(model_config["training"].get("bf16", False)) else "no")
+        ),
+        fsdp_plugin=fsdp_plugin,
+        kwargs_handlers=training_kwargs_handlers,
     )
+    if strategy == TRAINING_STRATEGY_FSDP:
+        # FSDP's no_sync keeps unsharded gradients during accumulation; the
+        # merged loop runs one backward per microbatch, so force the
+        # reduce-scatter on every microbatch exactly like the standalone FSDP
+        # recipe does.
+        _force_gradient_sync_in_accumulation(accelerator)
     accelerator.wait_for_everyone()
 
     run_root = merged_fold_root(
@@ -296,6 +363,8 @@ def train_merged_fold(
         "epochs": int(resolved_epochs),
         "subjects_per_class": subjects_per_class,
         "model_backend": str(model_config.get("model_backend") or ""),
+        "sample_prediction_mode": prediction_mode,
+        "evaluation_view": evaluation_view or None,
     }
     if complete_path.is_file() and best_dir.is_dir():
         existing = json.loads(complete_path.read_text(encoding="utf-8"))
@@ -304,6 +373,8 @@ def train_merged_fold(
             # field; treat a missing field as the Qwen default.
             existing_identity = dict(existing.get("identity") or {})
             existing_identity.setdefault("model_backend", "")
+            existing_identity.setdefault("sample_prediction_mode", "original_teacher_forced")
+            existing_identity.setdefault("evaluation_view", None)
             if existing_identity != identity:
                 raise ValueError(f"Incompatible completed merged training output: {run_root}")
         expected_source_commit = (
@@ -387,9 +458,6 @@ def train_merged_fold(
         save_json(weighting_audit, logs_dir / "weighting_audit.json")
     accelerator.wait_for_everyone()
 
-    model_name = str(resolve_model_name_or_path(None, model_config))
-    processor = load_processor(model_name, model_config)
-    sampling_rate = resolve_processor_sampling_rate(processor)
     # Backend-dispatched prompt preparation: Gemma re-renders the prompt from
     # the raw system/user fields through its pinned chat template; Qwen is a
     # no-op. The collator factory below dispatches the same way.
@@ -414,7 +482,6 @@ def train_merged_fold(
         chunk_sampling="random",
     )
     collator = build_collator(model_config, processor, debug=False, require_unit_range=False)
-    model = load_model_for_training(model_name, model_config)
     optimizer = AdamW(
         [parameter for parameter in model.parameters() if parameter.requires_grad],
         lr=float(model_config["training"].get("learning_rate", 2.0e-4)),
@@ -516,31 +583,49 @@ def train_merged_fold(
                 "normalized_loss": global_loss_numerator / global_loss_denominator if global_loss_denominator else 0.0,
             })
         accelerator.wait_for_everyone()
+        # The epoch-end selection evaluation runs on every rank: FSDP needs all
+        # ranks inside the forward collectives, and the sharded model must be
+        # evaluated through the prepared module (a direct call on the unwrapped
+        # tree sees flattened 1-D weights with use_orig_params). Only the main
+        # process writes evidence and owns the best-epoch bookkeeping; the save
+        # decision is broadcast so every rank joins the checkpoint gather.
+        component_metrics: dict[str, Any] = {}
+        mean_macro: float | None = None
+        if use_selection:
+            selection_values: list[float] = []
+            for dataset in DATASETS:
+                eval_dir = ensure_dir(logs_dir / "selection" / f"epoch_{epoch_index}" / dataset)
+                metrics = evaluate_examples(
+                    model,
+                    processor,
+                    selection_examples_prepared[dataset],
+                    records[[str(record["dataset"]).lower() for record in records].index(dataset)]["config"],
+                    eval_dir,
+                    checkpoint_name=f"epoch_{epoch_index}",
+                    sample_prediction_mode=prediction_mode,
+                    write_artifacts=accelerator.is_main_process,
+                )
+                active_backend = str(metrics["active_backend"])
+                if active_backend != prediction_mode:
+                    raise ValueError(
+                        f"Merged selection resolved prediction backend {active_backend!r} for "
+                        f"{dataset}, expected {prediction_mode!r}."
+                    )
+                headline = metrics["backend_results"][active_backend]["headline_metrics"]
+                component_metrics[dataset] = headline
+                selection_values.append(float(headline["macro_f1"]))
+            mean_macro = float(sum(selection_values) / len(selection_values))
+        save_best_selected = False
         if accelerator.is_main_process:
             row: dict[str, Any] = {
                 "epoch": epoch_index,
                 "train_loss": float(sum(item["normalized_loss"] for item in block_rows) / max(1, len(block_rows))),
                 "realized_dataset_contributions": schedule["audit"]["realized_dataset_weight_contributions"],
                 "schedule_hash": schedule["audit"]["schedule_hash"],
+                "sample_prediction_mode": prediction_mode,
             }
             if use_selection:
-                component_metrics: dict[str, Any] = {}
-                selection_values: list[float] = []
-                for dataset in DATASETS:
-                    eval_dir = ensure_dir(logs_dir / "selection" / f"epoch_{epoch_index}" / dataset)
-                    metrics = evaluate_examples(
-                        accelerator.unwrap_model(model),
-                        processor,
-                        selection_examples_prepared[dataset],
-                        records[[str(record["dataset"]).lower() for record in records].index(dataset)]["config"],
-                        eval_dir,
-                        checkpoint_name=f"epoch_{epoch_index}",
-                        sample_prediction_mode="original_teacher_forced",
-                    )
-                    headline = metrics["backend_results"]["original_teacher_forced"]["headline_metrics"]
-                    component_metrics[dataset] = headline
-                    selection_values.append(float(headline["macro_f1"]))
-                mean_macro = float(sum(selection_values) / len(selection_values))
+                assert mean_macro is not None
                 row["component_selection_metrics"] = component_metrics
                 row["mean_dataset_macro_f1"] = mean_macro
                 improved = mean_macro > best_metric
@@ -548,9 +633,7 @@ def train_merged_fold(
                     best_metric = mean_macro
                     best_epoch = epoch_index
                     bad_epochs = 0
-                    if best_dir.exists():
-                        shutil.rmtree(best_dir)
-                    save_adapter_and_processor(accelerator.unwrap_model(model), processor, best_dir, config=model_config)
+                    save_best_selected = True
                 else:
                     bad_epochs += 1
                 LOGGER.info(
@@ -566,6 +649,15 @@ def train_merged_fold(
                 row["stopped_early"] = False
             history.append(row)
             save_json(history, logs_dir / "training_history.json")
+        # Collective checkpoint save: the main process's decision travels to
+        # every rank first, then every rank joins the gather (FSDP) and the main
+        # process writes the adapter directory.
+        save_best_selected = broadcast_flag(accelerator, save_best_selected)
+        if save_best_selected:
+            if accelerator.is_main_process and best_dir.exists():
+                shutil.rmtree(best_dir)
+            accelerator.wait_for_everyone()
+            save_training_checkpoint(accelerator, model, processor, best_dir, config=model_config)
         stop_tensor = torch.tensor(0, dtype=torch.int32, device=accelerator.device)
         if accelerator.is_main_process and use_selection and history and history[-1].get("stopped_early"):
             stop_tensor.fill_(1)
@@ -578,13 +670,19 @@ def train_merged_fold(
             gc.collect()
             torch.cuda.empty_cache()
 
+    save_final_best = False
     if accelerator.is_main_process:
         if not use_selection:
             best_epoch = len(history)
             best_metric = float("nan")
-            if best_dir.exists():
-                shutil.rmtree(best_dir)
-            save_adapter_and_processor(accelerator.unwrap_model(model), processor, best_dir, config=model_config)
+            save_final_best = True
+    save_final_best = broadcast_flag(accelerator, save_final_best)
+    if save_final_best:
+        if accelerator.is_main_process and best_dir.exists():
+            shutil.rmtree(best_dir)
+        accelerator.wait_for_everyone()
+        save_training_checkpoint(accelerator, model, processor, best_dir, config=model_config)
+    if accelerator.is_main_process:
         if best_epoch < 0:
             raise RuntimeError("Merged training completed without selecting a checkpoint.")
         save_json(
@@ -638,5 +736,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    _relaunch_four_gpu_slurm_worker()
+    _relaunch_multi_gpu_slurm_worker()
     main()

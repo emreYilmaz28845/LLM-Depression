@@ -462,6 +462,9 @@ class TestMergedLauncherBackend:
             github_pr=10,
         )
         jobs = registry["jobs"]
-        assert len(jobs) == 9
+        # A Qwen3-backed contract plans train + postprocess only: its head kind
+        # is deferred until Qwen3 hidden-feature support lands.
+        assert len(jobs) == 6
+        assert {job["kind"] for job in jobs} == {"train", "postprocess"}
         for job in jobs:
             assert job["model_backend"] == ""

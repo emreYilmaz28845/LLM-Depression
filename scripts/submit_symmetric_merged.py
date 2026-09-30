@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import math
@@ -21,19 +22,71 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.merged.configuration import (
+    validate_evaluation_contract,
+    validate_merged_resources,
+)
 from src.merged.protocol import canonical_sha256
 from src.merged.provenance import source_commits_match
 from src.merged.runtime import load_merged_config, load_protocol_artifact
 from src.utils import read_json, resolve_project_path, save_json, sha256_file
 
 
-# The merged trainer is still the DDP path and the postprocess/head steps do not
-# support Qwen3 shards or processors. This guard is keyed on the component
-# backends, so it cannot be bypassed by editing a documentation field: a merged
-# contract that resolves to a Qwen3 backbone is refused before any GPU job is
-# submitted, and a dry-run only reports the blocked plan.
+# The guard is keyed on the resolved contract identity (config name + backend +
+# modality) and the recorded per-route readiness table below, so it cannot be
+# bypassed by editing a documentation field. A Qwen3-backed contract is refused
+# before any GPU job is submitted unless it is one of the declared routes; the
+# bounded ``smoke`` stage is how a declared route is verified, while the
+# multi-fold ``cv`` and ``final`` stages require ``production_ready``. The head
+# kind stays deferred for every Qwen3 route until Qwen3 hidden features land.
 NEW_MODEL_BACKENDS = frozenset({"qwen38", "qwen3omni"})
 QWEN3_MERGED_PREREQUISITE = "Qwen3 merged FSDP/postprocess prerequisite incomplete"
+QWEN3_HEAD_PREREQUISITE = "Qwen3 merged head support prerequisite incomplete"
+
+# Readiness of the four declared Qwen3 pooled merged contracts. Only a route
+# that passed its own bounded GPU smoke chain may be marked production-ready;
+# the others keep their production guard (and their CPU/config/processor route
+# tests) until they pass their own chain.
+QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
+    "symmetric_merged_qwen3_pooled_native_text_only": {
+        "backend": "qwen38",
+        "modality": "text_only",
+        "production_ready": False,
+        "production_block_reason": "the bounded GPU smoke chain is pending in this task",
+        "head_ready": False,
+        "evidence": None,
+    },
+    "symmetric_merged_qwen3_pooled_native_audio_text": {
+        "backend": "qwen3omni",
+        "modality": "audio_text",
+        "production_ready": False,
+        "production_block_reason": "the bounded GPU smoke chain is pending in this task",
+        "head_ready": False,
+        "evidence": None,
+    },
+    "symmetric_merged_qwen3_pooled_native_audio_only": {
+        "backend": "qwen3omni",
+        "modality": "audio_only",
+        "production_ready": False,
+        "production_block_reason": (
+            "the audio-only route has no GPU smoke chain in this task; it is covered by "
+            "CPU/config/processor route tests only"
+        ),
+        "head_ready": False,
+        "evidence": None,
+    },
+    "symmetric_merged_qwen3_pooled_english_text_only": {
+        "backend": "qwen38",
+        "modality": "text_only",
+        "production_ready": False,
+        "production_block_reason": (
+            "the English text contract has no GPU smoke chain in this task; it is covered by "
+            "CPU/config/processor route tests only"
+        ),
+        "head_ready": False,
+        "evidence": None,
+    },
+}
 
 
 def merged_blocked_backends(config: dict[str, Any]) -> list[str]:
@@ -57,6 +110,104 @@ def merged_blocked_backends(config: dict[str, Any]) -> list[str]:
         if backend in NEW_MODEL_BACKENDS:
             found.add(backend)
     return sorted(found)
+
+
+def merged_component_contract_records(
+    config: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Load the five component configs for contract validation without manifests.
+
+    The planner must validate the evaluation contract before any job is
+    submitted, and a dry-run may legitimately run before the component
+    manifests exist. Only the component YAML declarations are needed for that,
+    so the records carry the dataset identity and the loaded config. Component
+    paths that cannot be resolved are reported separately so the Qwen3 gate can
+    fail closed while legacy contracts keep their historical behavior.
+    """
+    records: list[dict[str, Any]] = []
+    unresolved: list[str] = []
+    for item in config.get("components") or []:
+        dataset = str(item.get("name") or item.get("dataset") or "").strip().lower()
+        raw_path = str(item.get("config") or "")
+        path = resolve_project_path(raw_path) if raw_path else None
+        if path is None or not path.is_file():
+            unresolved.append(dataset or raw_path or "<unnamed>")
+            continue
+        component_config = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        records.append({"dataset": dataset, "config": component_config})
+    return records, unresolved
+
+
+def merged_route_decision(config: dict[str, Any], *, stage: str) -> dict[str, Any]:
+    """Gate one merged contract for one stage against the Qwen3 readiness table.
+
+    Legacy (non-Qwen3) contracts keep today's behavior: they are allowed. A
+    Qwen3-backed contract must be one of the four declared pooled contracts with
+    a matching backend and modality; the bounded ``smoke`` stage is allowed for
+    a declared route, and ``cv``/``final`` additionally require the recorded
+    production readiness.
+    """
+    if stage not in {"smoke", "cv", "final"}:
+        raise ValueError(f"Unsupported merged stage: {stage!r}")
+    name = str(config.get("name") or "")
+    modality = str(config.get("modality") or "").strip().lower()
+    backends = merged_blocked_backends(config)
+    if not backends:
+        return {
+            "qwen3": False,
+            "declared": False,
+            "allowed": True,
+            "stage": stage,
+            "contract": name,
+            "backends": [],
+            "modality": modality,
+            "head_ready": True,
+            "head_deferred_reason": None,
+            "reason": None,
+            "evidence": None,
+        }
+    resolved_backend = "+".join(backends)
+    entry = QWEN3_CONTRACT_READINESS.get(name)
+    if entry is None or entry["backend"] != resolved_backend or entry["modality"] != modality:
+        return {
+            "qwen3": True,
+            "declared": False,
+            "allowed": False,
+            "stage": stage,
+            "contract": name,
+            "backends": backends,
+            "modality": modality,
+            "head_ready": False,
+            "head_deferred_reason": QWEN3_HEAD_PREREQUISITE,
+            "reason": (
+                f"{QWEN3_MERGED_PREREQUISITE}: {name or '<unnamed contract>'} is not a declared "
+                f"Qwen3 merged contract with recorded readiness for backend={resolved_backend} "
+                f"modality={modality!r}."
+            ),
+            "evidence": None,
+        }
+    if stage == "smoke":
+        allowed = True
+        reason = None
+    else:
+        allowed = bool(entry["production_ready"])
+        reason = None if allowed else (
+            f"{QWEN3_MERGED_PREREQUISITE}: {name} {stage} needs a passed GPU smoke chain; "
+            f"{entry['production_block_reason']}."
+        )
+    return {
+        "qwen3": True,
+        "declared": True,
+        "allowed": allowed,
+        "stage": stage,
+        "contract": name,
+        "backends": backends,
+        "modality": modality,
+        "head_ready": bool(entry["head_ready"]),
+        "head_deferred_reason": None if entry["head_ready"] else QWEN3_HEAD_PREREQUISITE,
+        "reason": reason,
+        "evidence": entry.get("evidence"),
+    }
 
 
 CONFIG_BY_MODALITY = {
@@ -181,6 +332,7 @@ def _completed(
     epochs: int | None = None,
     subjects_per_class: int | None = None,
     trials: int | None = None,
+    head_ready: bool = True,
 ) -> bool:
     roots = _run_roots(config, run_id, stage, fold)
     expected_identity = _expected_protocol_identity(config, config_path, fold)
@@ -210,7 +362,12 @@ def _completed(
     if kind == "postprocess":
         complete = roots["post"] / "postprocess_complete.json"
         identity_path = roots["post"] / "postprocess_identity.json"
-        if not complete.is_file() or not identity_path.is_file() or not (roots["post"] / "features" / "feature_metadata.json").is_file():
+        feature_metadata = roots["post"] / "features" / "feature_metadata.json"
+        if not complete.is_file() or not identity_path.is_file():
+            return False
+        if head_ready and not feature_metadata.is_file():
+            # The hidden feature matrix feeds the head stage; a route whose head
+            # support is deferred completes with its evaluation evidence only.
             return False
         if not _provenance_matches(roots["post"] / "slurm_provenance.json"):
             return False
@@ -297,11 +454,87 @@ def _check_final_gate(config: dict[str, Any], run_id: str, modality: str) -> Pat
     return path
 
 
+def _resolved_route_resources(
+    config: dict[str, Any], component_records: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Resolve the train/postprocess GPU shape for one Qwen3 merged contract.
+
+    The merged contract declares its shape: ``execution.qwen_gpus`` for the FSDP
+    training lane and ``execution.postprocess_gpus`` for the sharded evaluation,
+    which must agree with the components' ``resources.eval_gpus_per_node``. The
+    FSDP recipe keeps an effective global batch of 128, so the accumulated
+    per-rank batch must match the declared rank count.
+    """
+    execution = config.get("execution") or {}
+    training = config.get("training") or {}
+    train_gpus = int(execution.get("qwen_gpus") or 4)
+    resources = validate_merged_resources(config, component_records)
+    postprocess_gpus = int(resources["eval_gpus_per_node"])
+    per_device = int(training.get("per_device_train_batch_size", 1))
+    accumulation = int(training.get("gradient_accumulation_steps", 1))
+    effective_batch = per_device * accumulation * train_gpus
+    if effective_batch != 128:
+        raise ValueError(
+            f"Qwen3 merged FSDP keeps an effective global batch of 128; {train_gpus} rank(s) with "
+            f"per_device={per_device} accumulation={accumulation} give {effective_batch}."
+        )
+    return {
+        "train_gpus": train_gpus,
+        "postprocess_gpus": postprocess_gpus,
+        "evaluation_resources": resources,
+    }
+
+
+def _runtime_override_tokens(
+    config: dict[str, Any],
+    *,
+    input_root: str | Path | None,
+    pooled_runtime_root: str | Path | None,
+) -> list[str]:
+    """Repoint the read-only component inputs for an isolated deployment.
+
+    Relative component manifest/metadata paths resolve against PROJECT_ROOT,
+    which in a managed deployment is the immutable source directory. The
+    prebuilt inputs live outside it, so ``input_root`` rewrites every relative
+    component path, and ``pooled_runtime_root`` repoints the pooled Turkish
+    component at its task runtime exactly like the harmonized preparation flow
+    does. The tokens travel to every stage through OVERRIDES_JSON_B64.
+    """
+    tokens: list[str] = []
+    components = list(config.get("components") or [])
+    if input_root is not None:
+        root = Path(input_root)
+        for index, component in enumerate(components):
+            for field in ("manifest_path", "metadata_path"):
+                raw = str(component.get(field) or "")
+                if raw and not Path(raw).is_absolute():
+                    tokens.append(f"--set=components.{index}.{field}={root / raw}")
+    if pooled_runtime_root is not None:
+        root = Path(pooled_runtime_root)
+        for index, component in enumerate(components):
+            if str(component.get("name")) != "turkish":
+                continue
+            english = "harmonized_en" in str(component.get("manifest_path", ""))
+            manifest_root = root / ("manifests_en" if english else "manifests")
+            split_root = root / ("splits_en" if english else "splits")
+            tokens.append(
+                f"--set=components.{index}.manifest_path="
+                f"{manifest_root / 'turkish' / 'turkish_manifest.jsonl'}"
+            )
+            tokens.append(
+                f"--set=components.{index}.metadata_path="
+                f"{split_root / 'turkish' / 'turkish_manifest_metadata.json'}"
+            )
+    return tokens
+
+
 def build_job_specs(
     configs: list[Path], *, stage: str, run_id: str, dry_run: bool, smoke_subjects: int,
     smoke_epochs: int, smoke_trials: int, max_concurrent_trains: int = 0,
     max_concurrent_postprocess: int = 0, github_issue: int | None = None,
-    github_pr: int | None = None,
+    github_pr: int | None = None, overrides: list[str] | None = None,
+    log_root: str | None = None, input_root: str | Path | None = None,
+    pooled_runtime_root: str | Path | None = None,
 ) -> dict[str, Any]:
     if stage not in {"smoke", "cv", "final"}:
         raise ValueError(stage)
@@ -309,6 +542,7 @@ def build_job_specs(
         raise ValueError("GitHub Issue and PR provenance must be provided together.")
     if github_issue is not None and (github_issue < 1 or github_pr is None or github_pr < 1):
         raise ValueError("GitHub Issue and PR provenance must use positive integers.")
+    override_tokens = list(overrides or [])
     if stage == "smoke":
         configs = [path for path in configs]
         if len(configs) < 1:
@@ -319,30 +553,68 @@ def build_job_specs(
     else:
         folds = [0]
     jobs: list[dict[str, Any]] = []
-    config_identities: list[dict[str, str]] = []
+    config_identities: list[dict[str, Any]] = []
+    route_readiness: dict[str, Any] = {}
     for config_path in configs:
-        config = load_merged_config(config_path)
+        declared_config = load_merged_config(config_path, override_tokens)
+        resolved_tokens = override_tokens + _runtime_override_tokens(
+            declared_config,
+            input_root=input_root,
+            pooled_runtime_root=pooled_runtime_root,
+        )
+        config = load_merged_config(config_path, resolved_tokens)
         modality = str(config["modality"])
         head_trials = _head_trials(config, stage=stage, smoke_trials=smoke_trials)
-        blocked_backends = merged_blocked_backends(config)
-        if blocked_backends and not dry_run:
-            raise ValueError(
-                f"{QWEN3_MERGED_PREREQUISITE}: merged config {config_path} resolves to "
-                f"{blocked_backends}; refusing to submit GPU jobs. Qwen3 merged FSDP "
-                "training and postprocess support land in a separate task."
-            )
-        if blocked_backends:
+        decision = merged_route_decision(config, stage=stage)
+        evaluation_contract: dict[str, Any] | None = None
+        route_resources: dict[str, Any] | None = None
+        if decision["qwen3"] and decision["declared"]:
+            component_records, unresolved_components = merged_component_contract_records(config)
+            if unresolved_components:
+                raise ValueError(
+                    f"{QWEN3_MERGED_PREREQUISITE}: cannot resolve merged components "
+                    f"{unresolved_components} for {config_path}; a Qwen3 contract must keep all "
+                    "five component configs resolvable."
+                )
+            # The decision rule and the evidence view are validated separately,
+            # per component, before any job is planned or submitted.
+            evaluation_contract = validate_evaluation_contract(config, component_records)
+            route_resources = _resolved_route_resources(config, component_records)
+            decision["evaluation_contract"] = evaluation_contract
+            decision["resources"] = route_resources
+        if not decision["allowed"]:
+            if not dry_run:
+                raise ValueError(decision["reason"])
             print(
-                f"WARNING: {QWEN3_MERGED_PREREQUISITE}: {config_path} resolves to "
-                f"{blocked_backends}; dry-run plan only, execution is refused.",
+                f"WARNING: {decision['reason']} Dry-run plan only, execution is refused.",
                 file=sys.stderr,
             )
+        route_readiness[str(config_path)] = {
+            "contract": decision["contract"],
+            "qwen3": decision["qwen3"],
+            "backends": decision["backends"],
+            "allowed": decision["allowed"],
+            "production_ready": (
+                bool((QWEN3_CONTRACT_READINESS.get(decision["contract"]) or {}).get("production_ready", False))
+                if decision["qwen3"]
+                else None
+            ),
+            "head_ready": decision["head_ready"],
+            "head_deferred_reason": decision["head_deferred_reason"],
+            "reason": decision["reason"],
+            "evidence": decision["evidence"],
+            "sample_prediction_mode": (evaluation_contract or {}).get("sample_prediction_mode"),
+            "evaluation_view": (evaluation_contract or {}).get("evaluation_view"),
+        }
         config_identities.append(
             {
                 "path": str(config_path),
                 "sha256": sha256_file(config_path),
                 "modality": modality,
-                "blocked_backends": blocked_backends,
+                "blocked_backends": decision["backends"],
+                "qwen3": decision["qwen3"],
+                "allowed": decision["allowed"],
+                "head_ready": decision["head_ready"],
             }
         )
         if stage == "final":
@@ -359,6 +631,8 @@ def build_job_specs(
         else:
             final_epochs = None
         model_backend = str(config.get("model_backend") or "")
+        train_gpus = int(route_resources["train_gpus"]) if route_resources else 4
+        postprocess_gpus = int(route_resources["postprocess_gpus"]) if route_resources else 1
         for fold in folds:
             roots = _run_roots(config, run_id, stage, fold)
             chain = [
@@ -371,7 +645,7 @@ def build_job_specs(
                     "run_id": run_id,
                     "run_root": str(roots["train"]),
                     "model_backend": model_backend,
-                    "resource": {"gpus": 4, "cpus": 80, "time": config["execution"]["qwen_time"]},
+                    "resource": {"gpus": train_gpus, "cpus": 20 * train_gpus, "time": config["execution"]["qwen_time"]},
                     "epochs": final_epochs if stage == "final" else (smoke_epochs if stage == "smoke" else None),
                     "subjects_per_class": smoke_subjects if stage == "smoke" else None,
                 },
@@ -386,22 +660,25 @@ def build_job_specs(
                     "model_backend": model_backend,
                     "checkpoint_dir": str(roots["train"] / "best_model"),
                     "subjects_per_class": smoke_subjects if stage == "smoke" else None,
-                    "resource": {"gpus": 1, "cpus": 20, "time": config["execution"]["postprocess_time"]},
-                },
-                {
-                    "kind": "head",
-                    "config": str(config_path),
-                    "modality": modality,
-                    "stage": stage,
-                    "fold": fold,
-                    "run_id": run_id,
-                    "run_root": str(roots["post"] / "heads"),
-                    "model_backend": model_backend,
-                    "features_dir": str(roots["post"] / "features"),
-                    "resource": {"gpus": 0, "cpus": 20, "time": config["execution"]["head_time"]},
-                    "trials": head_trials,
+                    "resource": {"gpus": postprocess_gpus, "cpus": 20 * postprocess_gpus, "time": config["execution"]["postprocess_time"]},
                 },
             ]
+            if decision["head_ready"]:
+                chain.append(
+                    {
+                        "kind": "head",
+                        "config": str(config_path),
+                        "modality": modality,
+                        "stage": stage,
+                        "fold": fold,
+                        "run_id": run_id,
+                        "run_root": str(roots["post"] / "heads"),
+                        "model_backend": model_backend,
+                        "features_dir": str(roots["post"] / "features"),
+                        "resource": {"gpus": 0, "cpus": 20, "time": config["execution"]["head_time"]},
+                        "trials": head_trials,
+                    }
+                )
             previous_id: str | None = None
             for job in chain:
                 job_key = f"{modality}:{stage}:fold_{fold}:{job['kind']}"
@@ -411,6 +688,11 @@ def build_job_specs(
                     f"{modality}:{stage}:fold_{fold}:{'train' if job['kind'] == 'postprocess' else 'postprocess'}"
                     if job["kind"] != "train" else None
                 )
+                job["qwen3_route"] = decision["qwen3"]
+                job["head_deferred"] = None if decision["head_ready"] else decision["head_deferred_reason"]
+                job["overrides"] = list(resolved_tokens) if resolved_tokens else None
+                if log_root:
+                    job["log_root"] = str(log_root)
                 job["completed_before_submission"] = _completed(
                     config,
                     config_path,
@@ -421,6 +703,7 @@ def build_job_specs(
                     epochs=job.get("epochs"),
                     subjects_per_class=job.get("subjects_per_class"),
                     trials=job.get("trials"),
+                    head_ready=decision["head_ready"],
                 )
                 if job["completed_before_submission"]:
                     job["state"] = "skipped_compatible_complete"
@@ -432,7 +715,7 @@ def build_job_specs(
                     previous_id = job["expected_job_id"]
                 jobs.append(job)
     blocked_paths = {
-        str(record["path"]) for record in config_identities if record.get("blocked_backends")
+        str(record["path"]) for record in config_identities if not record.get("allowed")
     }
     for job in jobs:
         job["blocked_prerequisite"] = str(job["config"]) in blocked_paths
@@ -443,8 +726,9 @@ def build_job_specs(
     # The default production invocation has three modalities (45 CV or 9
     # final jobs), while targeted retries may intentionally pass one or more
     # configs. Count the actual planned chain so retry registries remain
-    # truthful without changing the default protocol scope.
-    expected = len(configs) * len(folds) * 3
+    # truthful without changing the default protocol scope. A route whose head
+    # kind is deferred plans train + postprocess only.
+    expected = sum(3 if record["head_ready"] else 2 for record in config_identities) * len(folds)
     plan_identity = {
         "stage": stage,
         "configs": config_identities,
@@ -455,12 +739,25 @@ def build_job_specs(
         "max_concurrent_postprocess": int(max_concurrent_postprocess),
         "research": {"github_issue": github_issue, "github_pr": github_pr},
     }
+    # The new identity fields only appear when they differ from the historical
+    # defaults, so an unchanged legacy rerun keeps its recorded plan hash.
+    if override_tokens:
+        plan_identity["overrides"] = override_tokens
+    if any(record["qwen3"] for record in config_identities):
+        plan_identity["route_readiness"] = route_readiness
     stage_plan = {
         "stage": stage,
         "plan_identity": plan_identity,
         "plan_hash": canonical_sha256(plan_identity),
         "expected_fresh_job_count": expected,
     }
+    blocked_reasons = sorted(
+        {
+            str(route_readiness[str(record["path"])]["reason"])
+            for record in config_identities
+            if not record.get("allowed")
+        }
+    )
     return {
         "schema_version": "symmetric_merged_job_registry.v2",
         "run_id": run_id,
@@ -468,6 +765,9 @@ def build_job_specs(
         "source_commit": _source_commit(),
         "reservation": _reservation() or None,
         "research": {"github_issue": github_issue, "github_pr": github_pr},
+        "overrides": override_tokens,
+        "log_root": str(log_root) if log_root else None,
+        "route_readiness": route_readiness,
         "plan_identity": plan_identity,
         "plan_hash": stage_plan["plan_hash"],
         "stages": [stage],
@@ -477,20 +777,16 @@ def build_job_specs(
         "planned_job_count": sum(job["state"] == "planned" for job in jobs),
         "skipped_job_count": sum(job["state"] != "planned" for job in jobs),
         "blocked_prerequisite": sorted(
-            str(record["path"]) for record in config_identities if record.get("blocked_backends")
+            str(record["path"]) for record in config_identities if not record.get("allowed")
         ),
-        "blocked_reason": (
-            QWEN3_MERGED_PREREQUISITE
-            if any(record.get("blocked_backends") for record in config_identities)
-            else None
-        ),
+        "blocked_reason": "; ".join(blocked_reasons) if blocked_reasons else None,
         "jobs": jobs,
     }
 
 
 def _submit_job(
     job: dict[str, Any], *, worker: Path, dependency_id: str | None,
-    throttle_dependency_id: str | None,
+    throttle_dependency_id: str | None, overrides: list[str] | None = None,
 ) -> str:
     export_values = {
         "PROJECT_ROOT": str(PROJECT_ROOT),
@@ -500,7 +796,8 @@ def _submit_job(
         "RUN_ID": job["run_id"],
         "SOURCE_COMMIT": _source_commit(),
     }
-    if str(job.get("model_backend") or "") == "gemma4":
+    backend = str(job.get("model_backend") or "")
+    if backend == "gemma4":
         export_values["ENV_ACTIVATE"] = os.environ.get(
             "GEMMA_ENV",
             "/gpfs/projects/etur92/ozu647717/venvs/gemma4_12b_tf5_14_1",
@@ -510,11 +807,39 @@ def _submit_job(
             "/gpfs/projects/etur92/ozu647717/models/gemma-4-12B-it/"
             "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
         )
+    elif backend == "qwen38":
+        export_values["ENV_ACTIVATE"] = os.environ.get(
+            "QWEN38_ENV_ACTIVATE",
+            "/gpfs/projects/etur92/ozu647717/venvs/qwen38_fsdp_fastpath_20260921",
+        ) + "/bin/activate"
+    elif backend == "qwen3omni":
+        export_values["ENV_ACTIVATE"] = os.environ.get(
+            "QWEN3OMNI_ENV_ACTIVATE",
+            "/gpfs/projects/etur92/ozu647717/venvs/qwen3omni",
+        ) + "/bin/activate"
+    override_tokens = list(overrides or [])
+    if override_tokens:
+        export_values["OVERRIDES_JSON_B64"] = base64.b64encode(
+            json.dumps(override_tokens).encode("utf-8")
+        ).decode("ascii")
+    if job.get("log_root"):
+        export_values["LOG_ROOT"] = str(job["log_root"])
+    if job["kind"] == "train":
+        export_values["NPROC_PER_NODE"] = str(int(job["resource"]["gpus"]))
+    if job["kind"] == "postprocess":
+        export_values["POSTPROCESS_GPUS"] = str(int(job["resource"]["gpus"]))
     for key in ("epochs", "subjects_per_class", "trials", "checkpoint_dir", "features_dir"):
         if job.get(key) is not None:
             export_values[key.upper()] = str(job[key])
     export_text = "ALL," + ",".join(f"{key}={value}" for key, value in export_values.items())
     arguments = ["sbatch", "--parsable", f"--job-name=sym-{job['modality'][:4]}-{job['stage'][:4]}-{job['fold']}-{job['kind'][:4]}"]
+    gpus = int(job["resource"]["gpus"])
+    cpus = int(job["resource"]["cpus"])
+    if gpus > 0:
+        # Sbatch command-line flags override the worker's script defaults, so
+        # the configured resource shape travels with the job contract.
+        arguments.append(f"--gres=gpu:{gpus}")
+        arguments.append(f"--cpus-per-task={cpus}")
     dependencies: list[str] = []
     if dependency_id:
         dependencies.append(f"afterok:{dependency_id}")
@@ -565,6 +890,7 @@ def submit_registry(registry: dict[str, Any], *, dry_run: bool) -> dict[str, Any
                 worker=worker_by_kind[job["kind"]],
                 dependency_id=dependency_id,
                 throttle_dependency_id=throttle_dependency_id,
+                overrides=registry.get("overrides") or [],
             )
         job["job_id"] = submitted_id
         if dependency_id:
@@ -780,12 +1106,50 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-concurrent-postprocess", type=int, default=0)
     parser.add_argument("--github-issue", type=int)
     parser.add_argument("--github-pr", type=int)
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        dest="set_overrides",
+        metavar="KEY=VALUE",
+        help="Extra config override applied to every stage and its workers (repeatable).",
+    )
+    parser.add_argument(
+        "--input-root",
+        type=Path,
+        default=None,
+        help="Root that relative component manifest/metadata paths resolve against; an "
+        "isolated deployment reads its prebuilt inputs outside the source directory.",
+    )
+    parser.add_argument(
+        "--pooled-runtime-root",
+        type=Path,
+        default=None,
+        help="Runtime root holding the prebuilt pooled Turkish manifests/splits.",
+    )
+    parser.add_argument(
+        "--log-root",
+        type=Path,
+        default=None,
+        help="Writable log root exported to every worker (isolated runtime).",
+    )
     return parser.parse_args()
+
+
+def _normalized_extra_overrides(raw: list[str]) -> list[str]:
+    tokens: list[str] = []
+    for token in raw:
+        text = str(token).strip()
+        if not text:
+            continue
+        tokens.append(text if text.startswith("--set") else f"--set={text}")
+    return tokens
 
 
 def main() -> None:
     args = parse_args()
     configs = [resolve_project_path(value) for value in (args.configs or list(CONFIG_BY_MODALITY.values()))]
+    extra_overrides = _normalized_extra_overrides(args.set_overrides)
     run_id = args.run_id
     if not run_id:
         identity = {
@@ -793,6 +1157,8 @@ def main() -> None:
             "configs": [str(path) + ":" + sha256_file(path) for path in configs],
             "source_commit": _source_commit(),
         }
+        if extra_overrides:
+            identity["overrides"] = extra_overrides
         run_id = f"symmetric_merged_{args.stage}_{canonical_sha256(identity)[:12]}"
     registry = build_job_specs(
         configs,
@@ -806,6 +1172,10 @@ def main() -> None:
         max_concurrent_postprocess=args.max_concurrent_postprocess,
         github_issue=args.github_issue,
         github_pr=args.github_pr,
+        overrides=extra_overrides,
+        log_root=str(args.log_root) if args.log_root else None,
+        input_root=args.input_root,
+        pooled_runtime_root=args.pooled_runtime_root,
     )
     registry_path = resolve_project_path(args.registry) if args.registry else PROJECT_ROOT / "outputs/symmetric_merged_jobs" / f"{run_id}.json"
     if registry_path.exists():

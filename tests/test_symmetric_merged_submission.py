@@ -445,9 +445,11 @@ def test_merged_train_preflight_does_not_self_create_an_incomplete_run() -> None
 def test_merged_train_extends_process_group_timeout_for_rank_zero_selection() -> None:
     source = Path("src/merged/train.py").read_text(encoding="utf-8")
 
-    assert "InitProcessGroupKwargs(" in source
-    assert 'dist_timeout_minutes' in source
-    assert "timeout=timedelta(" in source
+    # The process group is pre-initialized with the configured timeout before
+    # Accelerate builds its own group (the standalone FSDP recipe does the same).
+    assert "torch.distributed.init_process_group(" in source
+    assert "dist_timeout_minutes" in source
+    assert "timeout=_datetime.timedelta(minutes=dist_timeout_minutes)" in source
     assert "TORCH_DISTRIBUTED_DEFAULT_TIMEOUT" not in Path(
         "scripts/run_symmetric_merged_train_slurm.sh"
     ).read_text(encoding="utf-8")
