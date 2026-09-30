@@ -51,18 +51,30 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
     "symmetric_merged_qwen3_pooled_native_text_only": {
         "backend": "qwen38",
         "modality": "text_only",
-        "production_ready": False,
-        "production_block_reason": "the bounded GPU smoke chain is pending in this task",
+        "production_ready": True,
+        "production_block_reason": None,
         "head_ready": False,
-        "evidence": None,
+        "evidence": (
+            "GPU smoke chain passed: run qwen3_merged_smoke_text_only_20260930_r3, train job "
+            "46844006 COMPLETED 0:0 and postprocess job 46845076 COMPLETED 0:0 on deployment "
+            "feat-qwen3-merged-fsdp-postprocess-20260930-20260930T142929Z-c41d8e76-91bf3e5a "
+            "(source c41d8e76c12979c358499a8b84fce035f67b6478); likelihood subject-level "
+            "evidence locally verified for all five components."
+        ),
     },
     "symmetric_merged_qwen3_pooled_native_audio_text": {
         "backend": "qwen3omni",
         "modality": "audio_text",
-        "production_ready": False,
-        "production_block_reason": "the bounded GPU smoke chain is pending in this task",
+        "production_ready": True,
+        "production_block_reason": None,
         "head_ready": False,
-        "evidence": None,
+        "evidence": (
+            "GPU smoke chain passed: run qwen3_merged_smoke_audio_text_20260930_r2, train job "
+            "46846648 COMPLETED 0:0 and postprocess job 46846649 COMPLETED 0:0 on deployment "
+            "feat-qwen3-merged-fsdp-postprocess-20260930-20260930T153509Z-b50cc61e-5c61506c "
+            "(source b50cc61edc3b1737b860e59fc61baf86131d643e); likelihood subject-level "
+            "evidence locally verified for all five components."
+        ),
     },
     "symmetric_merged_qwen3_pooled_native_audio_only": {
         "backend": "qwen3omni",

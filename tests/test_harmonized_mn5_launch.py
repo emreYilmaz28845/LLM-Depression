@@ -82,10 +82,26 @@ def test_merged_planner_gates_qwen3_contracts_by_route_readiness() -> None:
         for job in smoke["jobs"]
     )
     assert smoke["route_readiness"][str(QWEN3_POOLED_MERGED)]["allowed"] is True
-    # Production (cv/final) stays closed until the route's own smoke passes.
+    # Production (cv/final) is open only for a route whose own smoke chain passed.
+    verified = build_job_specs(
+        configs,
+        stage="cv",
+        run_id="qwen3_verified",
+        dry_run=True,
+        smoke_subjects=2,
+        smoke_epochs=1,
+        smoke_trials=0,
+        github_issue=12,
+        github_pr=10,
+    )
+    assert verified["blocked_prerequisite"] == []
+    assert all(not job["blocked_prerequisite"] for job in verified["jobs"])
+    # 5 folds x (train + postprocess): the head kind stays deferred.
+    assert len(verified["jobs"]) == 10
+    unverified = ROOT / "configs/experiments/merged/symmetric_merged_qwen3_pooled_native_audio_only.yaml"
     with pytest.raises(ValueError, match="Qwen3 merged FSDP/postprocess prerequisite incomplete"):
         build_job_specs(
-            configs,
+            [unverified],
             stage="cv",
             run_id="qwen3_blocked",
             dry_run=False,
@@ -96,7 +112,7 @@ def test_merged_planner_gates_qwen3_contracts_by_route_readiness() -> None:
             github_pr=10,
         )
     registry = build_job_specs(
-        configs,
+        [unverified],
         stage="cv",
         run_id="qwen3_blocked",
         dry_run=True,
@@ -106,11 +122,24 @@ def test_merged_planner_gates_qwen3_contracts_by_route_readiness() -> None:
         github_issue=12,
         github_pr=10,
     )
-    assert registry["blocked_prerequisite"] == [str(QWEN3_POOLED_MERGED)]
+    assert registry["blocked_prerequisite"] == [str(unverified)]
     assert registry["blocked_reason"].startswith(
         "Qwen3 merged FSDP/postprocess prerequisite incomplete"
     )
     assert all(job["blocked_prerequisite"] for job in registry["jobs"])
+    # A declared route may always run the bounded smoke stage, verified or not.
+    smoke_unverified = build_job_specs(
+        [unverified],
+        stage="smoke",
+        run_id="qwen3_smoke_unverified",
+        dry_run=True,
+        smoke_subjects=2,
+        smoke_epochs=1,
+        smoke_trials=0,
+        github_issue=12,
+        github_pr=10,
+    )
+    assert {job["kind"] for job in smoke_unverified["jobs"]} == {"train", "postprocess"}
     # The legacy merged configs also resolve to Qwen3 components after the
     # canonical backbone conversion, but they are not declared contracts with
     # recorded readiness, so every stage (including smoke) is refused.

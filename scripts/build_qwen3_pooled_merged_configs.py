@@ -69,14 +69,20 @@ EXECUTE_VERIFIED_STATUS = "execute_verified"
 # sync with it.
 CELL_STATUS: dict[str, tuple[str, str]] = {
     "native_text_only": (
-        SMOKE_ONLY_STATUS,
-        "Qwen3 merged FSDP/postprocess implementation landed; the bounded native text-only "
-        "GPU smoke chain is pending in this task, so only the smoke stage is executable.",
+        EXECUTE_VERIFIED_STATUS,
+        "Qwen3 merged FSDP/postprocess GPU smoke chain passed (run qwen3_merged_smoke_text_only_20260930_r3: "
+        "train 46844006 and postprocess 46845076 COMPLETED 0:0; deployment "
+        "feat-qwen3-merged-fsdp-postprocess-20260930-20260930T142929Z-c41d8e76-91bf3e5a, source "
+        "c41d8e76c12979c358499a8b84fce035f67b6478), so the cv and final stages are executable; the head "
+        "kind stays deferred until Qwen3 hidden-feature support is verified for merged checkpoints.",
     ),
     "native_audio_text": (
-        SMOKE_ONLY_STATUS,
-        "Qwen3 merged FSDP/postprocess implementation landed; the bounded native audio+text "
-        "GPU smoke chain is pending in this task, so only the smoke stage is executable.",
+        EXECUTE_VERIFIED_STATUS,
+        "Qwen3 merged FSDP/postprocess GPU smoke chain passed (run qwen3_merged_smoke_audio_text_20260930_r2: "
+        "train 46846648 and postprocess 46846649 COMPLETED 0:0; deployment "
+        "feat-qwen3-merged-fsdp-postprocess-20260930-20260930T153509Z-b50cc61e-5c61506c, source "
+        "b50cc61edc3b1737b860e59fc61baf86131d643e), so the cv and final stages are executable; the head "
+        "kind stays deferred until Qwen3 hidden-feature support is verified for merged checkpoints.",
     ),
     "native_audio_only": (
         SMOKE_ONLY_STATUS,
