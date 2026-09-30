@@ -53,7 +53,7 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
         "modality": "text_only",
         "production_ready": True,
         "production_block_reason": None,
-        "head_ready": False,
+        "head_ready": True,
         "evidence": (
             "GPU smoke chain passed: run qwen3_merged_smoke_text_only_20260930_r3. Train job "
             "46844006 COMPLETED 0:0 and postprocess job 46845076 COMPLETED 0:0 both ran from the "
@@ -66,6 +66,7 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
             "the permanent checkout (identical files; earlier failed attempts and their logs are "
             "preserved). Likelihood subject-level evidence was locally verified for all five "
             "components."
+            " Hidden-feature audit passed: postprocess job 46853892 and head job 46855535 COMPLETED 0:0 under the isolated run qwen3_heads_audit_native_text_only_20260930_r1 (feature dimension 5120, 24 train and 24 holdout rows); the first head attempt 46853893 failed on the missing project-local dependency path and is preserved."
         ),
     },
     "symmetric_merged_qwen3_pooled_native_audio_text": {
@@ -73,7 +74,7 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
         "modality": "audio_text",
         "production_ready": True,
         "production_block_reason": None,
-        "head_ready": False,
+        "head_ready": True,
         "evidence": (
             "GPU smoke chain passed: run qwen3_merged_smoke_audio_text_20260930_r2. Train job "
             "46846648 COMPLETED 0:0 and postprocess job 46846649 COMPLETED 0:0 both ran from the "
@@ -81,6 +82,7 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
             "feat-qwen3-merged-fsdp-postprocess-20260930-20260930T153509Z-b50cc61e-5c61506c "
             "(source b50cc61edc3b1737b860e59fc61baf86131d643e); likelihood subject-level evidence "
             "was locally verified for all five components."
+            " Hidden-feature audit passed: postprocess job 46853894 and head job 46855538 COMPLETED 0:0 under the isolated run qwen3_heads_audit_native_audio_text_20260930_r1 (feature dimension 2048, 414 train and 407 holdout rows); the first head attempt 46853895 failed on the missing project-local dependency path and is preserved."
         ),
     },
     "symmetric_merged_qwen3_pooled_native_audio_only": {
@@ -88,7 +90,7 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
         "modality": "audio_only",
         "production_ready": True,
         "production_block_reason": None,
-        "head_ready": False,
+        "head_ready": True,
         "evidence": (
             "GPU smoke chain passed: run qwen3_multiseed_smoke_audio_only_20260930_r1. Train job "
             "46852252 COMPLETED 0:0 (30:49) and postprocess job 46852253 COMPLETED 0:0 (4:39), both "
@@ -97,6 +99,7 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
             "(source 4ff77c53ebd3808671af551a58287136bd1726e5). Likelihood subject-level evidence "
             "was collected locally for all five components and the strict metrics were recomputed "
             "from the stored subject predictions with an exact match."
+            " Hidden-feature audit passed: postprocess job 46853896 and head job 46855539 COMPLETED 0:0 under the isolated run qwen3_heads_audit_native_audio_only_20260930_r1 (feature dimension 2048, 414 train and 407 holdout rows); the first head attempt 46853897 failed on the missing project-local dependency path and is preserved."
         ),
     },
     "symmetric_merged_qwen3_pooled_english_text_only": {
@@ -104,7 +107,7 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
         "modality": "text_only",
         "production_ready": True,
         "production_block_reason": None,
-        "head_ready": False,
+        "head_ready": True,
         "evidence": (
             "GPU smoke chain passed: run qwen3_multiseed_smoke_en_text_20260930_r1. Train job "
             "46852254 COMPLETED 0:0 (6:40) and postprocess job 46852255 COMPLETED 0:0 (2:37), both "
@@ -113,6 +116,7 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
             "(source 4ff77c53ebd3808671af551a58287136bd1726e5). The four translated components "
             "render the versioned translation notice and DAIC keeps its native English input; "
             "likelihood subject-level evidence was locally verified for all five components."
+            " Hidden-feature audit passed: postprocess job 46853898 and head job 46855540 COMPLETED 0:0 under the isolated run qwen3_heads_audit_english_text_only_20260930_r1 (feature dimension 5120, 24 train and 24 holdout rows); the first head attempt 46853899 failed on the missing project-local dependency path and is preserved."
         ),
     },
     "symmetric_merged_qwen3_pooled_english_audio_text": {
@@ -120,7 +124,7 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
         "modality": "audio_text",
         "production_ready": True,
         "production_block_reason": None,
-        "head_ready": False,
+        "head_ready": True,
         "evidence": (
             "GPU smoke chain passed: run qwen3_multiseed_smoke_en_audio_text_20260930_r1. Train job "
             "46852256 COMPLETED 0:0 (32:43) and postprocess job 46852257 COMPLETED 0:0 (5:42), both "
@@ -129,6 +133,7 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
             "(source 4ff77c53ebd3808671af551a58287136bd1726e5). The English components carry the "
             "translation notice with original-language audio; likelihood subject-level evidence was "
             "locally verified for all five components."
+            " Hidden-feature audit passed: postprocess job 46853900 and head job 46855541 COMPLETED 0:0 under the isolated run qwen3_heads_audit_english_audio_text_20260930_r1 (feature dimension 2048, 414 train and 407 holdout rows); the first head attempt 46853901 failed on the missing project-local dependency path and is preserved."
         ),
     },
 }

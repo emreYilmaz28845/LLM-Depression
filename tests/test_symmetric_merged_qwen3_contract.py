@@ -189,8 +189,9 @@ def test_route_readiness_covers_exactly_the_five_pooled_contracts() -> None:
         smoke = merged_route_decision(config, stage="smoke")
         assert smoke["declared"] is True
         assert smoke["allowed"] is True
-        assert smoke["head_ready"] is False
-        assert smoke["head_deferred_reason"] == "Qwen3 merged head support prerequisite incomplete"
+        # Every route passed its bounded hidden-feature audit, so its head kind is open.
+        assert smoke["head_ready"] is True
+        assert smoke["head_deferred_reason"] is None
         for stage in ("cv", "final"):
             decision = merged_route_decision(config, stage=stage)
             production_ready = QWEN3_CONTRACT_READINESS[config["name"]]["production_ready"]

@@ -333,9 +333,10 @@ table, not on the YAML `status` field: a Qwen3-backed contract that is not
 declared there is refused outright, the bounded `smoke` stage is how a declared
 route is verified, and the multi-fold `cv` and `final` stages additionally
 require that route's recorded GPU smoke chain. All five contracts have passed
-their own chains (`execute_verified`). The hidden-feature and head kind is
-opened per route only after that route's own bounded hidden-feature audit has
-run, and Qwen3 fixed heads stay explicit-only: the standalone path runs through
+their own chains (`execute_verified`). Every route also passed its bounded
+hidden-feature audit (postprocess, feature extraction and fixed heads on its
+smoke checkpoint), so the head kind is open for all five. Qwen3 fixed heads stay
+explicit-only on the standalone path: they run through
 `scripts/submit_qwen3_hidden_smoke.sh` (`QWEN3_HEADS_ENABLED=1`), never through
 the harmonized launchers. Writing `strategy: fsdp` into a
 merged config is not readiness, and no route falls back to the old DDP loader.

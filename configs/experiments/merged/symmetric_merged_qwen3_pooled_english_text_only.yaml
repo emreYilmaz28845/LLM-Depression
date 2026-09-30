@@ -4,7 +4,7 @@ recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_
 modality: text_only
 seed: 1337
 status: execute_verified
-status_reason: 'Qwen3 merged FSDP/postprocess GPU smoke chain passed (run qwen3_multiseed_smoke_en_text_20260930_r1: train 46852254 and postprocess 46852255 COMPLETED 0:0; deployment feat-qwen3-multiseed-matrix-readiness-20260930-20260930T183953Z-4ff77c53-521d2e6a, source 4ff77c53ebd3808671af551a58287136bd1726e5), so the cv and final stages are executable; the four translated components render the versioned translation notice and the head kind is opened per route only after its own bounded hidden-feature audit.'
+status_reason: 'Qwen3 merged FSDP/postprocess GPU smoke chain passed (run qwen3_multiseed_smoke_en_text_20260930_r1: train 46852254 and postprocess 46852255 COMPLETED 0:0; deployment feat-qwen3-multiseed-matrix-readiness-20260930-20260930T183953Z-4ff77c53-521d2e6a, source 4ff77c53ebd3808671af551a58287136bd1726e5), so the cv and final stages are executable; the four translated components render the versioned translation notice, and the route passed its bounded hidden-feature audit on that smoke checkpoint, so its head kind is open.'
 model_backend: qwen38
 model_name_or_path: ${QWEN38_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen3.8-27B}
 model_revision: 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0

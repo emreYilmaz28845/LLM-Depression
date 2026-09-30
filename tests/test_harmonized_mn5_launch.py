@@ -87,11 +87,9 @@ def test_merged_planner_gates_qwen3_contracts_by_route_readiness() -> None:
         github_issue=12,
         github_pr=10,
     )
-    assert {job["kind"] for job in smoke["jobs"]} == {"train", "postprocess"}
-    assert all(
-        job["head_deferred"] == "Qwen3 merged head support prerequisite incomplete"
-        for job in smoke["jobs"]
-    )
+    assert {job["kind"] for job in smoke["jobs"]} == {"train", "postprocess", "head"}
+    # Every route passed its bounded hidden-feature audit, so no head kind is deferred.
+    assert all(job["head_deferred"] is None for job in smoke["jobs"])
     assert smoke["route_readiness"][str(QWEN3_POOLED_MERGED)]["allowed"] is True
     # Production (cv/final) is open only for a route whose own smoke chain passed.
     verified = build_job_specs(
@@ -107,8 +105,8 @@ def test_merged_planner_gates_qwen3_contracts_by_route_readiness() -> None:
     )
     assert verified["blocked_prerequisite"] == []
     assert all(not job["blocked_prerequisite"] for job in verified["jobs"])
-    # 5 folds x (train + postprocess): the head kind is opened per route later.
-    assert len(verified["jobs"]) == 10
+    # 5 folds x (train + postprocess + fixed heads).
+    assert len(verified["jobs"]) == 15
     # Every declared route whose own smoke chain passed may run cv, including the
     # routes that were opened after the first two.
     opened = ROOT / "configs/experiments/merged/symmetric_merged_qwen3_pooled_native_audio_only.yaml"
@@ -125,7 +123,7 @@ def test_merged_planner_gates_qwen3_contracts_by_route_readiness() -> None:
     )
     assert opened_registry["blocked_prerequisite"] == []
     assert all(not job["blocked_prerequisite"] for job in opened_registry["jobs"])
-    assert {job["kind"] for job in opened_registry["jobs"]} == {"train", "postprocess"}
+    assert {job["kind"] for job in opened_registry["jobs"]} == {"train", "postprocess", "head"}
     unverified = ROOT / "configs/experiments/merged/symmetric_merged_harmonized_audio_only_likelihood_v1.yaml"
     with pytest.raises(ValueError, match="not a declared Qwen3 merged contract"):
         build_job_specs(

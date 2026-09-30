@@ -276,7 +276,9 @@ def test_production_manifest_plans_three_seeds_and_marks_reuse() -> None:
     assert manifest["status"] == "planned_not_submitted"
     assert manifest["seeds"] == [7, 1337, 2024]
     assert manifest["summary"]["standalone_jobs"] == 468
-    assert manifest["summary"]["merged_jobs"] == 180
+    # 5 contracts x 3 seeds x 6 stage-folds x (train + postprocess + head): every
+    # contract passed its hidden-feature audit, so the head kind is planned.
+    assert manifest["summary"]["merged_jobs"] == 270
     assert manifest["summary"]["total_planned_jobs"] == manifest["summary"]["standalone_jobs"] + manifest["summary"]["merged_jobs"]
     d3tec_text = next(
         route for route in manifest["standalone"] if route["route_id"] == "d3tec_text_only_native"
@@ -288,12 +290,19 @@ def test_production_manifest_plans_three_seeds_and_marks_reuse() -> None:
         job for job in d3tec_text["jobs"] if job["seed"] == 2024 and job["kind"] == "train"
     ]
     assert other_seed[0]["reuse_seed_1337"] is None
-    # No merged route has an open head kind yet, so the merged plan carries no head job.
-    assert all(not route["head_ready"] for route in manifest["merged"])
+    # Every contract passed its hidden-feature audit, so each merged plan carries
+    # its train, postprocess and head jobs.
+    assert all(route["head_ready"] for route in manifest["merged"])
     assert all(
-        job["kind"] in {"train", "postprocess"}
+        job["kind"] in {"train", "postprocess", "head"}
         for route in manifest["merged"]
         for job in route["jobs"]
+    )
+    assert all(
+        job["dependency"] != "head"
+        for route in manifest["merged"]
+        for job in route["jobs"]
+        if job["kind"] == "train"
     )
 
 

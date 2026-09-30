@@ -76,16 +76,18 @@ CELL_STATUS: dict[str, tuple[str, str]] = {
         "Qwen3 merged FSDP/postprocess GPU smoke chain passed (run qwen3_merged_smoke_text_only_20260930_r3: "
         "train 46844006 and postprocess 46845076 COMPLETED 0:0; deployment "
         "feat-qwen3-merged-fsdp-postprocess-20260930-20260930T142929Z-c41d8e76-91bf3e5a, source "
-        "c41d8e76c12979c358499a8b84fce035f67b6478), so the cv and final stages are executable; the head "
-        "kind stays deferred until Qwen3 hidden-feature support is verified for merged checkpoints.",
+        "c41d8e76c12979c358499a8b84fce035f67b6478), so the cv and final stages are executable, and the "
+        "route passed its bounded hidden-feature audit on that smoke checkpoint, so its head kind is "
+        "open.",
     ),
     "native_audio_text": (
         EXECUTE_VERIFIED_STATUS,
         "Qwen3 merged FSDP/postprocess GPU smoke chain passed (run qwen3_merged_smoke_audio_text_20260930_r2: "
         "train 46846648 and postprocess 46846649 COMPLETED 0:0; deployment "
         "feat-qwen3-merged-fsdp-postprocess-20260930-20260930T153509Z-b50cc61e-5c61506c, source "
-        "b50cc61edc3b1737b860e59fc61baf86131d643e), so the cv and final stages are executable; the head "
-        "kind stays deferred until Qwen3 hidden-feature support is verified for merged checkpoints.",
+        "b50cc61edc3b1737b860e59fc61baf86131d643e), so the cv and final stages are executable, and the "
+        "route passed its bounded hidden-feature audit on that smoke checkpoint, so its head kind is "
+        "open.",
     ),
     "native_audio_only": (
         EXECUTE_VERIFIED_STATUS,
@@ -93,8 +95,9 @@ CELL_STATUS: dict[str, tuple[str, str]] = {
         "qwen3_multiseed_smoke_audio_only_20260930_r1: train 46852252 and postprocess 46852253 "
         "COMPLETED 0:0; deployment "
         "feat-qwen3-multiseed-matrix-readiness-20260930-20260930T183953Z-4ff77c53-521d2e6a, source "
-        "4ff77c53ebd3808671af551a58287136bd1726e5), so the cv and final stages are executable; "
-        "the head kind is opened per route only after its own bounded hidden-feature audit.",
+        "4ff77c53ebd3808671af551a58287136bd1726e5), so the cv and final stages are executable, and the "
+        "route passed its bounded hidden-feature audit on that smoke checkpoint, so its head kind is "
+        "open.",
     ),
     "english_text_only": (
         EXECUTE_VERIFIED_STATUS,
@@ -102,9 +105,9 @@ CELL_STATUS: dict[str, tuple[str, str]] = {
         "qwen3_multiseed_smoke_en_text_20260930_r1: train 46852254 and postprocess 46852255 "
         "COMPLETED 0:0; deployment "
         "feat-qwen3-multiseed-matrix-readiness-20260930-20260930T183953Z-4ff77c53-521d2e6a, source "
-        "4ff77c53ebd3808671af551a58287136bd1726e5), so the cv and final stages are executable; "
-        "the four translated components render the versioned translation notice and the head kind "
-        "is opened per route only after its own bounded hidden-feature audit.",
+        "4ff77c53ebd3808671af551a58287136bd1726e5), so the cv and final stages are executable; the "
+        "four translated components render the versioned translation notice, and the route passed its "
+        "bounded hidden-feature audit on that smoke checkpoint, so its head kind is open.",
     ),
     "english_audio_text": (
         EXECUTE_VERIFIED_STATUS,
@@ -113,8 +116,8 @@ CELL_STATUS: dict[str, tuple[str, str]] = {
         "COMPLETED 0:0; deployment "
         "feat-qwen3-multiseed-matrix-readiness-20260930-20260930T183953Z-4ff77c53-521d2e6a, source "
         "4ff77c53ebd3808671af551a58287136bd1726e5), so the cv and final stages are executable; the "
-        "English components carry the translation notice with original-language audio and the head "
-        "kind is opened per route only after its own bounded hidden-feature audit.",
+        "English components carry the translation notice with original-language audio, and the route "
+        "passed its bounded hidden-feature audit on that smoke checkpoint, so its head kind is open.",
     ),
 }
 

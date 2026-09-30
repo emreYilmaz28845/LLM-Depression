@@ -98,8 +98,8 @@ READINESS = (
     ),
     (
         "merged/head",
-        "deferred for every Qwen3 merged route until Qwen3 hidden-feature support is verified "
-        "for merged checkpoints",
+        "open per route: every Qwen3 pooled merged contract passed its bounded hidden-feature "
+        "audit (postprocess, feature extraction and fixed heads) on its smoke checkpoint",
     ),
     ("heads", "explicit-only: Qwen3 hidden extraction landed; Qwen3 head jobs run through the dedicated smoke submitter"),
 )

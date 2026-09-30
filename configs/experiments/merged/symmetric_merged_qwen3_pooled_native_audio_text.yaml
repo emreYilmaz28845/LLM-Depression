@@ -4,7 +4,7 @@ recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_
 modality: audio_text
 seed: 1337
 status: execute_verified
-status_reason: 'Qwen3 merged FSDP/postprocess GPU smoke chain passed (run qwen3_merged_smoke_audio_text_20260930_r2: train 46846648 and postprocess 46846649 COMPLETED 0:0; deployment feat-qwen3-merged-fsdp-postprocess-20260930-20260930T153509Z-b50cc61e-5c61506c, source b50cc61edc3b1737b860e59fc61baf86131d643e), so the cv and final stages are executable; the head kind stays deferred until Qwen3 hidden-feature support is verified for merged checkpoints.'
+status_reason: 'Qwen3 merged FSDP/postprocess GPU smoke chain passed (run qwen3_merged_smoke_audio_text_20260930_r2: train 46846648 and postprocess 46846649 COMPLETED 0:0; deployment feat-qwen3-merged-fsdp-postprocess-20260930-20260930T153509Z-b50cc61e-5c61506c, source b50cc61edc3b1737b860e59fc61baf86131d643e), so the cv and final stages are executable, and the route passed its bounded hidden-feature audit on that smoke checkpoint, so its head kind is open.'
 model_backend: qwen3omni
 model_name_or_path: ${QWEN3_OMNI_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen3-Omni-30B-A3B-Instruct}
 model_attn_implementation: sdpa
