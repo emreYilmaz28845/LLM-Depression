@@ -1,0 +1,123 @@
+schema_version: audiollm.experiment_group.v1
+group_id: qwen3-multiseed-matrix-readiness-20260930
+title: Qwen3 three-seed matrix readiness — evidence inventory, English notice, merged routes, standalone and merged heads
+research_question: >-
+  Can the three-seed Qwen3 matrix (seeds 7/1337/2024, fixed split seed 1337) be
+  executed and traced across the standalone native 15 cells, the standalone
+  English 8 cells and the five merged contracts, with every route carrying its
+  own recorded backend, prompt, transcript, checkpoint and evaluation evidence
+  before it is called ready?
+dataset: >-
+  The five harmonized datasets (daic participant packed30, cmdc, d3tec,
+  androids_interview, turkish_pooled_t17 pooled pos+neg BDI>=17) standalone and
+  as the five-component symmetric merged protocol, native transcripts and
+  accepted English translations.
+baseline: >-
+  The current origin/main state after PR #269 (pooled Turkish defaults), PR #270
+  (Qwen3 hidden extraction and fixed heads, explicit-only) and PR #271 (Qwen3
+  merged FSDP/postprocess with two smoke-verified merged routes and the head
+  kind deferred).
+treatment: >-
+  Readiness work, not a production campaign: a provenance inventory of the
+  existing seed-1337 runs; a versioned English translation notice in the English
+  prompt contract; the English audio+text merged contract plus the three missing
+  merged route smoke chains; the standalone production head orchestration with
+  one bounded English text and one bounded English audio+text train->eval->head
+  smoke; and merged-checkpoint hidden features and fixed heads with per-route
+  audits. Every smoke is bounded (two subjects per class per component, one
+  epoch) and is evidence for a route, never a headline.
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+runs:
+  - logical_run: qwen3omni_native_audio_only_merged_smoke
+    dataset: symmetric_merged_native_audio_only
+    modality: audio_only
+    config: configs/experiments/merged/symmetric_merged_qwen3_pooled_native_audio_only.yaml
+    folds:
+      - 0
+    endpoint: smoke
+    folds_note: >-
+      Fold 0 of the merged protocol with the bounded smoke cohort. Audio-only
+      route: the transcripts stay in the manifest but are not rendered into the
+      prompt. Smoke evidence only.
+  - logical_run: qwen38_english_text_only_merged_smoke
+    dataset: symmetric_merged_english_text_only
+    modality: text_only
+    config: configs/experiments/merged/symmetric_merged_qwen3_pooled_english_text_only.yaml
+    folds:
+      - 0
+    endpoint: smoke
+    folds_note: >-
+      Same merged protocol and smoke cohort; the four translated components
+      render their accepted English transcripts with the versioned translation
+      notice, and DAIC keeps its native English input. Smoke evidence only.
+  - logical_run: qwen3omni_english_audio_text_merged_smoke
+    dataset: symmetric_merged_english_audio_text
+    modality: audio_text
+    config: configs/experiments/merged/symmetric_merged_qwen3_pooled_english_audio_text.yaml
+    folds:
+      - 0
+    endpoint: smoke
+    folds_note: >-
+      The new English audio+text contract, first execution of its route: the
+      Thinker processor with English transcripts plus the notice and the
+      original-language audio, the frozen audio encoder and the declared
+      four-GPU device-map evaluation. Smoke evidence only.
+prompt_contract:
+  prompt_context_version: promptcontext_v1
+  modality_honest_rendering: >-
+    Native prompts stay byte-identical. English cells declare
+    prompt.translation_notice_version (translation_notice_v1) and render one
+    notice block immediately before the transcript block, so the estimand of an
+    English cell is "translated transcript plus explicit translation notice".
+  label_contract: Depressed / Non-depressed (legacy_english_labels, unchanged)
+model_contract:
+  backend: qwen38_and_qwen3omni
+  trainable_class: Qwen3_5ForConditionalGeneration (text) / Qwen3OmniMoeThinkerForConditionalGeneration (audio)
+  model_path: /gpfs/projects/etur92/ozu647717/models/Qwen3.8-27B and .../Qwen3-Omni-30B-A3B-Instruct
+  precision: bf16
+  training_strategy: fsdp
+  evaluation_shape: >-
+    Declared by each contract (execution.postprocess_gpus matched against the
+    components' resources.eval_gpus_per_node): one GPU for text-only routes, a
+    four-GPU device map for the audio routes.
+comparison_rule: >-
+  Smoke only. Each chain proves train -> best_model -> postprocess on a bounded
+  cohort under the declared likelihood decision rule and the anchored
+  evaluation view, with the strict subject-level metrics recomputed locally from
+  the synced subject predictions. No headline is produced, no seed is selected
+  by outcome, and likelihood and teacher-forced evidence are never mixed.
+scope:
+  campaign: qwen3_multiseed_matrix_readiness
+  checkpoint_role: best_model
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
+  storage_note: >-
+    Protocol artifacts, training outputs and postprocess evidence stay under the
+    permanent merged roots on GPFS; the local lane receives compact evidence
+    only, and adapter weights are copied only when a head stage needs them.
+exclusions:
+  - production_three_seed_campaign
+  - extra_seeds_or_folds
+  - optuna_or_hpo
+  - new_translations
+  - old_model_or_geriatri_or_label_arm_expansion
+  - outcome_based_seed_selection
+  - package_install
+  - shared_environment_or_dataset_change
+  - headline_or_workbook_changes
+  - wandb_cloud_export
+  - evidence_overwrite_or_deletion
+  - pr_merge
+github_issue: null
+github_pr: 272
