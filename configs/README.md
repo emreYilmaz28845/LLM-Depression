@@ -75,7 +75,8 @@ It covers D3TEC, Turkish BDI≥17 with Qwen3-ASR, Androids, DAIC-WOZ, and CMDC i
 
 ### Default backbone policy
 
-The 15 unqualified canonical configs use the current production backbones:
+The default Qwen3 family is twelve generated canonical configs (D3TEC, Androids,
+DAIC, CMDC × three modalities) plus the three pooled Turkish default cells:
 
 - text-only: `model_backend: qwen38` with the pinned Qwen3.8-27B snapshot;
 - audio-only and audio+text: `model_backend: qwen3omni` with the
@@ -83,11 +84,16 @@ The 15 unqualified canonical configs use the current production backbones:
 - both families use `promptcontext_v1`, FSDP, BF16 inference, CPU activation
   offload, likelihood evaluation and standalone evaluation after training.
 
-The pre-migration Qwen2/Qwen2-Audio versions of those exact 15 files are kept
+The Turkish default cells are the existing pooled pos+neg configs
+(`configs/main/turkish_pooled_t17_*_promptcontext_v1_*`): the canonical generator
+verifies their contract in place and never rewrites them, and the historical
+Qwen2 pooled configs plus the positive-only Turkish configs stay untouched. The
+pre-migration Qwen2/Qwen2-Audio versions of the twelve generated files are kept
 under `configs/archive/pre_default_backbone_20260923/`. Explicit Gemma, English,
 official-development, E-DAIC and secondary Turkish configs keep their named
 backends and recipes. Run `python scripts/build_canonical_backend_configs.py
---check` after editing a canonical config.
+--check` after editing a canonical config; it also verifies the pooled Turkish
+defaults.
 
 Naming:
 
@@ -175,8 +181,9 @@ E-DAIC was outside the harmonization scope and was not inspected, moved, or rewr
 
 Count the current inventory with `find configs/main -maxdepth 1 -type f -name '*.yaml' | wc -l`; do not copy an old total into plans or reports. The active families include:
 
-- the 15 core harmonized default configs: five datasets × three modalities
-  (Qwen3.8 text-only; Qwen3-Omni Thinker audio-only and audio+text);
+- the harmonized default family: the twelve generated canonical Qwen3 configs
+  (Qwen3.8 text-only; Qwen3-Omni Thinker audio-only and audio+text) plus the
+  three pooled Turkish default cells (see "Qwen3 Turkish pooled defaults");
 - 5 isolated Turkish negative-only t17 secondary configs: three native
   modalities plus English audio+text and text-only;
 - the 3 Gemma 4 DAIC configs described above;
@@ -237,7 +244,10 @@ and is retired; see `experiments/definitions/turkish_pos_only_rename_map.yaml`
 for the old→new map. Old `turkish_t17_*` files remain as legacy history. This
 names the canonical source family, not the reported main row: the main Turkish
 standalone result is the pooled pos+neg family
-(`configs/main/turkish_pooled_t17_*`), which is what the workbook carries.
+(`configs/main/turkish_pooled_t17_*`), which is what the workbook carries, and
+the **default** Turkish slot of the harmonized matrix now selects the pooled
+Qwen3 configs (see "Qwen3 Turkish pooled defaults"). The positive-only configs
+stay as the secondary question-set-1 arm and as history.
 
 The `turkish_negative_only_t17_*` configs reuse the harmonized Turkish recipe
 for the negative-question recordings (filenames `*-2-*`). They are a secondary comparison, not an
@@ -264,7 +274,7 @@ See `docs/harmonized_dataset_baseline.md` for the methodology and dataset-specif
 
 ## Harmonized reproduction matrix
 
-The standalone execution matrix is `configs/experiments/harmonized/standalone_matrix.yaml`. It expands to 63 four-GPU training jobs: one DAIC fold and five folds for each other dataset, across three modalities. D3TEC, Androids, and DAIC also receive separate deterministic evaluation jobs. Hidden-state postprocessing runs fixed Logistic Regression and fixed XGBoost; it does not run Optuna.
+The standalone execution matrix is `configs/experiments/harmonized/standalone_matrix.yaml`. It expands to 63 four-GPU training jobs: one DAIC fold and five folds for each other dataset, across three modalities. D3TEC, Androids, and DAIC also receive separate deterministic evaluation jobs. Hidden-state postprocessing runs fixed Logistic Regression and fixed XGBoost; it does not run Optuna. The three Turkish slots select the pooled Qwen3 configs; the pre-pooled selection (positive-only Turkish) is preserved in `configs/experiments/harmonized/standalone_matrix_legacy_pos_only.yaml`, an explicit legacy entrypoint that is not the default.
 
 The matching merged configs are:
 
@@ -272,7 +282,7 @@ The matching merged configs are:
 - `configs/experiments/merged/symmetric_merged_harmonized_audio_only_likelihood_v1.yaml`
 - `configs/experiments/merged/symmetric_merged_harmonized_text_only_likelihood_v1.yaml`
 
-They use only the 15 harmonized component configs. Each component and merged fit has a maximum of 20 epochs, validation macro-F1 checkpoint selection, patience 3, and no XGBoost Optuna. Merged cross-validation selects by mean dataset macro-F1; the final training epoch is the rounded median selected cross-validation epoch.
+They use only the harmonized component configs (the Turkish component is the pooled Qwen3 config). Each component and merged fit has a maximum of 20 epochs, validation macro-F1 checkpoint selection, patience 3, and no XGBoost Optuna. Merged cross-validation selects by mean dataset macro-F1; the final training epoch is the rounded median selected cross-validation epoch. After the canonical conversion every component resolves to a Qwen3 backbone, so the merged submission route refuses these legacy contracts; the four Qwen3 pooled merged contracts supersede them for any future merged campaign (see "Qwen3 Turkish pooled defaults").
 
 MN5 execution order:
 
@@ -284,18 +294,71 @@ Both GPU launchers require `GITHUB_ISSUE` and `GITHUB_PR`. For the full harmoniz
 
 All launchers default to dry-run. Their default lane counts run the whole matrix in parallel: one four-GPU training lane per training task and one one-GPU auxiliary lane per auxiliary job. There is no project-wide GPU cap; the scheduler, account, and QoS limits are the only binding constraints. Use `MAX_CONCURRENT_TRAINS` / `MAX_CONCURRENT_AUX` (or `MAX_CONCURRENT_POSTPROCESS`) to tune lane counts.
 
+## Qwen3 Turkish pooled defaults
+
+The new-model defaults use the Turkish pooled pos+neg input. Five standalone
+cells are defined:
+
+| language | modality | config | backend |
+| --- | --- | --- | --- |
+| native | text_only | `turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml` | qwen38 |
+| native | audio_only | `turkish_pooled_t17_audio_only_..._qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml` | qwen3omni |
+| native | audio_text | `turkish_pooled_t17_audio_text_..._qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml` | qwen3omni |
+| english | text_only | `turkish_pooled_t17_text_only_..._promptcontext_v1_en_qwen38_27b.yaml` | qwen38 |
+| english | audio_text | `turkish_pooled_t17_audio_text_..._qwen3asr_promptcontext_v1_en_qwen3omni_30b_a3b.yaml` | qwen3omni |
+
+The three native cells are the existing 120-participant pooled family (five
+REPORTABLE production folds each at seed 1337); the canonical generator verifies
+them and never rewrites them. The two English cells are derived from them by
+`scripts/build_qwen3_english_configs.py`, which also writes the default English
+matrix. Their manifests are prebuilt by
+`scripts/build_turkish_pooled_manifest.py` from the four audited source pairs
+(2,221 rows, 120 subjects, threshold 17, one fold map shared by native and
+English); the English cache placeholder stays inert and must not be pointed at a
+pos-only translation cache.
+
+The same generator derives the other six English cells (D3TEC, Androids, CMDC ×
+text-only/audio_text) from the current native Qwen3 configs and writes the
+eight-cell default matrix. English cells change only the recipe marker, the
+transcripts overlay, the isolated English manifest/split roots and the English
+run roots.
+
+Four Qwen3 pooled merged contracts are defined under
+`configs/experiments/merged/` (native text-only, native audio-only, native
+audio+text, English text-only). Each names five components, one backend family
+and the mean-dataset-macro-F1 selection contract. Their GPU execution is
+blocked: `scripts/submit_symmetric_merged.py` refuses a config whose components
+resolve to a Qwen3 backbone (dry-runs report the blocked plan), and the hidden
+extractor (`src/features/extract_qwen_hidden.py`) refuses Qwen3 checkpoints
+until the separate backend-support tasks land. Writing `strategy: fsdp` into a
+merged config is not readiness, and no route falls back to the old DDP loader.
+
+Validators and generation:
+
+```bash
+python scripts/build_canonical_backend_configs.py --check      # 12 canonical + 3 pooled defaults
+python scripts/build_qwen3_english_configs.py --check          # 8 English cells + the default matrix
+python scripts/build_qwen3_pooled_merged_configs.py --check    # the 4 merged contracts
+python tools/qwen3_pooled_defaults.py --check                  # the selection map and readiness
+```
+
+The legacy English family (Qwen2-era `*_en.yaml`, 100 jobs with heads) stays
+behind `configs/experiments/harmonized/english_translation_matrix_legacy_qwen2.yaml`
+and the legacy retry helper; the default English route now plans 60 jobs
+(40 train + 20 eval) and submits no head jobs.
+
 ## Harmonized English-translation family
 
-Issue #20 tracks the English-transcript comparison. The eight canonical English configs in `main/` are named `<dataset>_<modality>_harmonized_selmacrof1_likelihood_v1[_qwen3asr]_en.yaml` and are derived only from the native harmonized counterparts, never from `configs/experiments/translation_en/` (historical recipe, do not reuse).
+Issue #20 tracks the English-transcript comparison. The default English family is the Qwen3 one described in "Qwen3 Turkish pooled defaults": eight cells derived from the current native Qwen3 configs by `scripts/build_qwen3_english_configs.py` (D3TEC, Androids, CMDC and Turkish pooled × text-only/audio_text). Their manifests and splits use the isolated English roots `outputs/manifests_harmonized_en/` and `outputs/splits_harmonized_en/`; their outputs use the English Qwen3 campaign roots (`output_model/promptcontext_v1_qwen38_likelihood_en/` and `output_model/promptcontext_v1_qwen3omni_likelihood_en/`). Recipe IDs carry the native recipe plus the `_en` marker.
 
-- Recipe ID: `harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_en_v1`.
-- Each config adds a `transcripts:` block: `variant: english`, `cache_path: ${TRANSLATION_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/translations}/harmonized_en_complete_v1/<dataset>/accepted.jsonl`, `minimum_status: automatic_low`, `require_complete: true`, `include_failed: false`.
-- Outputs are English-specific: `outputs/manifests_harmonized_en/`, `outputs/splits_harmonized_en/`, `output_model/harmonized_v1_en_likelihood/`.
-- Only audio+text and text-only exist for D3TEC, Androids, CMDC, and Turkish t17. No English audio-only, DAIC, or E-DAIC configs.
-- The fixed English matrix is `configs/experiments/harmonized/english_translation_matrix.yaml`: 8 experiments, 40 training folds, 20 separate evaluation folds (D3TEC, Androids), 40 hidden-extraction/fixed-head folds, exactly 100 jobs, no Optuna, no merged training, no audio-only cells.
+Every English config keeps the `transcripts:` policy (`variant: english`, `minimum_status: automatic_low`, `require_complete: true`, `include_failed: false`). The D3TEC, Androids and CMDC cells point at `${TRANSLATION_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/translations}/harmonized_en_complete_v1/<dataset>/accepted.jsonl`; the pooled Turkish cells keep the inert `pooled_source_manifest_translations` placeholder because their manifest is prebuilt by the pooled builder. Only audio+text and text-only exist for D3TEC, Androids, CMDC, and Turkish. No English audio-only, DAIC, or E-DAIC configs.
+
+The default English matrix is `configs/experiments/harmonized/english_translation_matrix.yaml`: 8 experiments, 40 training folds, 20 separate evaluation folds (D3TEC, Androids), `fixed_heads: []` because Qwen3 head execution is deferred, exactly 60 jobs, no Optuna, no merged training, no audio-only cells. The launcher fails closed when a Qwen3 cell is combined with declared fixed heads.
+
+The pre-Qwen3 English family is preserved behind `configs/experiments/harmonized/english_translation_matrix_legacy_qwen2.yaml` (the Qwen2-era `*_en.yaml` configs, recipe `harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_en_v1`, 40 train + 20 eval + 40 head folds = 100 jobs), derived only from the native harmonized counterparts and never from `configs/experiments/translation_en/` (historical recipe, do not reuse). Submit it explicitly with `MATRIX=.../english_translation_matrix_legacy_qwen2.yaml`; the retry helper belongs to that legacy route.
 
 MN5 execution order:
 
-1. `scripts/submit_harmonized_en_preflight.sh` rebuilds the four English manifests on GPFS from the repaired `harmonized_en_complete_v1` translation cache, audits translation completeness, native/English input equivalence, and tokenizer/context fit, and records the expected 100-job scope. Requires `GITHUB_ISSUE=20` and the implementation `GITHUB_PR`.
+1. `scripts/submit_harmonized_en_preflight.sh` rebuilds the three translated English manifests on GPFS from the repaired `harmonized_en_complete_v1` translation cache, validates the prebuilt pooled English manifest from the task runtime, audits translation completeness, native/English input equivalence and the job scope, and (for the Qwen3 family) records that the tokenizer/processor context audit runs in the Qwen3 environments prepared by the pooled-defaults task. Requires `GITHUB_ISSUE=20` and the implementation `GITHUB_PR`.
 2. `scripts/submit_harmonized_en_standalone.sh` submits the English matrix only after that preflight audit passes with `status: passed` and zero failures. Use the same `GITHUB_ISSUE=20` and `GITHUB_PR`.
 3. `scripts/submit_harmonized_standalone_retry.sh` retries failed cells with new attempt identities; it accepts the English roots and prefixes through `PREFLIGHT_COMPONENTS=4`, `PREFLIGHT_MERGED=0`, `SUBMISSIONS_ROOT`, `CONTEXTS_ROOT`, `FEATURES_ROOT`, `CLASSIFIERS_ROOT`, `RUN_PREFIX`, `GROUP_PREFIX`, and `LOGICAL_PREFIX` (native defaults are unchanged).

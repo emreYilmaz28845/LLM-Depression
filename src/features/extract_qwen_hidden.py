@@ -43,6 +43,8 @@ from src.model.runtime import (
 from src.utils import (
     MODEL_BACKEND_GEMMA4,
     MODEL_BACKEND_QWEN2AUDIO,
+    MODEL_BACKEND_QWEN38,
+    MODEL_BACKEND_QWEN3OMNI,
     MODEL_BACKEND_TEXT,
     read_json,
     resolve_model_backend,
@@ -1017,11 +1019,26 @@ def _existing_cache_decision(
     return "skipped_compatible_complete_cache"
 
 
+def ensure_hidden_extraction_supported(config: dict[str, Any], run_config_path: Path) -> None:
+    """Fail closed for Qwen3 backends: the extractor support lands in a separate task."""
+    backend = resolve_model_backend(config)
+    if backend in (MODEL_BACKEND_QWEN38, MODEL_BACKEND_QWEN3OMNI):
+        raise ValueError(
+            f"Qwen3 hidden-extraction prerequisite incomplete: model_backend={backend!r} "
+            f"is not supported by the hidden-state extractor yet (run config: "
+            f"{run_config_path}). This is a separate backend-support task; refusing to extract."
+        )
+
+
 def main() -> None:
     args = parse_args()
     checkpoint_dir = args.checkpoint_dir.resolve()
     output_dir = args.output_dir.resolve()
     saved, config, run_config_path, split_path = _load_saved_run(checkpoint_dir)
+    # Head execution gate: the Qwen3.8 and Qwen3-Omni hidden-state paths need
+    # shard/processor support that lands in a separate task. Fail closed before
+    # any model code runs instead of silently extracting with the wrong pipeline.
+    ensure_hidden_extraction_supported(config, run_config_path)
     config = json.loads(json.dumps(config))
     if args.eval_chunk_policy:
         config.setdefault("data", {})["eval_chunk_policy"] = args.eval_chunk_policy

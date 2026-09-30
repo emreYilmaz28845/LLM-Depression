@@ -8,10 +8,15 @@ DRY_RUN="${DRY_RUN:-1}"
 WORKER="${WORKER:-$PROJECT_ROOT/scripts/run_harmonized_manifest_preflight_slurm.sh}"
 SOURCE_COMMIT="${HARMONIZED_SOURCE_COMMIT:-$(tr -d '\n' < "$PROJECT_ROOT/.provenance/git_commit.txt")}"
 SOURCE_BRANCH="${HARMONIZED_SOURCE_BRANCH:-$(tr -d '\n' < "$PROJECT_ROOT/.provenance/git_branch.txt")}"
+POOLED_RUNTIME_ROOT="${POOLED_RUNTIME_ROOT:-}"
 
 case "$DRY_RUN" in 0|1) ;; *) echo "DRY_RUN must be 0 or 1" >&2; exit 2;; esac
 [ -f "$WORKER" ] || { echo "Missing preflight worker: $WORKER" >&2; exit 3; }
-command=(sbatch --parsable --job-name="harm-preflight" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,RUN_ID=$RUN_ID,HARMONIZED_SOURCE_COMMIT=$SOURCE_COMMIT,HARMONIZED_SOURCE_BRANCH=$SOURCE_BRANCH" "$WORKER")
+export_spec="ALL,PROJECT_ROOT=$PROJECT_ROOT,RUN_ID=$RUN_ID,HARMONIZED_SOURCE_COMMIT=$SOURCE_COMMIT,HARMONIZED_SOURCE_BRANCH=$SOURCE_BRANCH"
+if [ -n "$POOLED_RUNTIME_ROOT" ]; then
+    export_spec="$export_spec,POOLED_RUNTIME_ROOT=$POOLED_RUNTIME_ROOT"
+fi
+command=(sbatch --parsable --job-name="harm-preflight" --export="$export_spec" "$WORKER")
 if [ "$DRY_RUN" = 1 ]; then
     printf 'DRY_RUN '; printf '%q ' "${command[@]}"; printf '\n'
 else

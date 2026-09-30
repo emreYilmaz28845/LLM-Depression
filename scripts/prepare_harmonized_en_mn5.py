@@ -27,6 +27,11 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.data.build_manifest import build_for_config, manifest_build_signature
 from src.data.runtime import _harmonized_subject_transcripts, qwen2audio_audio_token_length
+from src.experiment_tracking.manifest_policy import (
+    MANIFEST_POLICY_PREBUILT,
+    prebuilt_manifest_files,
+    validate_manifest_policy,
+)
 from src.utils import (
     load_yaml_with_overrides,
     read_json,
@@ -36,31 +41,46 @@ from src.utils import (
     sha256_file,
 )
 
-EN_RECIPE = "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_en_v1"
+EN_RECIPE_LEGACY = "harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_en_v1"
 
-# One audio_text config per dataset builds the shared manifest.
-BUILD_CONFIGS = (
-    "configs/main/d3tec_audio_text_harmonized_selmacrof1_likelihood_v1_en.yaml",
-    "configs/main/androids_audio_text_harmonized_selmacrof1_likelihood_v1_en.yaml",
-    "configs/main/cmdc_audio_text_harmonized_selmacrof1_likelihood_v1_en.yaml",
-    "configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml",
+# The default English family is derived by scripts/build_qwen3_english_configs.py;
+# its cell table is the single source of truth for the config lists below.
+from scripts import build_qwen3_english_configs as english_configs  # noqa: E402
+
+EN_CELLS = english_configs.CELLS
+EN_CONFIGS = tuple(f"configs/main/{cell[2]}" for cell in EN_CELLS)
+NATIVE_SOURCE_BY_EN_CONFIG = {
+    f"configs/main/{cell[2]}": f"configs/main/{cell[1]}" for cell in EN_CELLS
+}
+# One audio_text config per dataset builds the shared manifest. The Turkish
+# pooled cell is prebuilt by scripts/build_turkish_pooled_manifest.py, so it is
+# validated instead of built.
+BUILD_CONFIGS = tuple(
+    f"configs/main/{cell[2]}"
+    for cell in EN_CELLS
+    if cell[5] == "audio_text" and cell[8] is not None
 )
-NATIVE_CONFIGS = (
-    "configs/main/d3tec_audio_text_harmonized_selmacrof1_likelihood_v1.yaml",
-    "configs/main/androids_audio_text_harmonized_selmacrof1_likelihood_v1.yaml",
-    "configs/main/cmdc_audio_text_harmonized_selmacrof1_likelihood_v1.yaml",
-    "configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml",
+NATIVE_CONFIGS = tuple(
+    f"configs/main/{cell[1]}"
+    for cell in EN_CELLS
+    if cell[5] == "audio_text" and cell[8] is not None
 )
-ALL_EN_CONFIGS = BUILD_CONFIGS + (
-    "configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v1_en.yaml",
-    "configs/main/androids_text_only_harmonized_selmacrof1_likelihood_v1_en.yaml",
-    "configs/main/cmdc_text_only_harmonized_selmacrof1_likelihood_v1_en.yaml",
-    "configs/main/turkish_pos_only_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_en.yaml",
+PREBUILT_CONFIGS = tuple(
+    f"configs/main/{cell[2]}"
+    for cell in EN_CELLS
+    if cell[5] == "audio_text" and cell[8] is None
 )
+PREBUILT_NATIVE_CONFIGS = tuple(
+    f"configs/main/{cell[1]}"
+    for cell in EN_CELLS
+    if cell[5] == "audio_text" and cell[8] is None
+)
+ALL_EN_CONFIGS = EN_CONFIGS
 MATRIX = "configs/experiments/harmonized/english_translation_matrix.yaml"
 
-EXPECTED_ACCEPTED = {"d3tec": 3677, "androids_interview": 2176, "cmdc": 923, "turkish": 1051}
-CACHE_DATASET = {"d3tec": "d3tec", "androids_interview": "androids_interview", "cmdc": "cmdc", "turkish": "turkish"}
+EXPECTED_ACCEPTED = {"d3tec": 3677, "androids_interview": 2176, "cmdc": 923}
+CACHE_DATASET = {"d3tec": "d3tec", "androids_interview": "androids_interview", "cmdc": "cmdc"}
+POOLED_TRANSLATION_SOURCE = "pooled_source_manifests"
 FULL_SCOPE_FIELD = {
     "d3tec": "full_response_transcript",
     "androids_interview": "full_turn_transcript",
@@ -97,7 +117,22 @@ def validate_component(config_path: Path, *, required_path_prefix: Path | None) 
     if not metadata_path.is_file():
         raise FileNotFoundError(f"Missing harmonized English metadata for {dataset}: {metadata_path}")
     metadata = read_json(metadata_path)
-    if metadata.get("build_signature") != manifest_build_signature(config):
+    policy = validate_manifest_policy(config)
+    if policy == MANIFEST_POLICY_PREBUILT:
+        # The pooled manifest is built outside the worker by
+        # scripts/build_turkish_pooled_manifest.py, so its build signature
+        # legitimately differs; verify the four prepared files instead.
+        files = prebuilt_manifest_files(
+            manifest_dir=str(resolve_project_path(config["output_dirs"]["manifest_dir"])),
+            split_dir=str(split_dir),
+            dataset=dataset,
+        )
+        missing_files = [path for path in files.values() if not Path(path).is_file()]
+        if missing_files:
+            raise FileNotFoundError(
+                f"Prebuilt manifest files are missing for {dataset}: {missing_files}"
+            )
+    elif metadata.get("build_signature") != manifest_build_signature(config):
         raise ValueError(f"Stale build signature for {dataset}: {metadata_path}")
     manifest_path = resolve_project_path(metadata["manifest_path"])
     rows = read_jsonl(manifest_path)
@@ -138,6 +173,7 @@ def validate_component(config_path: Path, *, required_path_prefix: Path | None) 
         "dataset": dataset,
         "config": str(config_path),
         "config_sha256": sha256_file(config_path),
+        "manifest_policy": policy,
         "metadata_path": str(metadata_path),
         "split_metadata_sha256": sha256_file(metadata_path),
         "manifest_path": str(manifest_path),
@@ -379,8 +415,11 @@ def recipe_and_scope_audit() -> dict[str, Any]:
     failures: list[str] = []
     matrix_path = resolve_project_path(MATRIX)
     matrix = yaml.safe_load(matrix_path.read_text(encoding="utf-8"))
-    if matrix.get("fixed_heads") != ["logreg_raw", "xgb_raw"]:
-        failures.append("matrix fixed_heads must be [logreg_raw, xgb_raw]")
+    if matrix.get("fixed_heads") != []:
+        failures.append(
+            "the Qwen3 English default matrix must declare fixed_heads: [] "
+            "(Qwen3 head execution is deferred)"
+        )
     if matrix.get("max_epochs") != 20 or matrix.get("checkpoint_selection") != "inner_val_macro_f1":
         failures.append("matrix recipe fields differ from the plan")
     if matrix.get("optuna") is not False:
@@ -398,8 +437,20 @@ def recipe_and_scope_audit() -> dict[str, Any]:
         use_text = bool(config["data"].get("use_text"))
         if not (use_audio and use_text) and not (use_text and not use_audio):
             failures.append(f"audio-only or invalid modality in matrix: {config_path}")
-        if config.get("recipe_id") != EN_RECIPE:
-            failures.append(f"wrong recipe_id: {config_path}")
+        native_rel = NATIVE_SOURCE_BY_EN_CONFIG.get(str(item["config"]))
+        if native_rel is None:
+            failures.append(f"matrix config has no declared native source: {config_path}")
+        else:
+            native_config = load_yaml_with_overrides(resolve_project_path(native_rel), [])
+            expected_recipe = f"{native_config['recipe_id']}_en"
+            if config.get("recipe_id") != expected_recipe:
+                failures.append(
+                    f"wrong recipe_id for {config_path}: expected {expected_recipe}, "
+                    f"got {config.get('recipe_id')!r}"
+                )
+            for key in ("model_backend", "model_name_or_path", "model_revision", "lora"):
+                if config.get(key) != native_config.get(key):
+                    failures.append(f"{key} must be inherited from the native source: {config_path}")
         if int(config["training"]["num_train_epochs"]) != 20:
             failures.append(f"expected 20 epochs: {config_path}")
         if config["training"]["selection_metric"] != "inner_val_macro_f1" or config["training"]["selection_metric_mode"] != "max":
@@ -425,13 +476,14 @@ def recipe_and_scope_audit() -> dict[str, Any]:
 
     if len(matrix["experiments"]) != 8:
         failures.append("matrix must contain exactly eight experiments")
+    hidden_folds = train_folds if matrix.get("fixed_heads") else 0
     return {
         "matrix": str(MATRIX),
         "experiments": len(matrix["experiments"]),
         "train_folds": train_folds,
         "eval_folds": eval_folds,
-        "hidden_folds": train_folds,
-        "total_jobs": train_folds + eval_folds + train_folds,
+        "hidden_folds": hidden_folds,
+        "total_jobs": train_folds + eval_folds + hidden_folds,
         "failures": failures,
     }
 
@@ -445,12 +497,14 @@ def prepare(*, run_id: str, build: bool, required_path_prefix: Path | None,
     equivalences: list[dict[str, Any]] = []
     translations: list[dict[str, Any]] = []
 
-    for config_path, native_path in zip(
-        [resolve_project_path(p) for p in BUILD_CONFIGS],
-        [resolve_project_path(p) for p in NATIVE_CONFIGS],
-    ):
+    component_specs = [
+        (config, native, True) for config, native in zip(BUILD_CONFIGS, NATIVE_CONFIGS)
+    ] + [(config, native, False) for config, native in zip(PREBUILT_CONFIGS, PREBUILT_NATIVE_CONFIGS)]
+    for config_rel, native_rel, buildable in component_specs:
+        config_path = resolve_project_path(config_rel)
+        native_path = resolve_project_path(native_rel)
         dataset = str(load_yaml_with_overrides(config_path, [])["dataset"]).lower()
-        if build:
+        if build and buildable:
             print(f"Building MN5 harmonized English component: {config_path}", flush=True)
             build_for_config(config_path, [])
         component = validate_component(config_path, required_path_prefix=required_path_prefix)
@@ -458,7 +512,21 @@ def prepare(*, run_id: str, build: bool, required_path_prefix: Path | None,
         manifest_path = resolve_project_path(component["manifest_path"])
         en_rows = read_jsonl(manifest_path)
         en_rows_by_dataset[dataset] = en_rows
-        translations.append(audit_translation_cache(dataset))
+        if dataset in CACHE_DATASET:
+            translations.append(audit_translation_cache(dataset))
+        else:
+            translations.append(
+                {
+                    "dataset": dataset,
+                    "source": POOLED_TRANSLATION_SOURCE,
+                    "failures": [],
+                    "note": (
+                        "The pooled English manifest is built together with the native one by "
+                        "scripts/build_turkish_pooled_manifest.py, which audits translation "
+                        "pairing, hashes and folds; there is no per-dataset accepted cache."
+                    ),
+                }
+            )
 
         native_config = load_yaml_with_overrides(native_path, [])
         native_split_dir = resolve_project_path(native_config["output_dirs"]["split_dir"])
@@ -483,9 +551,28 @@ def prepare(*, run_id: str, build: bool, required_path_prefix: Path | None,
     for equivalence in equivalences:
         failures.extend(equivalence["failures"])
 
+    backend_cells = sorted(
+        {
+            str(load_yaml_with_overrides(resolve_project_path(path), []).get("model_backend") or "")
+            for path in ALL_EN_CONFIGS
+        }
+    )
+    new_model_cells = [backend for backend in backend_cells if backend in {"qwen38", "qwen3omni"}]
     context = None
     if skip_context_fit:
         context = {"skipped": True, "reason": "local validation without model copy"}
+    elif new_model_cells:
+        context = {
+            "skipped": True,
+            "reason": "qwen3_context_audit_is_separate",
+            "detail": (
+                "The Qwen2-Audio processor context fit does not apply to the Qwen3 English "
+                "family; the Qwen3.8 tokenizer/rendering and Qwen3-Omni processor audits are "
+                "prepared by the Qwen3 pooled-defaults preparation task and run in their own "
+                "MN5 environments before any Qwen3 English training."
+            ),
+            "backends": new_model_cells,
+        }
     elif model_path.is_dir():
         context = context_fit(en_rows_by_dataset, model_path)
         failures.extend(context["failures"])
@@ -501,7 +588,19 @@ def prepare(*, run_id: str, build: bool, required_path_prefix: Path | None,
         "source_branch": os.environ.get("HARMONIZED_EN_SOURCE_BRANCH"),
         "research": {"github_issue": github_issue, "github_pr": github_pr},
         "required_path_prefix": str(required_path_prefix) if required_path_prefix else None,
-        "recipe_id": EN_RECIPE,
+        "recipe_ids": sorted(
+            {
+                str(load_yaml_with_overrides(resolve_project_path(path), []).get("recipe_id") or "")
+                for path in ALL_EN_CONFIGS
+            }
+        ),
+        "manifest_policies": {
+            str(load_yaml_with_overrides(resolve_project_path(path), [])["dataset"]).lower(): (
+                validate_manifest_policy(load_yaml_with_overrides(resolve_project_path(path), []))
+            )
+            for path in ALL_EN_CONFIGS
+        },
+        "head_execution": "deferred: the Qwen3 hidden-extraction prerequisite is pending",
         "components": components,
         "translations": translations,
         "equivalence": equivalences,

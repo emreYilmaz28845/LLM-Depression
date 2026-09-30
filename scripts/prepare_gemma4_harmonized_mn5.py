@@ -409,8 +409,13 @@ def prepare(
     required_path_prefix: Path | None,
     english: bool,
     model_path: str,
+    pooled_runtime_root: Path | None = None,
 ) -> dict[str, Any]:
-    from scripts.prepare_harmonized_mn5 import COMPONENT_CONFIGS, MERGED_CONFIGS
+    from scripts.prepare_harmonized_mn5 import (
+        COMPONENT_CONFIGS,
+        MERGED_CONFIGS,
+        apply_pooled_runtime_paths,
+    )
 
     failures: list[str] = []
     matrix_path = resolve_project_path(EN_MATRIX if english else NATIVE_MATRIX)
@@ -443,6 +448,8 @@ def prepare(
         for raw_path in MERGED_CONFIGS:
             config_path = resolve_project_path(raw_path)
             config = load_yaml_with_overrides(config_path, [])
+            if pooled_runtime_root is not None:
+                config = apply_pooled_runtime_paths(config, Path(pooled_runtime_root))
             from src.merged.protocol import (
                 load_component_records,
                 save_protocol_artifacts,
@@ -614,6 +621,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--validate-only", action="store_true")
     parser.add_argument("--english", action="store_true")
     parser.add_argument("--required-path-prefix", type=Path)
+    parser.add_argument("--pooled-runtime-root", type=Path,
+                        help="task runtime root holding the built pooled manifests/splits")
     parser.add_argument("--audit-path", type=Path)
     parser.add_argument(
         "--model-path",
@@ -631,6 +640,7 @@ def main() -> None:
         required_path_prefix=args.required_path_prefix,
         english=args.english,
         model_path=args.model_path,
+        pooled_runtime_root=args.pooled_runtime_root,
     )
     audit_path = resolve_project_path(
         args.audit_path

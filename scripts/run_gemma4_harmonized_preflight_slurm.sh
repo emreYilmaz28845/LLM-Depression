@@ -68,6 +68,9 @@ ARGS=(--run-id "$RUN_ID" --required-path-prefix "$REQUIRED_PATH_PREFIX" --model-
 if [ "$ENGLISH" = "1" ]; then
     ARGS+=(--english)
 fi
+if [ -n "${POOLED_RUNTIME_ROOT:-}" ]; then
+    ARGS+=(--pooled-runtime-root "$POOLED_RUNTIME_ROOT")
+fi
 CMD=(python "$PROJECT_ROOT/scripts/prepare_gemma4_harmonized_mn5.py" "${ARGS[@]}")
 printf 'Preflight command: '; printf '%q ' "${CMD[@]}"; printf '\n'
 "${CMD[@]}"

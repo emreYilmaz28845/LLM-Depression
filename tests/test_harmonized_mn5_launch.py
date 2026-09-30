@@ -5,15 +5,19 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
-from scripts.submit_symmetric_merged import _head_trials, build_job_specs
+from scripts.submit_symmetric_merged import _head_trials, build_job_specs, merged_blocked_backends
 from src.merged.audit import _expected_head_methods, _job_registry_path
 from src.merged.runtime import load_merged_config
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MATRIX = ROOT / "configs/experiments/harmonized/standalone_matrix.yaml"
+QWEN3_POOLED_MERGED = (
+    ROOT / "configs/experiments/merged/symmetric_merged_qwen3_pooled_native_text_only.yaml"
+)
 MERGED = {
     modality: ROOT
     / "configs/experiments/merged"
@@ -35,6 +39,54 @@ def test_standalone_matrix_is_the_complete_fixed_head_recipe() -> None:
         assert config["training"]["num_train_epochs"] == 20
         assert config["training"]["selection_metric"] == "inner_val_macro_f1"
         assert config["training"]["early_stopping"]["patience"] == 3
+    # The Turkish slots are the pooled pos+neg Qwen3 family: no pos-only default.
+    turkish = [item["config"] for item in matrix["experiments"] if "turkish" in item["config"]]
+    assert len(turkish) == 3
+    assert all("turkish_pooled_t17" in rel for rel in turkish)
+    assert not any("pos_only" in rel for rel in (item["config"] for item in matrix["experiments"]))
+
+
+def test_native_matrix_legacy_copy_keeps_the_pos_only_selection() -> None:
+    legacy = ROOT / "configs/experiments/harmonized/standalone_matrix_legacy_pos_only.yaml"
+    matrix = yaml.safe_load(legacy.read_text(encoding="utf-8"))
+    assert matrix["status"] == "legacy"
+    turkish = [item["config"] for item in matrix["experiments"] if "turkish" in item["config"]]
+    assert len(turkish) == 3
+    assert all("turkish_pos_only_t17" in rel for rel in turkish)
+
+
+def test_merged_planner_refuses_qwen3_components_on_execute() -> None:
+    configs = [QWEN3_POOLED_MERGED]
+    assert merged_blocked_backends(load_merged_config(QWEN3_POOLED_MERGED)) == ["qwen38"]
+    with pytest.raises(ValueError, match="Qwen3 merged FSDP/postprocess prerequisite incomplete"):
+        build_job_specs(
+            configs,
+            stage="cv",
+            run_id="qwen3_blocked",
+            dry_run=False,
+            smoke_subjects=2,
+            smoke_epochs=1,
+            smoke_trials=0,
+            github_issue=12,
+            github_pr=10,
+        )
+    registry = build_job_specs(
+        configs,
+        stage="cv",
+        run_id="qwen3_blocked",
+        dry_run=True,
+        smoke_subjects=2,
+        smoke_epochs=1,
+        smoke_trials=0,
+        github_issue=12,
+        github_pr=10,
+    )
+    assert registry["blocked_prerequisite"] == [str(QWEN3_POOLED_MERGED)]
+    assert registry["blocked_reason"] == "Qwen3 merged FSDP/postprocess prerequisite incomplete"
+    assert all(job["blocked_prerequisite"] for job in registry["jobs"])
+    # The legacy merged configs also resolve to Qwen3 components after the
+    # canonical backbone conversion, so the component-level guard blocks them too.
+    assert merged_blocked_backends(load_merged_config(MERGED["audio_text"])) == ["qwen3omni"]
 
 
 def test_harmonized_merged_configs_use_only_harmonized_components() -> None:

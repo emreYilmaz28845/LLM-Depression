@@ -1,0 +1,104 @@
+schema_version: audiollm.experiment_group.v1
+group_id: qwen3-turkish-pooled-defaults-20260929
+title: Qwen3 Turkish pooled defaults - preparation (data, config, routing, readiness)
+research_question: >-
+  Which exact configs, manifest contracts and routing do the new Qwen3 default
+  routes use for the pooled Turkish pos+neg input, and are the data, prompt and
+  processor prerequisites in place before any GPU training runs? This group is a
+  preparation contract: it defines the five Turkish standalone cells and the four
+  merged contracts, proves the pooled input identity and the prompt/processor
+  behavior with CPU-only audits, and records what remains deferred (Qwen3 hidden
+  extraction and Qwen3 merged FSDP/postprocess).
+dataset: multi_dataset
+baseline: >-
+  The three native pooled Qwen3 Turkish configs exist and their five-fold
+  production runs are REPORTABLE in their own lanes (text-only qwen38, audio-only
+  and audio+text qwen3omni, seed 1337); they are the migration's native source
+  contract and this task does not rewrite them. The previous default routes
+  selected the positive-only Turkish stem in the native matrix and the Qwen2-era
+  English family in the English matrix; those selections are preserved as
+  explicit legacy matrices.
+treatment: >-
+  Preparation only, with no GPU training or evaluation in this task and no model
+  weights loaded: the default matrices and deterministic generators for the
+  English family and the merged contracts, the pooled verification inside the
+  canonical generator, the routing/readiness guards, and three CPU-only MN5
+  preflight stages (pooled native+English input build and audit; Qwen3.8
+  tokenizer/chat-template rendering audit; Qwen3-Omni processor and audio-input
+  audit) run from an immutable deployment into a task runtime.
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+cells:
+  - language: native
+    modality: text_only
+    config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml
+    backend: qwen38
+    state: existing production family
+  - language: native
+    modality: audio_only
+    config: configs/main/turkish_pooled_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml
+    backend: qwen3omni
+    state: existing production family
+  - language: native
+    modality: audio_text
+    config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml
+    backend: qwen3omni
+    state: existing production family
+  - language: english
+    modality: text_only
+    config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen38_27b.yaml
+    backend: qwen38
+    state: prepared here (data/config ready; rendering audit prepared)
+  - language: english
+    modality: audio_text
+    config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_en_qwen3omni_30b_a3b.yaml
+    backend: qwen3omni
+    state: prepared here (data/config ready; processor audit prepared)
+merged_contracts:
+  - configs/experiments/merged/symmetric_merged_qwen3_pooled_native_text_only.yaml
+  - configs/experiments/merged/symmetric_merged_qwen3_pooled_native_audio_only.yaml
+  - configs/experiments/merged/symmetric_merged_qwen3_pooled_native_audio_text.yaml
+  - configs/experiments/merged/symmetric_merged_qwen3_pooled_english_text_only.yaml
+preflight:
+  stages:
+    - pooled
+    - qwen38
+    - qwen3omni
+  resources: 1 CPU node, 1 task, 20 CPUs, 4:00:00, no GPUs
+  expected_outputs:
+    - preflight/pooled_manifest_audit.json
+    - preflight/pooled_inputs_audit.json
+    - preflight/selection_map.json
+    - preflight/qwen38_prompt_audit.json
+    - preflight/qwen3omni_processor_audit.json
+readiness:
+  standalone_native: ready (existing REPORTABLE production runs)
+  standalone_english: data and config ready; rendering and processor audits prepared
+  merged: data and config ready; GPU execution blocked until the Qwen3 merged FSDP/postprocess support task lands
+  heads: deferred until the Qwen3 hidden-extraction support task lands
+exclusions:
+  - gpu_training_or_evaluation
+  - model_weight_loading
+  - head_or_classifier_work
+  - merged_fsdp_implementation
+  - translation_generation
+  - participant_split_or_label_changes
+  - production_campaigns
+  - package_installation
+  - shared_environment_or_permission_changes
+  - canonical_workbook_replacement
+  - PR_merge
+github_issue: null
+github_pr: 269

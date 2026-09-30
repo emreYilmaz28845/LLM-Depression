@@ -8,8 +8,9 @@ from pathlib import Path
 import yaml
 import pytest
 
+from scripts import build_qwen3_english_configs as english_configs
 from scripts.prepare_harmonized_en_mn5 import (
-    EN_RECIPE,
+    EN_RECIPE_LEGACY,
     equivalence_audit,
     recipe_and_scope_audit,
     validate_component,
@@ -19,8 +20,15 @@ from scripts.prepare_harmonized_en_mn5 import (
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "configs/main"
 MATRIX = ROOT / "configs/experiments/harmonized/english_translation_matrix.yaml"
+LEGACY_MATRIX = ROOT / "configs/experiments/harmonized/english_translation_matrix_legacy_qwen2.yaml"
 
+# The default Qwen3 English family, derived by the generator.
 EN_CONFIGS = {
+    f"configs/main/{cell[2]}": cell for cell in english_configs.CELLS
+}
+
+# The pre-Qwen3 English family, preserved behind the legacy matrix.
+LEGACY_EN_CONFIGS = {
     "d3tec": {
         "audio_text": "d3tec_audio_text_harmonized_selmacrof1_likelihood_v1_en.yaml",
         "text_only": "d3tec_text_only_harmonized_selmacrof1_likelihood_v1_en.yaml",
@@ -41,13 +49,7 @@ EN_CONFIGS = {
 
 
 def en_config_paths() -> list[Path]:
-    return sorted(
-        path
-        for path in MAIN.glob("*harmonized_selmacrof1_likelihood_v1*_en.yaml")
-        if "turkish_negative_only" not in path.name
-        and not path.name.startswith("turkish_t17_")
-        and not path.name.startswith("turkish_pooled_t17_")
-    )
+    return sorted(ROOT / rel for rel in EN_CONFIGS)
 
 
 def test_legacy_turkish_en_configs_remain_as_history() -> None:
@@ -67,35 +69,30 @@ def test_legacy_turkish_en_configs_remain_as_history() -> None:
 def test_exactly_eight_english_configs_exist() -> None:
     paths = en_config_paths()
     assert len(paths) == 8
-    expected = {
-        name for modality in EN_CONFIGS.values() for name in modality.values()
-    }
-    assert {path.name for path in paths} == expected
+    assert {path.relative_to(ROOT).as_posix() for path in paths} == set(EN_CONFIGS)
+    for path in paths:
+        assert path.is_file(), path
 
 
 def test_english_configs_are_derived_only_from_native_bases() -> None:
-    for path in en_config_paths():
-        native = path.name[: -len("_en.yaml")] + ".yaml"
-        native_path = MAIN / native
-        assert native_path.is_file(), f"no native base {native_path}"
-        base = yaml.safe_load(native_path.read_text(encoding="utf-8"))
-        en = yaml.safe_load(path.read_text(encoding="utf-8"))
-        allowed = {"recipe_id", "transcripts", "output_dirs"}
-        base_minus = {k: v for k, v in base.items() if k not in allowed}
-        en_minus = {k: v for k, v in en.items() if k not in allowed}
-        assert base_minus == en_minus, f"non-allowed field changed in {path}"
-        assert en["recipe_id"] == EN_RECIPE
-        assert en["prompt"] == base["prompt"]
-        assert en["split"] == base["split"]
-        assert en["data"] == base["data"]
-        assert en["training"] == base["training"]
-        assert en["evaluation"] == base["evaluation"]
+    for rel, cell in sorted(EN_CONFIGS.items()):
+        slug, source_name, target_name, _manifest_dir, _run_dir, _modality, _folds, _eval, _cache = cell
+        source = yaml.safe_load((MAIN / source_name).read_text(encoding="utf-8"))
+        target = yaml.safe_load((MAIN / target_name).read_text(encoding="utf-8"))
+        changed = set(english_configs.diff_paths(source, target))
+        assert changed, slug
+        assert changed <= english_configs.ALLOWED_DIFF_PATHS, (slug, sorted(changed))
+        assert target["recipe_id"] == f"{source['recipe_id']}_en"
+        for key in ("prompt", "split", "data", "training", "evaluation", "labels", "lora", "model_backend",
+                    "model_name_or_path", "model_revision"):
+            assert target.get(key) == source.get(key), (slug, key)
+        assert target["labels"]["label_vocab_version"] == "legacy_english_labels"
 
 
 def test_no_english_audio_only_or_daic_or_edaic_config() -> None:
-    assert not list(MAIN.glob("*audio_only*_en.yaml"))
-    assert not list(MAIN.glob("daic*_en.yaml"))
-    assert not list(MAIN.glob("edaic*_en.yaml"))
+    assert not list(MAIN.glob("*audio_only*_en_qwen3*.yaml"))
+    assert not list(MAIN.glob("daic*_en_qwen3*.yaml"))
+    assert not list(MAIN.glob("edaic*_en_qwen3*.yaml"))
     for path in en_config_paths():
         config = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert config["dataset"] not in {"daic", "edaic"}
@@ -104,8 +101,8 @@ def test_no_english_audio_only_or_daic_or_edaic_config() -> None:
 
 
 def test_english_recipe_invariants_and_transcripts_policy() -> None:
-    for path in en_config_paths():
-        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    for rel, cell in sorted(EN_CONFIGS.items()):
+        config = yaml.safe_load((ROOT / rel).read_text(encoding="utf-8"))
         assert config["training"]["num_train_epochs"] == 20
         assert config["training"]["selection_metric"] == "inner_val_macro_f1"
         assert config["training"]["selection_metric_mode"] == "max"
@@ -122,18 +119,24 @@ def test_english_recipe_invariants_and_transcripts_policy() -> None:
         assert transcripts["minimum_status"] == "automatic_low"
         assert transcripts["require_complete"] is True
         assert transcripts["include_failed"] is False
-        assert transcripts["cache_path"].endswith("accepted.jsonl")
-        assert "harmonized_en_complete_v1" in transcripts["cache_path"]
-        assert "${TRANSLATION_ROOT" in transcripts["cache_path"]
+        cache_dir = cell[8]
+        if cache_dir is None:
+            assert transcripts["cache_path"] == english_configs.POOLED_TRANSCRIPTS_CACHE_PLACEHOLDER
+        else:
+            assert transcripts["cache_path"].endswith("accepted.jsonl")
+            assert "harmonized_en_complete_v1" in transcripts["cache_path"]
+            assert "${TRANSLATION_ROOT" in transcripts["cache_path"]
 
 
 def test_english_output_locations_cannot_collide() -> None:
-    for path in en_config_paths():
-        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    for rel, cell in sorted(EN_CONFIGS.items()):
+        config = yaml.safe_load((ROOT / rel).read_text(encoding="utf-8"))
         run_root = config["output_dirs"]["run_root"]
-        assert "/output_model/harmonized_v1_en_likelihood/" in run_root
+        assert "/output_model/promptcontext_v1_qwen38_likelihood_en/" in run_root or (
+            "/output_model/promptcontext_v1_qwen3omni_likelihood_en/" in run_root
+        )
         assert "output_model_en" not in run_root
-        assert "/harmonized_v1/" not in run_root
+        assert "/harmonized_v1_en_likelihood/" not in run_root
         assert "/manifests_harmonized_en/" in config["output_dirs"]["manifest_dir"]
         assert "/splits_harmonized_en/" in config["output_dirs"]["split_dir"]
         assert "/manifests_harmonized/" not in config["output_dirs"]["manifest_dir"]
@@ -142,16 +145,30 @@ def test_english_output_locations_cannot_collide() -> None:
 
 def test_english_matrix_shape_and_recipe() -> None:
     matrix = yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
-    assert matrix["fixed_heads"] == ["logreg_raw", "xgb_raw"]
+    assert matrix["fixed_heads"] == []
     assert matrix["max_epochs"] == 20
     assert matrix["checkpoint_selection"] == "inner_val_macro_f1"
     assert matrix["optuna"] is False
-    assert matrix["recipe_id"] == EN_RECIPE
+    assert matrix["recipe_id"].endswith("_promptcontext_v1_en")
     assert len(matrix["experiments"]) == 8
     assert sum(len(item["folds"]) for item in matrix["experiments"]) == 40
     assert sum(len(item["folds"]) for item in matrix["experiments"] if item["separate_eval"]) == 20
     assert not any("audio_only" in item["config"] for item in matrix["experiments"])
     assert not any("daic" in item["config"] for item in matrix["experiments"])
+    assert {item["config"] for item in matrix["experiments"]} == set(EN_CONFIGS)
+
+
+def test_legacy_english_matrix_keeps_the_pre_qwen3_selection() -> None:
+    matrix = yaml.safe_load(LEGACY_MATRIX.read_text(encoding="utf-8"))
+    assert matrix["status"] == "legacy"
+    assert matrix["fixed_heads"] == ["logreg_raw", "xgb_raw"]
+    legacy_names = {
+        name for modality in LEGACY_EN_CONFIGS.values() for name in modality.values()
+    }
+    assert {Path(item["config"]).name for item in matrix["experiments"]} == legacy_names
+    for name in legacy_names:
+        config = yaml.safe_load((MAIN / name).read_text(encoding="utf-8"))
+        assert config["recipe_id"] == EN_RECIPE_LEGACY
 
 
 def test_recipe_and_scope_audit_passes_without_dataset_access() -> None:
@@ -159,11 +176,11 @@ def test_recipe_and_scope_audit_passes_without_dataset_access() -> None:
     assert result["failures"] == []
     assert result["train_folds"] == 40
     assert result["eval_folds"] == 20
-    assert result["hidden_folds"] == 40
-    assert result["total_jobs"] == 100
+    assert result["hidden_folds"] == 0
+    assert result["total_jobs"] == 60
 
 
-def test_english_launcher_dry_run_has_exactly_100_jobs() -> None:
+def test_english_launcher_dry_run_has_exactly_60_jobs() -> None:
     result = subprocess.run(
         ["bash", str(ROOT / "scripts/submit_harmonized_en_standalone.sh")],
         cwd=ROOT,
@@ -180,14 +197,61 @@ def test_english_launcher_dry_run_has_exactly_100_jobs() -> None:
         check=True,
     )
     commands = [line for line in result.stderr.splitlines() if line.startswith("DRY_RUN sbatch")]
-    assert len(commands) == 100
+    assert len(commands) == 60
     assert sum("run_train_slurm.sh" in line for line in commands) == 40
     assert sum("run_eval_slurm.sh" in line for line in commands) == 20
-    assert sum("run_qwen_hidden_extract_slurm.sh" in line for line in commands) == 40
+    assert sum("run_qwen_hidden_extract_slurm.sh" in line for line in commands) == 0
     assert "max_gpus=200" in result.stdout
     assert "xgb_optuna" not in result.stdout + result.stderr
     assert "github_issue=20 github_pr=99" in result.stdout
     assert "audio_only" not in result.stdout + result.stderr
+
+
+def test_legacy_english_launcher_still_plans_100_jobs() -> None:
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/submit_harmonized_en_standalone.sh")],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PROJECT_ROOT": str(ROOT),
+            "RUN_ID": "unit",
+            "DRY_RUN": "1",
+            "GITHUB_ISSUE": "20",
+            "GITHUB_PR": "99",
+            "MATRIX": str(LEGACY_MATRIX),
+        },
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    commands = [line for line in result.stderr.splitlines() if line.startswith("DRY_RUN sbatch")]
+    assert len(commands) == 100
+    assert sum("run_qwen_hidden_extract_slurm.sh" in line for line in commands) == 40
+
+
+def test_english_launcher_refuses_qwen3_head_execution(tmp_path: Path) -> None:
+    matrix = yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+    matrix["fixed_heads"] = ["logreg_raw", "xgb_raw"]
+    doctored = tmp_path / "matrix_with_heads.yaml"
+    doctored.write_text(yaml.safe_dump(matrix, sort_keys=False), encoding="utf-8")
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/submit_harmonized_en_standalone.sh")],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PROJECT_ROOT": str(ROOT),
+            "RUN_ID": "unit",
+            "DRY_RUN": "1",
+            "GITHUB_ISSUE": "20",
+            "GITHUB_PR": "99",
+            "MATRIX": str(doctored),
+        },
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 5
+    assert "Qwen3 hidden-extraction prerequisite incomplete" in result.stderr
+    assert "refusing to submit" in result.stderr
 
 
 def test_english_launcher_allows_unlimited_parallelism() -> None:
@@ -535,6 +599,9 @@ def test_cv_smoke_split_guard_allows_per_partition_limits(tmp_path: Path) -> Non
 
 
 def test_retry_script_english_compatibility_dry_run(tmp_path: Path) -> None:
+    # The retry script is the legacy helper for the pre-Qwen3 routes; it submits
+    # the train/eval/hidden chain and therefore belongs to the legacy matrix.
+    # New Qwen3 cells must not be retried through it until head support lands.
     cells = tmp_path / "cells.tsv"
     cells.write_text("d3tec\taudio_text\t0\t0\t123456\t\t\tFAILED\n", encoding="utf-8")
     result = subprocess.run(
@@ -547,7 +614,7 @@ def test_retry_script_english_compatibility_dry_run(tmp_path: Path) -> None:
             "DRY_RUN": "1",
             "GITHUB_ISSUE": "20",
             "GITHUB_PR": "99",
-            "MATRIX": str(MATRIX),
+            "MATRIX": str(LEGACY_MATRIX),
             "CELLS": str(cells),
             "PREFLIGHT_AUDIT": str(tmp_path / "audit.json"),
             "PREFLIGHT_COMPONENTS": "4",

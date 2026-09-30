@@ -15,6 +15,8 @@ from pathlib import Path
 from statistics import median
 from typing import Any
 
+import yaml
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -23,6 +25,38 @@ from src.merged.protocol import canonical_sha256
 from src.merged.provenance import source_commits_match
 from src.merged.runtime import load_merged_config, load_protocol_artifact
 from src.utils import read_json, resolve_project_path, save_json, sha256_file
+
+
+# The merged trainer is still the DDP path and the postprocess/head steps do not
+# support Qwen3 shards or processors. This guard is keyed on the component
+# backends, so it cannot be bypassed by editing a documentation field: a merged
+# contract that resolves to a Qwen3 backbone is refused before any GPU job is
+# submitted, and a dry-run only reports the blocked plan.
+NEW_MODEL_BACKENDS = frozenset({"qwen38", "qwen3omni"})
+QWEN3_MERGED_PREREQUISITE = "Qwen3 merged FSDP/postprocess prerequisite incomplete"
+
+
+def merged_blocked_backends(config: dict[str, Any]) -> list[str]:
+    """Qwen3-family backends among the merged config and its component configs.
+
+    A component that points at an archived or renamed path cannot be resolved;
+    the planner's own gates report that later, so the guard only blocks what it
+    can actually resolve. The Qwen3 pooled contracts also declare the backend on
+    the merged config itself, so a missing component can never hide them.
+    """
+    found: set[str] = set()
+    own = str(config.get("model_backend") or "")
+    if own in NEW_MODEL_BACKENDS:
+        found.add(own)
+    for component in config.get("components") or []:
+        path = resolve_project_path(str(component.get("config", "")))
+        if not path.is_file():
+            continue
+        component_config = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        backend = str(component_config.get("model_backend") or "")
+        if backend in NEW_MODEL_BACKENDS:
+            found.add(backend)
+    return sorted(found)
 
 
 CONFIG_BY_MODALITY = {
@@ -290,11 +324,25 @@ def build_job_specs(
         config = load_merged_config(config_path)
         modality = str(config["modality"])
         head_trials = _head_trials(config, stage=stage, smoke_trials=smoke_trials)
+        blocked_backends = merged_blocked_backends(config)
+        if blocked_backends and not dry_run:
+            raise ValueError(
+                f"{QWEN3_MERGED_PREREQUISITE}: merged config {config_path} resolves to "
+                f"{blocked_backends}; refusing to submit GPU jobs. Qwen3 merged FSDP "
+                "training and postprocess support land in a separate task."
+            )
+        if blocked_backends:
+            print(
+                f"WARNING: {QWEN3_MERGED_PREREQUISITE}: {config_path} resolves to "
+                f"{blocked_backends}; dry-run plan only, execution is refused.",
+                file=sys.stderr,
+            )
         config_identities.append(
             {
                 "path": str(config_path),
                 "sha256": sha256_file(config_path),
                 "modality": modality,
+                "blocked_backends": blocked_backends,
             }
         )
         if stage == "final":
@@ -383,6 +431,11 @@ def build_job_specs(
                         job["dependency_job_id"] = previous_id
                     previous_id = job["expected_job_id"]
                 jobs.append(job)
+    blocked_paths = {
+        str(record["path"]) for record in config_identities if record.get("blocked_backends")
+    }
+    for job in jobs:
+        job["blocked_prerequisite"] = str(job["config"]) in blocked_paths
     for order, job in enumerate(jobs):
         job["submission_order"] = order
     _apply_concurrency_lanes(jobs, kind="train", limit=int(max_concurrent_trains))
@@ -423,6 +476,14 @@ def build_job_specs(
         "expected_fresh_job_count": expected,
         "planned_job_count": sum(job["state"] == "planned" for job in jobs),
         "skipped_job_count": sum(job["state"] != "planned" for job in jobs),
+        "blocked_prerequisite": sorted(
+            str(record["path"]) for record in config_identities if record.get("blocked_backends")
+        ),
+        "blocked_reason": (
+            QWEN3_MERGED_PREREQUISITE
+            if any(record.get("blocked_backends") for record in config_identities)
+            else None
+        ),
         "jobs": jobs,
     }
 

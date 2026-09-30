@@ -64,24 +64,33 @@ if len(payload.get("components", [])) != 4:
     raise SystemExit(f"Incomplete English MN5 preflight audit: {sys.argv[1]}")
 if payload.get("merged"):
     raise SystemExit(f"English preflight audit must not contain merged records: {sys.argv[1]}")
-if payload.get("job_scope", {}).get("total_jobs") != 100:
-    raise SystemExit(f"English preflight audit must declare 100 jobs: {sys.argv[1]}")
+scope = payload.get("job_scope") or {}
+train_folds = int(scope.get("train_folds", -1))
+eval_folds = int(scope.get("eval_folds", -1))
+hidden_folds = int(scope.get("hidden_folds", -1))
+if (train_folds, eval_folds) != (40, 20):
+    raise SystemExit(f"English preflight audit must declare 40 train and 20 eval folds: {sys.argv[1]}")
+if scope.get("total_jobs") != train_folds + eval_folds + hidden_folds:
+    raise SystemExit(f"English preflight audit job scope is inconsistent: {sys.argv[1]}")
 PY
 fi
 
 cd "$PROJECT_ROOT"
-mapfile -t TASKS < <(python - "$MATRIX" "$PROJECT_ROOT" <<'PY'
+TASKS_FILE="$(mktemp)"
+if ! python - "$MATRIX" "$PROJECT_ROOT" >"$TASKS_FILE" <<'PY'
 import sys, yaml
 from pathlib import Path
 root = Path(sys.argv[2])
 matrix = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
 backend = str(matrix.get("model_backend", "") or "")
-expected_heads = ["logreg_raw"] if backend == "gemma4" else ["logreg_raw", "xgb_raw"]
-if matrix.get("fixed_heads") != expected_heads:
-    raise SystemExit(
-        f"English matrix must contain only {expected_heads} heads for "
-        f"model_backend={backend or 'qwen'}"
-    )
+declared_heads = matrix.get("fixed_heads")
+if declared_heads not in ([], ["logreg_raw"], ["logreg_raw", "xgb_raw"]):
+    raise SystemExit(f"Unsupported fixed_heads declaration: {declared_heads}")
+if backend == "gemma4" and declared_heads != ["logreg_raw"]:
+    raise SystemExit("A Gemma English matrix must declare exactly [logreg_raw] heads")
+if backend == "qwen" and declared_heads != ["logreg_raw", "xgb_raw"]:
+    raise SystemExit("A Qwen2 English matrix must declare [logreg_raw, xgb_raw] heads")
+fixed_heads_enabled = 1 if declared_heads else 0
 if matrix.get("optuna") is not False:
     raise SystemExit("English matrix must disable Optuna")
 if matrix.get("max_epochs") != 20 or matrix.get("checkpoint_selection") != "inner_val_macro_f1":
@@ -96,10 +105,17 @@ for item in matrix["experiments"]:
     if config["training"]["selection_metric"] != "inner_val_macro_f1":
         raise SystemExit(f"Expected macro-F1 selection: {config_path}")
     config_backend = str(config.get("model_backend", "") or "")
-    if config_backend != backend:
+    if backend and config_backend != backend:
         raise SystemExit(
             f"Matrix model_backend={backend!r} does not match config backend "
             f"{config_backend!r}: {config_path}"
+        )
+    if declared_heads and config_backend in ("qwen38", "qwen3omni"):
+        raise SystemExit(
+            "Qwen3 hidden-extraction prerequisite incomplete: head execution is not "
+            f"supported for model_backend={config_backend!r} ({config_path}). "
+            "Declare fixed_heads: [] for the Qwen3 English family or wait for the "
+            "separate backend-support task."
         )
     dataset = str(config["dataset"])
     if dataset in ("daic", "edaic"):
@@ -116,14 +132,20 @@ for item in matrix["experiments"]:
         raise SystemExit(f"English matrix config has no English overlay: {config_path}")
     run_root = str(config["output_dirs"]["run_root"]).replace("${PROJECT_ROOT}", str(root))
     for fold in item["folds"]:
-        print("\t".join((str(config_path), dataset, modality, str(fold), "1" if item["separate_eval"] else "0", run_root, config_backend)))
+        print("\t".join((str(config_path), dataset, modality, str(fold), "1" if item["separate_eval"] else "0", run_root, str(fixed_heads_enabled), config_backend)))
         count += 1
         if item["separate_eval"]:
             eval_count += 1
 if count != 40 or eval_count != 20:
     raise SystemExit(f"Expected 40 English fold tasks with 20 separate evals, found {count}/{eval_count}")
 PY
-)
+then
+    echo "English matrix validation failed; refusing to submit: $MATRIX" >&2
+    rm -f "$TASKS_FILE"
+    exit 5
+fi
+mapfile -t TASKS < "$TASKS_FILE"
+rm -f "$TASKS_FILE"
 
 submit() {
     if [ "$DRY_RUN" = 1 ]; then
@@ -154,7 +176,7 @@ if [ "$DRY_RUN" = 0 ]; then
 fi
 
 for task in "${TASKS[@]}"; do
-    IFS=$'\t' read -r config dataset modality fold separate_eval run_root config_backend <<< "$task"
+    IFS=$'\t' read -r config dataset modality fold separate_eval run_root fixed_heads_enabled config_backend <<< "$task"
     backend_vars="$(bash "$PROJECT_ROOT/scripts/harmonized_backend_env.sh" "$config" "$PROJECT_ROOT")"
     eval "$backend_vars"
     run_name="${RUN_PREFIX}_${RUN_ID}_${dataset}_${modality}"
@@ -221,17 +243,20 @@ PY
         [ "$DRY_RUN" = 1 ] || printf '%s\t%s\t%s\teval\t%s\t%s,%s\n' "$dataset" "$modality" "$fold" "$chain_job" "$train_job" "$aux_throttle" >> "$registry"
     fi
 
-    aux_lane=$((aux_index % MAX_CONCURRENT_AUX))
-    aux_throttle="${aux_lanes[$aux_lane]:-}"
-    hidden_dep="$(dependency_arg "$chain_job" "$aux_throttle")"
-    cache="$FEATURES_ROOT/$dataset/$run_name/fold_$fold"
-    classifiers="$CLASSIFIERS_ROOT/$dataset/$run_name/fold_$fold"
-    hidden_cmd=(sbatch --parsable --job-name="he-hidden-${dataset:0:4}-${modality:0:2}-f$fold" "$hidden_dep" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CHECKPOINT_DIR=$fold_dir/best_model,CACHE_DIR=$cache,CLASSIFIER_DIR=$classifiers,MODEL_PATH=$MODEL_PATH,CONDITION=$modality,CLASSIFIER_VARIANTS=$CLASSIFIER_VARIANTS" "$HIDDEN_WORKER")
-    hidden_raw="$(submit "${hidden_cmd[@]}")"
-    hidden_job="$(job_id "$hidden_raw")"
-    aux_lanes[$aux_lane]="$hidden_job"
-    aux_index=$((aux_index + 1))
-    [ "$DRY_RUN" = 1 ] || printf '%s\t%s\t%s\thidden_fixed\t%s\t%s,%s\n' "$dataset" "$modality" "$fold" "$hidden_job" "$chain_job" "$aux_throttle" >> "$registry"
+    hidden_job=""
+    if [ "$fixed_heads_enabled" = 1 ]; then
+        aux_lane=$((aux_index % MAX_CONCURRENT_AUX))
+        aux_throttle="${aux_lanes[$aux_lane]:-}"
+        hidden_dep="$(dependency_arg "$chain_job" "$aux_throttle")"
+        cache="$FEATURES_ROOT/$dataset/$run_name/fold_$fold"
+        classifiers="$CLASSIFIERS_ROOT/$dataset/$run_name/fold_$fold"
+        hidden_cmd=(sbatch --parsable --job-name="he-hidden-${dataset:0:4}-${modality:0:2}-f$fold" "$hidden_dep" --export="ALL,PROJECT_ROOT=$PROJECT_ROOT,CHECKPOINT_DIR=$fold_dir/best_model,CACHE_DIR=$cache,CLASSIFIER_DIR=$classifiers,MODEL_PATH=$MODEL_PATH,CONDITION=$modality,CLASSIFIER_VARIANTS=$CLASSIFIER_VARIANTS" "$HIDDEN_WORKER")
+        hidden_raw="$(submit "${hidden_cmd[@]}")"
+        hidden_job="$(job_id "$hidden_raw")"
+        aux_lanes[$aux_lane]="$hidden_job"
+        aux_index=$((aux_index + 1))
+        [ "$DRY_RUN" = 1 ] || printf '%s\t%s\t%s\thidden_fixed\t%s\t%s,%s\n' "$dataset" "$modality" "$fold" "$hidden_job" "$chain_job" "$aux_throttle" >> "$registry"
+    fi
     if [ "$DRY_RUN" = 0 ]; then
         python - "$context_path" "$fold_dir" "$train_job" "${eval_raw:-}" "$hidden_job" "$PROJECT_ROOT" <<'PY'
 import json, os, sys
@@ -263,11 +288,12 @@ if eval_job:
         attempt_id=context["attempt_id"], fold=int(context["fold"]),
         slurm_job_id=eval_job, dependency_job_ids=[train_job], status="PENDING",
     ))
-events.append(lifecycle.new_job_event(
-    job_key="hidden_fixed", job_type="hidden_classifier", event_type="SUBMITTED",
-    attempt_id=context["attempt_id"], fold=int(context["fold"]),
-    slurm_job_id=hidden_job, dependency_job_ids=[eval_job or train_job], status="PENDING",
-))
+if hidden_job:
+    events.append(lifecycle.new_job_event(
+        job_key="hidden_fixed", job_type="hidden_classifier", event_type="SUBMITTED",
+        attempt_id=context["attempt_id"], fold=int(context["fold"]),
+        slurm_job_id=hidden_job, dependency_job_ids=[eval_job or train_job], status="PENDING",
+    ))
 for event in events:
     lifecycle.append_job_event(run_root / "jobs.jsonl", event)
 PY

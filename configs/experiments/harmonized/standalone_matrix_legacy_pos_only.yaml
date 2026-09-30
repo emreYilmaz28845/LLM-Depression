@@ -1,4 +1,11 @@
-name: harmonized_v1_standalone_matrix
+name: harmonized_v1_standalone_matrix_legacy_pos_only
+status: legacy
+legacy_of: configs/experiments/harmonized/standalone_matrix.yaml
+legacy_note: >-
+  Preserves the pre-pooled native selection: the three Turkish slots select the
+  positive-only Qwen3 configs. This is an explicit legacy entrypoint for
+  reproducing the earlier native matrix; it is not the default route. The
+  default matrix selects the pooled Qwen3 Turkish configs.
 recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1_promptcontext_v1
 seed: 1337
 max_epochs: 20
@@ -12,11 +19,11 @@ experiments:
   - {config: configs/main/androids_audio_only_harmonized_selmacrof1_likelihood_v1.yaml, folds: [0, 1, 2, 3, 4], separate_eval: true}
   - {config: configs/main/daic_audio_only_harmonized_selmacrof1_likelihood_v1.yaml, folds: [0], separate_eval: true}
   - {config: configs/main/cmdc_audio_text_harmonized_selmacrof1_likelihood_v1.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
-  - {config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
+  - {config: configs/main/turkish_pos_only_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
   - {config: configs/main/cmdc_audio_only_harmonized_selmacrof1_likelihood_v1.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
-  - {config: configs/main/turkish_pooled_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
+  - {config: configs/main/turkish_pos_only_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
   - {config: configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v1.yaml, folds: [0, 1, 2, 3, 4], separate_eval: true}
   - {config: configs/main/androids_text_only_harmonized_selmacrof1_likelihood_v1.yaml, folds: [0, 1, 2, 3, 4], separate_eval: true}
   - {config: configs/main/daic_text_only_harmonized_selmacrof1_likelihood_v1.yaml, folds: [0], separate_eval: true}
   - {config: configs/main/cmdc_text_only_harmonized_selmacrof1_likelihood_v1.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
-  - {config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
+  - {config: configs/main/turkish_pos_only_t17_text_only_harmonized_selmacrof1_likelihood_v1_qwen3asr.yaml, folds: [0, 1, 2, 3, 4], separate_eval: false}
