@@ -51,7 +51,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.data.prompt_context import PROMPT_CONTEXT_VERSION, resolve_system_prompt
+from src.data.prompt_context import (
+    PROMPT_CONTEXT_VERSION,
+    TRANSLATION_NOTICE_VERSION,
+    resolve_system_prompt,
+    resolve_translation_notice,
+)
 from src.experiment_tracking.manifest_policy import MANIFEST_POLICY_PREBUILT, validate_manifest_policy
 from src.model.qwen38_lora import validate_qwen38_config
 from src.model.qwen3omni_lora import validate_qwen3omni_config
@@ -185,6 +190,7 @@ ALLOWED_DIFF_PATHS = frozenset(
         "output_dirs.manifest_dir",
         "output_dirs.split_dir",
         "output_dirs.run_root",
+        "prompt.translation_notice_version",
     }
 )
 
@@ -242,6 +248,7 @@ def derive(source: dict[str, Any], cell: tuple) -> dict[str, Any]:
 
     config["recipe_id"] = f"{config['recipe_id']}{EN_RECIPE_SUFFIX}"
     config["transcripts"] = transcripts_block(cell)
+    config["prompt"]["translation_notice_version"] = TRANSLATION_NOTICE_VERSION
     config["output_dirs"]["manifest_dir"] = f"{EN_MANIFEST_ROOT}/{manifest_dir}"
     config["output_dirs"]["split_dir"] = f"{EN_SPLIT_ROOT}/{manifest_dir}"
     if modality == "text_only":
@@ -271,6 +278,8 @@ def derive(source: dict[str, Any], cell: tuple) -> dict[str, Any]:
     validate_qwen38_config(config)
     validate_qwen3omni_config(config)
     resolve_system_prompt(config)
+    if resolve_translation_notice(config) is None:
+        raise GenerationError(f"{slug}: the English cell must carry the translation notice")
     return reorder(config)
 
 
@@ -385,10 +394,30 @@ def render(config: dict[str, Any]) -> str:
     )
 
 
-def emit(target: Path, content: str, *, check_only: bool, failures: list[str]) -> None:
+def emit(
+    target: Path,
+    content: str,
+    *,
+    check_only: bool,
+    failures: list[str],
+    replace: bool = False,
+    replacements: list[str] | None = None,
+) -> None:
+    """Write the derived content, refusing to change an existing file silently.
+
+    An existing file with different content is a failure unless the caller
+    passes the explicit one-time ``replace`` transition, which records the
+    replaced path so the audit shows exactly what changed.
+    """
     if target.is_file():
         if target.read_text(encoding="utf-8") != content:
-            failures.append(f"existing file differs from derived content: {target}")
+            if replace and not check_only:
+                target.write_text(content, encoding="utf-8")
+                print(f"replaced {target.relative_to(PROJECT_ROOT)}")
+                if replacements is not None:
+                    replacements.append(str(target.relative_to(PROJECT_ROOT)))
+            else:
+                failures.append(f"existing file differs from derived content: {target}")
         return
     if check_only:
         failures.append(f"missing derived file: {target}")
@@ -398,12 +427,27 @@ def emit(target: Path, content: str, *, check_only: bool, failures: list[str]) -
     print(f"wrote {target.relative_to(PROJECT_ROOT)}")
 
 
-def emit_config(target: Path, config: dict[str, Any], *, check_only: bool, failures: list[str]) -> None:
+def emit_config(
+    target: Path,
+    config: dict[str, Any],
+    *,
+    check_only: bool,
+    failures: list[str],
+    replace: bool = False,
+    replacements: list[str] | None = None,
+) -> None:
     rendered = render(config)
     if yaml.safe_load(rendered) != config:
         failures.append(f"rendered config does not round-trip: {target}")
         return
-    emit(target, rendered, check_only=check_only, failures=failures)
+    emit(
+        target,
+        rendered,
+        check_only=check_only,
+        failures=failures,
+        replace=replace,
+        replacements=replacements,
+    )
 
 
 def target_matrix_differs(target: Path, content: str) -> bool:
@@ -468,6 +512,16 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--replace-cells",
+        action="store_true",
+        help=(
+            "one-time transition: replace existing generated English cells even when they "
+            "differ from the derived content (used when the derived contract changes, for "
+            "example a new prompt.translation_notice_version); the replaced paths are "
+            "recorded in the audit"
+        ),
+    )
+    parser.add_argument(
         "--audit-output",
         type=Path,
         default=DEFAULT_AUDIT_OUTPUT,
@@ -476,9 +530,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     failures: list[str] = []
+    replacements: list[str] = []
     audit: dict[str, Any] = {
         "schema_version": "audiollm.qwen3_english_config_diff.v1",
         "prompt_context_version": PROMPT_CONTEXT_VERSION,
+        "translation_notice_version": TRANSLATION_NOTICE_VERSION,
         "allowed_paths": sorted(ALLOWED_DIFF_PATHS),
         "matrix": str(MATRIX.relative_to(PROJECT_ROOT)),
         "configs": [],
@@ -491,7 +547,14 @@ def main(argv: list[str] | None = None) -> int:
         source = yaml.safe_load(source_path.read_text(encoding="utf-8"))
         config = derive(source, cell)
         target = MAIN / target_name
-        emit_config(target, config, check_only=args.check, failures=failures)
+        emit_config(
+            target,
+            config,
+            check_only=args.check,
+            failures=failures,
+            replace=args.replace_cells,
+            replacements=replacements,
+        )
         audit["configs"].append(
             {
                 "cell_id": slug,
@@ -525,6 +588,7 @@ def main(argv: list[str] | None = None) -> int:
     emit(MATRIX, matrix_rendered, check_only=args.check, failures=failures)
     audit["matrix_configs"] = [item["config"] for item in matrix["experiments"]]
     audit["matrix_replaced"] = matrix_replaced
+    audit["cells_replaced"] = replacements
     audit["matrix_legacy"] = "configs/experiments/harmonized/english_translation_matrix_legacy_qwen2.yaml"
     audit["fixed_heads"] = matrix["fixed_heads"]
     audit["training_folds"] = sum(len(item["folds"]) for item in matrix["experiments"])

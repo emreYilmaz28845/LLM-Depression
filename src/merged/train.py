@@ -51,6 +51,7 @@ from src.model.runtime import (
 from src.training_strategy import (
     TRAINING_STRATEGY_FSDP,
     _force_gradient_sync_in_accumulation,
+    activation_offload_context,
     align_fsdp_model_dtypes,
     build_fsdp_plugin,
     broadcast_flag,
@@ -557,10 +558,13 @@ def train_merged_fold(
                     if local_position < len(local_items) - 1
                     else torch.enable_grad()
                 )
-                with context:
+                with activation_offload_context(model_config), context:
                     # DDP observes the no-sync flag during the forward pass;
                     # entering it only around backward still performs an
-                    # all-reduce for every microbatch.
+                    # all-reduce for every microbatch. The merged loop applies
+                    # the config's activation offload exactly like the
+                    # standalone FSDP recipe does; skipping it doubles the
+                    # per-rank activation memory.
                     outputs = model(**batch)
                     accelerator.backward(outputs.loss * float(scale))
                 local_loss_numerator += float(outputs.loss.detach().item()) * weight
@@ -707,6 +711,17 @@ def train_merged_fold(
             "selection_metric_value": None if math.isnan(best_metric) else float(best_metric),
         }
         save_json(complete, complete_path)
+    # Per-rank memory evidence, in the same format as the standalone trainer.
+    # Without it the merged shape decision cannot be checked against the
+    # recorded peaks of the standalone audio lane.
+    if torch.cuda.is_available():
+        LOGGER.info(
+            "Per-rank training memory | rank=%s peak_allocated_gb=%.3f peak_reserved_gb=%.3f free_gb=%.3f",
+            int(getattr(accelerator, "process_index", 0)),
+            torch.cuda.max_memory_allocated() / 1024**3,
+            torch.cuda.max_memory_reserved() / 1024**3,
+            torch.cuda.mem_get_info()[0] / 1024**3,
+        )
     accelerator.wait_for_everyone()
     return {"status": "completed", "run_root": str(run_root), "fold": int(fold), "stage": stage}
 

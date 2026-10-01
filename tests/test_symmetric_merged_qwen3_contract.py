@@ -36,6 +36,7 @@ POOLED = {
     "native_audio_only": MERGED / "symmetric_merged_qwen3_pooled_native_audio_only.yaml",
     "native_audio_text": MERGED / "symmetric_merged_qwen3_pooled_native_audio_text.yaml",
     "english_text_only": MERGED / "symmetric_merged_qwen3_pooled_english_text_only.yaml",
+    "english_audio_text": MERGED / "symmetric_merged_qwen3_pooled_english_audio_text.yaml",
 }
 
 
@@ -120,21 +121,67 @@ def test_fsdp_resource_mismatch_fails_closed() -> None:
         validate_merged_resources(config, records)
 
 
-def test_head_support_is_deferred_for_qwen3_backends() -> None:
+def test_head_support_covers_every_backend_family() -> None:
+    """The code path is ready everywhere; per-route production readiness is the guard's."""
     assert is_qwen3_backend("qwen38") is True
     assert is_qwen3_backend("qwen3omni") is True
     assert is_qwen3_backend("qwen2audio") is False
-    assert head_support_ready("qwen38") is False
-    assert head_support_ready("qwen3omni") is False
+    assert head_support_ready("qwen38") is True
+    assert head_support_ready("qwen3omni") is True
     assert head_support_ready("qwen2audio") is True
+    assert head_support_ready(None) is True
 
 
-def test_route_readiness_covers_exactly_the_four_pooled_contracts() -> None:
+def test_merged_feature_dimensions_must_match_the_backend() -> None:
+    from src.merged.postprocess import validate_feature_dimensions
+
+    validate_feature_dimensions({5120}, "qwen38")
+    validate_feature_dimensions({2048}, "qwen3omni")
+    validate_feature_dimensions(set(), "qwen38")
+    validate_feature_dimensions({1234}, "unlisted_backend")
+    with pytest.raises(ValueError, match="does not match the recorded hidden size"):
+        validate_feature_dimensions({2048}, "qwen38")
+
+
+def test_english_audio_text_contract_mirrors_the_english_text_contract() -> None:
+    """DAIC keeps its native English input; the other four cells carry the notice."""
+    text = _merged("english_text_only")
+    audio = _merged("english_audio_text")
+    assert audio["name"] == "symmetric_merged_qwen3_pooled_english_audio_text"
+    assert audio["modality"] == "audio_text"
+    assert audio["model_backend"] == "qwen3omni"
+    assert audio["recipe_id"].endswith("_en")
+    assert (audio["execution"] or {}).get("postprocess_gpus") == 4
+    assert (audio["training"] or {}).get("strategy") == "fsdp"
+    assert (audio["protocol_settings"] or {}).get("selection_metric") == "mean_dataset_macro_f1"
+    assert audio["seed"] == text["seed"]
+    assert [component["name"] for component in audio["components"]] == [
+        component["name"] for component in text["components"]
+    ]
+    assert audio["components"][0]["config"] == (
+        "configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_v1.yaml"
+    )
+    assert "manifests_harmonized/daic" in audio["components"][0]["manifest_path"]
+    for component in audio["components"][1:]:
+        config = yaml.safe_load((ROOT / component["config"]).read_text(encoding="utf-8"))
+        assert component["config"].endswith("_en_qwen3omni_30b_a3b.yaml"), component["name"]
+        assert config["transcripts"]["variant"] == "english", component["name"]
+        assert (
+            config["prompt"]["translation_notice_version"]
+            == "translation_notice_v1"
+        ), component["name"]
+        assert "manifests_harmonized_en" in component["manifest_path"], component["name"]
+    assert audio["output_dirs"]["merged_root"].endswith("qwen3_pooled_english/audio_text")
+    assert audio["output_dirs"]["run_root"].endswith("qwen3_pooled_english_likelihood/audio_text")
+
+
+def test_route_readiness_covers_exactly_the_five_pooled_contracts() -> None:
     expected_names = {f"symmetric_merged_qwen3_pooled_{name}" for name in (
         "native_text_only",
         "native_audio_only",
         "native_audio_text",
         "english_text_only",
+        "english_audio_text",
     )}
     assert set(QWEN3_CONTRACT_READINESS) == expected_names
     for name, path in POOLED.items():
@@ -142,8 +189,9 @@ def test_route_readiness_covers_exactly_the_four_pooled_contracts() -> None:
         smoke = merged_route_decision(config, stage="smoke")
         assert smoke["declared"] is True
         assert smoke["allowed"] is True
-        assert smoke["head_ready"] is False
-        assert smoke["head_deferred_reason"] == "Qwen3 merged head support prerequisite incomplete"
+        # Every route passed its bounded hidden-feature audit, so its head kind is open.
+        assert smoke["head_ready"] is True
+        assert smoke["head_deferred_reason"] is None
         for stage in ("cv", "final"):
             decision = merged_route_decision(config, stage=stage)
             production_ready = QWEN3_CONTRACT_READINESS[config["name"]]["production_ready"]
@@ -204,6 +252,85 @@ def test_audio_and_text_routes_resolve_their_declared_gpu_shapes() -> None:
         assert config["status"] in {"smoke_only", "execute_verified"}
 
 
+def test_every_qwen3_omni_merged_route_runs_the_two_node_lane() -> None:
+    """Any Qwen3-Omni route declares two four-GPU nodes with accumulation 16.
+
+    The shape matches the standalone audio lane, whose baselines were submitted
+    that way; the text contracts keep one node with accumulation 32. Both keep
+    the FSDP effective global batch of 128.
+    """
+    for slug in ("native_audio_only", "native_audio_text", "english_audio_text"):
+        config = _merged(slug)
+        execution = config["execution"]
+        training = config["training"]
+        assert execution["train_nodes"] == 2, slug
+        assert execution["qwen_gpus"] == 4, slug
+        assert training["gradient_accumulation_steps"] == 16, slug
+        assert (
+            execution["train_nodes"]
+            * execution["qwen_gpus"]
+            * training["gradient_accumulation_steps"]
+            == 128
+        ), slug
+    for slug in ("native_text_only", "english_text_only"):
+        config = _merged(slug)
+        assert int((config["execution"] or {}).get("train_nodes", 1)) == 1, slug
+        assert config["training"]["gradient_accumulation_steps"] == 32, slug
+
+
+def test_readiness_table_records_the_shape_every_route_was_verified_in() -> None:
+    """The guard's verified shape must match what the shipped contract declares.
+
+    Otherwise a route could be opened on evidence recorded for another lane, and
+    the drift would only show up after production jobs were submitted.
+    """
+    for name, entry in QWEN3_CONTRACT_READINESS.items():
+        config = _merged(name.removeprefix("symmetric_merged_qwen3_pooled_"))
+        declared = {
+            "train_nodes": int((config["execution"] or {}).get("train_nodes", 1)),
+            "gpus_per_node": int((config["execution"] or {}).get("qwen_gpus", 4)),
+            "gradient_accumulation_steps": int(
+                (config["training"] or {}).get("gradient_accumulation_steps", 1)
+            ),
+        }
+        assert entry["verified_shape"] == declared, name
+        assert declared["train_nodes"] * declared["gpus_per_node"] * declared[
+            "gradient_accumulation_steps"
+        ] == 128, name
+
+
+def test_guard_refuses_a_production_run_in_an_unverified_shape() -> None:
+    """An override that keeps the effective batch but changes the lane is refused.
+
+    One node with accumulation 32 gives the same effective global batch as the
+    verified two-node lane with 16, so only an explicit shape check can stop a
+    production run from using the other shape's evidence. The bounded smoke stage
+    stays allowed: that is how a route is verified in the first place.
+    """
+    config = _merged("native_audio_text")
+    verified = merged_route_decision(config, stage="cv")
+    assert verified["shape_verified"] is True
+    assert verified["allowed"] is True
+    assert verified["declared_shape"] == {
+        "train_nodes": 2,
+        "gpus_per_node": 4,
+        "gradient_accumulation_steps": 16,
+    }
+
+    overridden = copy.deepcopy(config)
+    overridden["execution"]["train_nodes"] = 1
+    overridden["training"]["gradient_accumulation_steps"] = 32
+    decision = merged_route_decision(overridden, stage="cv")
+    assert decision["allowed"] is False
+    assert decision["shape_verified"] is False
+    assert "was verified as" in decision["reason"]
+    for stage in ("cv", "final"):
+        assert merged_route_decision(overridden, stage=stage)["allowed"] is False
+    smoke = merged_route_decision(overridden, stage="smoke")
+    assert smoke["allowed"] is True
+    assert smoke["shape_verified"] is False
+
+
 def test_worker_exports_the_job_level_resolved_overrides(monkeypatch) -> None:
     """A deployed worker must receive the per-config resolved token array.
 
@@ -248,7 +375,48 @@ def test_worker_exports_the_job_level_resolved_overrides(monkeypatch) -> None:
     encoded = export.split("OVERRIDES_JSON_B64=", 1)[1].split(",", 1)[0]
     assert json.loads(base64.b64decode(encoded).decode("utf-8")) == job["overrides"]
     assert "NPROC_PER_NODE=4" in export
+    assert "NNODES=1" in export
     assert "--gres=gpu:4" in captured["argv"]
     # The call site must prefer the job's resolved tokens over the registry list.
     source = (ROOT / "scripts/submit_symmetric_merged.py").read_text(encoding="utf-8")
     assert 'overrides=job.get("overrides") or registry.get("overrides") or []' in source
+
+
+def test_two_node_train_job_requests_both_nodes_and_exports_the_rendezvous(monkeypatch) -> None:
+    import scripts.submit_symmetric_merged as planner
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_check_output(arguments, cwd=None, text=None):
+        captured["argv"] = list(arguments)
+        return "23456\n"
+
+    monkeypatch.setattr(planner.subprocess, "check_output", fake_check_output)
+    job = {
+        "kind": "train",
+        "config": "/deployed/config.yaml",
+        "stage": "smoke",
+        "fold": 0,
+        "run_id": "r",
+        "modality": "audio_text",
+        "model_backend": "qwen3omni",
+        "resource": {"nodes": 2, "gpus": 4, "cpus": 80, "time": 10},
+    }
+    job_id = planner._submit_job(
+        job,
+        worker=Path("scripts/run_symmetric_merged_train_slurm.sh"),
+        dependency_id=None,
+        throttle_dependency_id=None,
+    )
+    assert job_id == "23456"
+    argv = [str(argument) for argument in captured["argv"]]
+    assert "--nodes=2" in argv
+    # One Slurm task per node holds the whole node's CPUs and GPUs, matching the
+    # worker's per-node srun step.
+    assert "--ntasks=2" in argv
+    assert "--ntasks-per-node=1" in argv
+    assert "--cpus-per-task=80" in argv
+    assert "--gres=gpu:4" in argv
+    export = next(argument for argument in argv if argument.startswith("--export="))
+    assert "NNODES=2" in export
+    assert "NPROC_PER_NODE=4" in export

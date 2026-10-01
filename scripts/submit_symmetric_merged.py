@@ -43,7 +43,7 @@ NEW_MODEL_BACKENDS = frozenset({"qwen38", "qwen3omni"})
 QWEN3_MERGED_PREREQUISITE = "Qwen3 merged FSDP/postprocess prerequisite incomplete"
 QWEN3_HEAD_PREREQUISITE = "Qwen3 merged head support prerequisite incomplete"
 
-# Readiness of the four declared Qwen3 pooled merged contracts. Only a route
+# Readiness of the five declared Qwen3 pooled merged contracts. Only a route
 # that passed its own bounded GPU smoke chain may be marked production-ready;
 # the others keep their production guard (and their CPU/config/processor route
 # tests) until they pass their own chain.
@@ -51,9 +51,14 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
     "symmetric_merged_qwen3_pooled_native_text_only": {
         "backend": "qwen38",
         "modality": "text_only",
+        "verified_shape": {
+            "train_nodes": 1,
+            "gpus_per_node": 4,
+            "gradient_accumulation_steps": 32,
+        },
         "production_ready": True,
         "production_block_reason": None,
-        "head_ready": False,
+        "head_ready": True,
         "evidence": (
             "GPU smoke chain passed: run qwen3_merged_smoke_text_only_20260930_r3. Train job "
             "46844006 COMPLETED 0:0 and postprocess job 46845076 COMPLETED 0:0 both ran from the "
@@ -66,44 +71,116 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
             "the permanent checkout (identical files; earlier failed attempts and their logs are "
             "preserved). Likelihood subject-level evidence was locally verified for all five "
             "components."
+            " Hidden-feature audit passed: postprocess job 46853892 and head job 46855535 COMPLETED 0:0 under the isolated run qwen3_heads_audit_native_text_only_20260930_r1 (feature dimension 5120, 24 train and 24 holdout rows); the first head attempt 46853893 failed on the missing project-local dependency path and is preserved."
         ),
     },
     "symmetric_merged_qwen3_pooled_native_audio_text": {
         "backend": "qwen3omni",
         "modality": "audio_text",
+        "verified_shape": {
+            "train_nodes": 2,
+            "gpus_per_node": 4,
+            "gradient_accumulation_steps": 16,
+        },
         "production_ready": True,
         "production_block_reason": None,
-        "head_ready": False,
+        "head_ready": True,
         "evidence": (
-            "GPU smoke chain passed: run qwen3_merged_smoke_audio_text_20260930_r2. Train job "
-            "46846648 COMPLETED 0:0 and postprocess job 46846649 COMPLETED 0:0 both ran from the "
-            "immutable deployment "
-            "feat-qwen3-merged-fsdp-postprocess-20260930-20260930T153509Z-b50cc61e-5c61506c "
-            "(source b50cc61edc3b1737b860e59fc61baf86131d643e); likelihood subject-level evidence "
-            "was locally verified for all five components."
+            "Two-node smoke chain passed (run qwen3_merged2n_smoke_native_audio_text_20261001_r1): train "
+            "46877582 COMPLETED 0:0 (52:10) and postprocess 46877583 COMPLETED 0:0 (9:33), and the smoke "
+            "stage's fixed head 46877584 COMPLETED 0:0, all from the immutable deployment "
+            "feat-qwen3-multiseed-matrix-readiness-20260930-20261001T112633Z-6a49be82-3313b433 (source "
+            "6a49be820b3d88c1426d1df9bbc206fd95cac6a6). The train job ran on two four-GPU nodes "
+            "(NumNodes=2-2 NumTasks=2 NumCPUs=160, rendezvous nnodes=2 master=as07r3b01:29517) with the "
+            "declared CPU activation offload active, and recorded per-rank peaks of 22.53-26.84 GiB "
+            "allocated / 34.36-36.90 GiB reserved / about 50.5 GiB free on every rank. Likelihood "
+            "subject-level evidence was collected locally for all five components and the strict metrics "
+            "were recomputed from the stored subject predictions with an exact match (status passed)."
+            " Hidden-feature audit passed in the same two-node shape: postprocess 46885550 and head "
+            "46885551 COMPLETED 0:0 under the isolated run qwen3_heads_audit_native_audio_text_20261001_r2 "
+            "(feature dimension 2048). Superseded one-node chain 46846648/46846649 is kept for the record."
         ),
     },
     "symmetric_merged_qwen3_pooled_native_audio_only": {
         "backend": "qwen3omni",
         "modality": "audio_only",
-        "production_ready": False,
-        "production_block_reason": (
-            "the audio-only route has no GPU smoke chain in this task; it is covered by "
-            "CPU/config/processor route tests only"
+        "verified_shape": {
+            "train_nodes": 2,
+            "gpus_per_node": 4,
+            "gradient_accumulation_steps": 16,
+        },
+        "production_ready": True,
+        "production_block_reason": None,
+        "head_ready": True,
+        "evidence": (
+            "Two-node smoke chain passed (run qwen3_merged2n_smoke_native_audio_only_20261001_r1): train "
+            "46880498 COMPLETED 0:0 (51:30) and postprocess 46880499 COMPLETED 0:0 (7:49), and the smoke "
+            "stage's fixed head 46880500 COMPLETED 0:0, all from the immutable deployment "
+            "feat-qwen3-multiseed-matrix-readiness-20260930-20261001T112633Z-6a49be82-3313b433 (source "
+            "6a49be820b3d88c1426d1df9bbc206fd95cac6a6). The train job ran on two four-GPU nodes "
+            "(rendezvous nnodes=2 master=as07r4b26:29517) with the declared CPU activation offload active, "
+            "and recorded per-rank peaks of 21.40-21.60 GiB allocated / 29.21-29.41 GiB reserved / about "
+            "50.7-50.9 GiB free on every rank. Likelihood subject-level evidence was collected locally for "
+            "all five components and the strict metrics were recomputed from the stored subject predictions "
+            "with an exact match (status passed)."
+            " Hidden-feature audit passed in the same two-node shape: postprocess 46885552 and head "
+            "46885553 COMPLETED 0:0 under the isolated run qwen3_heads_audit_native_audio_only_20261001_r2 "
+            "(feature dimension 2048). Superseded one-node chain 46852252/46852253 is kept for the record."
         ),
-        "head_ready": False,
-        "evidence": None,
     },
     "symmetric_merged_qwen3_pooled_english_text_only": {
         "backend": "qwen38",
         "modality": "text_only",
-        "production_ready": False,
-        "production_block_reason": (
-            "the English text contract has no GPU smoke chain in this task; it is covered by "
-            "CPU/config/processor route tests only"
+        "verified_shape": {
+            "train_nodes": 1,
+            "gpus_per_node": 4,
+            "gradient_accumulation_steps": 32,
+        },
+        "production_ready": True,
+        "production_block_reason": None,
+        "head_ready": True,
+        "evidence": (
+            "GPU smoke chain passed: run qwen3_multiseed_smoke_en_text_20260930_r1. Train job "
+            "46852254 COMPLETED 0:0 (6:40) and postprocess job 46852255 COMPLETED 0:0 (2:37), both "
+            "from the immutable deployment "
+            "feat-qwen3-multiseed-matrix-readiness-20260930-20260930T183953Z-4ff77c53-521d2e6a "
+            "(source 4ff77c53ebd3808671af551a58287136bd1726e5). The four translated components "
+            "render the versioned translation notice and DAIC keeps its native English input; "
+            "likelihood subject-level evidence was locally verified for all five components."
+            " Hidden-feature audit passed: postprocess job 46853898 and head job 46855540 COMPLETED 0:0 under the isolated run qwen3_heads_audit_english_text_only_20260930_r1 (feature dimension 5120, 24 train and 24 holdout rows); the first head attempt 46853899 failed on the missing project-local dependency path and is preserved."
         ),
-        "head_ready": False,
-        "evidence": None,
+    },
+    "symmetric_merged_qwen3_pooled_english_audio_text": {
+        "backend": "qwen3omni",
+        "modality": "audio_text",
+        "verified_shape": {
+            "train_nodes": 2,
+            "gpus_per_node": 4,
+            "gradient_accumulation_steps": 16,
+        },
+        "production_ready": True,
+        "production_block_reason": None,
+        "head_ready": True,
+        "evidence": (
+            "Two-node smoke chain passed (run qwen3_merged2n_smoke_en_audio_text_20261001_r2): train "
+            "46889195 COMPLETED 0:0 (51:44) and postprocess 46889196 COMPLETED 0:0 (10:00), and the smoke "
+            "stage's fixed head 46889197 COMPLETED 0:0, all from the immutable deployment "
+            "feat-qwen3-multiseed-matrix-readiness-20260930-20261001T112633Z-6a49be82-3313b433 (source "
+            "6a49be820b3d88c1426d1df9bbc206fd95cac6a6). The train job ran on two four-GPU nodes "
+            "(rendezvous nnodes=2 master=as03r5b22:29517) with the declared CPU activation offload active "
+            "and per-rank peaks of 22.53-26.84 GiB allocated / 34.36-36.90 GiB reserved / about 50.5 GiB "
+            "free on every rank. Likelihood subject-level evidence was collected locally for all five "
+            "components and the strict metrics were recomputed from the stored subject predictions with an "
+            "exact match (status passed)."
+            " Hidden-feature audit passed in the same two-node shape: postprocess 46891829 and head "
+            "46891830 COMPLETED 0:0 under the isolated run qwen3_heads_audit_english_audio_text_20261001_r2 "
+            "(feature dimension 2048)."
+            " The first attempt r1 (train 46880501) failed on an NCCL collective timeout of a 1-element "
+            "ALLREDUCE that never completed inside the process-group timeout; it is classified transient "
+            "infrastructure, its dependent jobs were cancelled with DependencyNeverSatisfied, and the "
+            "unchanged retry r2 above passed. The superseded one-node chain 46852256/46852257 is kept for "
+            "the record."
+        ),
     },
 }
 
@@ -164,12 +241,22 @@ def merged_route_decision(config: dict[str, Any], *, stage: str) -> dict[str, An
     Qwen3-backed contract must be one of the four declared pooled contracts with
     a matching backend and modality; the bounded ``smoke`` stage is allowed for
     a declared route, and ``cv``/``final`` additionally require the recorded
-    production readiness.
+    production readiness *and* the declared lane shape the route was verified in,
+    so an override that only restores the effective global batch (for example one
+    node with accumulation 32 instead of two with 16) cannot run production on
+    the strength of evidence recorded for another shape.
     """
     if stage not in {"smoke", "cv", "final"}:
         raise ValueError(f"Unsupported merged stage: {stage!r}")
     name = str(config.get("name") or "")
     modality = str(config.get("modality") or "").strip().lower()
+    execution = config.get("execution") or {}
+    training = config.get("training") or {}
+    declared_shape = {
+        "train_nodes": int(execution.get("train_nodes") or 1),
+        "gpus_per_node": int(execution.get("qwen_gpus") or 4),
+        "gradient_accumulation_steps": int(training.get("gradient_accumulation_steps") or 1),
+    }
     backends = merged_blocked_backends(config)
     if not backends:
         return {
@@ -180,6 +267,9 @@ def merged_route_decision(config: dict[str, Any], *, stage: str) -> dict[str, An
             "contract": name,
             "backends": [],
             "modality": modality,
+            "declared_shape": declared_shape,
+            "verified_shape": None,
+            "shape_verified": True,
             "head_ready": True,
             "head_deferred_reason": None,
             "reason": None,
@@ -196,6 +286,9 @@ def merged_route_decision(config: dict[str, Any], *, stage: str) -> dict[str, An
             "contract": name,
             "backends": backends,
             "modality": modality,
+            "declared_shape": declared_shape,
+            "verified_shape": None,
+            "shape_verified": False,
             "head_ready": False,
             "head_deferred_reason": QWEN3_HEAD_PREREQUISITE,
             "reason": (
@@ -205,15 +298,26 @@ def merged_route_decision(config: dict[str, Any], *, stage: str) -> dict[str, An
             ),
             "evidence": None,
         }
+    verified_shape = entry.get("verified_shape")
+    shape_verified = verified_shape is None or declared_shape == dict(verified_shape)
     if stage == "smoke":
         allowed = True
         reason = None
     else:
-        allowed = bool(entry["production_ready"])
-        reason = None if allowed else (
-            f"{QWEN3_MERGED_PREREQUISITE}: {name} {stage} needs a passed GPU smoke chain; "
-            f"{entry['production_block_reason']}."
-        )
+        allowed = bool(entry["production_ready"]) and shape_verified
+        if not entry["production_ready"]:
+            reason = (
+                f"{QWEN3_MERGED_PREREQUISITE}: {name} {stage} needs a passed GPU smoke chain; "
+                f"{entry['production_block_reason']}."
+            )
+        elif not shape_verified:
+            reason = (
+                f"{QWEN3_MERGED_PREREQUISITE}: {name} {stage} declares "
+                f"{declared_shape} but the route was verified as {entry.get('verified_shape')}; "
+                "a smoke chain in the declared shape is required."
+            )
+        else:
+            reason = None
     return {
         "qwen3": True,
         "declared": True,
@@ -222,6 +326,9 @@ def merged_route_decision(config: dict[str, Any], *, stage: str) -> dict[str, An
         "contract": name,
         "backends": backends,
         "modality": modality,
+        "declared_shape": declared_shape,
+        "verified_shape": entry.get("verified_shape"),
+        "shape_verified": shape_verified,
         "head_ready": bool(entry["head_ready"]),
         "head_deferred_reason": None if entry["head_ready"] else QWEN3_HEAD_PREREQUISITE,
         "reason": reason,
@@ -478,27 +585,35 @@ def _resolved_route_resources(
 ) -> dict[str, Any]:
     """Resolve the train/postprocess GPU shape for one Qwen3 merged contract.
 
-    The merged contract declares its shape: ``execution.qwen_gpus`` for the FSDP
-    training lane and ``execution.postprocess_gpus`` for the sharded evaluation,
-    which must agree with the components' ``resources.eval_gpus_per_node``. The
-    FSDP recipe keeps an effective global batch of 128, so the accumulated
-    per-rank batch must match the declared rank count.
+    The merged contract declares its shape: ``execution.train_nodes`` and
+    ``execution.qwen_gpus`` (GPUs per node) for the FSDP training lane, and
+    ``execution.postprocess_gpus`` for the sharded evaluation, which must agree
+    with the components' ``resources.eval_gpus_per_node``. The FSDP recipe keeps
+    an effective global batch of 128, so the accumulated per-rank batch must
+    match the declared rank count (nodes x GPUs per node).
     """
     execution = config.get("execution") or {}
     training = config.get("training") or {}
+    train_nodes = int(execution.get("train_nodes") or 1)
     train_gpus = int(execution.get("qwen_gpus") or 4)
+    if train_nodes < 1 or train_gpus < 1:
+        raise ValueError("execution.train_nodes and execution.qwen_gpus must be positive")
     resources = validate_merged_resources(config, component_records)
     postprocess_gpus = int(resources["eval_gpus_per_node"])
     per_device = int(training.get("per_device_train_batch_size", 1))
     accumulation = int(training.get("gradient_accumulation_steps", 1))
-    effective_batch = per_device * accumulation * train_gpus
+    world_size = train_nodes * train_gpus
+    effective_batch = per_device * accumulation * world_size
     if effective_batch != 128:
         raise ValueError(
-            f"Qwen3 merged FSDP keeps an effective global batch of 128; {train_gpus} rank(s) with "
-            f"per_device={per_device} accumulation={accumulation} give {effective_batch}."
+            f"Qwen3 merged FSDP keeps an effective global batch of 128; {world_size} rank(s) "
+            f"({train_nodes} node(s) x {train_gpus}) with per_device={per_device} "
+            f"accumulation={accumulation} give {effective_batch}."
         )
     return {
+        "train_nodes": train_nodes,
         "train_gpus": train_gpus,
+        "world_size": world_size,
         "postprocess_gpus": postprocess_gpus,
         "evaluation_resources": resources,
     }
@@ -650,6 +765,7 @@ def build_job_specs(
         else:
             final_epochs = None
         model_backend = str(config.get("model_backend") or "")
+        train_nodes = int(route_resources["train_nodes"]) if route_resources else 1
         train_gpus = int(route_resources["train_gpus"]) if route_resources else 4
         postprocess_gpus = int(route_resources["postprocess_gpus"]) if route_resources else 1
         for fold in folds:
@@ -664,7 +780,12 @@ def build_job_specs(
                     "run_id": run_id,
                     "run_root": str(roots["train"]),
                     "model_backend": model_backend,
-                    "resource": {"gpus": train_gpus, "cpus": 20 * train_gpus, "time": config["execution"]["qwen_time"]},
+                    "resource": {
+                        "nodes": train_nodes,
+                        "gpus": train_gpus,
+                        "cpus": 20 * train_gpus,
+                        "time": config["execution"]["qwen_time"],
+                    },
                     "epochs": final_epochs if stage == "final" else (smoke_epochs if stage == "smoke" else None),
                     "subjects_per_class": smoke_subjects if stage == "smoke" else None,
                 },
@@ -845,6 +966,7 @@ def _submit_job(
         export_values["LOG_ROOT"] = str(job["log_root"])
     if job["kind"] == "train":
         export_values["NPROC_PER_NODE"] = str(int(job["resource"]["gpus"]))
+        export_values["NNODES"] = str(int(job["resource"].get("nodes", 1)))
     if job["kind"] == "postprocess":
         export_values["POSTPROCESS_GPUS"] = str(int(job["resource"]["gpus"]))
     for key in ("epochs", "subjects_per_class", "trials", "checkpoint_dir", "features_dir"):
@@ -854,7 +976,17 @@ def _submit_job(
     arguments = ["sbatch", "--parsable", f"--job-name=sym-{job['modality'][:4]}-{job['stage'][:4]}-{job['fold']}-{job['kind'][:4]}"]
     gpus = int(job["resource"]["gpus"])
     cpus = int(job["resource"]["cpus"])
-    if gpus > 0:
+    nodes = int(job["resource"].get("nodes", 1))
+    if nodes > 1 and gpus > 0:
+        # A multi-node training lane: one task per node, each holding that node's
+        # GPUs and CPUs, and the worker expands the node rank through srun. The
+        # single-node branch below stays byte-identical to the verified shape.
+        arguments.append(f"--nodes={nodes}")
+        arguments.append(f"--ntasks={nodes}")
+        arguments.append("--ntasks-per-node=1")
+        arguments.append(f"--cpus-per-task={cpus}")
+        arguments.append(f"--gres=gpu:{gpus}")
+    elif gpus > 0:
         # Sbatch command-line flags override the worker's script defaults, so
         # the configured resource shape travels with the job contract.
         arguments.append(f"--gres=gpu:{gpus}")

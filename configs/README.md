@@ -83,6 +83,12 @@ DAIC, CMDC × three modalities) plus the three pooled Turkish default cells:
   Qwen3-Omni-30B-A3B Thinker. The Talker is not retained;
 - both families use `promptcontext_v1`, FSDP, BF16 inference, CPU activation
   offload, likelihood evaluation and standalone evaluation after training.
+- the lane shape is declared by each config: the audio cells declare
+  `resources.train_nodes: 2` with `training.gradient_accumulation_steps: 16`
+  (two four-GPU nodes, the shape the pooled Qwen3-Omni baselines were submitted
+  with), and the text cells keep one four-GPU node with accumulation 32. Both
+  keep the FSDP effective global batch of 128, and `exp.py submit` takes the
+  node count from the config unless `--train-nodes` overrides it.
 
 The Turkish default cells are the existing pooled pos+neg configs
 (`configs/main/turkish_pooled_t17_*_promptcontext_v1_*`): the canonical generator
@@ -323,14 +329,20 @@ eight-cell default matrix. English cells change only the recipe marker, the
 transcripts overlay, the isolated English manifest/split roots and the English
 run roots.
 
-Four Qwen3 pooled merged contracts are defined under
+Five Qwen3 pooled merged contracts are defined under
 `configs/experiments/merged/` (native text-only, native audio-only, native
-audio+text, English text-only). Each names five components, one backend family
-and the mean-dataset-macro-F1 selection contract. Their GPU execution is
-blocked: `scripts/submit_symmetric_merged.py` refuses a config whose components
-resolve to a Qwen3 backbone (dry-runs report the blocked plan). The hidden
-extractor (`src/features/extract_qwen_hidden.py`) supports Qwen3 checkpoints for
-the hidden-head path; Qwen3 fixed heads are explicit-only and run through
+audio+text, English text-only, English audio+text). Each names five components,
+one backend family and the mean-dataset-macro-F1 selection contract.
+`scripts/submit_symmetric_merged.py` keys its gate on the resolved contract
+identity (config name + backend + modality) and on its own recorded readiness
+table, not on the YAML `status` field: a Qwen3-backed contract that is not
+declared there is refused outright, the bounded `smoke` stage is how a declared
+route is verified, and the multi-fold `cv` and `final` stages additionally
+require that route's recorded GPU smoke chain. All five contracts have passed
+their own chains (`execute_verified`). Every route also passed its bounded
+hidden-feature audit (postprocess, feature extraction and fixed heads on its
+smoke checkpoint), so the head kind is open for all five. Qwen3 fixed heads stay
+explicit-only on the standalone path: they run through
 `scripts/submit_qwen3_hidden_smoke.sh` (`QWEN3_HEADS_ENABLED=1`), never through
 the harmonized launchers. Writing `strategy: fsdp` into a
 merged config is not readiness, and no route falls back to the old DDP loader.

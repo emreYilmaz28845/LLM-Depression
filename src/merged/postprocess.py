@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 import numpy as np
 import torch
 
+from src.features.extract_qwen_hidden import BACKEND_HIDDEN_SIZES
 from src.features.pooling import aligned_attention_mask, last_valid_token
 from src.features.qwen_hidden_collator import PromptOnlyExtractionCollator, load_prompt_audio
 from src.evaluate import evaluate_examples
@@ -157,6 +158,23 @@ def _extract_partition(
         "vector_dimension": dimension,
         "mask_sources": dict(sorted({source: sum(1 for row in rows if row.get("mask_source") == source) for source in {str(row.get("mask_source")) for row in rows}}.items())),
     }
+
+
+def validate_feature_dimensions(dimensions: set[int], model_backend: str) -> None:
+    """Fail closed when the merged hidden dimension does not match the backend.
+
+    The route's own contract fixes the decoder hidden size (5120 for Qwen3.8
+    text, 2048 for the Qwen3-Omni Thinker, 3840 for Gemma 4). A feature matrix
+    with any other width means the extractor read a different tensor than the
+    heads expect, so the head stage must not run on it.
+    """
+    expected = BACKEND_HIDDEN_SIZES.get(str(model_backend or "").strip().lower())
+    if expected and dimensions and not dimensions <= expected:
+        raise ValueError(
+            f"Merged hidden feature dimension {sorted(dimensions)} does not match the recorded "
+            f"hidden size {sorted(expected)} for backend {model_backend!r}; refusing to fit heads "
+            "on an unexpected vector."
+        )
 
 
 def postprocess_merged_fold(
@@ -374,6 +392,7 @@ def postprocess_merged_fold(
         dimensions = {int(row["vector_dimension"]) for row in train_rows + holdout_rows}
         if len(dimensions) > 1:
             raise ValueError(f"Merged hidden feature dimensions disagree: {sorted(dimensions)}")
+        validate_feature_dimensions(dimensions, model_backend)
         feature_metadata = {
             "schema_version": "symmetric_merged_hidden_features.v1",
             "stage": stage,
@@ -403,16 +422,15 @@ def postprocess_merged_fold(
             "feature_dimension": int(feature_metadata["feature_dimension"]),
         }
     else:
-        # Qwen3 hidden-feature extraction and the head stage are a separate
-        # support task: this route completes with its evaluation evidence and
-        # records the deferred prerequisite instead of writing unverified
-        # feature matrices.
+        # A backend whose hidden-feature extraction is not supported completes
+        # with its evaluation evidence and records the deferred prerequisite
+        # instead of writing unverified feature matrices.
         features_payload = {
             "status": "deferred_prerequisite",
             "backend": model_backend,
             "reason": (
-                "Qwen3 hidden-feature extraction and the head stage are a separate support task; "
-                "this route completes with its evaluation evidence only and its head kind stays "
+                "hidden-feature extraction is not supported for this backend; this route "
+                "completes with its evaluation evidence only and its head kind stays "
                 "execute-blocked until that support lands."
             ),
         }

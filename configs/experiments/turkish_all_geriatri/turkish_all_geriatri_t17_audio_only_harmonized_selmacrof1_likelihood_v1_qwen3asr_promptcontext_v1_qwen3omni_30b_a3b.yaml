@@ -126,5 +126,6 @@ evaluation:
   evaluate_last_checkpoint: false
   inference_dtype: bf16
 resources:
+  train_nodes: 2
   eval_nodes: 1
   eval_gpus_per_node: 4

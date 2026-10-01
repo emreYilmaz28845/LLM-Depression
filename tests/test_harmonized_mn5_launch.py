@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from scripts.submit_symmetric_merged import (
+    QWEN3_CONTRACT_READINESS,
     _head_trials,
     build_job_specs,
     merged_blocked_backends,
@@ -60,6 +61,17 @@ def test_native_matrix_legacy_copy_keeps_the_pos_only_selection() -> None:
     assert all("turkish_pos_only_t17" in rel for rel in turkish)
 
 
+def test_merged_head_worker_uses_the_project_local_hidden_deps() -> None:
+    """The head stage needs the project-local Optuna/XGBoost/scikit-learn deps.
+
+    A managed deployment does not carry ``.deps/qwen_hidden``, so the worker must
+    accept an explicit path exactly like the standalone classifier worker.
+    """
+    text = (ROOT / "scripts/run_symmetric_merged_head_slurm.sh").read_text(encoding="utf-8")
+    assert 'QWEN_HIDDEN_DEPS="${QWEN_HIDDEN_DEPS:-$PROJECT_ROOT/.deps/qwen_hidden}"' in text
+    assert 'export PYTHONPATH="$QWEN_HIDDEN_DEPS:$PROJECT_ROOT' in text
+
+
 def test_merged_planner_gates_qwen3_contracts_by_route_readiness() -> None:
     configs = [QWEN3_POOLED_MERGED]
     assert merged_blocked_backends(load_merged_config(QWEN3_POOLED_MERGED)) == ["qwen38"]
@@ -76,11 +88,9 @@ def test_merged_planner_gates_qwen3_contracts_by_route_readiness() -> None:
         github_issue=12,
         github_pr=10,
     )
-    assert {job["kind"] for job in smoke["jobs"]} == {"train", "postprocess"}
-    assert all(
-        job["head_deferred"] == "Qwen3 merged head support prerequisite incomplete"
-        for job in smoke["jobs"]
-    )
+    assert {job["kind"] for job in smoke["jobs"]} == {"train", "postprocess", "head"}
+    # Every route passed its bounded hidden-feature audit, so no head kind is deferred.
+    assert all(job["head_deferred"] is None for job in smoke["jobs"])
     assert smoke["route_readiness"][str(QWEN3_POOLED_MERGED)]["allowed"] is True
     # Production (cv/final) is open only for a route whose own smoke chain passed.
     verified = build_job_specs(
@@ -96,10 +106,45 @@ def test_merged_planner_gates_qwen3_contracts_by_route_readiness() -> None:
     )
     assert verified["blocked_prerequisite"] == []
     assert all(not job["blocked_prerequisite"] for job in verified["jobs"])
-    # 5 folds x (train + postprocess): the head kind stays deferred.
-    assert len(verified["jobs"]) == 10
-    unverified = ROOT / "configs/experiments/merged/symmetric_merged_qwen3_pooled_native_audio_only.yaml"
-    with pytest.raises(ValueError, match="Qwen3 merged FSDP/postprocess prerequisite incomplete"):
+    # 5 folds x (train + postprocess + fixed heads).
+    assert len(verified["jobs"]) == 15
+    # Every route whose own smoke chain passed in its declared shape may run cv;
+    # a route that is not production-ready is refused with its recorded reason.
+    # The readiness table is authoritative, so this holds while a route is being
+    # re-verified in a changed shape and after it is opened again.
+    for name, entry in QWEN3_CONTRACT_READINESS.items():
+        path = ROOT / "configs/experiments/merged" / f"{name}.yaml"
+        run_id = f"qwen3_cv_{name.removeprefix('symmetric_merged_qwen3_pooled_')}"
+        if entry["production_ready"]:
+            registry = build_job_specs(
+                [path],
+                stage="cv",
+                run_id=run_id,
+                dry_run=False,
+                smoke_subjects=2,
+                smoke_epochs=1,
+                smoke_trials=0,
+                github_issue=12,
+                github_pr=10,
+            )
+            assert registry["blocked_prerequisite"] == []
+            assert all(not job["blocked_prerequisite"] for job in registry["jobs"])
+            assert {job["kind"] for job in registry["jobs"]} == {"train", "postprocess", "head"}
+        else:
+            with pytest.raises(ValueError, match="needs a passed GPU smoke chain"):
+                build_job_specs(
+                    [path],
+                    stage="cv",
+                    run_id=run_id,
+                    dry_run=False,
+                    smoke_subjects=2,
+                    smoke_epochs=1,
+                    smoke_trials=0,
+                    github_issue=12,
+                    github_pr=10,
+                )
+    unverified = ROOT / "configs/experiments/merged/symmetric_merged_harmonized_audio_only_likelihood_v1.yaml"
+    with pytest.raises(ValueError, match="not a declared Qwen3 merged contract"):
         build_job_specs(
             [unverified],
             stage="cv",

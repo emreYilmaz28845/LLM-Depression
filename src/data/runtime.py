@@ -25,6 +25,7 @@ from src.data.prompt_context import (
     LEGACY_QUESTION_CONTEXT_SENTENCES,
     resolve_question_context_sentences,
     resolve_system_prompt,
+    resolve_translation_notice,
 )
 from src.daic_chunking import (
     balanced_joint_bundles,
@@ -135,6 +136,31 @@ def _transcript_block(use_text: bool, transcript: str) -> str:
     return f"The transcript of the subject's speech is:\n{transcript}\n\n"
 
 
+def _assert_translation_notice_row(config: dict[str, Any], row: dict[str, Any]) -> None:
+    """Fail closed when a translation-notice prompt meets a non-English row.
+
+    The manifest overlay records ``transcript_variant`` and ``language`` per
+    row. A config that tells the model the transcript is a translation must see
+    only rows the English overlay produced; a native row (or a missing marker)
+    would make the prompt claim something the input does not show.
+    """
+    if resolve_translation_notice(config) is None:
+        return
+    variant = str(row.get("transcript_variant") or "").strip().lower()
+    if variant != "english":
+        raise ValueError(
+            "This config declares an English-translation prompt, but the row's "
+            f"transcript_variant is {variant or 'missing'!r}; refusing to describe a "
+            "native transcript as a translation."
+        )
+    language = str(row.get("language") or "").strip().lower()
+    if language and language != "en":
+        raise ValueError(
+            "An English-translation prompt row declares "
+            f"language={language!r}; expected 'en'."
+        )
+
+
 def _user_prompt_template(config: dict[str, Any], is_subject_bundle: bool) -> str:
     prompt_cfg = config.get("prompt", {})
     if is_subject_bundle:
@@ -166,6 +192,22 @@ def render_user_prompt_text(
         if audio_context_override is not None
         else _audio_context_block(use_audio, is_subject_bundle)
     )
+    transcript_block = _transcript_block(use_text, transcript)
+    translation_notice = resolve_translation_notice(config)
+    if translation_notice is not None:
+        # One notice block, immediately before the transcript it describes. A
+        # template that never places the transcript block would silently drop
+        # the notice, so it fails closed instead.
+        if not use_text:
+            raise ValueError(
+                "prompt.translation_notice_version requires a transcript-bearing modality."
+            )
+        if "{transcript_block}" not in template:
+            raise ValueError(
+                "prompt.translation_notice_version requires the prompt template to place "
+                "{transcript_block}; otherwise the notice never reaches the model."
+            )
+        transcript_block = f"{translation_notice}\n{transcript_block}"
     if "{question_context}" in template:
         sentence_set = resolve_question_context_sentences(config)
         if question_condition not in sentence_set:
@@ -182,7 +224,7 @@ def render_user_prompt_text(
     placeholder_values = {
         "transcript": transcript,
         "audio_context_block": audio_context_block,
-        "transcript_block": _transcript_block(use_text, transcript),
+        "transcript_block": transcript_block,
         "decision_basis": _decision_basis(input_modality),
         "label_descriptor": prompt_label_descriptor(config),
         "label_instruction": prompt_label_instruction(config),
@@ -334,6 +376,7 @@ def _base_example_from_row(
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     input_modality = resolve_input_modality(config)
     use_audio, use_text = _modality_flags(input_modality)
+    _assert_translation_notice_row(config, row)
     transcript = row["transcript"] if use_text else ""
     if use_text and str(row.get("dataset", "")).lower() == "androids_interview":
         scope = str(

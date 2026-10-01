@@ -62,7 +62,12 @@ mkdir -p "$LOG_ROOT"
 exec > >(tee -a "$LOG_ROOT/head-${SLURM_JOB_ID}.out")
 exec 2> >(tee -a "$LOG_ROOT/head-${SLURM_JOB_ID}.err" >&2)
 export PROJECT_ROOT PYTHONHASHSEED="${PYTHONHASHSEED:-0}"
-export PYTHONPATH="$PROJECT_ROOT/.deps/qwen_hidden:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+# The hidden-state classifier dependencies live in the project-local deps path
+# (Optuna, XGBoost, scikit-learn). A managed deployment does not carry it, so the
+# submitter points QWEN_HIDDEN_DEPS at the permanent checkout's copy, exactly like
+# the standalone hidden-classifier worker does.
+QWEN_HIDDEN_DEPS="${QWEN_HIDDEN_DEPS:-$PROJECT_ROOT/.deps/qwen_hidden}"
+export PYTHONPATH="$QWEN_HIDDEN_DEPS:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 CMD=(python -m src.merged.heads --config "$CONFIG" --stage "$STAGE" --fold "$FOLD" --run-id "$RUN_ID" --features-dir "$FEATURES_DIR")
 if [ -n "$TRIALS" ]; then CMD+=(--trials "$TRIALS"); fi
 if [ -n "$METHOD" ]; then CMD+=(--method "$METHOD"); fi

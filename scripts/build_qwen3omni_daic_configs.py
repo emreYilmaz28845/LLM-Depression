@@ -117,9 +117,11 @@ ALLOWED_DIFF_PATHS = frozenset(
         "training.strategy",
         "training.activation_offload",
         "training.run_final_eval_in_train",
+        "training.gradient_accumulation_steps",
         "evaluation.evaluation_view",
         "evaluation.inference_dtype",
         "resources",
+        "resources.train_nodes",
         "resources.eval_nodes",
         "resources.eval_gpus_per_node",
     }
@@ -152,6 +154,12 @@ POOLED_ALLOWED_DIFF_PATHS = ALLOWED_DIFF_PATHS | {
     "manifest_policy",
     "prompt.question_context_version",
 }
+
+# The audio lane default: two four-GPU nodes with per-rank accumulation 16,
+# which keeps the FSDP effective global batch at 128 (1 x 16 x 8). The
+# existing pooled Qwen3-Omni baselines were submitted with this shape.
+TRAIN_NODES = 2
+GRADIENT_ACCUMULATION_STEPS = 16
 
 POOLED_DATASET_CONTEXT = "turkish_pooled"
 POOLED_RUN_ROOT_DATASET_DIR = "turkish"
@@ -219,9 +227,11 @@ def derive(source: dict[str, Any], cell: tuple) -> dict[str, Any]:
     config["evaluation"]["inference_dtype"] = INFERENCE_DTYPE
 
     config["resources"] = {
+        "train_nodes": TRAIN_NODES,
         "eval_nodes": EVAL_NODES,
         "eval_gpus_per_node": EVAL_GPUS_PER_NODE,
     }
+    training["gradient_accumulation_steps"] = GRADIENT_ACCUMULATION_STEPS
 
     changed = diff_paths(source, config)
     disallowed = [path for path in changed if path not in ALLOWED_DIFF_PATHS]
@@ -283,9 +293,11 @@ def derive_pooled(source: dict[str, Any], cell: tuple) -> dict[str, Any]:
     config["evaluation"]["inference_dtype"] = INFERENCE_DTYPE
 
     config["resources"] = {
+        "train_nodes": TRAIN_NODES,
         "eval_nodes": EVAL_NODES,
         "eval_gpus_per_node": EVAL_GPUS_PER_NODE,
     }
+    training["gradient_accumulation_steps"] = GRADIENT_ACCUMULATION_STEPS
     if str(config.get("dataset_variant")) != "pooled_t17":
         raise GenerationError(f"{slug}: pooled source must declare dataset_variant=pooled_t17")
 
@@ -390,7 +402,7 @@ SECTION_ORDER = {
         "do_sample",
         "evaluate_last_checkpoint",
     ),
-    "resources": ("eval_nodes", "eval_gpus_per_node"),
+    "resources": ("train_nodes", "eval_nodes", "eval_gpus_per_node"),
 }
 
 
@@ -434,14 +446,28 @@ def render(config: dict[str, Any]) -> str:
     )
 
 
-def emit(target: Path, config: dict[str, Any], *, check_only: bool, failures: list[str]) -> None:
+def emit(
+    target: Path,
+    config: dict[str, Any],
+    *,
+    check_only: bool,
+    failures: list[str],
+    replace: bool = False,
+    replacements: list[str] | None = None,
+) -> None:
     rendered = render(config)
     if yaml.safe_load(rendered) != config:
         failures.append(f"rendered config does not round-trip: {target}")
         return
     if target.is_file():
         if target.read_text(encoding="utf-8") != rendered:
-            failures.append(f"existing file differs from derived content: {target}")
+            if replace and not check_only:
+                target.write_text(rendered, encoding="utf-8")
+                print(f"replaced {target.relative_to(PROJECT_ROOT)}")
+                if replacements is not None:
+                    replacements.append(str(target.relative_to(PROJECT_ROOT)))
+            else:
+                failures.append(f"existing file differs from derived content: {target}")
         return
     if check_only:
         failures.append(f"missing derived file: {target}")
@@ -473,6 +499,8 @@ def _emit_cell(
     check_only: bool,
     failures: list[str],
     audit: dict[str, Any],
+    replace: bool = False,
+    replacements: list[str] | None = None,
 ) -> None:
     slug, source_name, target_name, modality = cell
     source_path = source_dir / source_name
@@ -481,7 +509,14 @@ def _emit_cell(
     source = yaml.safe_load(source_path.read_text(encoding="utf-8"))
     config = derive_fn(source, cell)
     target = MAIN / target_name
-    emit(target, config, check_only=check_only, failures=failures)
+    emit(
+        target,
+        config,
+        check_only=check_only,
+        failures=failures,
+        replace=replace,
+        replacements=replacements,
+    )
     changed = diff_paths(source, config)
     audit["configs"].append(
         {
@@ -501,6 +536,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="verify without writing")
     parser.add_argument(
+        "--replace-cells",
+        action="store_true",
+        help=(
+            "one-time transition: replace existing generated configs even when they differ from "
+            "the derived content (for example the audio-lane shape change); the replaced paths "
+            "are recorded in the audit"
+        ),
+    )
+    parser.add_argument(
         "--audit-output",
         type=Path,
         default=DEFAULT_AUDIT_OUTPUT,
@@ -509,6 +553,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     failures: list[str] = []
+    replacements: list[str] = []
     audit: dict[str, Any] = {
         "schema_version": "audiollm.qwen3omni_config_diff.v1",
         "prompt_context_version": PROMPT_CONTEXT_VERSION,
@@ -531,8 +576,11 @@ def main(argv: list[str] | None = None) -> int:
                 check_only=args.check,
                 failures=failures,
                 audit=audit,
+                replace=args.replace_cells,
+                replacements=replacements,
             )
 
+    audit["cells_replaced"] = replacements
     if args.audit_output is not None:
         args.audit_output.parent.mkdir(parents=True, exist_ok=True)
         args.audit_output.write_text(

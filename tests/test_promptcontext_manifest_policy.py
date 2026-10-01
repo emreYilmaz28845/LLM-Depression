@@ -172,6 +172,8 @@ def test_pr259_training_shape_arguments_still_work() -> None:
     assert four_gpu["training_shape"] == {
         "strategy": "fsdp",
         "nodes": 1,
+        "nodes_source": "cli",
+        "config_nodes": 1,
         "gpus_per_node": 4,
         "world_size": 4,
         "per_device_train_batch_size": 1,
@@ -206,6 +208,36 @@ def test_pr259_training_shape_arguments_still_work() -> None:
             train_gpus_per_node=4,
             **_base_kwargs("daic", "text_only", "daic_fold0"),
         )
+
+
+def test_audio_lane_shape_comes_from_the_config_when_no_flag_is_given() -> None:
+    """The audio default is two nodes with accumulation 16, declared by the config."""
+    audio_config = {
+        **DAIC_CONFIG,
+        "training": {**DAIC_CONFIG["training"], "gradient_accumulation_steps": 16},
+        "resources": {"train_nodes": 2, "eval_nodes": 1, "eval_gpus_per_node": 4},
+    }
+    audio_kwargs = _base_kwargs("daic", "text_only", "daic_fold0")
+    audio_kwargs["extra_overrides"] = ["--set=training.gradient_accumulation_steps=16"]
+    contract = resolve_contract(
+        deployment=_deployment(), config_dict=audio_config, **audio_kwargs
+    )
+    shape = contract["training_shape"]
+    assert shape["nodes"] == 2
+    assert shape["nodes_source"] == "config"
+    assert shape["config_nodes"] == 2
+    assert shape["world_size"] == 8
+    assert shape["effective_global_batch_size"] == 128
+    # An explicit flag still wins over the config.
+    overridden = resolve_contract(
+        deployment=_deployment(),
+        config_dict=audio_config,
+        train_nodes=1,
+        train_gpus_per_node=8,
+        **audio_kwargs,
+    )
+    assert overridden["training_shape"]["nodes"] == 1
+    assert overridden["training_shape"]["nodes_source"] == "cli"
 
 
 def test_train_and_evaluation_jobs_keep_distinct_shapes() -> None:

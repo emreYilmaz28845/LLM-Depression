@@ -49,9 +49,9 @@ POOLED_NATIVE_CONFIG_SHA256 = {
     "turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml":
         "bd945a3ceb3d8e70f8c5894a4702aa87722dc3074774f6a18faa9f4d0b96c8ab",
     "turkish_pooled_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml":
-        "e22d52df3f58408d5591f07c86a7ebccd5bb39821c8d17d2f39af9b29f4d1200",
+        "b761a709b2ec29214f0fab8f7ba0bbbb9952cb5dde2c53af893a4b37a07f43eb",
     "turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml":
-        "d3b89e740ff28dfd15fbad2021cc00859cf25fa5ea91a8d08e358e204c1e62a4",
+        "b3ab27cff81518a491ec6a0f81d54388513c05ec57e8ec4d6cdb17ef7254551b",
 }
 
 
@@ -210,7 +210,7 @@ def test_selection_map_records_cells_contracts_and_readiness(tmp_path: Path) -> 
     payload = json.loads(target.read_text(encoding="utf-8"))
     turkish = [cell for cell in payload["cells"] if cell["family"] == "turkish_pooled"]
     assert len(turkish) == 5
-    assert len(payload["merged"]) == 4
+    assert len(payload["merged"]) == 5
     assert payload["readiness"]
     assert any("deferred" in item["state"] for item in payload["readiness"])
     heads_state = next(item["state"] for item in payload["readiness"] if item["contract"] == "heads")

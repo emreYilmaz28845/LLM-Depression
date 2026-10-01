@@ -75,8 +75,10 @@ def _omni_example(*, with_audio: bool = True) -> dict:
     return example
 
 
-def _write_fake_qwen38_checkpoint(tmp_path: Path, *, eval_gpus_per_node: int = 1) -> dict:
-    """Write a minimal but contract-shaped pooled Qwen3.8 checkpoint tree."""
+def _write_fake_qwen38_checkpoint(
+    tmp_path: Path, *, eval_gpus_per_node: int = 1, dataset_variant: str | None = "pooled_t17"
+) -> dict:
+    """Write a minimal but contract-shaped Qwen3.8 checkpoint tree."""
     base = tmp_path / "base_model"
     base.mkdir()
     (base / "config.json").write_text("{}", encoding="utf-8")
@@ -95,27 +97,30 @@ def _write_fake_qwen38_checkpoint(tmp_path: Path, *, eval_gpus_per_node: int = 1
     rows = []
     for subject_id, label in (("t1", 1), ("t2", 0), ("t3", 1), ("t4", 0), ("v1", 1), ("v2", 0), ("v3", 1), ("v4", 0)):
         for condition in CONDITIONS:
-            rows.append(
-                {
-                    "dataset": "turkish",
-                    "dataset_variant": condition,
-                    "sample_id": f"{subject_id}-{condition}",
-                    "subject_id": subject_id,
-                    "label": label,
-                    "score": 17.0,
-                    "threshold": 17.0,
-                    "transcript": "synthetic",
-                    "audio_path": str(tmp_path / "audio.wav"),
-                    "audio_paths": [str(tmp_path / "audio.wav")],
-                }
-            )
+            row = {
+                "dataset": "turkish",
+                "sample_id": f"{subject_id}-{condition}",
+                "subject_id": subject_id,
+                "label": label,
+                "score": 17.0,
+                "threshold": 17.0,
+                "transcript": "synthetic",
+                "audio_path": str(tmp_path / "audio.wav"),
+                "audio_paths": [str(tmp_path / "audio.wav")],
+            }
+            if dataset_variant is not None:
+                row["dataset_variant"] = condition
+            else:
+                row["sample_id"] = f"{subject_id}-row"
+            rows.append(row)
+            if dataset_variant is None:
+                break
     (tmp_path / "audio.wav").write_bytes(b"RIFF0000WAVE")
     manifest = tmp_path / "turkish_manifest.jsonl"
     manifest.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
     saved = {
         "config": {
             "dataset": "turkish",
-            "dataset_variant": "pooled_t17",
             "model_backend": "qwen38",
             "split": {"cv_protocol": "train_val"},
             "evaluation": {"evaluation_view": "harmonized_all_windows_full_coverage"},
@@ -126,6 +131,8 @@ def _write_fake_qwen38_checkpoint(tmp_path: Path, *, eval_gpus_per_node: int = 1
         "fold": 0,
         "manifest_path": str(manifest),
     }
+    if dataset_variant is not None:
+        saved["config"]["dataset_variant"] = dataset_variant
     (fold / "run_config.yaml").write_text(yaml.safe_dump(saved), encoding="utf-8")
     return {"fold": fold, "best": best, "manifest": manifest}
 
@@ -273,6 +280,29 @@ class TestSelectionBuilder:
         )
         assert result.returncode != 0
         assert "required" in (result.stderr + result.stdout)
+
+    def test_non_pooled_checkpoint_selects_by_label_only(self, tmp_path: Path):
+        """An English (or any non-pooled) cell has no question-condition pairing."""
+        fixture = _write_fake_qwen38_checkpoint(tmp_path, dataset_variant=None)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts/build_qwen3_smoke_subject_selection.py"),
+                "--checkpoint-dir", str(fixture["best"]),
+                "--train-per-label", "2",
+                "--eval-per-label", "2",
+                "--preview",
+                "--print-json",
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+        )
+        assert result.returncode == 0, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["required_conditions"] == []
+        assert payload["outer_train"] == ["t1", "t2", "t3", "t4"]
+        assert payload["final_eval"] == ["v1", "v2", "v3", "v4"]
 
 
 class TestSmokeSubmitter:

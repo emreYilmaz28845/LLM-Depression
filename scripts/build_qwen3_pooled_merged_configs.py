@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the four Qwen3 pooled merged contracts.
+"""Generate the five Qwen3 pooled merged contracts.
 
 The contracts are derived from the existing symmetric-merged configs, so the
 merged methodology is inherited by construction and the diff audit proves it:
@@ -12,9 +12,10 @@ contract fields change:
   30B-A3B Thinker for the audio modalities) with the pinned model path and, for
   Qwen3.8, the pinned revision;
 * the five components point at the current native default cells; the Turkish
-  component is the pooled Qwen3 config, and the English text-only contract swaps
-  the four translated datasets to their Qwen3 English cells while DAIC keeps its
-  native English input;
+  component is the pooled Qwen3 config, and the English contracts swap the four
+  translated datasets to their Qwen3 English cells while DAIC keeps its native
+  English input (text-only and audio+text; no English audio-only contract,
+  which would be input-identical to its native counterpart);
 * the pooled English component keeps the prebuilt manifest contract;
 * isolated merged roots under ``symmetric_merged/qwen3_pooled_{native,english}``;
 * the explicit FSDP training recipe (``training.strategy: fsdp`` with CPU
@@ -46,6 +47,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from scripts import build_qwen3_english_configs as english_configs  # noqa: E402
+
 MERGED = PROJECT_ROOT / "configs/experiments/merged"
 MAIN = PROJECT_ROOT / "configs/main"
 DEFAULT_AUDIT_OUTPUT = PROJECT_ROOT / "outputs/qwen3_pooled_merged_configs/config_diff_audit.json"
@@ -73,28 +76,50 @@ CELL_STATUS: dict[str, tuple[str, str]] = {
         "Qwen3 merged FSDP/postprocess GPU smoke chain passed (run qwen3_merged_smoke_text_only_20260930_r3: "
         "train 46844006 and postprocess 46845076 COMPLETED 0:0; deployment "
         "feat-qwen3-merged-fsdp-postprocess-20260930-20260930T142929Z-c41d8e76-91bf3e5a, source "
-        "c41d8e76c12979c358499a8b84fce035f67b6478), so the cv and final stages are executable; the head "
-        "kind stays deferred until Qwen3 hidden-feature support is verified for merged checkpoints.",
+        "c41d8e76c12979c358499a8b84fce035f67b6478), so the cv and final stages are executable, and the "
+        "route passed its bounded hidden-feature audit on that smoke checkpoint, so its head kind is "
+        "open.",
     ),
     "native_audio_text": (
         EXECUTE_VERIFIED_STATUS,
-        "Qwen3 merged FSDP/postprocess GPU smoke chain passed (run qwen3_merged_smoke_audio_text_20260930_r2: "
-        "train 46846648 and postprocess 46846649 COMPLETED 0:0; deployment "
-        "feat-qwen3-merged-fsdp-postprocess-20260930-20260930T153509Z-b50cc61e-5c61506c, source "
-        "b50cc61edc3b1737b860e59fc61baf86131d643e), so the cv and final stages are executable; the head "
-        "kind stays deferred until Qwen3 hidden-feature support is verified for merged checkpoints.",
+        "Two-node smoke chain passed (run qwen3_merged2n_smoke_native_audio_text_20261001_r1: train 46877582 "
+        "and postprocess 46877583 plus the smoke fixed head 46877584 COMPLETED 0:0; deployment "
+        "feat-qwen3-multiseed-matrix-readiness-20260930-20261001T112633Z-6a49be82-3313b433, source "
+        "6a49be820b3d88c1426d1df9bbc206fd95cac6a6) with the declared CPU activation offload active and "
+        "per-rank peaks of 22.53-26.84 GiB allocated, and the route passed its hidden-feature audit in the "
+        "same shape (postprocess 46885550, head 46885551), so the cv and final stages are executable and "
+        "its head kind is open.",
     ),
     "native_audio_only": (
-        SMOKE_ONLY_STATUS,
-        "Qwen3 merged FSDP/postprocess implementation landed; the audio+text route carries the "
-        "GPU smoke chain, so the audio-only route keeps its production guard and its "
-        "CPU/config/processor route tests until it passes its own chain.",
+        EXECUTE_VERIFIED_STATUS,
+        "Two-node smoke chain passed (run qwen3_merged2n_smoke_native_audio_only_20261001_r1: train 46880498 "
+        "and postprocess 46880499 plus the smoke fixed head 46880500 COMPLETED 0:0; deployment "
+        "feat-qwen3-multiseed-matrix-readiness-20260930-20261001T112633Z-6a49be82-3313b433, source "
+        "6a49be820b3d88c1426d1df9bbc206fd95cac6a6) with the declared CPU activation offload active and "
+        "per-rank peaks of 21.40-21.60 GiB allocated, and the route passed its hidden-feature audit in the "
+        "same shape (postprocess 46885552, head 46885553), so the cv and final stages are executable and "
+        "its head kind is open.",
     ),
     "english_text_only": (
-        SMOKE_ONLY_STATUS,
-        "Qwen3 merged FSDP/postprocess implementation landed; the English text contract keeps "
-        "its production guard and its CPU/config/processor route tests until it passes its own "
-        "GPU smoke chain.",
+        EXECUTE_VERIFIED_STATUS,
+        "Qwen3 merged FSDP/postprocess GPU smoke chain passed (run "
+        "qwen3_multiseed_smoke_en_text_20260930_r1: train 46852254 and postprocess 46852255 "
+        "COMPLETED 0:0; deployment "
+        "feat-qwen3-multiseed-matrix-readiness-20260930-20260930T183953Z-4ff77c53-521d2e6a, source "
+        "4ff77c53ebd3808671af551a58287136bd1726e5), so the cv and final stages are executable; the "
+        "four translated components render the versioned translation notice, and the route passed its "
+        "bounded hidden-feature audit on that smoke checkpoint, so its head kind is open.",
+    ),
+    "english_audio_text": (
+        EXECUTE_VERIFIED_STATUS,
+        "Two-node smoke chain passed (run qwen3_merged2n_smoke_en_audio_text_20261001_r2: train 46889195 "
+        "and postprocess 46889196 plus the smoke fixed head 46889197 COMPLETED 0:0; deployment "
+        "feat-qwen3-multiseed-matrix-readiness-20260930-20261001T112633Z-6a49be82-3313b433, source "
+        "6a49be820b3d88c1426d1df9bbc206fd95cac6a6) with the declared CPU activation offload active and "
+        "per-rank peaks of 22.53-26.84 GiB allocated, and the route passed its hidden-feature audit in the "
+        "same shape (postprocess 46891829, head 46891830). The first attempt failed on a transient NCCL "
+        "collective timeout and is preserved; so the cv and final stages are executable and its head kind "
+        "is open.",
     ),
 }
 
@@ -173,39 +198,63 @@ def native_components(modality: str) -> list[dict[str, str]]:
     ]
 
 
-def english_text_only_components() -> list[dict[str, str]]:
-    return [
+def english_components(modality: str) -> list[dict[str, str]]:
+    """The five English components for one modality, in the merged order.
+
+    DAIC keeps its native English input; the other four datasets use their
+    generated English cells (their config name and English manifest/split roots
+    come from the English generator's cell table, so the two generators cannot
+    drift apart silently).
+    """
+    english_cells = {
+        cell[4]: (cell[2], cell[3])
+        for cell in english_configs.CELLS
+        if cell[5] == modality
+    }
+    missing = {"cmdc", "d3tec", "androids_interview", "turkish"} - set(english_cells)
+    if missing:
+        raise GenerationError(
+            f"the English generator has no {modality} cell for {sorted(missing)}"
+        )
+    components: list[dict[str, str]] = [
         {
             "name": "daic",
-            "config": "configs/main/daic_text_only_harmonized_selmacrof1_likelihood_v1.yaml",
+            "config": f"configs/main/daic_{modality}_harmonized_selmacrof1_likelihood_v1.yaml",
             "manifest_path": "outputs/manifests_harmonized/daic/daic_manifest.jsonl",
             "metadata_path": "outputs/splits_harmonized/daic/daic_manifest_metadata.json",
         },
         {
             "name": "cmdc",
-            "config": "configs/main/cmdc_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen38_27b.yaml",
-            "manifest_path": "outputs/manifests_harmonized_en/cmdc/cmdc_manifest.jsonl",
-            "metadata_path": "outputs/splits_harmonized_en/cmdc/cmdc_manifest_metadata.json",
+            "config": f"configs/main/{english_cells['cmdc'][0]}",
+            "manifest_path": f"outputs/manifests_harmonized_en/{english_cells['cmdc'][1]}/cmdc_manifest.jsonl",
+            "metadata_path": f"outputs/splits_harmonized_en/{english_cells['cmdc'][1]}/cmdc_manifest_metadata.json",
         },
         {
             "name": "turkish",
-            "config": POOLED_COMPONENT_EN["text_only"],
+            "config": POOLED_COMPONENT_EN[modality],
             "manifest_path": POOLED_MANIFEST["english"][0],
             "metadata_path": POOLED_MANIFEST["english"][1],
         },
         {
             "name": "d3tec",
-            "config": "configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen38_27b.yaml",
-            "manifest_path": "outputs/manifests_harmonized_en/d3tec/d3tec_manifest.jsonl",
-            "metadata_path": "outputs/splits_harmonized_en/d3tec/d3tec_manifest_metadata.json",
+            "config": f"configs/main/{english_cells['d3tec'][0]}",
+            "manifest_path": f"outputs/manifests_harmonized_en/{english_cells['d3tec'][1]}/d3tec_manifest.jsonl",
+            "metadata_path": f"outputs/splits_harmonized_en/{english_cells['d3tec'][1]}/d3tec_manifest_metadata.json",
         },
         {
             "name": "androids_interview",
-            "config": "configs/main/androids_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen38_27b.yaml",
-            "manifest_path": "outputs/manifests_harmonized_en/androids/androids_interview_manifest.jsonl",
-            "metadata_path": "outputs/splits_harmonized_en/androids/androids_interview_manifest_metadata.json",
+            "config": f"configs/main/{english_cells['androids_interview'][0]}",
+            "manifest_path": (
+                "outputs/manifests_harmonized_en/"
+                f"{english_cells['androids_interview'][1]}/androids_interview_manifest.jsonl"
+            ),
+            "metadata_path": (
+                "outputs/splits_harmonized_en/"
+                f"{english_cells['androids_interview'][1]}/androids_interview_manifest_metadata.json"
+            ),
         },
     ]
+    return components
 
 
 # (slug, legacy source config, target config, modality, backend, language)
@@ -242,6 +291,14 @@ CELLS = (
         "qwen38",
         "english",
     ),
+    (
+        "english_audio_text",
+        "symmetric_merged_harmonized_audio_text_likelihood_v1.yaml",
+        "symmetric_merged_qwen3_pooled_english_audio_text.yaml",
+        "audio_text",
+        "qwen3omni",
+        "english",
+    ),
 )
 
 ALLOWED_DIFF_PATHS = frozenset(
@@ -261,7 +318,9 @@ ALLOWED_DIFF_PATHS = frozenset(
         # declared contract.
         "training.strategy",
         "training.activation_offload",
+        "training.gradient_accumulation_steps",
         "execution.postprocess_gpus",
+        "execution.train_nodes",
     }
 )
 COMPONENT_PATHS = ("config", "manifest_path", "metadata_path")
@@ -330,7 +389,7 @@ def derive(source: dict[str, Any], cell: tuple) -> dict[str, Any]:
 
     config["recipe_id"] = NATIVE_RECIPE if language == "native" else ENGLISH_RECIPE
     config["components"] = (
-        english_text_only_components() if language == "english" else native_components(modality)
+        english_components(modality) if language == "english" else native_components(modality)
     )
     campaign = "qwen3_pooled_native" if language == "native" else "qwen3_pooled_english"
     config["output_dirs"]["merged_root"] = (
@@ -346,9 +405,14 @@ def derive(source: dict[str, Any], cell: tuple) -> dict[str, Any]:
     config["training"]["activation_offload"] = "cpu"
     if modality != "text_only":
         config.setdefault("execution", {})["postprocess_gpus"] = 4
+        # Every Qwen3-Omni route runs the two-node lane: two four-GPU nodes with
+        # per-rank accumulation 16, the shape the pooled Qwen3-Omni baselines
+        # were submitted with. The effective global batch stays 128.
+        config["execution"]["train_nodes"] = 2
+        config["training"]["gradient_accumulation_steps"] = 16
     config["status"], config["status_reason"] = CELL_STATUS[slug]
     if language == "english":
-        config["name"] = "symmetric_merged_qwen3_pooled_english_text_only"
+        config["name"] = f"symmetric_merged_qwen3_pooled_english_{modality}"
     else:
         config["name"] = f"symmetric_merged_qwen3_pooled_native_{modality}"
 
@@ -425,10 +489,30 @@ def render(config: dict[str, Any]) -> str:
     return yaml.safe_dump(config, sort_keys=False, allow_unicode=True, width=1000)
 
 
-def emit(target: Path, content: str, *, check_only: bool, failures: list[str]) -> None:
+def emit(
+    target: Path,
+    content: str,
+    *,
+    check_only: bool,
+    failures: list[str],
+    replace: bool = False,
+    replacements: list[str] | None = None,
+) -> None:
+    """Write the derived content, refusing to change an existing file silently.
+
+    An existing file with different content is a failure unless the caller
+    passes the explicit one-time ``replace`` transition, which records the
+    replaced path so the audit shows exactly what changed.
+    """
     if target.is_file():
         if target.read_text(encoding="utf-8") != content:
-            failures.append(f"existing file differs from derived content: {target}")
+            if replace and not check_only:
+                target.write_text(content, encoding="utf-8")
+                print(f"replaced {target.relative_to(PROJECT_ROOT)}")
+                if replacements is not None:
+                    replacements.append(str(target.relative_to(PROJECT_ROOT)))
+            else:
+                failures.append(f"existing file differs from derived content: {target}")
         return
     if check_only:
         failures.append(f"missing derived file: {target}")
@@ -442,6 +526,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="verify without writing")
     parser.add_argument(
+        "--replace-contracts",
+        action="store_true",
+        help=(
+            "one-time transition: replace existing generated contracts even when they differ from "
+            "the derived content (for example a readiness status flip backed by a recorded smoke "
+            "chain); the replaced paths are recorded in the audit"
+        ),
+    )
+    parser.add_argument(
         "--audit-output",
         type=Path,
         default=DEFAULT_AUDIT_OUTPUT,
@@ -450,6 +543,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     failures: list[str] = []
+    replacements: list[str] = []
     audit: dict[str, Any] = {
         "schema_version": "audiollm.qwen3_pooled_merged_config_diff.v1",
         "allowed_paths": sorted(ALLOWED_DIFF_PATHS),
@@ -468,7 +562,15 @@ def main(argv: list[str] | None = None) -> int:
         if yaml.safe_load(rendered) != config:
             raise GenerationError(f"{slug}: rendered config does not round-trip")
         target = MERGED / target_name
-        emit(target, rendered, check_only=args.check, failures=failures)
+        emit(
+            target,
+            rendered,
+            check_only=args.check,
+            failures=failures,
+            replace=args.replace_contracts,
+            replacements=replacements,
+        )
+        audit["contracts_replaced"] = replacements
         audit["configs"].append(
             {
                 "cell_id": slug,

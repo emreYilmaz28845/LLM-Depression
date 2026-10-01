@@ -21,6 +21,7 @@ import hashlib
 from typing import Any
 
 from src.utils import (
+    INPUT_MODALITY_AUDIO_TEXT,
     INPUT_MODALITY_TEXT_ONLY,
     resolve_input_modality,
 )
@@ -144,6 +145,29 @@ QUESTION_CONTEXT_SENTENCE_SETS: dict[str, dict[str, str]] = {
     PROMPT_CONTEXT_VERSION: PROMPTCONTEXT_QUESTION_CONTEXT_SENTENCES,
 }
 
+# Versioned English-translation notice. It is rendered only when a config
+# declares ``prompt.translation_notice_version``, and it goes in one block
+# immediately before the transcript block, so the statement sits directly above
+# the translated text it describes.
+#
+# The estimand of an English-transcript run is "translated transcript plus
+# explicit translation notice": native and English runs differ by the transcript
+# and by this notice, so a native-vs-English comparison measures both together.
+TRANSLATION_NOTICE_VERSION = "translation_notice_v1"
+
+TRANSLATION_NOTICE_SENTENCES: dict[str, dict[str, str]] = {
+    TRANSLATION_NOTICE_VERSION: {
+        INPUT_MODALITY_TEXT_ONLY: (
+            "The transcript below is an English translation of the participant's "
+            "original speech."
+        ),
+        INPUT_MODALITY_AUDIO_TEXT: (
+            "The transcript below is an English translation of the participant's "
+            "original speech. The audio remains in the original language."
+        ),
+    }
+}
+
 DATASET_CONTEXT_KEYS = tuple(sorted(DATASET_CONTEXT_BLOCKS[PROMPT_CONTEXT_VERSION]))
 
 
@@ -229,6 +253,45 @@ def resolve_question_context_sentences(config: dict[str, Any]) -> dict[str, str]
     return QUESTION_CONTEXT_SENTENCE_SETS[version]
 
 
+def resolve_translation_notice(config: dict[str, Any]) -> str | None:
+    """Return the English-translation notice block, or ``None``.
+
+    The notice is explicit and versioned: it renders only when the config
+    declares ``prompt.translation_notice_version``. It fails closed on an
+    unknown version, on a modality that carries no transcript, and on a config
+    whose transcript overlay is not the English one, so a native transcript can
+    never be described as a translation.
+    """
+    raw_version = _prompt_cfg(config).get("translation_notice_version")
+    if raw_version is None or str(raw_version).strip() == "":
+        return None
+    version = str(raw_version).strip()
+    if version not in TRANSLATION_NOTICE_SENTENCES:
+        raise ValueError(
+            f"Unsupported prompt.translation_notice_version={raw_version!r}. "
+            f"Expected one of {sorted(TRANSLATION_NOTICE_SENTENCES)}."
+        )
+    modality = resolve_input_modality(config)
+    sentences = TRANSLATION_NOTICE_SENTENCES[version]
+    if modality not in sentences:
+        raise ValueError(
+            f"prompt.translation_notice_version={version!r} is not defined for input "
+            f"modality {modality!r}: the notice belongs to the transcript-bearing "
+            "modalities text_only and audio_text."
+        )
+    transcripts = config.get("transcripts")
+    variant = ""
+    if isinstance(transcripts, dict):
+        variant = str(transcripts.get("variant") or "").strip()
+    if variant != "english":
+        raise ValueError(
+            "prompt.translation_notice_version is declared but transcripts.variant is "
+            f"{variant or 'unset'!r}; only an English-transcript overlay may carry the "
+            "translation notice."
+        )
+    return sentences[modality]
+
+
 def prompt_context_record(config: dict[str, Any]) -> dict[str, Any]:
     """Deterministic provenance record of the prompt a run renders.
 
@@ -241,6 +304,8 @@ def prompt_context_record(config: dict[str, Any]) -> dict[str, Any]:
         _prompt_cfg(config).get("question_context_version")
         or DEFAULT_QUESTION_CONTEXT_SENTENCE_SET
     ).strip()
+    notice = resolve_translation_notice(config)
+    raw_notice_version = _prompt_cfg(config).get("translation_notice_version")
     return {
         "version": version,
         "dataset_context": (
@@ -252,4 +317,11 @@ def prompt_context_record(config: dict[str, Any]) -> dict[str, Any]:
         "system_prompt_sha256": hashlib.sha256(
             system_prompt.encode("utf-8")
         ).hexdigest(),
+        "translation_notice_version": (
+            str(raw_notice_version).strip() if raw_notice_version else None
+        ),
+        "translation_notice": notice,
+        "translation_notice_sha256": (
+            hashlib.sha256(notice.encode("utf-8")).hexdigest() if notice else None
+        ),
     }

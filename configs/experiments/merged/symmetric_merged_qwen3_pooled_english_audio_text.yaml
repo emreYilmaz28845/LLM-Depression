@@ -1,37 +1,37 @@
-name: symmetric_merged_qwen3_pooled_english_text_only
+name: symmetric_merged_qwen3_pooled_english_audio_text
 protocol: symmetric_merged
 recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1_promptcontext_v1_en
-modality: text_only
+modality: audio_text
 seed: 1337
 status: execute_verified
-status_reason: 'Qwen3 merged FSDP/postprocess GPU smoke chain passed (run qwen3_multiseed_smoke_en_text_20260930_r1: train 46852254 and postprocess 46852255 COMPLETED 0:0; deployment feat-qwen3-multiseed-matrix-readiness-20260930-20260930T183953Z-4ff77c53-521d2e6a, source 4ff77c53ebd3808671af551a58287136bd1726e5), so the cv and final stages are executable; the four translated components render the versioned translation notice, and the route passed its bounded hidden-feature audit on that smoke checkpoint, so its head kind is open.'
-model_backend: qwen38
-model_name_or_path: ${QWEN38_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen3.8-27B}
-model_revision: 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+status_reason: 'Two-node smoke chain passed (run qwen3_merged2n_smoke_en_audio_text_20261001_r2: train 46889195 and postprocess 46889196 plus the smoke fixed head 46889197 COMPLETED 0:0; deployment feat-qwen3-multiseed-matrix-readiness-20260930-20261001T112633Z-6a49be82-3313b433, source 6a49be820b3d88c1426d1df9bbc206fd95cac6a6) with the declared CPU activation offload active and per-rank peaks of 22.53-26.84 GiB allocated, and the route passed its hidden-feature audit in the same shape (postprocess 46891829, head 46891830). The first attempt failed on a transient NCCL collective timeout and is preserved; so the cv and final stages are executable and its head kind is open.'
+model_backend: qwen3omni
+model_name_or_path: ${QWEN3_OMNI_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen3-Omni-30B-A3B-Instruct}
+model_attn_implementation: sdpa
 components:
 - name: daic
-  config: configs/main/daic_text_only_harmonized_selmacrof1_likelihood_v1.yaml
+  config: configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_v1.yaml
   manifest_path: outputs/manifests_harmonized/daic/daic_manifest.jsonl
   metadata_path: outputs/splits_harmonized/daic/daic_manifest_metadata.json
 - name: cmdc
-  config: configs/main/cmdc_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen38_27b.yaml
+  config: configs/main/cmdc_audio_text_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen3omni_30b_a3b.yaml
   manifest_path: outputs/manifests_harmonized_en/cmdc/cmdc_manifest.jsonl
   metadata_path: outputs/splits_harmonized_en/cmdc/cmdc_manifest_metadata.json
 - name: turkish
-  config: configs/main/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen38_27b.yaml
+  config: configs/main/turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_en_qwen3omni_30b_a3b.yaml
   manifest_path: outputs/manifests_harmonized_en/turkish_pooled_t17_qwen3asr/turkish_manifest.jsonl
   metadata_path: outputs/splits_harmonized_en/turkish_pooled_t17_qwen3asr/turkish_manifest_metadata.json
 - name: d3tec
-  config: configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen38_27b.yaml
+  config: configs/main/d3tec_audio_text_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen3omni_30b_a3b.yaml
   manifest_path: outputs/manifests_harmonized_en/d3tec/d3tec_manifest.jsonl
   metadata_path: outputs/splits_harmonized_en/d3tec/d3tec_manifest_metadata.json
 - name: androids_interview
-  config: configs/main/androids_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen38_27b.yaml
+  config: configs/main/androids_audio_text_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen3omni_30b_a3b.yaml
   manifest_path: outputs/manifests_harmonized_en/androids/androids_interview_manifest.jsonl
   metadata_path: outputs/splits_harmonized_en/androids/androids_interview_manifest_metadata.json
 output_dirs:
-  merged_root: ${PROJECT_ROOT}/outputs/symmetric_merged/qwen3_pooled_english/text_only
-  run_root: ${PROJECT_ROOT}/output_model/symmetric_merged/qwen3_pooled_english_likelihood/text_only
+  merged_root: ${PROJECT_ROOT}/outputs/symmetric_merged/qwen3_pooled_english/audio_text
+  run_root: ${PROJECT_ROOT}/output_model/symmetric_merged/qwen3_pooled_english_likelihood/audio_text
 protocol_settings:
   outer_folds: 5
   inner_val_ratio: 0.2
@@ -48,7 +48,7 @@ training:
   weight_decay: 0.0
   warmup_ratio: 0.03
   per_device_train_batch_size: 1
-  gradient_accumulation_steps: 32
+  gradient_accumulation_steps: 16
   logging_steps: 25
   bf16: true
   gradient_checkpointing: true
@@ -83,8 +83,9 @@ execution:
   smoke_epochs: 1
   smoke_optuna_trials: 0
   qwen_gpus: 4
-  postprocess_gpus: 1
+  postprocess_gpus: 4
   head_cpus: 20
   qwen_time: 259200
   postprocess_time: 172800
   head_time: 43200
+  train_nodes: 2
