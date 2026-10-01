@@ -51,6 +51,11 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
     "symmetric_merged_qwen3_pooled_native_text_only": {
         "backend": "qwen38",
         "modality": "text_only",
+        "verified_shape": {
+            "train_nodes": 1,
+            "gpus_per_node": 4,
+            "gradient_accumulation_steps": 32,
+        },
         "production_ready": True,
         "production_block_reason": None,
         "head_ready": True,
@@ -72,6 +77,11 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
     "symmetric_merged_qwen3_pooled_native_audio_text": {
         "backend": "qwen3omni",
         "modality": "audio_text",
+        "verified_shape": {
+            "train_nodes": 2,
+            "gpus_per_node": 4,
+            "gradient_accumulation_steps": 16,
+        },
         "production_ready": True,
         "production_block_reason": None,
         "head_ready": True,
@@ -94,6 +104,11 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
     "symmetric_merged_qwen3_pooled_native_audio_only": {
         "backend": "qwen3omni",
         "modality": "audio_only",
+        "verified_shape": {
+            "train_nodes": 2,
+            "gpus_per_node": 4,
+            "gradient_accumulation_steps": 16,
+        },
         "production_ready": True,
         "production_block_reason": None,
         "head_ready": True,
@@ -116,6 +131,11 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
     "symmetric_merged_qwen3_pooled_english_text_only": {
         "backend": "qwen38",
         "modality": "text_only",
+        "verified_shape": {
+            "train_nodes": 1,
+            "gpus_per_node": 4,
+            "gradient_accumulation_steps": 32,
+        },
         "production_ready": True,
         "production_block_reason": None,
         "head_ready": True,
@@ -133,6 +153,11 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
     "symmetric_merged_qwen3_pooled_english_audio_text": {
         "backend": "qwen3omni",
         "modality": "audio_text",
+        "verified_shape": {
+            "train_nodes": 2,
+            "gpus_per_node": 4,
+            "gradient_accumulation_steps": 16,
+        },
         "production_ready": True,
         "production_block_reason": None,
         "head_ready": True,
@@ -216,12 +241,22 @@ def merged_route_decision(config: dict[str, Any], *, stage: str) -> dict[str, An
     Qwen3-backed contract must be one of the four declared pooled contracts with
     a matching backend and modality; the bounded ``smoke`` stage is allowed for
     a declared route, and ``cv``/``final`` additionally require the recorded
-    production readiness.
+    production readiness *and* the declared lane shape the route was verified in,
+    so an override that only restores the effective global batch (for example one
+    node with accumulation 32 instead of two with 16) cannot run production on
+    the strength of evidence recorded for another shape.
     """
     if stage not in {"smoke", "cv", "final"}:
         raise ValueError(f"Unsupported merged stage: {stage!r}")
     name = str(config.get("name") or "")
     modality = str(config.get("modality") or "").strip().lower()
+    execution = config.get("execution") or {}
+    training = config.get("training") or {}
+    declared_shape = {
+        "train_nodes": int(execution.get("train_nodes") or 1),
+        "gpus_per_node": int(execution.get("qwen_gpus") or 4),
+        "gradient_accumulation_steps": int(training.get("gradient_accumulation_steps") or 1),
+    }
     backends = merged_blocked_backends(config)
     if not backends:
         return {
@@ -232,6 +267,9 @@ def merged_route_decision(config: dict[str, Any], *, stage: str) -> dict[str, An
             "contract": name,
             "backends": [],
             "modality": modality,
+            "declared_shape": declared_shape,
+            "verified_shape": None,
+            "shape_verified": True,
             "head_ready": True,
             "head_deferred_reason": None,
             "reason": None,
@@ -248,6 +286,9 @@ def merged_route_decision(config: dict[str, Any], *, stage: str) -> dict[str, An
             "contract": name,
             "backends": backends,
             "modality": modality,
+            "declared_shape": declared_shape,
+            "verified_shape": None,
+            "shape_verified": False,
             "head_ready": False,
             "head_deferred_reason": QWEN3_HEAD_PREREQUISITE,
             "reason": (
@@ -257,15 +298,26 @@ def merged_route_decision(config: dict[str, Any], *, stage: str) -> dict[str, An
             ),
             "evidence": None,
         }
+    verified_shape = entry.get("verified_shape")
+    shape_verified = verified_shape is None or declared_shape == dict(verified_shape)
     if stage == "smoke":
         allowed = True
         reason = None
     else:
-        allowed = bool(entry["production_ready"])
-        reason = None if allowed else (
-            f"{QWEN3_MERGED_PREREQUISITE}: {name} {stage} needs a passed GPU smoke chain; "
-            f"{entry['production_block_reason']}."
-        )
+        allowed = bool(entry["production_ready"]) and shape_verified
+        if not entry["production_ready"]:
+            reason = (
+                f"{QWEN3_MERGED_PREREQUISITE}: {name} {stage} needs a passed GPU smoke chain; "
+                f"{entry['production_block_reason']}."
+            )
+        elif not shape_verified:
+            reason = (
+                f"{QWEN3_MERGED_PREREQUISITE}: {name} {stage} declares "
+                f"{declared_shape} but the route was verified as {entry.get('verified_shape')}; "
+                "a smoke chain in the declared shape is required."
+            )
+        else:
+            reason = None
     return {
         "qwen3": True,
         "declared": True,
@@ -274,6 +326,9 @@ def merged_route_decision(config: dict[str, Any], *, stage: str) -> dict[str, An
         "contract": name,
         "backends": backends,
         "modality": modality,
+        "declared_shape": declared_shape,
+        "verified_shape": entry.get("verified_shape"),
+        "shape_verified": shape_verified,
         "head_ready": bool(entry["head_ready"]),
         "head_deferred_reason": None if entry["head_ready"] else QWEN3_HEAD_PREREQUISITE,
         "reason": reason,

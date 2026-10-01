@@ -200,12 +200,19 @@ def build_selection_map() -> dict[str, Any]:
                     "production_ready": entry.get("production_ready"),
                     "head_ready": entry.get("head_ready"),
                     "declared": bool(entry),
+                    "verified_shape": entry.get("verified_shape"),
                 },
                 "components": components,
                 "protocol_settings": config.get("protocol_settings"),
                 "training": {
                     "strategy": (config.get("training") or {}).get("strategy"),
                     "activation_offload": (config.get("training") or {}).get("activation_offload"),
+                    "gradient_accumulation_steps": (config.get("training") or {}).get(
+                        "gradient_accumulation_steps"
+                    ),
+                    "per_device_train_batch_size": (config.get("training") or {}).get(
+                        "per_device_train_batch_size"
+                    ),
                 },
                 "execution": config.get("execution"),
                 "run_roots": raw_config.get("output_dirs"),
@@ -331,12 +338,27 @@ def build_production_manifest(
     for contract in selection_map["merged_routes"]:
         jobs = []
         head_ready = bool((contract["guard"] or {}).get("head_ready"))
+        execution = contract.get("execution") or {}
+        training = contract.get("training") or {}
+        # The merged contract declares its lane: execution.train_nodes (default 1)
+        # with execution.qwen_gpus per node and the training accumulation. Every
+        # Qwen3-Omni route declares two four-GPU nodes with accumulation 16; the
+        # text routes keep one four-GPU node with accumulation 32.
+        lane_nodes = int(execution.get("train_nodes") or 1)
+        lane_gpus = int(execution.get("qwen_gpus") or 4)
+        lane_accumulation = int(training.get("gradient_accumulation_steps") or 1)
         for seed in seeds:
             for stage, folds in (("cv", [0, 1, 2, 3, 4]), ("final", [0])):
                 for fold in folds:
                     run_name = f"{contract['route_id']}_s{seed}_{stage}_f{fold}"
-                    train_shape = {"strategy": (contract["training"] or {}).get("strategy"),
-                                   "gpus": (contract["execution"] or {}).get("qwen_gpus", 4)}
+                    train_shape = {
+                        "strategy": training.get("strategy"),
+                        "nodes": lane_nodes,
+                        "gpus_per_node": lane_gpus,
+                        "world_size": lane_nodes * lane_gpus,
+                        "gradient_accumulation_steps": lane_accumulation,
+                        "effective_global_batch_size": lane_nodes * lane_gpus * lane_accumulation,
+                    }
                     jobs.append({"kind": "train", "seed": seed, "stage": stage, "fold": fold,
                                  "run_name": run_name, "shape": train_shape,
                                  "dependency": None, "status": "planned"})

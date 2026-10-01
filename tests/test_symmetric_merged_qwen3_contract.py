@@ -278,6 +278,59 @@ def test_every_qwen3_omni_merged_route_runs_the_two_node_lane() -> None:
         assert config["training"]["gradient_accumulation_steps"] == 32, slug
 
 
+def test_readiness_table_records_the_shape_every_route_was_verified_in() -> None:
+    """The guard's verified shape must match what the shipped contract declares.
+
+    Otherwise a route could be opened on evidence recorded for another lane, and
+    the drift would only show up after production jobs were submitted.
+    """
+    for name, entry in QWEN3_CONTRACT_READINESS.items():
+        config = _merged(name.removeprefix("symmetric_merged_qwen3_pooled_"))
+        declared = {
+            "train_nodes": int((config["execution"] or {}).get("train_nodes", 1)),
+            "gpus_per_node": int((config["execution"] or {}).get("qwen_gpus", 4)),
+            "gradient_accumulation_steps": int(
+                (config["training"] or {}).get("gradient_accumulation_steps", 1)
+            ),
+        }
+        assert entry["verified_shape"] == declared, name
+        assert declared["train_nodes"] * declared["gpus_per_node"] * declared[
+            "gradient_accumulation_steps"
+        ] == 128, name
+
+
+def test_guard_refuses_a_production_run_in_an_unverified_shape() -> None:
+    """An override that keeps the effective batch but changes the lane is refused.
+
+    One node with accumulation 32 gives the same effective global batch as the
+    verified two-node lane with 16, so only an explicit shape check can stop a
+    production run from using the other shape's evidence. The bounded smoke stage
+    stays allowed: that is how a route is verified in the first place.
+    """
+    config = _merged("native_audio_text")
+    verified = merged_route_decision(config, stage="cv")
+    assert verified["shape_verified"] is True
+    assert verified["allowed"] is True
+    assert verified["declared_shape"] == {
+        "train_nodes": 2,
+        "gpus_per_node": 4,
+        "gradient_accumulation_steps": 16,
+    }
+
+    overridden = copy.deepcopy(config)
+    overridden["execution"]["train_nodes"] = 1
+    overridden["training"]["gradient_accumulation_steps"] = 32
+    decision = merged_route_decision(overridden, stage="cv")
+    assert decision["allowed"] is False
+    assert decision["shape_verified"] is False
+    assert "was verified as" in decision["reason"]
+    for stage in ("cv", "final"):
+        assert merged_route_decision(overridden, stage=stage)["allowed"] is False
+    smoke = merged_route_decision(overridden, stage="smoke")
+    assert smoke["allowed"] is True
+    assert smoke["shape_verified"] is False
+
+
 def test_worker_exports_the_job_level_resolved_overrides(monkeypatch) -> None:
     """A deployed worker must receive the per-config resolved token array.
 

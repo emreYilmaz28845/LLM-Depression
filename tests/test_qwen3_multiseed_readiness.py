@@ -339,6 +339,40 @@ def test_production_manifest_plans_three_seeds_and_marks_reuse() -> None:
         for job in route["jobs"]
         if job["kind"] == "train"
     )
+    # Every merged plan carries the lane its contract declares, so the manifest
+    # cannot show a single-node shape for a two-node route.
+    for route in manifest["merged"]:
+        train = next(job for job in route["jobs"] if job["kind"] == "train")
+        config = yaml.safe_load((REPO_ROOT / route["config"]).read_text(encoding="utf-8"))
+        execution = config["execution"]
+        training = config["training"]
+        assert train["shape"]["nodes"] == int(execution.get("train_nodes", 1))
+        assert train["shape"]["gpus_per_node"] == execution["qwen_gpus"]
+        assert train["shape"]["world_size"] == train["shape"]["nodes"] * execution["qwen_gpus"]
+        assert (
+            train["shape"]["gradient_accumulation_steps"]
+            == training["gradient_accumulation_steps"]
+        )
+        assert (
+            train["shape"]["effective_global_batch_size"]
+            == train["shape"]["world_size"] * training["gradient_accumulation_steps"]
+        )
+        assert train["shape"]["effective_global_batch_size"] == 128
+    audio_merged = [
+        route
+        for route in manifest["merged"]
+        if next(job for job in route["jobs"] if job["kind"] == "train")["shape"]["nodes"] == 2
+    ]
+    text_merged = [
+        route
+        for route in manifest["merged"]
+        if next(job for job in route["jobs"] if job["kind"] == "train")["shape"]["nodes"] == 1
+    ]
+    assert len(audio_merged) == 3 and len(text_merged) == 2
+    for route in audio_merged:
+        train = next(job for job in route["jobs"] if job["kind"] == "train")
+        assert train["shape"]["world_size"] == 8
+        assert train["shape"]["gradient_accumulation_steps"] == 16
 
 
 def test_production_manifest_records_waiting_head_jobs() -> None:
