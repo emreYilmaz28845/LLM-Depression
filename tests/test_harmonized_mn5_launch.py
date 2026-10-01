@@ -107,23 +107,35 @@ def test_merged_planner_gates_qwen3_contracts_by_route_readiness() -> None:
     assert all(not job["blocked_prerequisite"] for job in verified["jobs"])
     # 5 folds x (train + postprocess + fixed heads).
     assert len(verified["jobs"]) == 15
-    # Every declared route whose own smoke chain passed may run cv, including the
-    # routes that were opened after the first two.
+    # A route whose declared shape moved after its recorded smoke chain stays
+    # closed until a chain in the new shape passes: every Qwen3-Omni merged route
+    # moved to the two-node lane, so its cv execution is refused and only planned.
     opened = ROOT / "configs/experiments/merged/symmetric_merged_qwen3_pooled_native_audio_only.yaml"
-    opened_registry = build_job_specs(
+    with pytest.raises(ValueError, match="the declared shape moved to the two-node lane"):
+        build_job_specs(
+            [opened],
+            stage="cv",
+            run_id="qwen3_opened",
+            dry_run=False,
+            smoke_subjects=2,
+            smoke_epochs=1,
+            smoke_trials=0,
+            github_issue=12,
+            github_pr=10,
+        )
+    opened_plan = build_job_specs(
         [opened],
         stage="cv",
-        run_id="qwen3_opened",
-        dry_run=False,
+        run_id="qwen3_opened_plan",
+        dry_run=True,
         smoke_subjects=2,
         smoke_epochs=1,
         smoke_trials=0,
         github_issue=12,
         github_pr=10,
     )
-    assert opened_registry["blocked_prerequisite"] == []
-    assert all(not job["blocked_prerequisite"] for job in opened_registry["jobs"])
-    assert {job["kind"] for job in opened_registry["jobs"]} == {"train", "postprocess", "head"}
+    assert opened_plan["blocked_prerequisite"] == [str(opened)]
+    assert {job["kind"] for job in opened_plan["jobs"]} == {"train", "postprocess", "head"}
     unverified = ROOT / "configs/experiments/merged/symmetric_merged_harmonized_audio_only_likelihood_v1.yaml"
     with pytest.raises(ValueError, match="not a declared Qwen3 merged contract"):
         build_job_specs(

@@ -81,23 +81,16 @@ CELL_STATUS: dict[str, tuple[str, str]] = {
         "open.",
     ),
     "native_audio_text": (
-        EXECUTE_VERIFIED_STATUS,
-        "Qwen3 merged FSDP/postprocess GPU smoke chain passed (run qwen3_merged_smoke_audio_text_20260930_r2: "
-        "train 46846648 and postprocess 46846649 COMPLETED 0:0; deployment "
-        "feat-qwen3-merged-fsdp-postprocess-20260930-20260930T153509Z-b50cc61e-5c61506c, source "
-        "b50cc61edc3b1737b860e59fc61baf86131d643e), so the cv and final stages are executable, and the "
-        "route passed its bounded hidden-feature audit on that smoke checkpoint, so its head kind is "
-        "open.",
+        SMOKE_ONLY_STATUS,
+        "The declared shape moved to the two-node lane (execution.train_nodes 2 with "
+        "gradient_accumulation_steps 16) after the recorded one-node chain, so that chain's evidence "
+        "no longer matches the declared shape; a smoke chain in the two-node shape is pending.",
     ),
     "native_audio_only": (
-        EXECUTE_VERIFIED_STATUS,
-        "Qwen3 merged FSDP/postprocess GPU smoke chain passed (run "
-        "qwen3_multiseed_smoke_audio_only_20260930_r1: train 46852252 and postprocess 46852253 "
-        "COMPLETED 0:0; deployment "
-        "feat-qwen3-multiseed-matrix-readiness-20260930-20260930T183953Z-4ff77c53-521d2e6a, source "
-        "4ff77c53ebd3808671af551a58287136bd1726e5), so the cv and final stages are executable, and the "
-        "route passed its bounded hidden-feature audit on that smoke checkpoint, so its head kind is "
-        "open.",
+        SMOKE_ONLY_STATUS,
+        "The declared shape moved to the two-node lane (execution.train_nodes 2 with "
+        "gradient_accumulation_steps 16) after the recorded one-node chain, so that chain's evidence "
+        "no longer matches the declared shape; a smoke chain in the two-node shape is pending.",
     ),
     "english_text_only": (
         EXECUTE_VERIFIED_STATUS,
@@ -110,14 +103,10 @@ CELL_STATUS: dict[str, tuple[str, str]] = {
         "bounded hidden-feature audit on that smoke checkpoint, so its head kind is open.",
     ),
     "english_audio_text": (
-        EXECUTE_VERIFIED_STATUS,
-        "Qwen3 merged FSDP/postprocess GPU smoke chain passed (run "
-        "qwen3_multiseed_smoke_en_audio_text_20260930_r1: train 46852256 and postprocess 46852257 "
-        "COMPLETED 0:0; deployment "
-        "feat-qwen3-multiseed-matrix-readiness-20260930-20260930T183953Z-4ff77c53-521d2e6a, source "
-        "4ff77c53ebd3808671af551a58287136bd1726e5), so the cv and final stages are executable; the "
-        "English components carry the translation notice with original-language audio, and the route "
-        "passed its bounded hidden-feature audit on that smoke checkpoint, so its head kind is open.",
+        SMOKE_ONLY_STATUS,
+        "The declared shape moved to the two-node lane (execution.train_nodes 2 with "
+        "gradient_accumulation_steps 16) after the recorded one-node chain, so that chain's evidence "
+        "no longer matches the declared shape; a smoke chain in the two-node shape is pending.",
     ),
 }
 
@@ -316,7 +305,9 @@ ALLOWED_DIFF_PATHS = frozenset(
         # declared contract.
         "training.strategy",
         "training.activation_offload",
+        "training.gradient_accumulation_steps",
         "execution.postprocess_gpus",
+        "execution.train_nodes",
     }
 )
 COMPONENT_PATHS = ("config", "manifest_path", "metadata_path")
@@ -401,6 +392,11 @@ def derive(source: dict[str, Any], cell: tuple) -> dict[str, Any]:
     config["training"]["activation_offload"] = "cpu"
     if modality != "text_only":
         config.setdefault("execution", {})["postprocess_gpus"] = 4
+        # Every Qwen3-Omni route runs the two-node lane: two four-GPU nodes with
+        # per-rank accumulation 16, the shape the pooled Qwen3-Omni baselines
+        # were submitted with. The effective global batch stays 128.
+        config["execution"]["train_nodes"] = 2
+        config["training"]["gradient_accumulation_steps"] = 16
     config["status"], config["status_reason"] = CELL_STATUS[slug]
     if language == "english":
         config["name"] = f"symmetric_merged_qwen3_pooled_english_{modality}"

@@ -444,7 +444,23 @@ def test_merged_train_preflight_does_not_self_create_an_incomplete_run() -> None
     assert source.index("accelerator = Accelerator(") < source.index("if complete_path.is_file()")
     assert source.count("accelerator.wait_for_everyone()") >= 2
     assert "if is_local_main_process:" in source
-    assert source.index("with context:") < source.index("outputs = model(**batch)")
+    # The merged step applies the config's activation offload, exactly like the
+    # standalone FSDP recipe; without it the four-rank lane doubles its
+    # per-rank activation memory.
+    assert source.index(
+        "activation_offload_context(model_config), context:"
+    ) < source.index("outputs = model(**batch)")
+
+
+def test_qwen_worker_supports_the_two_node_lane() -> None:
+    worker = Path("scripts/run_symmetric_merged_train_slurm.sh").read_text(encoding="utf-8")
+    assert 'NNODES="${NNODES:-1}"' in worker
+    assert "if [ \"$NNODES\" -gt 1 ]" in worker
+    assert '--node_rank="$SLURM_NODEID"' in worker
+    assert '--master_addr="$3"' in worker
+    assert "scontrol show hostnames" in worker
+    # The single-node branch stays the verified standalone launch.
+    assert '--standalone --nnodes=1' in worker
 
 
 def test_merged_train_extends_process_group_timeout_for_rank_zero_selection() -> None:

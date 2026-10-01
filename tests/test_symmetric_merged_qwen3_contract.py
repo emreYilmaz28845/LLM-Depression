@@ -252,6 +252,32 @@ def test_audio_and_text_routes_resolve_their_declared_gpu_shapes() -> None:
         assert config["status"] in {"smoke_only", "execute_verified"}
 
 
+def test_every_qwen3_omni_merged_route_runs_the_two_node_lane() -> None:
+    """Any Qwen3-Omni route declares two four-GPU nodes with accumulation 16.
+
+    The shape matches the standalone audio lane, whose baselines were submitted
+    that way; the text contracts keep one node with accumulation 32. Both keep
+    the FSDP effective global batch of 128.
+    """
+    for slug in ("native_audio_only", "native_audio_text", "english_audio_text"):
+        config = _merged(slug)
+        execution = config["execution"]
+        training = config["training"]
+        assert execution["train_nodes"] == 2, slug
+        assert execution["qwen_gpus"] == 4, slug
+        assert training["gradient_accumulation_steps"] == 16, slug
+        assert (
+            execution["train_nodes"]
+            * execution["qwen_gpus"]
+            * training["gradient_accumulation_steps"]
+            == 128
+        ), slug
+    for slug in ("native_text_only", "english_text_only"):
+        config = _merged(slug)
+        assert int((config["execution"] or {}).get("train_nodes", 1)) == 1, slug
+        assert config["training"]["gradient_accumulation_steps"] == 32, slug
+
+
 def test_worker_exports_the_job_level_resolved_overrides(monkeypatch) -> None:
     """A deployed worker must receive the per-config resolved token array.
 
@@ -296,7 +322,48 @@ def test_worker_exports_the_job_level_resolved_overrides(monkeypatch) -> None:
     encoded = export.split("OVERRIDES_JSON_B64=", 1)[1].split(",", 1)[0]
     assert json.loads(base64.b64decode(encoded).decode("utf-8")) == job["overrides"]
     assert "NPROC_PER_NODE=4" in export
+    assert "NNODES=1" in export
     assert "--gres=gpu:4" in captured["argv"]
     # The call site must prefer the job's resolved tokens over the registry list.
     source = (ROOT / "scripts/submit_symmetric_merged.py").read_text(encoding="utf-8")
     assert 'overrides=job.get("overrides") or registry.get("overrides") or []' in source
+
+
+def test_two_node_train_job_requests_both_nodes_and_exports_the_rendezvous(monkeypatch) -> None:
+    import scripts.submit_symmetric_merged as planner
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_check_output(arguments, cwd=None, text=None):
+        captured["argv"] = list(arguments)
+        return "23456\n"
+
+    monkeypatch.setattr(planner.subprocess, "check_output", fake_check_output)
+    job = {
+        "kind": "train",
+        "config": "/deployed/config.yaml",
+        "stage": "smoke",
+        "fold": 0,
+        "run_id": "r",
+        "modality": "audio_text",
+        "model_backend": "qwen3omni",
+        "resource": {"nodes": 2, "gpus": 4, "cpus": 80, "time": 10},
+    }
+    job_id = planner._submit_job(
+        job,
+        worker=Path("scripts/run_symmetric_merged_train_slurm.sh"),
+        dependency_id=None,
+        throttle_dependency_id=None,
+    )
+    assert job_id == "23456"
+    argv = [str(argument) for argument in captured["argv"]]
+    assert "--nodes=2" in argv
+    # One Slurm task per node holds the whole node's CPUs and GPUs, matching the
+    # worker's per-node srun step.
+    assert "--ntasks=2" in argv
+    assert "--ntasks-per-node=1" in argv
+    assert "--cpus-per-task=80" in argv
+    assert "--gres=gpu:4" in argv
+    export = next(argument for argument in argv if argument.startswith("--export="))
+    assert "NNODES=2" in export
+    assert "NPROC_PER_NODE=4" in export

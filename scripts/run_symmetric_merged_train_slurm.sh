@@ -82,12 +82,43 @@ if [ "$NPROC_PER_NODE" -lt 1 ]; then
 fi
 
 # The job's resource shape travels with the submission contract (four FSDP
-# ranks for the Qwen3 pooled routes). A plain `python` invocation would
+# ranks per node for the Qwen3 pooled routes). A plain `python` invocation would
 # initialize one process on only one of the allocated GPUs, so launch the local
 # process group explicitly through the selected environment's interpreter.
-CMD=("$PYTHON_BIN" -m torch.distributed.run --standalone --nnodes=1 --nproc_per_node="$NPROC_PER_NODE" -m src.merged.train
-    --config "$CONFIG" --stage "$STAGE" --fold "$FOLD" --run-id "$RUN_ID")
-if [ -n "$EPOCHS" ]; then CMD+=(--epochs "$EPOCHS"); fi
-if [ -n "$SUBJECTS_PER_CLASS" ]; then CMD+=(--subjects-per-class "$SUBJECTS_PER_CLASS"); fi
-for token in "${OVERRIDE_ARGS[@]}"; do CMD+=(--override="$token"); done
+NNODES="${NNODES:-1}"
+TRAIN_ENTRY=(-m src.merged.train --config "$CONFIG" --stage "$STAGE" --fold "$FOLD" --run-id "$RUN_ID")
+if [ -n "$EPOCHS" ]; then TRAIN_ENTRY+=(--epochs "$EPOCHS"); fi
+if [ -n "$SUBJECTS_PER_CLASS" ]; then TRAIN_ENTRY+=(--subjects-per-class "$SUBJECTS_PER_CLASS"); fi
+for token in "${OVERRIDE_ARGS[@]}"; do TRAIN_ENTRY+=(--override="$token"); done
+
+if [ "$NNODES" -gt 1 ]; then
+    # Slurm runs the batch script on the FIRST node only, so the second node
+    # needs srun to start its own torchrun; the node rank must expand inside
+    # each task, which is why it is passed to bash -c. The same pattern is
+    # proven by the standalone two-node audio lane.
+    MASTER_ADDR="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)"
+    MASTER_PORT="${MASTER_PORT:-29517}"
+    # One Slurm task per node holds that node's CPUs and GPUs (the merged
+    # convention, unlike the standalone lane's one task per rank), so the inner
+    # per-node step asks for the node's whole CPU allocation.
+    SRUN_CPUS_PER_TASK="${SLURM_CPUS_PER_TASK:-80}"
+    echo "Multi-node rendezvous | nnodes=$NNODES master=$MASTER_ADDR:$MASTER_PORT tasks_per_node=1 cpus_per_task=$SRUN_CPUS_PER_TASK python=$PYTHON_BIN"
+    CMD=(
+        srun
+        --nodes="$NNODES"
+        --ntasks="$NNODES"
+        --ntasks-per-node=1
+        --cpus-per-task="$SRUN_CPUS_PER_TASK"
+        --export=ALL
+        bash -c 'exec "$5" -m torch.distributed.run --nproc_per_node="$1" --nnodes="$2" --node_rank="$SLURM_NODEID" --master_addr="$3" --master_port="$4" "${@:6}"' _
+        "$NPROC_PER_NODE"
+        "$NNODES"
+        "$MASTER_ADDR"
+        "$MASTER_PORT"
+        "$PYTHON_BIN"
+        "${TRAIN_ENTRY[@]}"
+    )
+else
+    CMD=("$PYTHON_BIN" -m torch.distributed.run --standalone --nnodes=1 --nproc_per_node="$NPROC_PER_NODE" "${TRAIN_ENTRY[@]}")
+fi
 "${CMD[@]}"

@@ -67,16 +67,7 @@ ARMS: dict[str, tuple[str, str, str]] = {
 }
 
 ARM_ORDER = ("ab", "01", "truefalse", "yesno", "en")
-# `training.gradient_accumulation_steps` and `resources.train_nodes` are allowed
-# because this family pins its own four-rank shape (see `derive`), while the
-# canonical DAIC audio source now declares the two-node audio-lane default.
-ALLOWED_DIFF_KEYS = (
-    "recipe_id",
-    "labels",
-    "output_dirs.run_root",
-    "training.gradient_accumulation_steps",
-    "resources.train_nodes",
-)
+ALLOWED_DIFF_KEYS = ("recipe_id", "labels", "output_dirs.run_root")
 # Sections whose content may change as a whole; the tests check their exact content.
 OPAQUE_DIFF_KEYS = ("labels",)
 
@@ -125,12 +116,6 @@ def derive(source: dict[str, Any], *, modality: str, tag: str) -> dict[str, Any]
     config["output_dirs"]["run_root"] = (
         f"${{PROJECT_ROOT}}/output_model/{CAMPAIGN}/{modality}/{DATASET}"
     )
-    if modality != "text_only":
-        # This family is a separate, completed DAIC campaign: it keeps the
-        # four-rank shape its runs were submitted with, so the two-node audio-lane
-        # default of the three-seed matrix does not change these configs.
-        config["training"]["gradient_accumulation_steps"] = 32
-        config["resources"] = {"eval_nodes": 1, "eval_gpus_per_node": 4}
 
     if modality == "text_only":
         validate_qwen38_config(config)

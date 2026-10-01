@@ -66,11 +66,6 @@ def test_generated_config_equals_canonical_source_plus_the_allowlist(modality: s
     expected["output_dirs"]["run_root"] = (
         f"${{PROJECT_ROOT}}/output_model/{CAMPAIGN}/{modality}/daic"
     )
-    if modality != "text_only":
-        # This family pins the four-rank shape its runs were submitted with; the
-        # canonical DAIC audio source now declares the two-node audio-lane default.
-        expected["training"]["gradient_accumulation_steps"] = 32
-        expected["resources"] = {"eval_nodes": 1, "eval_gpus_per_node": 4}
 
     assert candidate == expected
     differences = set(diff_keys(source, candidate))
@@ -138,7 +133,12 @@ def test_split_likelihood_and_evaluation_contract_is_frozen(modality: str, arm: 
     assert training["strategy"] == "fsdp"
     assert training["activation_offload"] == "cpu"
     assert training["per_device_train_batch_size"] == 1
-    assert training["gradient_accumulation_steps"] == 32
+    # The audio arms inherit the canonical two-node audio lane; the text arm
+    # keeps the one-node text lane. Both keep the effective global batch of 128.
+    if modality == "text_only":
+        assert training["gradient_accumulation_steps"] == 32
+    else:
+        assert training["gradient_accumulation_steps"] == 16
     assert config["prompt"]["version"] == "promptcontext_v1"
     assert config["prompt"]["dataset_context"] == "daic"
     assert config["quarantine_path"] == "${PROJECT_ROOT}/configs/quarantines.yaml"
@@ -158,7 +158,11 @@ def test_model_identity_and_evaluation_shape_are_preserved(modality: str, arm: s
         assert config["model_backend"] == "qwen3omni"
         assert config["model_attn_implementation"] == "sdpa"
         assert config["model_name_or_path"].startswith("${QWEN3_OMNI_MODEL_PATH:-")
-        assert config["resources"] == {"eval_nodes": 1, "eval_gpus_per_node": 4}
+        assert config["resources"] == {
+            "train_nodes": 2,
+            "eval_nodes": 1,
+            "eval_gpus_per_node": 4,
+        }
         validate_qwen3omni_config(config)
     adapter = config.get("audio_adapter") or {}
     assert adapter.get("enabled", False) is False

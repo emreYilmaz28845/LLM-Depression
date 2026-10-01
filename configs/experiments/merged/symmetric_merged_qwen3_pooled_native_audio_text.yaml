@@ -3,8 +3,8 @@ protocol: symmetric_merged
 recipe_id: harmonized_full_transcript_single30_allwindows_selmacrof1_likelihood_v1_promptcontext_v1
 modality: audio_text
 seed: 1337
-status: execute_verified
-status_reason: 'Qwen3 merged FSDP/postprocess GPU smoke chain passed (run qwen3_merged_smoke_audio_text_20260930_r2: train 46846648 and postprocess 46846649 COMPLETED 0:0; deployment feat-qwen3-merged-fsdp-postprocess-20260930-20260930T153509Z-b50cc61e-5c61506c, source b50cc61edc3b1737b860e59fc61baf86131d643e), so the cv and final stages are executable, and the route passed its bounded hidden-feature audit on that smoke checkpoint, so its head kind is open.'
+status: smoke_only
+status_reason: The declared shape moved to the two-node lane (execution.train_nodes 2 with gradient_accumulation_steps 16) after the recorded one-node chain, so that chain's evidence no longer matches the declared shape; a smoke chain in the two-node shape is pending.
 model_backend: qwen3omni
 model_name_or_path: ${QWEN3_OMNI_MODEL_PATH:-/gpfs/projects/etur92/ozu647717/models/Qwen3-Omni-30B-A3B-Instruct}
 model_attn_implementation: sdpa
@@ -48,7 +48,7 @@ training:
   weight_decay: 0.0
   warmup_ratio: 0.03
   per_device_train_batch_size: 1
-  gradient_accumulation_steps: 32
+  gradient_accumulation_steps: 16
   logging_steps: 25
   bf16: true
   gradient_checkpointing: true
@@ -88,3 +88,4 @@ execution:
   qwen_time: 259200
   postprocess_time: 172800
   head_time: 43200
+  train_nodes: 2
