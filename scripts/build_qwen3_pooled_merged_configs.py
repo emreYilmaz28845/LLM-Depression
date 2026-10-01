@@ -81,16 +81,24 @@ CELL_STATUS: dict[str, tuple[str, str]] = {
         "open.",
     ),
     "native_audio_text": (
-        SMOKE_ONLY_STATUS,
-        "The declared shape moved to the two-node lane (execution.train_nodes 2 with "
-        "gradient_accumulation_steps 16) after the recorded one-node chain, so that chain's evidence "
-        "no longer matches the declared shape; a smoke chain in the two-node shape is pending.",
+        EXECUTE_VERIFIED_STATUS,
+        "Two-node smoke chain passed (run qwen3_merged2n_smoke_native_audio_text_20261001_r1: train 46877582 "
+        "and postprocess 46877583 plus the smoke fixed head 46877584 COMPLETED 0:0; deployment "
+        "feat-qwen3-multiseed-matrix-readiness-20260930-20261001T112633Z-6a49be82-3313b433, source "
+        "6a49be820b3d88c1426d1df9bbc206fd95cac6a6) with the declared CPU activation offload active and "
+        "per-rank peaks of 22.53-26.84 GiB allocated, and the route passed its hidden-feature audit in the "
+        "same shape (postprocess 46885550, head 46885551), so the cv and final stages are executable and "
+        "its head kind is open.",
     ),
     "native_audio_only": (
-        SMOKE_ONLY_STATUS,
-        "The declared shape moved to the two-node lane (execution.train_nodes 2 with "
-        "gradient_accumulation_steps 16) after the recorded one-node chain, so that chain's evidence "
-        "no longer matches the declared shape; a smoke chain in the two-node shape is pending.",
+        EXECUTE_VERIFIED_STATUS,
+        "Two-node smoke chain passed (run qwen3_merged2n_smoke_native_audio_only_20261001_r1: train 46880498 "
+        "and postprocess 46880499 plus the smoke fixed head 46880500 COMPLETED 0:0; deployment "
+        "feat-qwen3-multiseed-matrix-readiness-20260930-20261001T112633Z-6a49be82-3313b433, source "
+        "6a49be820b3d88c1426d1df9bbc206fd95cac6a6) with the declared CPU activation offload active and "
+        "per-rank peaks of 21.40-21.60 GiB allocated, and the route passed its hidden-feature audit in the "
+        "same shape (postprocess 46885552, head 46885553), so the cv and final stages are executable and "
+        "its head kind is open.",
     ),
     "english_text_only": (
         EXECUTE_VERIFIED_STATUS,

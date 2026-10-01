@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from scripts.submit_symmetric_merged import (
+    QWEN3_CONTRACT_READINESS,
     _head_trials,
     build_job_specs,
     merged_blocked_backends,
@@ -107,35 +108,41 @@ def test_merged_planner_gates_qwen3_contracts_by_route_readiness() -> None:
     assert all(not job["blocked_prerequisite"] for job in verified["jobs"])
     # 5 folds x (train + postprocess + fixed heads).
     assert len(verified["jobs"]) == 15
-    # A route whose declared shape moved after its recorded smoke chain stays
-    # closed until a chain in the new shape passes: every Qwen3-Omni merged route
-    # moved to the two-node lane, so its cv execution is refused and only planned.
-    opened = ROOT / "configs/experiments/merged/symmetric_merged_qwen3_pooled_native_audio_only.yaml"
-    with pytest.raises(ValueError, match="the declared shape moved to the two-node lane"):
-        build_job_specs(
-            [opened],
-            stage="cv",
-            run_id="qwen3_opened",
-            dry_run=False,
-            smoke_subjects=2,
-            smoke_epochs=1,
-            smoke_trials=0,
-            github_issue=12,
-            github_pr=10,
-        )
-    opened_plan = build_job_specs(
-        [opened],
-        stage="cv",
-        run_id="qwen3_opened_plan",
-        dry_run=True,
-        smoke_subjects=2,
-        smoke_epochs=1,
-        smoke_trials=0,
-        github_issue=12,
-        github_pr=10,
-    )
-    assert opened_plan["blocked_prerequisite"] == [str(opened)]
-    assert {job["kind"] for job in opened_plan["jobs"]} == {"train", "postprocess", "head"}
+    # Every route whose own smoke chain passed in its declared shape may run cv;
+    # a route that is not production-ready is refused with its recorded reason.
+    # The readiness table is authoritative, so this holds while a route is being
+    # re-verified in a changed shape and after it is opened again.
+    for name, entry in QWEN3_CONTRACT_READINESS.items():
+        path = ROOT / "configs/experiments/merged" / f"{name}.yaml"
+        run_id = f"qwen3_cv_{name.removeprefix('symmetric_merged_qwen3_pooled_')}"
+        if entry["production_ready"]:
+            registry = build_job_specs(
+                [path],
+                stage="cv",
+                run_id=run_id,
+                dry_run=False,
+                smoke_subjects=2,
+                smoke_epochs=1,
+                smoke_trials=0,
+                github_issue=12,
+                github_pr=10,
+            )
+            assert registry["blocked_prerequisite"] == []
+            assert all(not job["blocked_prerequisite"] for job in registry["jobs"])
+            assert {job["kind"] for job in registry["jobs"]} == {"train", "postprocess", "head"}
+        else:
+            with pytest.raises(ValueError, match="needs a passed GPU smoke chain"):
+                build_job_specs(
+                    [path],
+                    stage="cv",
+                    run_id=run_id,
+                    dry_run=False,
+                    smoke_subjects=2,
+                    smoke_epochs=1,
+                    smoke_trials=0,
+                    github_issue=12,
+                    github_pr=10,
+                )
     unverified = ROOT / "configs/experiments/merged/symmetric_merged_harmonized_audio_only_likelihood_v1.yaml"
     with pytest.raises(ValueError, match="not a declared Qwen3 merged contract"):
         build_job_specs(

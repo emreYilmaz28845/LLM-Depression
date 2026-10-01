@@ -72,48 +72,45 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
     "symmetric_merged_qwen3_pooled_native_audio_text": {
         "backend": "qwen3omni",
         "modality": "audio_text",
-        "production_ready": False,
-        "production_block_reason": (
-            "the declared shape moved to the two-node lane (execution.train_nodes: 2 with "
-            "gradient_accumulation_steps 16) after the recorded one-node chain, so that chain's "
-            "evidence no longer matches the declared shape and a smoke chain in the two-node shape "
-            "is required"
-        ),
+        "production_ready": True,
+        "production_block_reason": None,
         "head_ready": True,
         "evidence": (
-            "SUPERSEDED SHAPE (one-node lane, kept for the record): GPU smoke chain passed: run "
-            "qwen3_merged_smoke_audio_text_20260930_r2. Train job "
-            "46846648 COMPLETED 0:0 and postprocess job 46846649 COMPLETED 0:0 both ran from the "
-            "immutable deployment "
-            "feat-qwen3-merged-fsdp-postprocess-20260930-20260930T153509Z-b50cc61e-5c61506c "
-            "(source b50cc61edc3b1737b860e59fc61baf86131d643e); likelihood subject-level evidence "
-            "was locally verified for all five components."
-            " Hidden-feature audit passed: postprocess job 46853894 and head job 46855538 COMPLETED 0:0 under the isolated run qwen3_heads_audit_native_audio_text_20260930_r1 (feature dimension 2048, 414 train and 407 holdout rows); the first head attempt 46853895 failed on the missing project-local dependency path and is preserved."
-            " PENDING: a smoke chain in the declared two-node shape."
+            "Two-node smoke chain passed (run qwen3_merged2n_smoke_native_audio_text_20261001_r1): train "
+            "46877582 COMPLETED 0:0 (52:10) and postprocess 46877583 COMPLETED 0:0 (9:33), and the smoke "
+            "stage's fixed head 46877584 COMPLETED 0:0, all from the immutable deployment "
+            "feat-qwen3-multiseed-matrix-readiness-20260930-20261001T112633Z-6a49be82-3313b433 (source "
+            "6a49be820b3d88c1426d1df9bbc206fd95cac6a6). The train job ran on two four-GPU nodes "
+            "(NumNodes=2-2 NumTasks=2 NumCPUs=160, rendezvous nnodes=2 master=as07r3b01:29517) with the "
+            "declared CPU activation offload active, and recorded per-rank peaks of 22.53-26.84 GiB "
+            "allocated / 34.36-36.90 GiB reserved / about 50.5 GiB free on every rank. Likelihood "
+            "subject-level evidence was collected locally for all five components and the strict metrics "
+            "were recomputed from the stored subject predictions with an exact match (status passed)."
+            " Hidden-feature audit passed in the same two-node shape: postprocess 46885550 and head "
+            "46885551 COMPLETED 0:0 under the isolated run qwen3_heads_audit_native_audio_text_20261001_r2 "
+            "(feature dimension 2048). Superseded one-node chain 46846648/46846649 is kept for the record."
         ),
     },
     "symmetric_merged_qwen3_pooled_native_audio_only": {
         "backend": "qwen3omni",
         "modality": "audio_only",
-        "production_ready": False,
-        "production_block_reason": (
-            "the declared shape moved to the two-node lane (execution.train_nodes: 2 with "
-            "gradient_accumulation_steps 16) after the recorded one-node chain, so that chain's "
-            "evidence no longer matches the declared shape and a smoke chain in the two-node shape "
-            "is required"
-        ),
+        "production_ready": True,
+        "production_block_reason": None,
         "head_ready": True,
         "evidence": (
-            "SUPERSEDED SHAPE (one-node lane, kept for the record): GPU smoke chain passed: run "
-            "qwen3_multiseed_smoke_audio_only_20260930_r1. Train job "
-            "46852252 COMPLETED 0:0 (30:49) and postprocess job 46852253 COMPLETED 0:0 (4:39), both "
-            "from the immutable deployment "
-            "feat-qwen3-multiseed-matrix-readiness-20260930-20260930T183953Z-4ff77c53-521d2e6a "
-            "(source 4ff77c53ebd3808671af551a58287136bd1726e5). Likelihood subject-level evidence "
-            "was collected locally for all five components and the strict metrics were recomputed "
-            "from the stored subject predictions with an exact match."
-            " Hidden-feature audit passed: postprocess job 46853896 and head job 46855539 COMPLETED 0:0 under the isolated run qwen3_heads_audit_native_audio_only_20260930_r1 (feature dimension 2048, 414 train and 407 holdout rows); the first head attempt 46853897 failed on the missing project-local dependency path and is preserved."
-            " PENDING: a smoke chain in the declared two-node shape."
+            "Two-node smoke chain passed (run qwen3_merged2n_smoke_native_audio_only_20261001_r1): train "
+            "46880498 COMPLETED 0:0 (51:30) and postprocess 46880499 COMPLETED 0:0 (7:49), and the smoke "
+            "stage's fixed head 46880500 COMPLETED 0:0, all from the immutable deployment "
+            "feat-qwen3-multiseed-matrix-readiness-20260930-20261001T112633Z-6a49be82-3313b433 (source "
+            "6a49be820b3d88c1426d1df9bbc206fd95cac6a6). The train job ran on two four-GPU nodes "
+            "(rendezvous nnodes=2 master=as07r4b26:29517) with the declared CPU activation offload active, "
+            "and recorded per-rank peaks of 21.40-21.60 GiB allocated / 29.21-29.41 GiB reserved / about "
+            "50.7-50.9 GiB free on every rank. Likelihood subject-level evidence was collected locally for "
+            "all five components and the strict metrics were recomputed from the stored subject predictions "
+            "with an exact match (status passed)."
+            " Hidden-feature audit passed in the same two-node shape: postprocess 46885552 and head "
+            "46885553 COMPLETED 0:0 under the isolated run qwen3_heads_audit_native_audio_only_20261001_r2 "
+            "(feature dimension 2048). Superseded one-node chain 46852252/46852253 is kept for the record."
         ),
     },
     "symmetric_merged_qwen3_pooled_english_text_only": {
