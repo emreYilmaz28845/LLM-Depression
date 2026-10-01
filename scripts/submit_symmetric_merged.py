@@ -133,25 +133,28 @@ QWEN3_CONTRACT_READINESS: dict[str, dict[str, Any]] = {
     "symmetric_merged_qwen3_pooled_english_audio_text": {
         "backend": "qwen3omni",
         "modality": "audio_text",
-        "production_ready": False,
-        "production_block_reason": (
-            "the declared shape moved to the two-node lane (execution.train_nodes: 2 with "
-            "gradient_accumulation_steps 16) after the recorded one-node chain, so that chain's "
-            "evidence no longer matches the declared shape and a smoke chain in the two-node shape "
-            "is required"
-        ),
+        "production_ready": True,
+        "production_block_reason": None,
         "head_ready": True,
         "evidence": (
-            "SUPERSEDED SHAPE (one-node lane, kept for the record): GPU smoke chain passed: run "
-            "qwen3_multiseed_smoke_en_audio_text_20260930_r1. Train job "
-            "46852256 COMPLETED 0:0 (32:43) and postprocess job 46852257 COMPLETED 0:0 (5:42), both "
-            "from the immutable deployment "
-            "feat-qwen3-multiseed-matrix-readiness-20260930-20260930T183953Z-4ff77c53-521d2e6a "
-            "(source 4ff77c53ebd3808671af551a58287136bd1726e5). The English components carry the "
-            "translation notice with original-language audio; likelihood subject-level evidence was "
-            "locally verified for all five components."
-            " Hidden-feature audit passed: postprocess job 46853900 and head job 46855541 COMPLETED 0:0 under the isolated run qwen3_heads_audit_english_audio_text_20260930_r1 (feature dimension 2048, 414 train and 407 holdout rows); the first head attempt 46853901 failed on the missing project-local dependency path and is preserved."
-            " PENDING: a smoke chain in the declared two-node shape."
+            "Two-node smoke chain passed (run qwen3_merged2n_smoke_en_audio_text_20261001_r2): train "
+            "46889195 COMPLETED 0:0 (51:44) and postprocess 46889196 COMPLETED 0:0 (10:00), and the smoke "
+            "stage's fixed head 46889197 COMPLETED 0:0, all from the immutable deployment "
+            "feat-qwen3-multiseed-matrix-readiness-20260930-20261001T112633Z-6a49be82-3313b433 (source "
+            "6a49be820b3d88c1426d1df9bbc206fd95cac6a6). The train job ran on two four-GPU nodes "
+            "(rendezvous nnodes=2 master=as03r5b22:29517) with the declared CPU activation offload active "
+            "and per-rank peaks of 22.53-26.84 GiB allocated / 34.36-36.90 GiB reserved / about 50.5 GiB "
+            "free on every rank. Likelihood subject-level evidence was collected locally for all five "
+            "components and the strict metrics were recomputed from the stored subject predictions with an "
+            "exact match (status passed)."
+            " Hidden-feature audit passed in the same two-node shape: postprocess 46891829 and head "
+            "46891830 COMPLETED 0:0 under the isolated run qwen3_heads_audit_english_audio_text_20261001_r2 "
+            "(feature dimension 2048)."
+            " The first attempt r1 (train 46880501) failed on an NCCL collective timeout of a 1-element "
+            "ALLREDUCE that never completed inside the process-group timeout; it is classified transient "
+            "infrastructure, its dependent jobs were cancelled with DependencyNeverSatisfied, and the "
+            "unchanged retry r2 above passed. The superseded one-node chain 46852256/46852257 is kept for "
+            "the record."
         ),
     },
 }

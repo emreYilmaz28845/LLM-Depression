@@ -111,10 +111,15 @@ CELL_STATUS: dict[str, tuple[str, str]] = {
         "bounded hidden-feature audit on that smoke checkpoint, so its head kind is open.",
     ),
     "english_audio_text": (
-        SMOKE_ONLY_STATUS,
-        "The declared shape moved to the two-node lane (execution.train_nodes 2 with "
-        "gradient_accumulation_steps 16) after the recorded one-node chain, so that chain's evidence "
-        "no longer matches the declared shape; a smoke chain in the two-node shape is pending.",
+        EXECUTE_VERIFIED_STATUS,
+        "Two-node smoke chain passed (run qwen3_merged2n_smoke_en_audio_text_20261001_r2: train 46889195 "
+        "and postprocess 46889196 plus the smoke fixed head 46889197 COMPLETED 0:0; deployment "
+        "feat-qwen3-multiseed-matrix-readiness-20260930-20261001T112633Z-6a49be82-3313b433, source "
+        "6a49be820b3d88c1426d1df9bbc206fd95cac6a6) with the declared CPU activation offload active and "
+        "per-rank peaks of 22.53-26.84 GiB allocated, and the route passed its hidden-feature audit in the "
+        "same shape (postprocess 46891829, head 46891830). The first attempt failed on a transient NCCL "
+        "collective timeout and is preserved; so the cv and final stages are executable and its head kind "
+        "is open.",
     ),
 }
 
