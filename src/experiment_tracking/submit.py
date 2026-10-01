@@ -129,13 +129,18 @@ def resolve_contract(
     github_issue: str | None = None,
     github_pr: str | None = None,
     attempt_id: str | None = None,
-    train_nodes: int = 1,
+    train_nodes: int | None = None,
     train_gpus_per_node: int = 4,
     eval_gpus_per_node: int | None = None,
     env_activate: str | None = None,
     manifest_policy: str | None = None,
 ) -> dict[str, Any]:
-    """Resolve the complete submission contract without touching the network."""
+    """Resolve the complete submission contract without touching the network.
+
+    ``train_nodes`` is taken from the command line when given; otherwise the
+    config's ``resources.train_nodes`` decides the lane shape, so a route that
+    declares the two-node audio lane keeps it without a manual flag.
+    """
     try:
         resolved_manifest_policy = validate_manifest_policy(config_dict, manifest_policy)
     except ManifestPolicyError as exc:
@@ -144,14 +149,16 @@ def resolve_contract(
         raise SubmissionError(
             f"dataset qualifier {dataset!r} does not match resolved config dataset {config_dict.get('dataset')!r}"
         )
-    if int(train_nodes) < 1 or int(train_gpus_per_node) < 1:
+    config_train_nodes = int((config_dict.get("resources") or {}).get("train_nodes", 1) or 1)
+    resolved_train_nodes = config_train_nodes if train_nodes is None else int(train_nodes)
+    if resolved_train_nodes < 1 or int(train_gpus_per_node) < 1:
         raise SubmissionError("train_nodes and train_gpus_per_node must be positive")
     evaluation_shape = resolve_evaluation_shape(config_dict, eval_gpus_per_node)
     training_cfg = config_dict.get("training", {}) or {}
     strategy = str(training_cfg.get("strategy", "ddp") or "ddp").strip().lower()
     per_device_train_batch_size = int(training_cfg.get("per_device_train_batch_size", 1))
     gradient_accumulation_steps = int(training_cfg.get("gradient_accumulation_steps", 1))
-    world_size = int(train_nodes) * int(train_gpus_per_node)
+    world_size = int(resolved_train_nodes) * int(train_gpus_per_node)
     effective_global_batch_size = (
         per_device_train_batch_size * gradient_accumulation_steps * world_size
     )
@@ -164,7 +171,9 @@ def resolve_contract(
         )
     training_shape = {
         "strategy": strategy,
-        "nodes": int(train_nodes),
+        "nodes": int(resolved_train_nodes),
+        "nodes_source": "cli" if train_nodes is not None else "config",
+        "config_nodes": config_train_nodes,
         "gpus_per_node": int(train_gpus_per_node),
         "world_size": world_size,
         "per_device_train_batch_size": per_device_train_batch_size,

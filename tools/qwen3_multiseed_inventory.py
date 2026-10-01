@@ -318,9 +318,33 @@ def evaluate_candidate(
     differences = diff_paths(reduce_config(current_config) or {}, reduce_config(config) or {})
     scientific_differences = [path for path in differences if not is_shape_path(path)]
     shape_differences = [path for path in differences if is_shape_path(path)]
+    shape_note = None
+    # `resources.train_nodes` is a declaration the older runs could not record
+    # (their lane shape lived in the submission), so compare the effective shape
+    # instead: the recorded world size and the config-declared nodes must agree.
+    recorded_world = int((payload.get("training_strategy") or {}).get("world_size") or 0)
+    declared_world = int((current_config.get("resources") or {}).get("train_nodes", 1) or 1) * 4
+    recorded_accum = int((config.get("training") or {}).get("gradient_accumulation_steps") or 0)
+    declared_accum = int(
+        (current_config.get("training") or {}).get("gradient_accumulation_steps") or 0
+    )
+    if (
+        "resources.train_nodes" in shape_differences
+        and recorded_world
+        and declared_world
+        and recorded_world == declared_world
+        and recorded_accum == declared_accum
+    ):
+        shape_differences = [path for path in shape_differences if path != "resources.train_nodes"]
+        shape_note = (
+            f"resources.train_nodes is declaration-only here: the run recorded world size "
+            f"{recorded_world} and the config declares {declared_world}, both with accumulation "
+            f"{declared_accum}"
+        )
     checks["config_differences"] = differences
     checks["scientific_differences"] = scientific_differences
     checks["shape_differences"] = shape_differences
+    checks["shape_note"] = shape_note
     checks["config_matches"] = not differences
     checks["science_matches"] = not scientific_differences
 

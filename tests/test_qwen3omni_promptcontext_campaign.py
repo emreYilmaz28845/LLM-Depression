@@ -97,7 +97,6 @@ FROZEN_POOLED_LEAVES = {
     "output_dirs.split_dir",
     "training.num_train_epochs",
     "training.learning_rate",
-    "training.gradient_accumulation_steps",
     "training.selection_metric",
     "training.selection_metric_mode",
     "training.class_balance",

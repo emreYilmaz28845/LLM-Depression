@@ -77,9 +77,11 @@ ALLOWED_CONFIG_DIFFERENCES = {
     "training.strategy",
     "training.activation_offload",
     "training.run_final_eval_in_train",
+    "training.gradient_accumulation_steps",
     "evaluation.evaluation_view",
     "evaluation.inference_dtype",
     "resources",
+    "resources.train_nodes",
     "resources.eval_nodes",
     "resources.eval_gpus_per_node",
 }
@@ -264,7 +266,7 @@ def test_config_carries_the_mandatory_fields(config_path: Path) -> None:
     assert "promptcontext_v1_qwen3omni_likelihood" in config["output_dirs"]["run_root"]
     resources = config.get("resources")
     if resources is not None:
-        assert set(resources) <= {"eval_nodes", "eval_gpus_per_node"}
+        assert set(resources) <= {"train_nodes", "eval_nodes", "eval_gpus_per_node"}
         assert int(resources["eval_nodes"]) == 1
         assert int(resources["eval_gpus_per_node"]) in {1, 4}
     validate_qwen3omni_config(config)
@@ -356,15 +358,17 @@ def test_validation_is_noop_for_other_backends() -> None:
     validate_qwen3omni_config({})
 
 
-def test_effective_batch_matches_the_canonical_recipe_for_both_shapes() -> None:
+def test_effective_batch_matches_the_canonical_recipe_for_the_audio_lane() -> None:
     config = _omni_config()
     training = config["training"]
     assert training["per_device_train_batch_size"] == 1
-    assert training["gradient_accumulation_steps"] == 32
-    assert effective_global_batch_size(config, 4) == 128
-    eight_rank = dict(config)
-    eight_rank["training"] = dict(training, gradient_accumulation_steps=16)
-    assert effective_global_batch_size(eight_rank, 8) == 128
+    # The audio lane default: two nodes of four GPUs with accumulation 16.
+    assert training["gradient_accumulation_steps"] == 16
+    assert config["resources"]["train_nodes"] == 2
+    assert effective_global_batch_size(config, 8) == 128
+    four_rank = dict(config)
+    four_rank["training"] = dict(training, gradient_accumulation_steps=32)
+    assert effective_global_batch_size(four_rank, 4) == 128
 
 
 # --------------------------------------------------------------------------- #

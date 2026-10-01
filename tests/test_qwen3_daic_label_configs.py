@@ -66,6 +66,11 @@ def test_generated_config_equals_canonical_source_plus_the_allowlist(modality: s
     expected["output_dirs"]["run_root"] = (
         f"${{PROJECT_ROOT}}/output_model/{CAMPAIGN}/{modality}/daic"
     )
+    if modality != "text_only":
+        # This family pins the four-rank shape its runs were submitted with; the
+        # canonical DAIC audio source now declares the two-node audio-lane default.
+        expected["training"]["gradient_accumulation_steps"] = 32
+        expected["resources"] = {"eval_nodes": 1, "eval_gpus_per_node": 4}
 
     assert candidate == expected
     differences = set(diff_keys(source, candidate))

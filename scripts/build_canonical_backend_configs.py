@@ -76,6 +76,19 @@ POOLED_TURKISH_DEFAULTS = {
 }
 POOLED_TURKISH_TEXT_AGGREGATION = "turkish_pooled_text_pair_mean_margin_strict_v1"
 
+# The audio lane's default shape: two nodes of four GPUs with per-rank
+# accumulation 16, which is the shape the existing pooled Qwen3-Omni baseline
+# cells were submitted with. The FSDP recipe keeps an effective global batch of
+# 128 (1 x 16 x 8); the text lane keeps one node of four GPUs with accumulation
+# 32 (1 x 32 x 4).
+AUDIO_TRAIN_NODES = 2
+AUDIO_GRADIENT_ACCUMULATION_STEPS = 16
+AUDIO_RESOURCES = {
+    "train_nodes": AUDIO_TRAIN_NODES,
+    "eval_nodes": 1,
+    "eval_gpus_per_node": 4,
+}
+
 
 def _filename(stem: str, modality: str) -> str:
     return f"{stem}_{modality}_harmonized_selmacrof1_likelihood_v1.yaml"
@@ -125,7 +138,8 @@ def derive(source: dict[str, Any], *, modality: str, context: str, output_datase
             f"${{PROJECT_ROOT}}/output_model/promptcontext_v1_qwen3omni_likelihood/"
             f"{modality}/{output_dataset}"
         )
-        config["resources"] = {"eval_nodes": 1, "eval_gpus_per_node": 4}
+        config["resources"] = dict(AUDIO_RESOURCES)
+        training["gradient_accumulation_steps"] = AUDIO_GRADIENT_ACCUMULATION_STEPS
         validate_qwen3omni_config(config)
 
     resolve_system_prompt(config)
@@ -203,8 +217,16 @@ def verify_pooled_turkish_defaults() -> list[str]:
                 problems.append("evaluation.aggregation_level must be response_subject")
             if evaluation.get("hierarchical_score_aggregation") != "mean":
                 problems.append("evaluation.hierarchical_score_aggregation must be mean")
-            if config.get("resources") != {"eval_nodes": 1, "eval_gpus_per_node": 4}:
-                problems.append("resources must be the sharded evaluation shape")
+            if config.get("resources") != AUDIO_RESOURCES:
+                problems.append(
+                    "resources must declare the audio lane shape "
+                    f"{sorted(AUDIO_RESOURCES)}"
+                )
+            if training.get("gradient_accumulation_steps") != AUDIO_GRADIENT_ACCUMULATION_STEPS:
+                problems.append(
+                    "training.gradient_accumulation_steps must be "
+                    f"{AUDIO_GRADIENT_ACCUMULATION_STEPS} for the two-node audio lane"
+                )
         if output_dirs.get("run_root") != expected_run_root:
             problems.append(f"output_dirs.run_root must be {expected_run_root}")
         try:

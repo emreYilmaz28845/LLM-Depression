@@ -40,7 +40,8 @@ def _reduced_run_config(perturb: dict | None = None) -> dict:
 
 
 def _write_run(tmp_path: Path, *, perturb: dict | None = None, state: str = "REPORTABLE",
-               with_evidence: bool = True, metrics_value: float = 1.0, run_name: str = "run_one") -> Path:
+               with_evidence: bool = True, metrics_value: float = 1.0, run_name: str = "run_one",
+               world_size: int = 4) -> Path:
     config = _reduced_run_config(perturb)
     fold_dir = tmp_path / "scan" / "campaign" / "text_only" / "daic" / run_name / "fold_0"
     fold_dir.mkdir(parents=True)
@@ -61,7 +62,7 @@ def _write_run(tmp_path: Path, *, perturb: dict | None = None, state: str = "REP
         "manifest_path": "/remote/manifest.jsonl",
         "tracking": {"attempt_id": "attempt-1"},
         "config_overrides": [],
-        "training_strategy": {"world_size": 4, "effective_global_batch_size": 128},
+        "training_strategy": {"world_size": world_size, "effective_global_batch_size": 128},
     }
     (fold_dir / "run_config.yaml").write_text(yaml.safe_dump(payload), encoding="utf-8")
     (fold_dir / "status.json").write_text(json.dumps({"state": state}), encoding="utf-8")
@@ -169,6 +170,40 @@ def test_inventory_marks_a_shape_only_run_pending_decision(synthetic_project: Pa
         "training.gradient_accumulation_steps"
     ]
     assert fold["candidates"][0]["checks"]["scientific_differences"] == []
+
+
+def test_inventory_accepts_a_declaration_only_lane_difference(synthetic_project: Path) -> None:
+    """`resources.train_nodes` is a declaration; the recorded world size decides.
+
+    The older audio runs recorded their lane shape in the submission, not in the
+    config, so a run whose recorded world size equals the config-declared lane is
+    reusable even though the recorded config block has no ``train_nodes``.
+    """
+    reference = synthetic_project / REFERENCE_CONFIG
+    config = yaml.safe_load(reference.read_text(encoding="utf-8"))
+    config["resources"] = {"train_nodes": 2, "eval_nodes": 1, "eval_gpus_per_node": 4}
+    config["training"]["gradient_accumulation_steps"] = 16
+    reference.write_text(yaml.safe_dump(config), encoding="utf-8")
+    recorded = {
+        "resources": {"eval_nodes": 1, "eval_gpus_per_node": 4},
+        "training.gradient_accumulation_steps": 16,
+    }
+    _write_run(synthetic_project, perturb=recorded, world_size=8)
+    inventory_data = _run_inventory(synthetic_project, _write_matrix(synthetic_project))
+    candidate = inventory_data["cells"][0]["folds"][0]["candidates"][0]
+    assert candidate["verdict"] == "reusable"
+    assert candidate["checks"]["shape_differences"] == []
+    assert "declaration-only" in (candidate["checks"]["shape_note"] or "")
+    # A recorded world size that disagrees with the declared lane stays a decision.
+    _write_run(synthetic_project, run_name="run_two", perturb=recorded, world_size=4)
+    inventory_data = _run_inventory(synthetic_project, _write_matrix(synthetic_project))
+    fold = inventory_data["cells"][0]["folds"][0]
+    pending = [
+        candidate
+        for candidate in fold["candidates"]
+        if candidate["verdict"] == "reusable_pending_shape_decision"
+    ]
+    assert pending and pending[0]["checks"]["shape_differences"] == ["resources.train_nodes"]
 
 
 def test_inventory_marks_a_prompt_change_incompatible(synthetic_project: Path) -> None:

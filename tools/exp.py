@@ -1661,8 +1661,12 @@ def main() -> int:
     submit_parser.add_argument(
         "--train-nodes",
         type=int,
-        default=1,
-        help="training nodes: 1 (default, 4-GPU lane) or 2 (2 x 4 GPUs for the FSDP strategy)",
+        default=None,
+        help=(
+            "training nodes; when omitted the config's resources.train_nodes decides "
+            "(the audio lane declares 2 x 4 GPUs with accumulation 16, the text lane 1 x 4 "
+            "with accumulation 32, both keeping effective global batch 128)"
+        ),
     )
     submit_parser.add_argument(
         "--train-gpus-per-node",

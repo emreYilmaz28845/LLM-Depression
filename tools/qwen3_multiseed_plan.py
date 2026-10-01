@@ -286,6 +286,12 @@ def build_production_manifest(
                 run_name = (
                     f"{route['dataset']}_{route['modality']}_{route['language']}_s{seed}_f{fold}"
                 )
+                lane_nodes = int(
+                    (yaml.safe_load(
+                        (PROJECT_ROOT / route["config"]).read_text(encoding="utf-8")
+                    ).get("resources") or {}).get("train_nodes", 1)
+                    or 1
+                )
                 jobs.append(
                     {
                         "kind": "train",
@@ -293,7 +299,12 @@ def build_production_manifest(
                         "fold": fold,
                         "run_name": run_name,
                         "run_root": route["run_root"],
-                        "shape": {"strategy": route["training"]["strategy"], "gpus": 4},
+                        "shape": {
+                            "strategy": route["training"]["strategy"],
+                            "nodes": lane_nodes,
+                            "gpus_per_node": 4,
+                            "world_size": lane_nodes * 4,
+                        },
                         "reuse_seed_1337": reuse,
                         "status": "planned",
                     }

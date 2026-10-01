@@ -83,6 +83,12 @@ DAIC, CMDC × three modalities) plus the three pooled Turkish default cells:
   Qwen3-Omni-30B-A3B Thinker. The Talker is not retained;
 - both families use `promptcontext_v1`, FSDP, BF16 inference, CPU activation
   offload, likelihood evaluation and standalone evaluation after training.
+- the lane shape is declared by each config: the audio cells declare
+  `resources.train_nodes: 2` with `training.gradient_accumulation_steps: 16`
+  (two four-GPU nodes, the shape the pooled Qwen3-Omni baselines were submitted
+  with), and the text cells keep one four-GPU node with accumulation 32. Both
+  keep the FSDP effective global batch of 128, and `exp.py submit` takes the
+  node count from the config unless `--train-nodes` overrides it.
 
 The Turkish default cells are the existing pooled pos+neg configs
 (`configs/main/turkish_pooled_t17_*_promptcontext_v1_*`): the canonical generator

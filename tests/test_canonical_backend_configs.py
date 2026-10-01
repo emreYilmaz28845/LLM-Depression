@@ -39,4 +39,11 @@ def test_canonical_backend_assignment_and_resource_contracts() -> None:
                 assert "Qwen3-Omni-30B-A3B-Instruct" in config["model_name_or_path"]
                 assert config["model_attn_implementation"] == "sdpa"
                 assert config["lora"]["target_modules"] == QWEN3OMNI_LORA_TARGET_REGEX
-                assert config["resources"] == {"eval_nodes": 1, "eval_gpus_per_node": 4}
+                # The audio lane runs two four-GPU nodes with accumulation 16, which
+                # keeps the FSDP effective global batch at 128 (1 x 16 x 8).
+                assert config["resources"] == {
+                    "train_nodes": 2,
+                    "eval_nodes": 1,
+                    "eval_gpus_per_node": 4,
+                }
+                assert config["training"]["gradient_accumulation_steps"] == 16
