@@ -7,14 +7,33 @@ and runs the full-cohort extraction + fixed-classifier chain for every resolved
 counterpart of the smoke-only ``submit_qwen3_hidden_smoke.sh``: no smoke subject
 limits, no Optuna, no PCA/control variants, and no legacy campaign routing.
 
-Design rules enforced here:
+Lane identity (shared by Native and English)
+--------------------------------------------
+Nothing about the campaign is hardcoded. The tool resolves one lane identity
+from the lane pin, the linked ``audiollm.experiment_lane.v1`` definition and the
+linked ``audiollm.experiment_group.v1`` definition:
 
-* one head attempt per parent key; the attempt directory is lane-owned under
-  the experiment runtime and the local mirror is lane-owned under the lane
-  evidence directory;
-* extraction runs with ``SKIP_CLASSIFIERS=1`` and the explicit classifier
-  worker follows with ``--dependency=afterok`` and ``SEED=1337`` (the extractor's
-  inline classifier call does not forward SEED);
+* ``experiment_id`` from the pin drives the remote runtime root
+  ``<REMOTE_RUNTIME_BASE>/<experiment_id>``;
+* the group's ``scope.campaign`` drives the tracking campaign, the local
+  evidence directory (``scope.evidence_dir`` or ``outputs/<campaign>``) and the
+  default plan/registry paths;
+* ``scope.head_tracking_kind`` and ``scope.head_run_schema`` (or deterministic
+  ``<campaign>_head`` / ``audiollm.<campaign>_head_run.v1`` fallbacks) drive the
+  attempt tracking identity;
+* ``scope.language`` drives the route filter.
+
+Isolation is fail-closed: the plan's campaign/group/experiment must match the
+resolved identity, the plan must declare a lane-owned ``cache_root`` under the
+lane runtime root, every remote attempt path must stay under that runtime root,
+and every local mirror must stay under the lane evidence directory. A foreign
+path or a plan from another lane is refused before any mutation.
+
+Other enforced rules:
+
+* one head attempt per parent key; extraction runs with ``SKIP_CLASSIFIERS=1``
+  and the explicit classifier worker follows with ``--dependency=afterok`` and
+  ``SEED=1337`` (the extractor's inline classifier call does not forward SEED);
 * classifier variants are exactly ``logreg_raw:xgb_raw``;
 * backend activation (``ENV_ACTIVATE``) and the project-local hidden dependency
   path (``QWEN_HIDDEN_DEPS``) are explicit; ignored ``.deps`` directories are
@@ -37,14 +56,16 @@ from __future__ import annotations
 import argparse
 import base64
 import json
-import os
 import re
 import shlex
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -63,21 +84,13 @@ from src.utils import load_yaml_with_overrides  # noqa: E402
 
 SCHEMA_VERSION = "audiollm.qwen3_multiseed_head_dispatch_plan.v1"
 REGISTRY_SCHEMA = "audiollm.qwen3_multiseed_head_registry.v1"
-CAMPAIGN = "qwen3_multiseed_native_20261002"
 HEAD_SEED = 1337
 HEAD_VARIANTS = ("logreg_raw", "xgb_raw")
-TRACKING_KIND = "qwen3_multiseed_native_head"
-RUN_SCHEMA = "audiollm.qwen3_multiseed_head_run.v1"
-REMOTE_PROJECT_ROOT = Path("/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression")
 REMOTE_RUNTIME_BASE = Path("/gpfs/projects/etur92/ozu647717/AudioLLM/experiment_runtime")
 QWEN_HIDDEN_DEPS_DEFAULT = (
     "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/.deps/qwen_hidden"
 )
 EVALUATION_VIEW = "harmonized_all_windows_full_coverage"
-METRIC_NAMESPACE = "headline/binary_strict"
-LANE_EVIDENCE = PROJECT_ROOT / "outputs" / CAMPAIGN
-DEFAULT_PLAN = LANE_EVIDENCE / "head_dispatch_plan_v1.json"
-DEFAULT_REGISTRY = LANE_EVIDENCE / "head_submissions.jsonl"
 TERMINAL_STATES = {
     "COMPLETED": ("COMPLETED", "COMPLETED"),
     "FAILED": ("FAILED", "FAILED"),
@@ -88,10 +101,37 @@ TERMINAL_STATES = {
     "PREEMPTED": ("FAILED", "PREEMPTED"),
     "BOOT_FAIL": ("FAILED", "NODE_FAIL"),
 }
+EXPERIMENT_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]*")
 
 
 class DispatchError(RuntimeError):
     """A dispatch contract or remote operation failed closed."""
+
+
+@dataclass(frozen=True)
+class LaneIdentity:
+    """Identity resolved from the lane pin and its linked experiment group."""
+
+    project_root: Path
+    experiment_id: str
+    group_id: str
+    campaign: str
+    language: str
+    evidence_dir: Path
+    tracking_kind: str
+    run_schema: str
+    runtime_root: Path
+    lane_definition_path: Path
+    group_definition_path: Path
+
+    def plan_path(self) -> Path:
+        return self.evidence_dir / "head_dispatch_plan_v1.json"
+
+    def registry_path(self) -> Path:
+        return self.evidence_dir / "head_submissions.jsonl"
+
+    def local_mirror(self, attempt_id: str) -> Path:
+        return self.evidence_dir / "head_attempts" / attempt_id
 
 
 def _now() -> str:
@@ -107,59 +147,132 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _lane_pin() -> dict[str, Any]:
-    pin_path = PROJECT_ROOT / ".agent-pin.json"
-    if not pin_path.is_file():
-        raise DispatchError(f"lane pin is missing: {pin_path}")
-    return _load_json(pin_path)
+def _load_yaml(path: Path) -> dict[str, Any]:
+    payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise DispatchError(f"expected a YAML mapping: {path}")
+    return payload
 
 
-def lane_group_id() -> str:
-    pin = _lane_pin()
+def require_under(candidate: str | Path, root: str | Path, what: str) -> Path:
+    """Fail closed unless ``candidate`` stays inside ``root``."""
+
+    cand = Path(candidate)
+    if ".." in cand.parts:
+        raise DispatchError(f"{what} contains '..': {candidate}")
+    root_str = str(root).rstrip("/")
+    cand_str = str(cand)
+    if cand_str != root_str and not cand_str.startswith(root_str + "/"):
+        raise DispatchError(f"{what} {cand} escapes the lane root {root}")
+    return cand
+
+
+def resolve_lane_identity(
+    *,
+    project_root: Path | None = None,
+    pin_path: Path | None = None,
+    campaign_override: str | None = None,
+    language_override: str | None = None,
+) -> LaneIdentity:
+    """Resolve the lane identity; refuse anything ambiguous or foreign."""
+
+    root = Path(project_root or PROJECT_ROOT)
+    pin = _load_json(Path(pin_path) if pin_path else root / ".agent-pin.json")
+    experiment_id = pin.get("experiment_id")
+    if not isinstance(experiment_id, str) or not EXPERIMENT_ID_PATTERN.fullmatch(experiment_id):
+        raise DispatchError(f"lane pin has an invalid experiment_id: {experiment_id!r}")
     definition_rel = pin.get("definition_path")
     if not isinstance(definition_rel, str) or not definition_rel:
         raise DispatchError("lane pin has no definition_path")
-    import yaml
-
-    definition = yaml.safe_load((PROJECT_ROOT / definition_rel).read_text(encoding="utf-8"))
-    group_rel = definition.get("experiment_group_path")
+    lane_definition_path = root / definition_rel
+    lane = _load_yaml(lane_definition_path)
+    if lane.get("experiment_id") != experiment_id:
+        raise DispatchError(
+            f"lane definition experiment_id {lane.get('experiment_id')!r} does not match pin "
+            f"{experiment_id!r}"
+        )
+    group_rel = lane.get("experiment_group_path")
     if not group_rel:
         raise DispatchError(
             "lane definition has no experiment_group_path; link a complete "
             "audiollm.experiment_group.v1 definition before dispatch"
         )
-    group = yaml.safe_load((PROJECT_ROOT / group_rel).read_text(encoding="utf-8"))
+    group_definition_path = root / str(group_rel)
+    group = _load_yaml(group_definition_path)
     group_id = group.get("group_id")
     if not group_id:
         raise DispatchError(f"linked experiment group has no group_id: {group_rel}")
-    return str(group_id)
-
-
-def _lane_runtime_root() -> Path:
-    return REMOTE_RUNTIME_BASE / str(_lane_pin().get("experiment_id") or PROJECT_ROOT.name)
-
-
-def _load_deployment(deployment_id: str | None) -> dict[str, Any]:
-    root = PROJECT_ROOT / "outputs" / "exp_deploy"
-    candidates: list[tuple[Path, dict[str, Any]]] = []
-    for record_path in sorted(root.glob("*/deployment.json")):
-        try:
-            record = _load_json(record_path)
-        except Exception:
-            continue
-        if deployment_id and record.get("deployment_id") != deployment_id:
-            continue
-        candidates.append((record_path, record))
-    if not candidates:
+    scope = group.get("scope") if isinstance(group.get("scope"), dict) else {}
+    campaign = scope.get("campaign")
+    if campaign_override:
+        if campaign and campaign_override != campaign:
+            raise DispatchError(
+                f"--campaign {campaign_override!r} does not match the linked group campaign "
+                f"{campaign!r}"
+            )
+        campaign = campaign or campaign_override
+    if not campaign:
         raise DispatchError(
-            f"no local deployment record found{f' for {deployment_id}' if deployment_id else ''}"
+            "linked experiment group must declare scope.campaign (or pass a matching --campaign)"
         )
-    return candidates[-1][1]
+    language = scope.get("language")
+    if language_override:
+        if language and language_override != language:
+            raise DispatchError(
+                f"--language {language_override!r} does not match the linked group language "
+                f"{language!r}"
+            )
+        language = language or language_override
+    if not language:
+        raise DispatchError(
+            "linked experiment group must declare scope.language (or pass a matching --language)"
+        )
+    evidence_rel = str(scope.get("evidence_dir") or f"outputs/{campaign}")
+    outputs_root = (root / "outputs").resolve()
+    evidence_dir = (root / evidence_rel).resolve()
+    require_under(evidence_dir, outputs_root, "evidence dir")
+    tracking_kind = str(scope.get("head_tracking_kind") or f"{campaign}_head")
+    run_schema = str(scope.get("head_run_schema") or f"audiollm.{campaign}_head_run.v1")
+    runtime_root = Path(REMOTE_RUNTIME_BASE) / experiment_id
+    return LaneIdentity(
+        project_root=root,
+        experiment_id=experiment_id,
+        group_id=str(group_id),
+        campaign=str(campaign),
+        language=str(language),
+        evidence_dir=evidence_dir,
+        tracking_kind=tracking_kind,
+        run_schema=run_schema,
+        runtime_root=runtime_root,
+        lane_definition_path=lane_definition_path,
+        group_definition_path=group_definition_path,
+    )
 
 
-def _route_aggregation(config: dict[str, Any]) -> str:
-    evaluation = config.get("evaluation") or {}
-    return str(evaluation.get("aggregation_level") or "subject")
+def validate_plan_identity(plan: dict[str, Any], identity: LaneIdentity) -> Path:
+    """Fail closed when a dispatch plan belongs to another lane or escapes it."""
+
+    if plan.get("schema_version") != SCHEMA_VERSION:
+        raise DispatchError(f"unexpected dispatch plan schema: {plan.get('schema_version')!r}")
+    for field, expected in (
+        ("campaign", identity.campaign),
+        ("group_id", identity.group_id),
+        ("experiment_id", identity.experiment_id),
+        ("language", identity.language),
+    ):
+        value = plan.get(field)
+        if value and str(value) != str(expected):
+            raise DispatchError(
+                f"dispatch plan {field} {value!r} does not match this lane's {expected!r}"
+            )
+    cache_root = plan.get("cache_root")
+    if not cache_root:
+        raise DispatchError(
+            "dispatch plan has no lane-owned cache_root; regenerate the planner with "
+            "--cache-root under the lane runtime root"
+        )
+    require_under(str(cache_root), identity.runtime_root, "cache root")
+    return Path(str(cache_root))
 
 
 # ---------------------------------------------------------------------------
@@ -168,14 +281,24 @@ def _route_aggregation(config: dict[str, Any]) -> str:
 
 
 def command_plan(args: argparse.Namespace) -> int:
+    identity = resolve_lane_identity(
+        campaign_override=args.campaign, language_override=args.language
+    )
     matrix = _load_json(args.matrix)
     if matrix.get("schema_version") != "audiollm.qwen3_heads_matrix.v1":
         raise DispatchError(f"unexpected planner schema: {matrix.get('schema_version')!r}")
     seeds = [int(seed) for seed in (args.seed or matrix.get("planned_seeds") or [])]
+    cache_root = matrix.get("cache_root")
+    if not cache_root:
+        raise DispatchError(
+            "planner matrix has no cache_root; regenerate it with --cache-root under the "
+            "lane runtime root"
+        )
+    require_under(str(cache_root), identity.runtime_root, "cache root")
     routes_out: list[dict[str, Any]] = []
     resolved = waiting = blocked = 0
     for route in matrix.get("routes") or []:
-        if route.get("language") != args.language:
+        if route.get("language") != identity.language:
             continue
         config = load_yaml_with_overrides(PROJECT_ROOT / str(route["config"]), [])
         route_out = {
@@ -229,6 +352,7 @@ def command_plan(args: argparse.Namespace) -> int:
                         "extract_gpus": int(job["extract"]["gpus"]),
                     }
                 )
+                require_under(str(job["extract"]["cache_dir"]), str(cache_root), "job cache dir")
                 resolved += 1
             else:
                 entry["reason"] = job.get("reason")
@@ -240,11 +364,18 @@ def command_plan(args: argparse.Namespace) -> int:
         routes_out.append(route_out)
     payload = {
         "schema_version": SCHEMA_VERSION,
-        "campaign": CAMPAIGN,
-        "language": args.language,
+        "campaign": identity.campaign,
+        "group_id": identity.group_id,
+        "experiment_id": identity.experiment_id,
+        "language": identity.language,
+        "tracking_kind": identity.tracking_kind,
+        "run_schema": identity.run_schema,
+        "evidence_dir": str(identity.evidence_dir),
+        "runtime_root": str(identity.runtime_root),
         "seeds": seeds,
         "head_seed": HEAD_SEED,
         "variants": list(HEAD_VARIANTS),
+        "cache_root": str(cache_root),
         "source_matrix": str(args.matrix),
         "source_matrix_sha256": sha256_file(args.matrix),
         "created_at_utc": _now(),
@@ -256,12 +387,18 @@ def command_plan(args: argparse.Namespace) -> int:
             "jobs": resolved + waiting + blocked,
         },
     }
-    output = Path(args.output)
+    output = Path(args.output) if args.output else identity.plan_path()
+    require_under(output, identity.evidence_dir, "dispatch plan output")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8")
     print(f"wrote {output}")
     print("dispatch plan:", json.dumps(payload["summary"], sort_keys=True))
     return 0
+
+
+def _route_aggregation(config: dict[str, Any]) -> str:
+    evaluation = config.get("evaluation") or {}
+    return str(evaluation.get("aggregation_level") or "subject")
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +427,15 @@ def _key(route_id: str, seed: int, fold: int) -> str:
     return f"{route_id}|{seed}|{fold}"
 
 
+def _validate_registry_entry(entry: dict[str, Any], identity: LaneIdentity) -> None:
+    require_under(str(entry.get("local_mirror", "")), identity.evidence_dir, "local mirror")
+    require_under(str(entry.get("remote_attempt_dir", "")), identity.runtime_root, "remote attempt")
+    if entry.get("campaign") and entry["campaign"] != identity.campaign:
+        raise DispatchError(
+            f"registry entry campaign {entry['campaign']!r} does not match {identity.campaign!r}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # submit
 # ---------------------------------------------------------------------------
@@ -297,10 +443,6 @@ def _key(route_id: str, seed: int, fold: int) -> str:
 
 def _remote_attempt_dir(runtime_root: Path, route_id: str, attempt_id: str) -> str:
     return str(runtime_root / "heads" / route_id / attempt_id)
-
-
-def _local_mirror(attempt_id: str) -> Path:
-    return LANE_EVIDENCE / "head_attempts" / attempt_id
 
 
 def _backend_env(config_path: str, code_root: str, host: str) -> dict[str, str]:
@@ -341,17 +483,22 @@ def _init_payload(
     attempt_id: str,
     remote_attempt_dir: str,
     deployment: dict[str, Any],
-    group_id: str,
+    identity: LaneIdentity,
 ) -> dict[str, Any]:
+    if route.get("language") != identity.language:
+        raise DispatchError(
+            f"route language {route.get('language')!r} does not match lane language "
+            f"{identity.language!r}"
+        )
     parent = job["parent"]
     context = {
         "attempt_id": attempt_id,
         "logical_run_name": job["logical_run_name"],
         "fold": int(job["fold"]),
         "seed": int(job["seed"]),
-        "group_id": group_id,
-        "tracking_kind": TRACKING_KIND,
-        "run_schema_version": RUN_SCHEMA,
+        "group_id": identity.group_id,
+        "tracking_kind": identity.tracking_kind,
+        "run_schema_version": identity.run_schema,
         "created_at_utc": _now(),
         "required_jobs": ["extract", "classifier"],
         "source": {
@@ -371,7 +518,7 @@ def _init_payload(
         },
     }
     scientific = {
-        "campaign": CAMPAIGN,
+        "campaign": identity.campaign,
         "route_id": route["route_id"],
         "dataset": route["dataset"],
         "modality": route["modality"],
@@ -380,7 +527,7 @@ def _init_payload(
         "stage": "standalone_head",
         "parent_training_seed": int(job["seed"]),
         "head_seed": HEAD_SEED,
-        "split_seed": int(matrix_split_seed()),
+        "split_seed": 1337,
         "dataset_variant": route.get("dataset_variant"),
         "classifier": {
             "method": "fixed_logreg_xgb",
@@ -411,10 +558,6 @@ def _init_payload(
         "config": scientific,
         "parent": parent_payload,
     }
-
-
-def matrix_split_seed() -> int:
-    return 1337
 
 
 def _remote_python_block(code: str) -> str:
@@ -511,10 +654,10 @@ print("events-recorded")
             [
                 f"echo '=== JOB {key} ==='",
                 f"export Q3MS_PAYLOAD_B64={shlex.quote(payload_b64)}",
-                f"deactivate >/dev/null 2>&1 || true",
+                "deactivate >/dev/null 2>&1 || true",
                 f"source {shlex.quote(env['ENV_ACTIVATE'])} >/dev/null 2>&1 || true",
                 init_python.rstrip("\n"),
-                f"unset Q3MS_PAYLOAD_B64",
+                "unset Q3MS_PAYLOAD_B64",
                 f"export Q3MS_ATTEMPT_DIR={shlex.quote(attempt_dir)}",
                 (
                     f"Q3MS_EXTRACT_ID=\"$(sbatch --parsable --chdir={shlex.quote(code_root)} "
@@ -524,7 +667,7 @@ print("events-recorded")
                     f"{shlex.quote(code_root + '/scripts/run_qwen_hidden_extract_slurm.sh')})\""
                 ),
                 "if [ -z \"${Q3MS_EXTRACT_ID:-}\" ]; then echo 'ERROR=extract sbatch returned no id'; continue; fi",
-                f"export Q3MS_EXTRACT_ID",
+                "export Q3MS_EXTRACT_ID",
                 (
                     f"Q3MS_CLASSIFIER_ID=\"$(sbatch --parsable --chdir={shlex.quote(code_root)} "
                     f"--job-name=q3mshc-{short} --dependency=afterok:$Q3MS_EXTRACT_ID "
@@ -532,11 +675,11 @@ print("events-recorded")
                     f"{shlex.quote(code_root + '/scripts/run_qwen_hidden_classifier_slurm.sh')})\""
                 ),
                 "if [ -z \"${Q3MS_CLASSIFIER_ID:-}\" ]; then echo 'ERROR=classifier sbatch returned no id'; continue; fi",
-                f"export Q3MS_CLASSIFIER_ID",
+                "export Q3MS_CLASSIFIER_ID",
                 f"export LOG_ROOT={shlex.quote(job_log_root)}",
                 events_python.rstrip("\n"),
-                f"echo \"EXTRACT_ID=$Q3MS_EXTRACT_ID\"",
-                f"echo \"CLASSIFIER_ID=$Q3MS_CLASSIFIER_ID\"",
+                "echo \"EXTRACT_ID=$Q3MS_EXTRACT_ID\"",
+                "echo \"CLASSIFIER_ID=$Q3MS_CLASSIFIER_ID\"",
             ]
         )
     return "\n".join(lines) + "\n"
@@ -564,16 +707,18 @@ def _parse_submit_output(output: str) -> dict[str, dict[str, str]]:
 
 
 def command_submit(args: argparse.Namespace) -> int:
-    plan = _load_json(args.plan)
-    if plan.get("schema_version") != SCHEMA_VERSION:
-        raise DispatchError(f"unexpected dispatch plan schema: {plan.get('schema_version')!r}")
+    identity = resolve_lane_identity(campaign_override=args.campaign)
     if args.execute and args.dry_run:
         raise DispatchError("specify either --dry-run or --execute, not both")
+    plan_path = Path(args.plan) if args.plan else identity.plan_path()
+    require_under(plan_path, identity.evidence_dir, "dispatch plan")
+    plan = _load_json(plan_path)
+    cache_root = validate_plan_identity(plan, identity)
     deployment = _load_deployment(args.deployment_id)
     code_root = str(deployment["deployed_code_path"])
-    runtime_root = _lane_runtime_root()
-    group_id = lane_group_id()
-    registry_path = Path(args.registry)
+    runtime_root = identity.runtime_root
+    registry_path = Path(args.registry) if args.registry else identity.registry_path()
+    require_under(registry_path, identity.evidence_dir, "registry")
     registry = _read_registry(registry_path)
     submitted_keys = {entry["registry_key"] for entry in registry}
     seeds = {int(seed) for seed in (args.seed or plan.get("seeds") or [])}
@@ -582,7 +727,6 @@ def command_submit(args: argparse.Namespace) -> int:
     for route in plan.get("routes") or []:
         if args.route and route["route_id"] not in set(args.route):
             continue
-        config = load_yaml_with_overrides(PROJECT_ROOT / str(route["config"]), [])
         for job in route.get("jobs") or []:
             if job["parent_status"] != "resolved":
                 continue
@@ -593,7 +737,7 @@ def command_submit(args: argparse.Namespace) -> int:
                 continue
             if args.key and key not in set(args.key):
                 continue
-            jobs.append({"route": route, "job": job, "registry_key": key, "config": config})
+            jobs.append({"route": route, "job": job, "registry_key": key})
             if args.limit and len(jobs) >= int(args.limit):
                 break
         if args.limit and len(jobs) >= int(args.limit):
@@ -602,7 +746,6 @@ def command_submit(args: argparse.Namespace) -> int:
         print("no dispatchable jobs selected")
         return 0
 
-    runner = RemoteRunner(host=DEFAULT_TRANSFER_HOST)
     scheduler_env: dict[str, dict[str, str]] = {}
     prepared: list[dict[str, Any]] = []
     for item in jobs:
@@ -610,8 +753,10 @@ def command_submit(args: argparse.Namespace) -> int:
         job = item["job"]
         attempt_id = new_attempt_id(job["logical_run_name"], deployment["git_commit"])
         remote_attempt_dir = _remote_attempt_dir(runtime_root, route["route_id"], attempt_id)
+        require_under(remote_attempt_dir, runtime_root, "remote attempt dir")
         classifier_dir = f"{remote_attempt_dir}/classifier"
         job_log_root = str(runtime_root / "logs" / "heads" / route["route_id"] / attempt_id)
+        require_under(job_log_root, runtime_root, "log root")
         env = _backend_env(
             str(PROJECT_ROOT / route["config"]),
             code_root,
@@ -624,7 +769,7 @@ def command_submit(args: argparse.Namespace) -> int:
             attempt_id=attempt_id,
             remote_attempt_dir=remote_attempt_dir,
             deployment=deployment,
-            group_id=group_id,
+            identity=identity,
         )
         prepared.append(
             {
@@ -651,17 +796,21 @@ def command_submit(args: argparse.Namespace) -> int:
         log_root=str(runtime_root / "logs" / "heads"),
     )
     print(f"=== head dispatch submit ({'execute' if args.execute else 'dry-run'}) ===")
+    print(f"campaign: {identity.campaign}")
+    print(f"group_id: {identity.group_id}")
+    print(f"experiment_id: {identity.experiment_id}")
+    print(f"language: {identity.language}")
     print(f"deployment_id: {deployment['deployment_id']}")
     print(f"git_commit: {deployment['git_commit']}")
-    print(f"group_id: {group_id}")
     print(f"runtime_root: {runtime_root}")
+    print(f"cache_root: {cache_root}")
     print(f"jobs: {len(prepared)}")
     for item in prepared:
         print(
             f"  {item['registry_key']} -> {item['attempt_id']} "
             f"(extract gpus={item['extract_gpus']}, cache={item['cache_dir']})"
         )
-    evidence_dir = LANE_EVIDENCE / "head_submit_evidence"
+    evidence_dir = identity.evidence_dir / "head_submit_evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
     (evidence_dir / "submit_script.sh").write_text(script, encoding="utf-8")
     print(f"submit script: {evidence_dir / 'submit_script.sh'}")
@@ -671,6 +820,7 @@ def command_submit(args: argparse.Namespace) -> int:
         print("dry-run complete; no mutation performed")
         return 0
 
+    runner = RemoteRunner(host=DEFAULT_TRANSFER_HOST)
     try:
         verification = verify_deployment(
             runner,
@@ -684,10 +834,9 @@ def command_submit(args: argparse.Namespace) -> int:
             f"({verification['tree_verification']['verified_files']}/"
             f"{verification['tree_verification']['expected_files']} files)"
         )
-    except Exception as exc:  # DeploymentError or transport
+    except Exception as exc:
         raise DispatchError(f"deployment verification failed: {exc}") from exc
 
-    # Read-only collision preflight before any mutation.
     for item in prepared:
         for path in (item["remote_attempt_dir"], item["cache_dir"]):
             proc = runner.run(f"test -e {shlex.quote(path)} && echo exists || echo absent")
@@ -713,6 +862,9 @@ def command_submit(args: argparse.Namespace) -> int:
             "route_id": item["route"]["route_id"],
             "dataset": item["route"]["dataset"],
             "modality": item["route"]["modality"],
+            "language": identity.language,
+            "campaign": identity.campaign,
+            "group_id": identity.group_id,
             "config": item["route"]["config"],
             "parent_training_seed": int(item["job"]["seed"]),
             "head_seed": HEAD_SEED,
@@ -720,7 +872,7 @@ def command_submit(args: argparse.Namespace) -> int:
             "parent_attempt_id": item["parent"]["attempt_id"],
             "parent_checkpoint_dir": item["parent"]["checkpoint_dir"],
             "remote_attempt_dir": item["remote_attempt_dir"],
-            "local_mirror": str(_local_mirror(item["attempt_id"])),
+            "local_mirror": str(identity.local_mirror(item["attempt_id"])),
             "cache_dir": item["cache_dir"],
             "classifier_dir": item["classifier_dir"],
             "extract_job_id": result.get("extract_job_id"),
@@ -730,8 +882,9 @@ def command_submit(args: argparse.Namespace) -> int:
             "git_commit": deployment["git_commit"],
             "submitted_at_utc": _now(),
         }
+        _validate_registry_entry(entry, identity)
         _append_registry(registry_path, entry)
-        context_path = LANE_EVIDENCE / "head_contexts" / f"{item['attempt_id']}.json"
+        context_path = identity.evidence_dir / "head_contexts" / f"{item['attempt_id']}.json"
         _write_json(context_path, item["payload"]["context"])
         recorded += 1
         status = "submitted" if not result.get("error") else f"ERROR {result['error']}"
@@ -740,14 +893,30 @@ def command_submit(args: argparse.Namespace) -> int:
     return 0 if recorded else 1
 
 
+def _load_deployment(deployment_id: str | None) -> dict[str, Any]:
+    root = PROJECT_ROOT / "outputs" / "exp_deploy"
+    candidates: list[tuple[Path, dict[str, Any]]] = []
+    for record_path in sorted(root.glob("*/deployment.json")):
+        try:
+            record = _load_json(record_path)
+        except Exception:
+            continue
+        if deployment_id and record.get("deployment_id") != deployment_id:
+            continue
+        candidates.append((record_path, record))
+    if not candidates:
+        raise DispatchError(
+            f"no local deployment record found{f' for {deployment_id}' if deployment_id else ''}"
+        )
+    return candidates[-1][1]
+
+
 # ---------------------------------------------------------------------------
 # status
 # ---------------------------------------------------------------------------
 
 
-def _scheduler_states(
-    job_ids: list[str], host: str
-) -> dict[str, dict[str, str]]:
+def _scheduler_states(job_ids: list[str], host: str) -> dict[str, dict[str, str]]:
     if not job_ids:
         return {}
     states: dict[str, dict[str, str]] = {}
@@ -793,7 +962,7 @@ def _remote_record_terminal(
         """
 import base64, json, os, sys
 sys.path.insert(0, os.environ["PROJECT_ROOT"])
-from src.native_en_text_heads_tracking import record_head_job, transition_head_attempt
+from src.native_en_text_heads_tracking import record_head_job
 events = json.loads(base64.b64decode(os.environ["Q3MS_TERMINAL_B64"]).decode("utf-8"))
 attempt_dir = os.environ["Q3MS_ATTEMPT_DIR"]
 for event in events:
@@ -828,8 +997,13 @@ print("terminal-events-recorded")
 
 
 def command_status(args: argparse.Namespace) -> int:
-    registry = _read_registry(Path(args.registry))
-    deployment = _load_deployment(args.deployment_id) if args.deployment_id else _load_deployment(None)
+    identity = resolve_lane_identity()
+    registry_path = Path(args.registry) if args.registry else identity.registry_path()
+    require_under(registry_path, identity.evidence_dir, "registry")
+    registry = _read_registry(registry_path)
+    for entry in registry:
+        _validate_registry_entry(entry, identity)
+    deployment = _load_deployment(args.deployment_id)
     code_root = str(deployment["deployed_code_path"])
     host = args.scheduler_host or DEFAULT_SCHEDULER_HOST
     job_ids: list[str] = []
@@ -840,6 +1014,7 @@ def command_status(args: argparse.Namespace) -> int:
     states = _scheduler_states(sorted(set(job_ids)), host)
     report: dict[str, Any] = {
         "schema_version": "audiollm.qwen3_multiseed_head_status.v1",
+        "campaign": identity.campaign,
         "checked_at_utc": _now(),
         "attempts": [],
     }
@@ -852,7 +1027,10 @@ def command_status(args: argparse.Namespace) -> int:
         }
         events: list[dict[str, str]] = []
         terminal = True
-        for key, job_type in (("extract_job_id", "hidden_extraction"), ("classifier_job_id", "hidden_classifier")):
+        for key, job_type in (
+            ("extract_job_id", "hidden_extraction"),
+            ("classifier_job_id", "hidden_classifier"),
+        ):
             job_id = entry.get(key)
             state = states.get(str(job_id)) if job_id else None
             attempt["jobs"][key] = state
@@ -892,7 +1070,8 @@ def command_status(args: argparse.Namespace) -> int:
         "terminal": sum(1 for attempt in report["attempts"] if attempt["terminal"]),
         "failures": failures,
     }
-    output = Path(args.output)
+    output = Path(args.output) if args.output else identity.evidence_dir / "head_status.json"
+    require_under(output, identity.evidence_dir, "status output")
     _write_json(output, report)
     print(f"wrote {output}")
     print("status summary:", json.dumps(report["summary"], sort_keys=True))
@@ -927,8 +1106,17 @@ def _remote_manifest(runner: RemoteRunner, remote_dir: str) -> dict[str, str]:
 
 
 def command_collect(args: argparse.Namespace) -> int:
-    registry = _read_registry(Path(args.registry))
-    selected = [entry for entry in registry if not args.attempt_id or entry["attempt_id"] in set(args.attempt_id)]
+    identity = resolve_lane_identity()
+    registry_path = Path(args.registry) if args.registry else identity.registry_path()
+    require_under(registry_path, identity.evidence_dir, "registry")
+    registry = _read_registry(registry_path)
+    for entry in registry:
+        _validate_registry_entry(entry, identity)
+    selected = [
+        entry
+        for entry in registry
+        if not args.attempt_id or entry["attempt_id"] in set(args.attempt_id)
+    ]
     if not selected:
         print("no registry entries selected")
         return 0
@@ -975,13 +1163,29 @@ def command_collect(args: argparse.Namespace) -> int:
                 f"collection hash verification failed for {entry['attempt_id']}: "
                 f"missing={missing} mismatches={mismatches}"
             )
-    _write_json(LANE_EVIDENCE / "head_collection.json", {"schema_version": "audiollm.qwen3_multiseed_head_collection.v1", "results": results})
+    _write_json(
+        identity.evidence_dir / "head_collection.json",
+        {
+            "schema_version": "audiollm.qwen3_multiseed_head_collection.v1",
+            "campaign": identity.campaign,
+            "results": results,
+        },
+    )
     return 0
 
 
 def command_validate(args: argparse.Namespace) -> int:
-    registry = _read_registry(Path(args.registry))
-    selected = [entry for entry in registry if not args.attempt_id or entry["attempt_id"] in set(args.attempt_id)]
+    identity = resolve_lane_identity()
+    registry_path = Path(args.registry) if args.registry else identity.registry_path()
+    require_under(registry_path, identity.evidence_dir, "registry")
+    registry = _read_registry(registry_path)
+    for entry in registry:
+        _validate_registry_entry(entry, identity)
+    selected = [
+        entry
+        for entry in registry
+        if not args.attempt_id or entry["attempt_id"] in set(args.attempt_id)
+    ]
     failures = 0
     for entry in selected:
         from src.native_en_text_heads_tracking import HeadTrackingError, validate_head_attempt
@@ -999,8 +1203,17 @@ def command_validate(args: argparse.Namespace) -> int:
 
 
 def command_finish(args: argparse.Namespace) -> int:
-    registry = _read_registry(Path(args.registry))
-    selected = [entry for entry in registry if not args.attempt_id or entry["attempt_id"] in set(args.attempt_id)]
+    identity = resolve_lane_identity()
+    registry_path = Path(args.registry) if args.registry else identity.registry_path()
+    require_under(registry_path, identity.evidence_dir, "registry")
+    registry = _read_registry(registry_path)
+    for entry in registry:
+        _validate_registry_entry(entry, identity)
+    selected = [
+        entry
+        for entry in registry
+        if not args.attempt_id or entry["attempt_id"] in set(args.attempt_id)
+    ]
     failures = 0
     for entry in selected:
         from src.native_en_text_heads_tracking import HeadTrackingError, finish_head_attempt
@@ -1023,8 +1236,14 @@ def command_finish(args: argparse.Namespace) -> int:
 
 
 def command_coverage(args: argparse.Namespace) -> int:
-    plan = _load_json(args.plan)
-    registry = _read_registry(Path(args.registry))
+    identity = resolve_lane_identity()
+    plan_path = Path(args.plan) if args.plan else identity.plan_path()
+    require_under(plan_path, identity.evidence_dir, "dispatch plan")
+    plan = _load_json(plan_path)
+    validate_plan_identity(plan, identity)
+    registry_path = Path(args.registry) if args.registry else identity.registry_path()
+    require_under(registry_path, identity.evidence_dir, "registry")
+    registry = _read_registry(registry_path)
     by_key = {entry["registry_key"]: entry for entry in registry}
     rows: list[dict[str, Any]] = []
     counts: dict[str, int] = {}
@@ -1065,11 +1284,13 @@ def command_coverage(args: argparse.Namespace) -> int:
             )
     payload = {
         "schema_version": "audiollm.qwen3_multiseed_head_coverage.v1",
+        "campaign": identity.campaign,
         "created_at_utc": _now(),
         "counts": counts,
         "rows": rows,
     }
-    output = Path(args.output)
+    output = Path(args.output) if args.output else identity.evidence_dir / "head_coverage.json"
+    require_under(output, identity.evidence_dir, "coverage output")
     _write_json(output, payload)
     print(f"wrote {output}")
     print("coverage:", json.dumps(counts, sort_keys=True))
@@ -1087,14 +1308,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     plan_parser = sub.add_parser("plan", help="filter a validated planner matrix into a dispatch plan")
     plan_parser.add_argument("--matrix", type=Path, required=True)
-    plan_parser.add_argument("--language", default="native")
+    plan_parser.add_argument("--language", default=None, help="must match the lane group language")
+    plan_parser.add_argument("--campaign", default=None, help="must match the lane group campaign")
     plan_parser.add_argument("--seed", action="append", type=int, default=None)
-    plan_parser.add_argument("--output", type=Path, default=DEFAULT_PLAN)
+    plan_parser.add_argument("--output", type=Path, default=None)
     plan_parser.set_defaults(func=command_plan)
 
     submit_parser = sub.add_parser("submit", help="submit head extract+classifier chains (dry-run first)")
-    submit_parser.add_argument("--plan", type=Path, default=DEFAULT_PLAN)
-    submit_parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
+    submit_parser.add_argument("--plan", type=Path, default=None)
+    submit_parser.add_argument("--registry", type=Path, default=None)
+    submit_parser.add_argument("--campaign", default=None, help="must match the lane group campaign")
     submit_parser.add_argument("--deployment-id", default=None)
     submit_parser.add_argument("--seed", action="append", type=int, default=None)
     submit_parser.add_argument("--route", action="append", default=None)
@@ -1107,33 +1330,33 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     submit_parser.set_defaults(func=command_submit)
 
     status_parser = sub.add_parser("status", help="reconcile recorded jobs against squeue/sacct")
-    status_parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
+    status_parser.add_argument("--registry", type=Path, default=None)
     status_parser.add_argument("--deployment-id", default=None)
     status_parser.add_argument("--scheduler-host", default=None)
-    status_parser.add_argument("--output", type=Path, default=LANE_EVIDENCE / "head_status.json")
+    status_parser.add_argument("--output", type=Path, default=None)
     status_parser.add_argument("--execute", action="store_true", help="record terminal events on MN5")
     status_parser.set_defaults(func=command_status)
 
     collect_parser = sub.add_parser("collect", help="collect compact attempt evidence (dry-run first)")
-    collect_parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
+    collect_parser.add_argument("--registry", type=Path, default=None)
     collect_parser.add_argument("--attempt-id", action="append", default=None)
     collect_parser.add_argument("--dry-run", action="store_true")
     collect_parser.set_defaults(func=command_collect)
 
     validate_parser = sub.add_parser("validate", help="official head lifecycle validation on local mirrors")
-    validate_parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
+    validate_parser.add_argument("--registry", type=Path, default=None)
     validate_parser.add_argument("--attempt-id", action="append", default=None)
     validate_parser.set_defaults(func=command_validate)
 
     finish_parser = sub.add_parser("finish", help="advance validated head attempts to REPORTABLE")
-    finish_parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
+    finish_parser.add_argument("--registry", type=Path, default=None)
     finish_parser.add_argument("--attempt-id", action="append", default=None)
     finish_parser.set_defaults(func=command_finish)
 
     coverage_parser = sub.add_parser("coverage", help="audit every planned key against the registry")
-    coverage_parser.add_argument("--plan", type=Path, default=DEFAULT_PLAN)
-    coverage_parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
-    coverage_parser.add_argument("--output", type=Path, default=LANE_EVIDENCE / "head_coverage.json")
+    coverage_parser.add_argument("--plan", type=Path, default=None)
+    coverage_parser.add_argument("--registry", type=Path, default=None)
+    coverage_parser.add_argument("--output", type=Path, default=None)
     coverage_parser.set_defaults(func=command_coverage)
     return parser.parse_args(argv)
 
