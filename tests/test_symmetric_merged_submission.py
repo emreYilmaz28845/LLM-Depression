@@ -127,6 +127,40 @@ def test_targeted_retry_job_count_matches_selected_configs() -> None:
     assert len(registry["jobs"]) == 15
 
 
+def test_fold_scoped_retry_keeps_full_expected_count_and_plan_hash() -> None:
+    """A scoped retry must not change the protocol plan or the stage count.
+
+    Retrying only the affected folds keeps completed folds untouched while the
+    registry still reports the full CV stage size (15 jobs per config).
+    """
+
+    full = build_job_specs(
+        [CONFIG_BY_MODALITY["audio_text"]],
+        stage="cv",
+        run_id="scoped_retry",
+        dry_run=True,
+        smoke_subjects=2,
+        smoke_epochs=1,
+        smoke_trials=2,
+    )
+    scoped = build_job_specs(
+        [CONFIG_BY_MODALITY["audio_text"]],
+        stage="cv",
+        run_id="scoped_retry",
+        dry_run=True,
+        smoke_subjects=2,
+        smoke_epochs=1,
+        smoke_trials=2,
+        folds_override=[1, 4],
+    )
+    assert full["plan_hash"] == scoped["plan_hash"]
+    assert full["expected_fresh_job_count"] == 15
+    assert scoped["expected_fresh_job_count"] == 15
+    assert len(scoped["jobs"]) == 6
+    assert {job["fold"] for job in scoped["jobs"]} == {1, 4}
+    assert scoped["scoped_folds"] == [1, 4]
+
+
 def test_retry_registry_submits_chain_in_dependency_order() -> None:
     run_id = "retry_dependency_order"
     train_key = "audio_text:smoke:fold_0:train"
@@ -467,6 +501,51 @@ def test_merged_train_incomplete_output_guard_is_broadcast_before_writes() -> No
     assert declared < decision < broadcast < first_write
     block = source[declared:first_write]
     assert "if is_local_main_process:" in block
+
+
+def test_merged_postprocess_releases_per_example_cuda_memory() -> None:
+    """Full-cohort extraction must not accumulate CUDA blocks on one GPU.
+
+    The readiness smoke extracted a tiny cohort; the production extraction of
+    the whole outer-train pool OOMed on long transcripts. The postprocess worker
+    now carries the same allocator setting as the train worker and the loop
+    frees per-example buffers.
+    """
+    worker = Path("scripts/run_symmetric_merged_postprocess_slurm.sh").read_text(encoding="utf-8")
+    assert "PYTORCH_CUDA_ALLOC_CONF" in worker
+    assert "expandable_segments:True" in worker
+    source = Path("src/merged/postprocess.py").read_text(encoding="utf-8")
+    assert "del outputs, hidden, mask, inputs" in source
+    assert "torch.cuda.empty_cache()" in source
+
+
+def test_extraction_logits_kwargs_only_when_supported() -> None:
+    """Only pass logits_to_keep when the base model's forward accepts it."""
+
+    from src.merged.postprocess import _extraction_logits_kwargs
+
+    class Supported:
+        def forward(self, input_ids, logits_to_keep=0):
+            return None
+
+    class Unsupported:
+        def forward(self, input_ids):
+            return None
+
+    class Wrapped:
+        def __init__(self, base):
+            self._base = base
+
+        def get_base_model(self):
+            return self._base
+
+        def forward(self, *args, **kwargs):
+            return None
+
+    assert _extraction_logits_kwargs(Supported()) == {"logits_to_keep": 1}
+    assert _extraction_logits_kwargs(Unsupported()) == {}
+    assert _extraction_logits_kwargs(Wrapped(Supported())) == {"logits_to_keep": 1}
+    assert _extraction_logits_kwargs(Wrapped(Unsupported())) == {}
 
 
 def test_qwen_worker_supports_the_two_node_lane() -> None:
