@@ -1390,10 +1390,36 @@ def _remote_record_terminal(
         """
 import base64, json, os, sys
 sys.path.insert(0, os.environ["PROJECT_ROOT"])
+from pathlib import Path
 from src.native_en_text_heads_tracking import record_head_job
 events = json.loads(base64.b64decode(os.environ["Q3MS_TERMINAL_B64"]).decode("utf-8"))
 attempt_dir = os.environ["Q3MS_ATTEMPT_DIR"]
+existing = set()
+jobs_path = Path(attempt_dir) / "jobs.jsonl"
+if jobs_path.is_file():
+    for line in jobs_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except ValueError:
+            continue
+        existing.add(
+            (
+                str(item.get("job_key")),
+                str(item.get("event_type")),
+                str(item.get("slurm_job_id")),
+            )
+        )
+recorded = 0
 for event in events:
+    key = (
+        str(event["job_key"]),
+        str(event["event_type"]),
+        str(event.get("slurm_job_id")),
+    )
+    if key in existing:
+        continue
     record_head_job(
         attempt_dir,
         job_key=event["job_key"],
@@ -1404,7 +1430,9 @@ for event in events:
         exit_code=event.get("exit_code"),
         reason=event.get("reason"),
     )
-print("terminal-events-recorded")
+    existing.add(key)
+    recorded += 1
+print(json.dumps({"recorded": recorded}))
 """
     )
     script = "\n".join(
