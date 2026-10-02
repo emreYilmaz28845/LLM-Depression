@@ -731,6 +731,27 @@ def test_coverage_refuses_foreign_plan(
     assert rc == 1
 
 
+def test_materialize_script_passes_variant_and_links_original_job() -> None:
+    script = dispatch._build_materialize_script(
+        code_root="/gpfs/deploy/code",
+        jobs=[
+            {
+                "registry_key": "d3tec_text_only_native|1337|0",
+                "attempt_id": "attempt-1",
+                "remote_attempt_dir": "/gpfs/attempt",
+                "classifier_dir": "/gpfs/attempt/classifier",
+                "variants": ["logreg_raw", "xgb_raw"],
+                "original_classifier_job_id": "46955648",
+            }
+        ],
+    )
+    assert "Q3MS_VARIANTS=logreg_raw:xgb_raw" in script
+    assert "variant=variant" in script
+    assert "resubmission_of_job_id" in script
+    assert "refusing to fabricate evidence" in script
+    assert "PYTHONDONTWRITEBYTECODE=1" in script
+
+
 def test_tracking_schema_override_and_uar_metric(tmp_path: Path) -> None:
     from src.native_en_text_heads_tracking import initialize_head_attempt, _metric_payload
 
