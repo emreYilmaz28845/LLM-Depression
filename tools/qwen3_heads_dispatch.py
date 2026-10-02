@@ -407,14 +407,21 @@ def _route_aggregation(config: dict[str, Any]) -> str:
 
 
 def _read_registry(path: Path) -> list[dict[str, Any]]:
+    """Latest entry per registry key.
+
+    The registry is append-only so repairs and retries add a new line for the
+    same key; readers must use the newest line and never double-count.
+    """
+
     if not path.is_file():
         return []
-    entries: list[dict[str, Any]] = []
+    latest: dict[str, dict[str, Any]] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line:
-            entries.append(json.loads(line))
-    return entries
+            entry = json.loads(line)
+            latest[str(entry.get("registry_key"))] = entry
+    return list(latest.values())
 
 
 def _append_registry(path: Path, entry: dict[str, Any]) -> None:
@@ -564,6 +571,41 @@ def _remote_python_block(code: str) -> str:
     return "python - <<'PY'\n" + code + "\nPY\n"
 
 
+def _job_exports(
+    job: dict[str, Any], *, code_root: str, env: dict[str, str], qwen_hidden_deps: str
+) -> tuple[str, str]:
+    extract_export = ",".join(
+        [
+            "ALL",
+            f"PROJECT_ROOT={code_root}",
+            f"CHECKPOINT_DIR={job['parent']['checkpoint_dir']}",
+            f"CACHE_DIR={job['cache_dir']}",
+            f"CLASSIFIER_DIR={job['classifier_dir']}",
+            f"CONDITION={job['condition']}",
+            "SKIP_CLASSIFIERS=1",
+            f"ENV_ACTIVATE={env['ENV_ACTIVATE']}",
+            f"QWEN_HIDDEN_DEPS={qwen_hidden_deps}",
+            f"LOG_ROOT={job['log_root']}",
+        ]
+    )
+    classifier_export = ",".join(
+        [
+            "ALL",
+            f"PROJECT_ROOT={code_root}",
+            f"CACHE_DIR={job['cache_dir']}",
+            f"CLASSIFIER_DIR={job['classifier_dir']}",
+            f"CLASSIFIER_VARIANTS={':'.join(HEAD_VARIANTS)}",
+            f"SEED={HEAD_SEED}",
+            f"ENV_ACTIVATE={env['ENV_ACTIVATE']}",
+            f"QWEN_HIDDEN_DEPS={qwen_hidden_deps}",
+            f"LOG_ROOT={job['log_root']}",
+            f"ATTEMPT_DIR={job['remote_attempt_dir']}",
+            f"MATERIALIZE_VARIANTS={':'.join(HEAD_VARIANTS)}",
+        ]
+    )
+    return extract_export, classifier_export
+
+
 def _build_submit_script(
     *,
     code_root: str,
@@ -617,37 +659,8 @@ print("events-recorded")
             json.dumps(job["payload"], sort_keys=True).encode("utf-8")
         ).decode("ascii")
         attempt_dir = job["remote_attempt_dir"]
-        cache_dir = job["cache_dir"]
-        classifier_dir = job["classifier_dir"]
-        job_log_root = job["log_root"]
-        extract_export = ",".join(
-            [
-                "ALL",
-                f"PROJECT_ROOT={code_root}",
-                f"CHECKPOINT_DIR={job['parent']['checkpoint_dir']}",
-                f"CACHE_DIR={cache_dir}",
-                f"CLASSIFIER_DIR={classifier_dir}",
-                f"CONDITION={job['condition']}",
-                "SKIP_CLASSIFIERS=1",
-                f"ENV_ACTIVATE={env['ENV_ACTIVATE']}",
-                f"QWEN_HIDDEN_DEPS={qwen_hidden_deps}",
-                f"LOG_ROOT={job_log_root}",
-            ]
-        )
-        classifier_export = ",".join(
-            [
-                "ALL",
-                f"PROJECT_ROOT={code_root}",
-                f"CACHE_DIR={cache_dir}",
-                f"CLASSIFIER_DIR={classifier_dir}",
-                f"CLASSIFIER_VARIANTS={':'.join(HEAD_VARIANTS)}",
-                f"SEED={HEAD_SEED}",
-                f"ENV_ACTIVATE={env['ENV_ACTIVATE']}",
-                f"QWEN_HIDDEN_DEPS={qwen_hidden_deps}",
-                f"LOG_ROOT={job_log_root}",
-                f"ATTEMPT_DIR={attempt_dir}",
-                f"MATERIALIZE_VARIANTS={':'.join(HEAD_VARIANTS)}",
-            ]
+        extract_export, classifier_export = _job_exports(
+            job, code_root=code_root, env=env, qwen_hidden_deps=qwen_hidden_deps
         )
         short = re.sub(r"[^a-z0-9]", "", job["attempt_id"].lower())[:16]
         lines.extend(
@@ -667,6 +680,7 @@ print("events-recorded")
                     f"{shlex.quote(code_root + '/scripts/run_qwen_hidden_extract_slurm.sh')})\""
                 ),
                 "if [ -z \"${Q3MS_EXTRACT_ID:-}\" ]; then echo 'ERROR=extract sbatch returned no id'; continue; fi",
+                "Q3MS_EXTRACT_ID=\"${Q3MS_EXTRACT_ID%%;*}\"",
                 "export Q3MS_EXTRACT_ID",
                 (
                     f"Q3MS_CLASSIFIER_ID=\"$(sbatch --parsable --chdir={shlex.quote(code_root)} "
@@ -675,8 +689,9 @@ print("events-recorded")
                     f"{shlex.quote(code_root + '/scripts/run_qwen_hidden_classifier_slurm.sh')})\""
                 ),
                 "if [ -z \"${Q3MS_CLASSIFIER_ID:-}\" ]; then echo 'ERROR=classifier sbatch returned no id'; continue; fi",
+                "Q3MS_CLASSIFIER_ID=\"${Q3MS_CLASSIFIER_ID%%;*}\"",
                 "export Q3MS_CLASSIFIER_ID",
-                f"export LOG_ROOT={shlex.quote(job_log_root)}",
+                f"export LOG_ROOT={shlex.quote(job['log_root'])}",
                 events_python.rstrip("\n"),
                 "echo \"EXTRACT_ID=$Q3MS_EXTRACT_ID\"",
                 "echo \"CLASSIFIER_ID=$Q3MS_CLASSIFIER_ID\"",
@@ -879,6 +894,7 @@ def command_submit(args: argparse.Namespace) -> int:
             "local_mirror": str(identity.local_mirror(item["attempt_id"])),
             "cache_dir": item["cache_dir"],
             "classifier_dir": item["classifier_dir"],
+            "extract_gpus": int(item["extract_gpus"]),
             "extract_job_id": result.get("extract_job_id"),
             "classifier_job_id": result.get("classifier_job_id"),
             "error": result.get("error"),
@@ -895,6 +911,197 @@ def command_submit(args: argparse.Namespace) -> int:
         print(f"  {item['registry_key']}: {status}")
     print(f"registry updated: {recorded} entries -> {registry_path}")
     return 0 if recorded else 1
+
+
+def _build_repair_script(
+    *,
+    code_root: str,
+    jobs: list[dict[str, Any]],
+    scheduler_env: dict[str, dict[str, str]],
+    qwen_hidden_deps: str,
+) -> str:
+    """Re-submit the missing leg(s) of half-submitted head attempts."""
+
+    lines = [
+        "set -uo pipefail",
+        f"cd {shlex.quote(code_root)}",
+        f"export PROJECT_ROOT={shlex.quote(code_root)}",
+    ]
+    events_python = _remote_python_block(
+        """
+import json, os, sys
+sys.path.insert(0, os.environ["PROJECT_ROOT"])
+from src.native_en_text_heads_tracking import record_head_job, transition_head_attempt
+attempt_dir = os.environ["Q3MS_ATTEMPT_DIR"]
+for state in ("SUBMITTED", "RUNNING"):
+    try:
+        transition_head_attempt(attempt_dir, state, reason="head jobs submitted (repair)")
+    except Exception as exc:
+        print(f"transition-skip {state}: {exc}")
+if os.environ.get("Q3MS_RECORD_EXTRACT") == "1":
+    record_head_job(
+        attempt_dir, job_key="extract", job_type="hidden_extraction", event_type="SUBMITTED",
+        slurm_job_id=os.environ["Q3MS_EXTRACT_ID"], status="PENDING",
+    )
+record_head_job(
+    attempt_dir, job_key="classifier", job_type="hidden_classifier", event_type="SUBMITTED",
+    slurm_job_id=os.environ["Q3MS_CLASSIFIER_ID"], status="PENDING",
+    dependency_job_ids=[os.environ["Q3MS_EXTRACT_ID"]],
+)
+print("events-recorded")
+"""
+    )
+    for job in jobs:
+        key = job["registry_key"]
+        env = scheduler_env[job["attempt_id"]]
+        extract_export, classifier_export = _job_exports(
+            job, code_root=code_root, env=env, qwen_hidden_deps=qwen_hidden_deps
+        )
+        short = re.sub(r"[^a-z0-9]", "", job["attempt_id"].lower())[:16]
+        lines.append(f"echo '=== JOB {key} ==='")
+        lines.append(f"export Q3MS_ATTEMPT_DIR={shlex.quote(job['remote_attempt_dir'])}")
+        if job["submit_extract"]:
+            lines.append(
+                f"Q3MS_EXTRACT_ID=\"$(sbatch --parsable --chdir={shlex.quote(code_root)} "
+                f"--job-name=q3mshx-{short} --gres=gpu:{job['extract_gpus']} "
+                f"--cpus-per-task={20 * job['extract_gpus']} "
+                f"--export={shlex.quote(extract_export)} "
+                f"{shlex.quote(code_root + '/scripts/run_qwen_hidden_extract_slurm.sh')})\""
+            )
+            lines.append(
+                "if [ -z \"${Q3MS_EXTRACT_ID:-}\" ]; then echo 'ERROR=extract sbatch returned no id'; continue; fi"
+            )
+            lines.append("Q3MS_EXTRACT_ID=\"${Q3MS_EXTRACT_ID%%;*}\"")
+            lines.append("export Q3MS_EXTRACT_ID")
+            lines.append("export Q3MS_RECORD_EXTRACT=1")
+        else:
+            lines.append(
+                f"export Q3MS_EXTRACT_ID={shlex.quote(str(job['existing_extract_id']))}"
+            )
+            lines.append("export Q3MS_RECORD_EXTRACT=0")
+        lines.append(
+            f"Q3MS_CLASSIFIER_ID=\"$(sbatch --parsable --chdir={shlex.quote(code_root)} "
+            f"--job-name=q3mshc-{short} --dependency=afterok:$Q3MS_EXTRACT_ID "
+            f"--export={shlex.quote(classifier_export)} "
+            f"{shlex.quote(code_root + '/scripts/run_qwen_hidden_classifier_slurm.sh')})\""
+        )
+        lines.append(
+            "if [ -z \"${Q3MS_CLASSIFIER_ID:-}\" ]; then echo 'ERROR=classifier sbatch returned no id'; continue; fi"
+        )
+        lines.append("Q3MS_CLASSIFIER_ID=\"${Q3MS_CLASSIFIER_ID%%;*}\"")
+        lines.append("export Q3MS_CLASSIFIER_ID")
+        lines.append(events_python.rstrip("\n"))
+        lines.append("echo \"EXTRACT_ID=$Q3MS_EXTRACT_ID\"")
+        lines.append("echo \"CLASSIFIER_ID=$Q3MS_CLASSIFIER_ID\"")
+    return "\n".join(lines) + "\n"
+
+
+def command_repair(args: argparse.Namespace) -> int:
+    """Re-submit missing extract/classifier legs after a partial submission."""
+
+    identity = resolve_lane_identity()
+    registry_path = Path(args.registry) if args.registry else identity.registry_path()
+    require_under(registry_path, identity.evidence_dir, "registry")
+    entries = _read_registry(registry_path)
+    for entry in entries:
+        _validate_registry_entry(entry, identity)
+    selected = [
+        entry
+        for entry in entries
+        if (not args.attempt_id or entry["attempt_id"] in set(args.attempt_id))
+        and (not entry.get("extract_job_id") or not entry.get("classifier_job_id") or entry.get("error"))
+    ]
+    if not selected:
+        print("no broken registry entries selected")
+        return 0
+    plan_path = Path(args.plan) if args.plan else identity.plan_path()
+    plan = _load_json(plan_path)
+    gpus_by_key: dict[str, int] = {}
+    for route in plan.get("routes") or []:
+        for job in route.get("jobs") or []:
+            key = _key(route["route_id"], int(job["seed"]), int(job["fold"]))
+            if job["parent_status"] == "resolved":
+                gpus_by_key[key] = int(job["extract_gpus"])
+    deployment = _load_deployment(args.deployment_id)
+    code_root = str(deployment["deployed_code_path"])
+    host = args.scheduler_host or DEFAULT_SCHEDULER_HOST
+    env_cache: dict[str, dict[str, str]] = {}
+    scheduler_env: dict[str, dict[str, str]] = {}
+    prepared: list[dict[str, Any]] = []
+    for entry in selected:
+        if entry["config"] not in env_cache:
+            env_cache[entry["config"]] = _backend_env(
+                f"{code_root}/{entry['config']}", code_root, host
+            )
+        scheduler_env[entry["attempt_id"]] = env_cache[entry["config"]]
+        prepared.append(
+            {
+                "registry_key": entry["registry_key"],
+                "attempt_id": entry["attempt_id"],
+                "remote_attempt_dir": entry["remote_attempt_dir"],
+                "classifier_dir": entry["classifier_dir"],
+                "log_root": entry["log_root"],
+                "cache_dir": entry["cache_dir"],
+                "parent": {"checkpoint_dir": entry["parent_checkpoint_dir"]},
+                "condition": entry["modality"],
+                "extract_gpus": gpus_by_key.get(
+                    entry["registry_key"], 4 if entry["modality"] != "text_only" else 1
+                ),
+                "submit_extract": not entry.get("extract_job_id"),
+                "existing_extract_id": entry.get("extract_job_id") or "",
+            }
+        )
+    script = _build_repair_script(
+        code_root=code_root,
+        jobs=prepared,
+        scheduler_env=scheduler_env,
+        qwen_hidden_deps=str(args.qwen_hidden_deps or QWEN_HIDDEN_DEPS_DEFAULT),
+    )
+    print(f"=== head dispatch repair ({'execute' if args.execute else 'dry-run'}) ===")
+    print(f"deployment_id: {deployment['deployment_id']}")
+    print(f"broken entries: {len(prepared)}")
+    for item in prepared:
+        print(
+            f"  {item['registry_key']} attempt={item['attempt_id']} "
+            f"submit_extract={item['submit_extract']} existing_extract={item['existing_extract_id'] or '-'}"
+        )
+    evidence_dir = identity.evidence_dir / "head_submit_evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    (evidence_dir / "repair_script.sh").write_text(script, encoding="utf-8")
+    if not args.execute:
+        print(script)
+        print("dry-run complete; no mutation performed")
+        return 0
+    from src.experiment_tracking.submit import SshSubmitRunner
+
+    proc = SshSubmitRunner(host=host).run_script(script, timeout=1800)
+    (evidence_dir / "repair_output.log").write_text(
+        proc.stdout + ("\n[stderr]\n" + proc.stderr if proc.stderr else ""), encoding="utf-8"
+    )
+    parsed = _parse_submit_output(proc.stdout)
+    repaired = 0
+    for item in prepared:
+        result = parsed.get(item["registry_key"]) or {}
+        if result.get("error") or not result.get("extract_job_id") or not result.get("classifier_job_id"):
+            print(f"  {item['registry_key']}: repair still incomplete: {result}")
+            continue
+        old = next(e for e in selected if e["registry_key"] == item["registry_key"])
+        new_entry = dict(old)
+        new_entry.update(
+            {
+                "extract_job_id": result["extract_job_id"],
+                "classifier_job_id": result["classifier_job_id"],
+                "error": None,
+                "repaired_at_utc": _now(),
+                "repair_of_extract_job_id": old.get("extract_job_id"),
+                "repair_of_classifier_job_id": old.get("classifier_job_id"),
+            }
+        )
+        _append_registry(registry_path, new_entry)
+        repaired += 1
+        print(f"  {item['registry_key']}: repaired extract={result['extract_job_id']} classifier={result['classifier_job_id']}")
+    print(f"repaired entries: {repaired}/{len(prepared)}")
+    return 0 if repaired else 1
 
 
 def _load_deployment(deployment_id: str | None) -> dict[str, Any]:
@@ -1332,6 +1539,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     submit_parser.add_argument("--dry-run", action="store_true")
     submit_parser.add_argument("--execute", action="store_true")
     submit_parser.set_defaults(func=command_submit)
+
+    repair_parser = sub.add_parser(
+        "repair", help="re-submit missing legs of half-submitted head attempts"
+    )
+    repair_parser.add_argument("--plan", type=Path, default=None)
+    repair_parser.add_argument("--registry", type=Path, default=None)
+    repair_parser.add_argument("--deployment-id", default=None)
+    repair_parser.add_argument("--scheduler-host", default=None)
+    repair_parser.add_argument("--qwen-hidden-deps", default=None)
+    repair_parser.add_argument("--attempt-id", action="append", default=None)
+    repair_parser.add_argument("--dry-run", action="store_true")
+    repair_parser.add_argument("--execute", action="store_true")
+    repair_parser.set_defaults(func=command_repair)
 
     status_parser = sub.add_parser("status", help="reconcile recorded jobs against squeue/sacct")
     status_parser.add_argument("--registry", type=Path, default=None)
