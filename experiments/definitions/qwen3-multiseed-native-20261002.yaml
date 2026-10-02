@@ -48,6 +48,10 @@ comparison_rule: >-
   independent held-out test).
 scope:
   campaign: qwen3_multiseed_native_20261002
+  language: native
+  evidence_dir: outputs/qwen3_multiseed_native_20261002
+  head_tracking_kind: qwen3_multiseed_native_head
+  head_run_schema: audiollm.qwen3_multiseed_head_run.v1
   lane: feat-qwen3-multiseed-native-20261002
   checkpoint_role: best_model
   head_variants:
