@@ -1128,7 +1128,12 @@ def command_repair(args: argparse.Namespace) -> int:
     return 0 if repaired else 1
 
 
-def _build_materialize_script(*, code_root: str, jobs: list[dict[str, Any]]) -> str:
+def _build_materialize_script(
+    *,
+    code_root: str,
+    jobs: list[dict[str, Any]],
+    provenance: dict[str, str],
+) -> str:
     """Repair evidence for already-fitted head attempts without refitting."""
 
     python = _remote_python_block(
@@ -1136,42 +1141,41 @@ def _build_materialize_script(*, code_root: str, jobs: list[dict[str, Any]]) -> 
 import json, os, sys
 sys.path.insert(0, os.environ["PROJECT_ROOT"])
 from pathlib import Path
-from src.native_en_text_heads_tracking import materialize_head_evidence, record_head_job
+from src.native_en_text_heads_tracking import (
+    materialize_head_evidence,
+    prevalidate_head_fit_outputs,
+    record_head_repair_event,
+)
 attempt_dir = Path(os.environ["Q3MS_ATTEMPT_DIR"])
 classifier_dir = Path(os.environ["Q3MS_CLASSIFIER_DIR"])
 variants = [item for item in os.environ.get("Q3MS_VARIANTS", "").split(":") if item]
 metadata = json.loads((attempt_dir / "metadata.json").read_text(encoding="utf-8"))
 checkpoint = (metadata.get("parent") or {}).get("parent_checkpoint_path")
-if not checkpoint:
-    raise SystemExit("attempt metadata has no parent checkpoint path")
+# Fail-closed prevalidation of every requested variant before any write.
+outputs = prevalidate_head_fit_outputs(attempt_dir, classifier_dir, variants)
 repaired = []
-for variant in variants:
-    variant_dir = classifier_dir / variant
-    predictions = variant_dir / "predictions_subject_level.jsonl"
-    metrics = variant_dir / "metrics.json"
-    if predictions.is_file() and metrics.is_file():
-        result = materialize_head_evidence(
-            attempt_dir,
-            predictions_path=predictions,
-            metrics_path=metrics,
-            checkpoint_path=str(checkpoint),
-            variant=variant,
-        )
-        repaired.append({"variant": variant, "result": result})
-if not repaired:
-    raise SystemExit("no fitted variant evidence found; refusing to fabricate evidence")
-original = os.environ.get("Q3MS_ORIGINAL_JOB_ID") or None
-if os.environ.get("Q3MS_RECORD_REPAIR_EVENT") == "1":
-    record_head_job(
+for item in outputs:
+    result = materialize_head_evidence(
         attempt_dir,
-        job_key="classifier",
-        job_type="hidden_classifier",
-        event_type="COMPLETED",
-        slurm_job_id=None,
-        status="COMPLETED",
-        exit_code="0:0",
-        reason="evidence materialization repair after failed classifier job",
-        resubmission_of_job_id=original,
+        predictions_path=item["predictions"],
+        metrics_path=item["metrics"],
+        checkpoint_path=str(checkpoint),
+        variant=item["variant"],
+    )
+    repaired.append({"variant": item["variant"], "result": result})
+if os.environ.get("Q3MS_RECORD_REPAIR_EVENT") == "1":
+    reason = (
+        "non-scheduler evidence materialization repair; "
+        f"operation=materialize_head_evidence; deployment={os.environ.get('Q3MS_DEPLOYMENT_ID','')}; "
+        f"source_commit={os.environ.get('Q3MS_SOURCE_COMMIT','')}; "
+        f"source_manifest_sha256={os.environ.get('Q3MS_SOURCE_MANIFEST_SHA256','')}; "
+        f"executed_at_utc={os.environ.get('Q3MS_REPAIR_TIMESTAMP','')}; "
+        f"original_classifier_job={os.environ.get('Q3MS_ORIGINAL_JOB_ID','')}"
+    )
+    record_head_repair_event(
+        attempt_dir,
+        original_job_id=os.environ.get("Q3MS_ORIGINAL_JOB_ID") or None,
+        reason=reason,
     )
 print(json.dumps({"repaired": repaired}))
 """
@@ -1181,6 +1185,10 @@ print(json.dumps({"repaired": repaired}))
         "export PYTHONDONTWRITEBYTECODE=1",
         f"cd {shlex.quote(code_root)}",
         f"export PROJECT_ROOT={shlex.quote(code_root)}",
+        f"export Q3MS_DEPLOYMENT_ID={shlex.quote(provenance['deployment_id'])}",
+        f"export Q3MS_SOURCE_COMMIT={shlex.quote(provenance['source_git_commit'])}",
+        f"export Q3MS_SOURCE_MANIFEST_SHA256={shlex.quote(provenance['source_manifest_sha256'])}",
+        f"export Q3MS_REPAIR_TIMESTAMP={shlex.quote(provenance['executed_at_utc'])}",
     ]
     for job in jobs:
         lines.extend(
@@ -1254,7 +1262,16 @@ def command_materialize(args: argparse.Namespace) -> int:
     if not prepared:
         print("no terminal-failed classifier attempts to repair")
         return 0
-    script = _build_materialize_script(code_root=code_root, jobs=prepared)
+    script = _build_materialize_script(
+        code_root=code_root,
+        jobs=prepared,
+        provenance={
+            "deployment_id": deployment["deployment_id"],
+            "source_git_commit": deployment["git_commit"],
+            "source_manifest_sha256": deployment.get("source_manifest_sha256") or "",
+            "executed_at_utc": _now(),
+        },
+    )
     print(f"=== head evidence repair ({'execute' if args.execute else 'dry-run'}) ===")
     print(f"deployment_id: {deployment['deployment_id']}")
     print(f"attempts: {len(prepared)}")
@@ -1291,6 +1308,10 @@ def command_materialize(args: argparse.Namespace) -> int:
                 "evidence_repaired_at_utc": _now(),
                 "repair_of_classifier_job_id": item["original_classifier_job_id"],
                 "evidence_repair": "materialize_head_evidence on existing fit outputs",
+                "repair_deployment_id": deployment["deployment_id"],
+                "repair_source_git_commit": deployment["git_commit"],
+                "repair_source_manifest_sha256": deployment.get("source_manifest_sha256"),
+                "repair_operation": "materialize_head_evidence",
             }
         )
         _append_registry(registry_path, new_entry)
