@@ -3,11 +3,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+import yaml
+
 from src.merged.audit import (
     _audit_feature_test_protection,
     _audit_head_inner_folds,
+    _audit_head_seed,
+    _job_registry_path,
     _resolve_qwen_prediction_path,
     _audit_training_artifacts,
+    audit_symmetric_run,
+    parse_args,
 )
 from src.merged.protocol import DATASETS, canonical_sha256
 
@@ -154,3 +161,93 @@ def test_compact_audit_uses_local_qwen_prediction_path(tmp_path: Path) -> None:
         fold_root, "daic", "/gpfs/projects/etur92/remote/qwen/daic"
     )
     assert resolved == local_prediction
+
+
+def test_job_registry_path_honors_an_explicit_registry(tmp_path: Path) -> None:
+    explicit = tmp_path / "runtime" / "run.json"
+    assert _job_registry_path("run", explicit) == explicit
+
+
+def test_audit_head_seed_enforces_the_declared_classifier_seed() -> None:
+    failures: list[str] = []
+    _audit_head_seed(
+        expected_head_seed=1337,
+        head_identity={"head_seed": 1337},
+        classifier_metadata={"head_seed": 1337, "random_state": 1337, "class_weight": None},
+        method="logreg",
+        fold=0,
+        failures=failures,
+    )
+    assert failures == []
+
+    failures = []
+    _audit_head_seed(
+        expected_head_seed=1337,
+        head_identity={"head_seed": 7},
+        classifier_metadata={"head_seed": 7, "random_state": 7},
+        method="logreg",
+        fold=0,
+        failures=failures,
+    )
+    assert "heads_seed_mismatch:0" in failures
+    assert "head_seed_mismatch:0:logreg" in failures
+    assert "head_random_state_mismatch:0:logreg" in failures
+    assert "head_class_weight_missing:0:logreg" in failures
+
+    # Legacy contracts without heads.fixed_seed keep the historical behavior.
+    failures = []
+    _audit_head_seed(
+        expected_head_seed=None,
+        head_identity={"head_seed": 7},
+        classifier_metadata={},
+        method="logreg",
+        fold=0,
+        failures=failures,
+    )
+    assert failures == []
+
+
+def test_audit_cli_accepts_override_and_registry(tmp_path: Path) -> None:
+    args = parse_args(
+        [
+            "--config",
+            "configs/experiments/merged/symmetric_merged_qwen3_pooled_native_text_only.yaml",
+            "--stage",
+            "cv",
+            "--run-id",
+            "r",
+            "--override=--set=output_dirs.merged_root=/tmp/x",
+            "--registry",
+            str(tmp_path / "reg.json"),
+        ]
+    )
+    assert args.override == ["--set=output_dirs.merged_root=/tmp/x"]
+    assert args.registry == tmp_path / "reg.json"
+
+def test_audit_resolves_the_overridden_merged_root(tmp_path: Path) -> None:
+    """An override must steer the auditor to the same writable root as submit."""
+
+    config_path = tmp_path / "merged.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "name": "synthetic",
+                "protocol": "symmetric_merged",
+                "modality": "text_only",
+                "output_dirs": {
+                    "merged_root": "${PROJECT_ROOT}/outputs/m",
+                    "run_root": "${PROJECT_ROOT}/output_model/m",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    overridden_root = tmp_path / "elsewhere" / "merged"
+    with pytest.raises(FileNotFoundError) as error:
+        audit_symmetric_run(
+            config_path,
+            stage="cv",
+            run_id="r",
+            overrides=[f"--set=output_dirs.merged_root={overridden_root}"],
+        )
+    assert str(overridden_root) in str(error.value)

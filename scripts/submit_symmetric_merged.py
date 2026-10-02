@@ -936,6 +936,14 @@ def _submit_job(
         "RUN_ID": job["run_id"],
         "SOURCE_COMMIT": _source_commit(),
     }
+    # The project-local hidden-state dependencies are not part of the tracked
+    # deployment. Point every worker at the existing cluster copy explicitly so
+    # the head worker can import xgboost/scikit-learn; an unexported shell
+    # variable would never travel through sbatch.
+    export_values["QWEN_HIDDEN_DEPS"] = os.environ.get(
+        "QWEN_HIDDEN_DEPS",
+        "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/.deps/qwen_hidden",
+    )
     backend = str(job.get("model_backend") or "")
     if backend == "gemma4":
         export_values["ENV_ACTIVATE"] = os.environ.get(
