@@ -535,6 +535,81 @@ def test_registry_read_keeps_latest_per_key(tmp_path: Path) -> None:
     assert entries[0]["extract_job_id"] == "2"
 
 
+def test_submit_and_repair_scripts_disable_bytecode_writes() -> None:
+    job = {
+        "registry_key": "d3tec_text_only_native|1337|0",
+        "attempt_id": "attempt-1",
+        "logical_run_name": "q3ms_head_d3tec_text_only_native_s1337_f0",
+        "remote_attempt_dir": "/gpfs/runtime/heads/d3tec_text_only_native/attempt-1",
+        "classifier_dir": "/gpfs/runtime/heads/d3tec_text_only_native/attempt-1/classifier",
+        "log_root": "/gpfs/runtime/logs/heads/d3tec_text_only_native/attempt-1",
+        "cache_dir": "/gpfs/runtime/heads_cache/d3tec/text_only/run_parent_fold_0_pseed1337_hseed1337",
+        "parent": {"checkpoint_dir": "/gpfs/parent/best_model"},
+        "condition": "text_only",
+        "extract_gpus": 1,
+        "submit_extract": False,
+        "existing_extract_id": "111",
+        "payload": {"attempt_dir": "/gpfs/runtime/heads/d3tec_text_only_native/attempt-1"},
+    }
+    env = {"attempt-1": {"ENV_ACTIVATE": "/gpfs/venvs/qwen38/bin/activate"}}
+    submit_script = dispatch._build_submit_script(
+        code_root="/gpfs/deploy/code",
+        jobs=[{**job, "payload": job["payload"]}],
+        scheduler_env=env,
+        qwen_hidden_deps="/gpfs/deps/qwen_hidden",
+        log_root="/gpfs/runtime/logs/heads",
+    )
+    repair_script = dispatch._build_repair_script(
+        code_root="/gpfs/deploy/code",
+        jobs=[job],
+        scheduler_env=env,
+        qwen_hidden_deps="/gpfs/deps/qwen_hidden",
+    )
+    assert "PYTHONDONTWRITEBYTECODE=1" in submit_script
+    assert "PYTHONDONTWRITEBYTECODE=1" in repair_script
+    root = Path(__file__).resolve().parents[1]
+    for rel in (
+        "scripts/run_qwen_hidden_extract_slurm.sh",
+        "scripts/run_qwen_hidden_classifier_slurm.sh",
+    ):
+        assert "PYTHONDONTWRITEBYTECODE=1" in (root / rel).read_text(encoding="utf-8")
+
+
+def test_init_payload_records_supersedes_attempt(native_identity) -> None:
+    job = {
+        "logical_run_name": "q3ms_head_d3tec_text_only_native_s1337_f0",
+        "seed": 1337,
+        "fold": 0,
+        "parent": {
+            "attempt_id": "attempt-parent",
+            "run_name": "run_parent",
+            "fold_dir": "/gpfs/parent/fold_0",
+            "checkpoint_dir": "/gpfs/parent/fold_0/best_model",
+            "adapter_config_sha256": "a" * 64,
+            "adapter_sha256": "b" * 64,
+            "split_fingerprint": {"sha256": "c" * 64},
+            "manifest_hash": "d" * 64,
+        },
+    }
+    deployment = {
+        "deployment_id": "dep-1",
+        "git_commit": "e" * 40,
+        "git_branch_at_deploy": "agent/x",
+        "git_dirty": False,
+        "source_manifest_sha256": "f" * 64,
+    }
+    payload = dispatch._init_payload(
+        job=job,
+        route={**ROUTE, "dataset_variant": None, "aggregation": "subject"},
+        attempt_id="attempt-new",
+        remote_attempt_dir=str(native_identity.runtime_root / "heads" / "x" / "attempt-new"),
+        deployment=deployment,
+        identity=native_identity,
+        supersedes_attempt_id="attempt-old",
+    )
+    assert payload["context"]["supersedes_attempt_id"] == "attempt-old"
+
+
 def test_coverage_reconciles_planned_keys(
     monkeypatch: pytest.MonkeyPatch, native_identity
 ) -> None:

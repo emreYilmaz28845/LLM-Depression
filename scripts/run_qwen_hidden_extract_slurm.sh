@@ -21,6 +21,9 @@ ENV_ACTIVATE="${ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen_mn5_reb
 source "$ENV_ACTIVATE"
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
 export PROJECT_ROOT
+# Never write interpreter bytecode into the immutable deployment tree: the
+# deployment verifier treats transient __pycache__/*.pyc.<pid> files as drift.
+export PYTHONDONTWRITEBYTECODE=1
 cd "$PROJECT_ROOT"
 
 CHECKPOINT_DIR="${CHECKPOINT_DIR:?Set CHECKPOINT_DIR to a fold best_model directory}"
