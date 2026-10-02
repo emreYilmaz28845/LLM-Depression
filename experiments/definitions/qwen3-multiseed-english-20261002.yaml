@@ -1,0 +1,42 @@
+schema_version: audiollm.experiment_group.v1
+group_id: qwen3-multiseed-english-20261002
+title: Qwen3 three-seed standalone English production campaign
+research_question: >-
+  How stable are the standalone English-transcript routes (D3TEC, Androids
+  interview, CMDC and pooled Turkish, text-only and audio+text) across the three
+  model-training seeds 7, 1337 and 2024 under a fixed split seed 1337 and a fixed
+  classifier seed 1337, with the accepted English overlay plus translation_notice_v1
+  and the original-language audio?
+dataset: >-
+  D3TEC (Spanish), Androids interview (Italian), CMDC (Mandarin) and pooled
+  Turkish BDI>=17 pos+neg, text-only and audio+text, accepted English
+  translations only.
+baseline: >-
+  The c6ca2b938fbae7e370cc2abc12bdf892a630d8eb (#272) readiness baseline.
+  Existing seed-1337 English evidence is not assumed reusable; reuse needs
+  matching parent and contract evidence.
+treatment: >-
+  Three training seeds 7/1337/2024 per route and fold with fixed subject/fold
+  membership; Qwen3.8-27B text-only and Qwen3-Omni Thinker audio+text backbones;
+  candidate-label likelihood evaluation view
+  harmonized_all_windows_full_coverage; strict subject-level Macro-F1, Positive-F1
+  and UAR; exact-parent fixed heads logreg_raw and xgb_raw with SEED=1337 and no
+  Optuna/HPO.
+expected_seeds:
+  - 7
+  - 1337
+  - 2024
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+github_issue: null
+github_pr: null
