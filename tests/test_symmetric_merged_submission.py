@@ -8,6 +8,7 @@ from unittest.mock import patch
 from scripts.submit_symmetric_merged import (
     CONFIG_BY_MODALITY,
     _completed,
+    _config_identity_mismatch,
     build_job_specs,
     _set_combined_registry_metadata,
     _final_epoch_for_dry_run,
@@ -159,6 +160,18 @@ def test_fold_scoped_retry_keeps_full_expected_count_and_plan_hash() -> None:
     assert len(scoped["jobs"]) == 6
     assert {job["fold"] for job in scoped["jobs"]} == {1, 4}
     assert scoped["scoped_folds"] == [1, 4]
+
+
+def test_scoped_retry_config_identity_check_only_compares_rebuilt_folds() -> None:
+    """A fold-scoped retry must not require the full job set in its own plan."""
+
+    existing = {f"audio_text:cv:fold_{fold}:train": "configs/x.yaml" for fold in range(5)}
+    scoped = {"audio_text:cv:fold_1:train": "configs/x.yaml"}
+    assert _config_identity_mismatch(existing, scoped, scoped_folds=[1]) == {}
+    changed = {"audio_text:cv:fold_1:train": "configs/other.yaml"}
+    assert _config_identity_mismatch(existing, changed, scoped_folds=[1])
+    assert _config_identity_mismatch(existing, existing, scoped_folds=None) == {}
+    assert _config_identity_mismatch(existing, scoped, scoped_folds=None)
 
 
 def test_retry_registry_submits_chain_in_dependency_order() -> None:

@@ -1095,6 +1095,30 @@ def submit_registry(registry: dict[str, Any], *, dry_run: bool) -> dict[str, Any
     return registry
 
 
+def _config_identity_mismatch(
+    existing_configs: dict[str, str],
+    current_configs: dict[str, str],
+    *,
+    scoped_folds: list[int] | None,
+) -> dict[str, Any]:
+    """Return incompatible job/config identities, if any.
+
+    A full-stage rebuild must keep the exact job set. A fold-scoped retry
+    rebuilds only the selected folds, so only those rebuilt keys are compared
+    against the existing registry and the other folds stay untouched.
+    """
+
+    if scoped_folds:
+        return {
+            key: (existing_configs.get(key), value)
+            for key, value in current_configs.items()
+            if existing_configs.get(key) != value
+        }
+    if existing_configs == current_configs:
+        return {}
+    return {"existing": existing_configs, "current": current_configs}
+
+
 def merge_existing_registry(registry: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
     """Carry forward submitted/terminal jobs so reruns are restart-safe."""
 
@@ -1379,7 +1403,11 @@ def main() -> None:
             for job in registry.get("jobs", [])
             if job.get("job_key")
         }
-        if existing_configs and existing_configs != current_configs:
+        if existing_configs and _config_identity_mismatch(
+            existing_configs,
+            current_configs,
+            scoped_folds=registry.get("scoped_folds"),
+        ):
             raise ValueError(f"Existing registry has incompatible job/config identities: {registry_path}")
         registry = merge_existing_registry(registry, existing)
         existing_stage_plans[args.stage] = current_stage_plan
