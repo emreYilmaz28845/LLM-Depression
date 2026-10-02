@@ -121,7 +121,9 @@ def initialize_head_attempt(
         "required_jobs": list(context.get("required_jobs") or ["head"]),
     }
     run_config = {
-        "schema_version": "native_en_text_heads_v2_run.v1",
+        "schema_version": str(
+            context.get("run_schema_version") or "native_en_text_heads_v2_run.v1"
+        ),
         "config": config,
         "tracking": tracking,
     }
@@ -366,6 +368,9 @@ def _metric_payload(rows: list[dict[str, Any]], *, strict_invalid: bool = False)
         if strict_invalid else raw_predictions
     )
     metrics = classification_metrics(labels, predictions)
+    # UAR is the unweighted average recall (balanced accuracy), the same
+    # quantity the repository writes as binary_strict_uar for backbone runs.
+    metrics["uar"] = metrics["macro_recall"]
     tn, fp = metrics["confusion_matrix"][0]
     fn, _ = metrics["confusion_matrix"][1]
     negative_precision = tn / (tn + fn) if tn + fn else 0.0
@@ -440,7 +445,7 @@ def _build_evaluations(
                 "predictions_artifact_path": str(predictions_path.relative_to(target)),
                 "metrics": [
                     {"name": name, "value": float(metrics.get(name, 0.0)), "support": support}
-                    for name in ("macro_f1", "positive_f1", "accuracy", "negative_f1")
+                    for name in ("macro_f1", "positive_f1", "uar", "accuracy", "negative_f1")
                 ],
                 "locally_verified": False,
                 "reportable": False,
