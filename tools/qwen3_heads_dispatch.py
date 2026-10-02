@@ -1161,17 +1161,18 @@ for variant in variants:
 if not repaired:
     raise SystemExit("no fitted variant evidence found; refusing to fabricate evidence")
 original = os.environ.get("Q3MS_ORIGINAL_JOB_ID") or None
-record_head_job(
-    attempt_dir,
-    job_key="classifier",
-    job_type="hidden_classifier",
-    event_type="COMPLETED",
-    slurm_job_id=None,
-    status="COMPLETED",
-    exit_code="0:0",
-    reason="evidence materialization repair after failed classifier job",
-    resubmission_of_job_id=original,
-)
+if os.environ.get("Q3MS_RECORD_REPAIR_EVENT") == "1":
+    record_head_job(
+        attempt_dir,
+        job_key="classifier",
+        job_type="hidden_classifier",
+        event_type="COMPLETED",
+        slurm_job_id=None,
+        status="COMPLETED",
+        exit_code="0:0",
+        reason="evidence materialization repair after failed classifier job",
+        resubmission_of_job_id=original,
+    )
 print(json.dumps({"repaired": repaired}))
 """
     )
@@ -1189,6 +1190,7 @@ print(json.dumps({"repaired": repaired}))
                 f"export Q3MS_CLASSIFIER_DIR={shlex.quote(job['classifier_dir'])}",
                 f"export Q3MS_VARIANTS={shlex.quote(':'.join(job['variants']))}",
                 f"export Q3MS_ORIGINAL_JOB_ID={shlex.quote(str(job.get('original_classifier_job_id') or ''))}",
+                f"export Q3MS_RECORD_REPAIR_EVENT={'1' if job.get('record_repair_event') else '0'}",
                 python.rstrip("\n"),
             ]
         )
@@ -1220,10 +1222,18 @@ def command_materialize(args: argparse.Namespace) -> int:
     prepared: list[dict[str, Any]] = []
     for entry in selected:
         state = (states.get(str(entry["classifier_job_id"])) or {}).get("state")
-        if state not in {"FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL", "PREEMPTED"}:
+        if state not in {
+            "COMPLETED",
+            "FAILED",
+            "CANCELLED",
+            "TIMEOUT",
+            "OUT_OF_MEMORY",
+            "NODE_FAIL",
+            "PREEMPTED",
+        }:
             print(
                 f"skip {entry['registry_key']}: classifier job "
-                f"{entry['classifier_job_id']} is {state or 'unknown'}, not a terminal failure"
+                f"{entry['classifier_job_id']} is {state or 'unknown'}, not terminal"
             )
             continue
         variants = args.variants.split(":") if args.variants else list(HEAD_VARIANTS)
@@ -1235,6 +1245,10 @@ def command_materialize(args: argparse.Namespace) -> int:
                 "classifier_dir": entry["classifier_dir"],
                 "variants": variants,
                 "original_classifier_job_id": entry["classifier_job_id"],
+                # A completed job genuinely completed: re-materialize its
+                # evidence idempotently without inventing a repair event. Only
+                # terminal failures get the linked repair event.
+                "record_repair_event": state != "COMPLETED",
             }
         )
     if not prepared:

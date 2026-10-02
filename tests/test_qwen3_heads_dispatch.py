@@ -742,6 +742,7 @@ def test_materialize_script_passes_variant_and_links_original_job() -> None:
                 "classifier_dir": "/gpfs/attempt/classifier",
                 "variants": ["logreg_raw", "xgb_raw"],
                 "original_classifier_job_id": "46955648",
+                "record_repair_event": True,
             }
         ],
     )
@@ -750,6 +751,8 @@ def test_materialize_script_passes_variant_and_links_original_job() -> None:
     assert "resubmission_of_job_id" in script
     assert "refusing to fabricate evidence" in script
     assert "PYTHONDONTWRITEBYTECODE=1" in script
+    assert "Q3MS_RECORD_REPAIR_EVENT=1" in script
+    assert 'Q3MS_RECORD_REPAIR_EVENT") == "1"' in script
 
 
 def test_tracking_schema_override_and_uar_metric(tmp_path: Path) -> None:
