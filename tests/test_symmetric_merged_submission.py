@@ -452,6 +452,23 @@ def test_merged_train_preflight_does_not_self_create_an_incomplete_run() -> None
     ) < source.index("outputs = model(**batch)")
 
 
+def test_merged_train_incomplete_output_guard_is_broadcast_before_writes() -> None:
+    """The incomplete-output guard must not race the main process's own writes.
+
+    A lagging rank used to read this job's fresh identity/config files as a
+    previous incomplete attempt and fail the whole job. The decision is now made
+    on the main process and broadcast before any rank writes.
+    """
+    source = Path("src/merged/train.py").read_text(encoding="utf-8")
+    declared = source.index("incomplete_output_ok: bool | None")
+    decision = source.index("incomplete_output_ok = not (")
+    broadcast = source.index("broadcast_flag(accelerator, bool(incomplete_output_ok))")
+    first_write = source.index('save_json(identity, run_root / "training_identity.json")')
+    assert declared < decision < broadcast < first_write
+    block = source[declared:first_write]
+    assert "if is_local_main_process:" in block
+
+
 def test_qwen_worker_supports_the_two_node_lane() -> None:
     worker = Path("scripts/run_symmetric_merged_train_slurm.sh").read_text(encoding="utf-8")
     assert 'NNODES="${NNODES:-1}"' in worker

@@ -430,7 +430,17 @@ def train_merged_fold(
                 archive_root,
             )
         accelerator.wait_for_everyone()
-    if _unexpected_incomplete_output_entries(run_root) and not complete_path.is_file():
+    # The incomplete-output guard must run before any rank can observe the main
+    # process's own fresh writes. A per-rank check races the main process and can
+    # misread this job's identity/config files as a previous incomplete attempt.
+    # Decide once on the main process and broadcast the decision; no rank writes
+    # before the broadcast returns.
+    incomplete_output_ok: bool | None = None
+    if is_local_main_process:
+        incomplete_output_ok = not (
+            _unexpected_incomplete_output_entries(run_root) and not complete_path.is_file()
+        )
+    if not broadcast_flag(accelerator, bool(incomplete_output_ok)):
         raise ValueError(f"Refusing to overwrite an incomplete merged training output: {run_root}")
     ensure_dir(run_root)
     ensure_dir(logs_dir)
