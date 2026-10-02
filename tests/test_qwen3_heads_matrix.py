@@ -260,6 +260,24 @@ def test_only_failed_candidate_blocks_the_key(synthetic_cell: Path) -> None:
     assert parent["excluded_attempts"]
 
 
+def test_lagging_running_state_with_clean_jobs_is_accepted(synthetic_cell: Path) -> None:
+    config = _cell_config(synthetic_cell)
+    _write_run(synthetic_cell, cell_config=config, state="RUNNING")
+    parent = _resolve(synthetic_cell, config)
+    assert parent["status"] == "resolved"
+    assert parent["state"] == "RUNNING"
+    assert parent["state_lagging"] is True
+    assert parent["jobs_clean"] is True
+
+
+def test_missing_status_sidecar_is_not_success(synthetic_cell: Path) -> None:
+    config = _cell_config(synthetic_cell)
+    _write_run(synthetic_cell, cell_config=config, write_sidecars=False)
+    parent = _resolve(synthetic_cell, config)
+    assert parent["status"] == "blocked_failed_parent"
+    assert any("no status sidecar" in item["reason"] for item in parent["excluded_attempts"])
+
+
 def test_superseded_candidate_is_excluded(synthetic_cell: Path) -> None:
     config = _cell_config(synthetic_cell)
     _write_run(synthetic_cell, cell_config=config, run_name="run_old", attempt_id="attempt-old")

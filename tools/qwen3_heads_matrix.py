@@ -78,6 +78,7 @@ ADAPTER_FILES = ("adapter_config.json", "adapter_model.safetensors")
 SUCCESS_STATES = frozenset(
     {"COMPLETED_ON_MN5", "SYNCED_LOCALLY", "LOCALLY_VALIDATED", "REPORTABLE"}
 )
+NEGATIVE_STATES = frozenset({"FAILED", "CANCELLED", "SUPERSEDED", "REJECTED"})
 TERMINAL_FAILURES = frozenset({"FAILED", "CANCELLED", "TIMEOUT"})
 DECLARATION_ONLY_SHAPE_DIFFS = ("resources.train_nodes",)
 PARENT_STATUSES = ("resolved", "waiting_for_checkpoint", "blocked_failed_parent")
@@ -121,10 +122,14 @@ def _load_json(path: Path) -> dict[str, Any] | None:
 def attempt_eligibility(fold_dir: Path) -> dict[str, Any]:
     """Successful-attempt evidence for one candidate parent.
 
-    A parent may only be selected when its lifecycle state is COMPLETED_ON_MN5
-    or later and its recorded terminal job events contain at least one
-    COMPLETED event with no FAILED/CANCELLED/TIMEOUT events. A missing status
-    sidecar is not success.
+    The authoritative success evidence is the terminal job history: at least
+    one COMPLETED ``train`` event and no FAILED/CANCELLED/TIMEOUT events. The
+    lifecycle state must not be an explicit negative (FAILED, CANCELLED,
+    SUPERSEDED, REJECTED); a missing status sidecar is not success. A state
+    that is still RUNNING/SUBMITTED while the recorded jobs are clean is a
+    lagging lifecycle pointer and is accepted with ``state_lagging=True``
+    recorded, because the remote sidecars of historical campaigns were not
+    advanced after local collection.
     """
 
     status = _load_json(fold_dir / "status.json") or {}
@@ -146,11 +151,20 @@ def attempt_eligibility(fold_dir: Path) -> dict[str, Any]:
     failures = [
         event for event in events if event.get("event_type") in TERMINAL_FAILURES
     ]
+    train_keys = {str(event.get("job_key")) for event in events if event.get("job_key")}
+    train_completed = any(
+        event.get("job_key") == "train" and event.get("event_type") == "COMPLETED"
+        for event in events
+    )
     reasons: list[str] = []
-    if state not in SUCCESS_STATES:
+    if state in NEGATIVE_STATES:
         reasons.append(f"state={state}")
+    elif not state:
+        reasons.append("no status sidecar")
     if not completed:
         reasons.append("no COMPLETED job event")
+    elif "train" in train_keys and not train_completed:
+        reasons.append("no COMPLETED train event")
     if failures:
         reasons.append(
             "failed terminal events: "
@@ -160,6 +174,7 @@ def attempt_eligibility(fold_dir: Path) -> dict[str, Any]:
     return {
         "state": state,
         "eligible": not reasons,
+        "state_lagging": bool(not reasons and state not in SUCCESS_STATES),
         "completed_events": len(completed),
         "failed_events": len(failures),
         "reasons": reasons,
@@ -326,6 +341,10 @@ def _evaluate_fold_as_parent(
             "world_size_recorded": (payload.get("training_strategy") or {}).get("world_size"),
             "declaration_only_shape_difference": declaration_only,
             "state": eligibility["state"],
+            "state_lagging": eligibility["state_lagging"],
+            "jobs_clean": bool(
+                eligibility["completed_events"] and not eligibility["failed_events"]
+            ),
             "supersedes_attempt_id": eligibility["supersedes_attempt_id"],
             "extract_gpus": int(
                 (recorded.get("resources") or {}).get("eval_gpus_per_node", 1) or 1
@@ -428,6 +447,12 @@ def resolve_parent(
             raise HeadsMatrixError(
                 f"explicit parent attempt id {mapped_attempt!r} does not match the recorded "
                 f"attempt id {parent['attempt_id']!r} for {cell['config']} seed {seed} fold {fold}"
+            )
+        map_state = explicit.get("state")
+        if map_state and str(map_state) not in SUCCESS_STATES:
+            raise HeadsMatrixError(
+                f"explicit parent map records non-success state {map_state!r} for "
+                f"{cell['config']} seed {seed} fold {fold}"
             )
         parent["selection"] = "explicit_parent_map"
         parent["selection_reason"] = str(explicit.get("selection_reason") or "explicit parent map")
