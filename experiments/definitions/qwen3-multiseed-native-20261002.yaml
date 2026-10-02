@@ -1,0 +1,74 @@
+schema_version: audiollm.experiment_group.v1
+group_id: qwen3-multiseed-native-20261002
+title: Qwen3 three-seed standalone Native production campaign (15 routes, 189 fits)
+research_question: >-
+  How stable are the harmonized standalone Native Qwen3 depression-classification
+  results across three independent training seeds (7, 1337, 2024) when the
+  dataset split (seed 1337), prompts, frozen encoder policy, manifests,
+  likelihood decision rule and fixed-head classifier seed (1337) are held fixed?
+dataset: >-
+  DAIC-WOZ participant-only packed30 windows (fold 0), D3TEC, Androids interview,
+  CMDC and Turkish pooled t17 positive+negative question set, each in text_only,
+  audio_only and audio_text modes. Native transcripts; external labels stay
+  Depressed / Non-depressed.
+baseline: >-
+  The existing seed-1337 standalone production runs for the 15 native cells
+  (63 fold fits), verified reusable by the Qwen3 multiseed matrix readiness
+  inventory; their evaluation evidence is reused, their fixed heads are fitted
+  in this campaign.
+treatment: >-
+  Seeds 7 and 2024 are new training attempts of the identical recipe (split seed
+  1337, one chunk per prompt, frozen audio encoder, FSDP effective global batch
+  128, macro-F1 checkpoint selection). Every parent checkpoint, including the
+  reused seed-1337 runs, receives the same two fixed heads (Logistic Regression
+  logreg_raw with legacy class_weight=balanced, fixed XGBoost xgb_raw) fitted
+  with classifier seed 1337, full-cohort extraction, no PCA and no Optuna.
+expected_seeds:
+  - 7
+  - 1337
+  - 2024
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+comparison_rule: >-
+  Per-seed fold-mean strict subject-level Macro-F1, Positive-F1 and UAR
+  (INVALID counts as wrong) for each dataset/modality/route; seeds are never
+  averaged into one headline and no winning seed is selected from outcomes.
+  DAIC is a single-fold result; Turkish pooled uses the declared train_val
+  protocol (the outer fold is both selection and reported score, not an
+  independent held-out test).
+scope:
+  campaign: qwen3_multiseed_native_20261002
+  lane: feat-qwen3-multiseed-native-20261002
+  checkpoint_role: best_model
+  head_variants:
+    - logreg_raw
+    - xgb_raw
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
+exclusions:
+  - pr_merge
+  - extra_seeds_or_folds_or_routes
+  - optuna_or_hpo
+  - pca_or_control_head_variants
+  - teacher_forced_evaluation
+  - outcome_based_seed_selection
+  - new_translations_or_transcripts
+  - english_or_merged_route_ownership
+  - shared_workbook_or_tables_writes
+  - package_install
+  - shared_environment_or_dataset_change
+  - evidence_overwrite_or_deletion
+github_issue: null
+github_pr: null
