@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Never write interpreter bytecode into the immutable deployment tree: the
+# deployment verifier allows final .pyc files but a concurrent import can
+# briefly expose atomic-write temp files (*.pyc.<id>) as unexpected files.
+export PYTHONDONTWRITEBYTECODE=1
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression}"
 CONFIG="${CONFIG:-$PROJECT_ROOT/configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_v1.yaml}"
 FOLD="${FOLD:-0}"
