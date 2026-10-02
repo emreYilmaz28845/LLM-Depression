@@ -871,10 +871,14 @@ def command_submit(args: argparse.Namespace) -> int:
         raise DispatchError(f"deployment verification failed: {exc}") from exc
 
     for item in prepared:
-        for path in (item["remote_attempt_dir"], item["cache_dir"]):
-            proc = runner.run(f"test -e {shlex.quote(path)} && echo exists || echo absent")
-            if proc.stdout.strip() != "absent":
-                raise DispatchError(f"collision: {path} already exists")
+        # The remote attempt directory must be new. An existing cache directory
+        # is expected for resubmitted keys: the extractor reuses a compatible
+        # complete cache and refuses a partial or incompatible one by itself.
+        proc = runner.run(
+            f"test -e {shlex.quote(item['remote_attempt_dir'])} && echo exists || echo absent"
+        )
+        if proc.stdout.strip() != "absent":
+            raise DispatchError(f"collision: {item['remote_attempt_dir']} already exists")
 
     from src.experiment_tracking.submit import SshSubmitRunner
 
