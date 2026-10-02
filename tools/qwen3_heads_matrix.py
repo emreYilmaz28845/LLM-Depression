@@ -45,6 +45,7 @@ manifest. Nothing is submitted by this tool.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 from pathlib import Path
@@ -236,11 +237,18 @@ def _evaluate_fold_as_parent(
     recorded = payload.get("config")
     if not isinstance(recorded, dict):
         return {"ok": False, "reason": "run_config.yaml has no resolved config block", "record": None}
-    differences = diff_paths(reduce_config(cell_config) or {}, reduce_config(recorded) or {})
+    # The requested training seed is the only approved top-level difference
+    # between the cell config and a recorded attempt of another seed. Every
+    # other scientific field must match; the recorded seed is validated
+    # separately below and the split seed stays fixed at SPLIT_SEED.
+    expected = copy.deepcopy(cell_config)
+    expected["seed"] = int(seed)
+    differences = diff_paths(reduce_config(expected) or {}, reduce_config(recorded) or {})
     scientific = [path for path in differences if not is_shape_path(path)]
     if scientific:
         return {
             "ok": False,
+            "classification": "not_candidate",
             "reason": "recorded config differs from the cell config: " + ", ".join(scientific),
             "record": None,
         }
@@ -250,6 +258,7 @@ def _evaluate_fold_as_parent(
         if not _declaration_only_shape_difference(shape, recorded, payload, cell_config):
             return {
                 "ok": False,
+                "classification": "not_candidate",
                 "reason": "recorded resource shape differs from the cell config: "
                 + ", ".join(shape),
                 "record": None,
@@ -259,6 +268,7 @@ def _evaluate_fold_as_parent(
     if recorded_seed != int(seed):
         return {
             "ok": False,
+            "classification": "not_candidate",
             "reason": f"recorded training seed {recorded_seed} != requested {seed}",
             "record": None,
         }
@@ -268,6 +278,7 @@ def _evaluate_fold_as_parent(
     if prompt_recorded != prompt_current:
         return {
             "ok": False,
+            "classification": "fatal",
             "fatal": True,
             "reason": "recorded prompt hash differs from the cell config",
             "record": None,
@@ -276,6 +287,7 @@ def _evaluate_fold_as_parent(
     if str(notice_recorded or "") != str(notice_version or ""):
         return {
             "ok": False,
+            "classification": "fatal",
             "fatal": True,
             "reason": (
                 "recorded translation notice version "
@@ -287,6 +299,7 @@ def _evaluate_fold_as_parent(
     if split_seed != SPLIT_SEED:
         return {
             "ok": False,
+            "classification": "fatal",
             "fatal": True,
             "reason": f"recorded split seed {split_seed} != {SPLIT_SEED}",
             "record": None,
@@ -296,23 +309,40 @@ def _evaluate_fold_as_parent(
     if missing:
         return {
             "ok": False,
+            "classification": "not_candidate",
             "reason": f"{checkpoint} is missing {missing}",
             "record": None,
         }
     eligibility = attempt_eligibility(fold_dir)
     if not eligibility["eligible"]:
+        state = eligibility["state"]
+        if state in NEGATIVE_STATES:
+            classification = "terminal_failed"
+        elif state in {"PLANNED", "DEPLOYED", "SUBMITTED", "RUNNING"}:
+            # A live attempt without completed evidence yet: wait, do not block.
+            classification = "nonterminal"
+        else:
+            # Missing sidecar or contradictory evidence: fail closed.
+            classification = "invalid"
         return {
             "ok": False,
+            "classification": classification,
             "reason": "attempt is not eligible: " + "; ".join(eligibility["reasons"]),
             "record": None,
         }
     metadata = _load_json(fold_dir / "metadata.json") or {}
     attempt_id = (payload.get("tracking") or {}).get("attempt_id") or metadata.get("attempt_id")
     if not attempt_id:
-        return {"ok": False, "reason": "recorded attempt id is missing", "record": None}
+        return {
+            "ok": False,
+            "classification": "invalid",
+            "reason": "recorded attempt id is missing",
+            "record": None,
+        }
     if metadata.get("attempt_id") and str(metadata.get("attempt_id")) != str(attempt_id):
         return {
             "ok": False,
+            "classification": "invalid",
             "reason": "run_config tracking attempt id disagrees with metadata.json",
             "record": None,
         }
@@ -483,23 +513,23 @@ def resolve_parent(
                 "attempt_id": (payload.get("tracking") or {}).get("attempt_id"),
                 "state": (attempt_eligibility(fold_dir) or {}).get("state"),
                 "reason": result["reason"],
+                "classification": result.get("classification", "invalid"),
             }
         )
     if not matches:
-        failed_only = [
+        blocked = [
             item
             for item in excluded
-            if item["state"] in {"FAILED", "CANCELLED", "SUPERSEDED", "REJECTED"}
-            or "not eligible" in str(item["reason"])
+            if item.get("classification") in ("terminal_failed", "invalid")
         ]
-        if failed_only:
+        if blocked:
             return {
                 "status": "blocked_failed_parent",
                 "reason": (
                     f"no eligible {seed}-seed parent for {cell['config']} fold {fold}; "
-                    "failed/superseded candidates require an explicit decision"
+                    "failed or invalid candidates require an explicit decision"
                 ),
-                "excluded_attempts": failed_only,
+                "excluded_attempts": excluded,
             }
         return {
             "status": "waiting_for_checkpoint",
@@ -525,6 +555,7 @@ def resolve_parent(
                         "attempt_id": match["attempt_id"],
                         "state": match["state"],
                         "reason": f"superseded by attempt {superseder}",
+                        "classification": "terminal_failed",
                     }
                 )
             else:
