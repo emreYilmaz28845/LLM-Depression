@@ -266,6 +266,17 @@ def test_submitted_parent_with_no_events_waits(synthetic_cell: Path) -> None:
     )
 
 
+def test_inflight_run_without_run_config_waits(synthetic_cell: Path) -> None:
+    config = _cell_config(synthetic_cell)
+    fold_dir = synthetic_cell / "run_root" / "run_inflight" / "fold_0"
+    fold_dir.mkdir(parents=True, exist_ok=True)
+    parent = _resolve(synthetic_cell, config)
+    assert parent["status"] == "waiting_for_checkpoint"
+    assert any(
+        item["classification"] == "nonterminal" for item in parent["excluded_attempts"]
+    )
+
+
 def test_english_cell_refuses_a_native_checkpoint(synthetic_cell: Path) -> None:
     native = _cell_config(synthetic_cell)
     _write_run(synthetic_cell, cell_config=native, notice_version=None, notice_explicit=True)
