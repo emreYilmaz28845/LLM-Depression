@@ -24,6 +24,10 @@ export PROJECT_ROOT
 # Never write interpreter bytecode into the immutable deployment tree: the
 # deployment verifier treats transient __pycache__/*.pyc.<pid> files as drift.
 export PYTHONDONTWRITEBYTECODE=1
+# Same memory-allocator strategy as the evaluation and training workers: this
+# changes no scientific configuration and keeps long-transcript extraction from
+# failing on fragmentation.
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 cd "$PROJECT_ROOT"
 
 CHECKPOINT_DIR="${CHECKPOINT_DIR:?Set CHECKPOINT_DIR to a fold best_model directory}"
