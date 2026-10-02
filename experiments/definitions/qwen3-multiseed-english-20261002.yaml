@@ -38,5 +38,11 @@ primary_metric:
   backend: likelihood
   aggregation: subject_level
   evaluation_view: harmonized_all_windows_full_coverage
+scope:
+  campaign: qwen3_multiseed_english_20261002
+  language: english
+  evidence_dir: outputs/qwen3_multiseed_english_20261002
+  head_tracking_kind: qwen3_multiseed_english_20261002_head
+  head_run_schema: audiollm.qwen3_multiseed_english_20261002_head_run.v1
 github_issue: null
 github_pr: null
