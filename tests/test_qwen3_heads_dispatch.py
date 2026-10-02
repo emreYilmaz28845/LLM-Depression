@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from src.experiment_tracking.identity import new_attempt_id
 from tools import qwen3_heads_dispatch as dispatch
 
 ROUTE = {
@@ -575,13 +576,13 @@ def test_submit_and_repair_scripts_disable_bytecode_writes() -> None:
         assert "PYTHONDONTWRITEBYTECODE=1" in (root / rel).read_text(encoding="utf-8")
 
 
-def test_init_payload_records_supersedes_attempt(native_identity) -> None:
-    job = {
+def _payload_job() -> dict:
+    return {
         "logical_run_name": "q3ms_head_d3tec_text_only_native_s1337_f0",
         "seed": 1337,
         "fold": 0,
         "parent": {
-            "attempt_id": "attempt-parent",
+            "attempt_id": new_attempt_id("run_parent", "a" * 40),
             "run_name": "run_parent",
             "fold_dir": "/gpfs/parent/fold_0",
             "checkpoint_dir": "/gpfs/parent/fold_0/best_model",
@@ -591,23 +592,59 @@ def test_init_payload_records_supersedes_attempt(native_identity) -> None:
             "manifest_hash": "d" * 64,
         },
     }
-    deployment = {
+
+
+def _payload_deployment() -> dict:
+    return {
         "deployment_id": "dep-1",
         "git_commit": "e" * 40,
         "git_branch_at_deploy": "agent/x",
         "git_dirty": False,
         "source_manifest_sha256": "f" * 64,
     }
-    payload = dispatch._init_payload(
-        job=job,
+
+
+def _payload_for(identity, *, attempt_id: str, supersedes: str | None = None) -> dict:
+    return dispatch._init_payload(
+        job=_payload_job(),
         route={**ROUTE, "dataset_variant": None, "aggregation": "subject"},
-        attempt_id="attempt-new",
-        remote_attempt_dir=str(native_identity.runtime_root / "heads" / "x" / "attempt-new"),
-        deployment=deployment,
-        identity=native_identity,
-        supersedes_attempt_id="attempt-old",
+        attempt_id=attempt_id,
+        remote_attempt_dir=str(identity.runtime_root / "heads" / "x" / attempt_id),
+        deployment=_payload_deployment(),
+        identity=identity,
+        supersedes_attempt_id=supersedes,
     )
+
+
+def test_init_payload_records_supersedes_attempt(native_identity) -> None:
+    payload = _payload_for(native_identity, attempt_id="attempt-new", supersedes="attempt-old")
     assert payload["context"]["supersedes_attempt_id"] == "attempt-old"
+
+
+def test_init_payload_produces_schema_valid_metadata(native_identity, tmp_path: Path) -> None:
+    from src.experiment_tracking.sidecars import read_modern_sidecars
+    from src.native_en_text_heads_tracking import initialize_head_attempt, record_head_job
+
+    attempt_id = new_attempt_id("q3ms_head_d3tec_text_only_native_s1337_f0", "e" * 40)
+    payload = _payload_for(native_identity, attempt_id=attempt_id)
+    attempt_dir = tmp_path / "attempt"
+    initialize_head_attempt(
+        attempt_dir,
+        context=payload["context"],
+        config=payload["config"],
+        parent=payload["parent"],
+    )
+    record_head_job(
+        attempt_dir,
+        job_key="extract",
+        job_type="hidden_extraction",
+        event_type="SUBMITTED",
+        slurm_job_id="1",
+        status="PENDING",
+    )
+    # Regression: the metadata created_at_utc must satisfy the official
+    # audiollm.metadata.v1 UTC format, otherwise materialization fails later.
+    assert read_modern_sidecars(attempt_dir) is not None
 
 
 def test_coverage_reconciles_planned_keys(

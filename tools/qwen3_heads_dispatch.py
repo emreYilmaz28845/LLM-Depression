@@ -508,7 +508,6 @@ def _init_payload(
         "group_id": identity.group_id,
         "tracking_kind": identity.tracking_kind,
         "run_schema_version": identity.run_schema,
-        "created_at_utc": _now(),
         "required_jobs": ["extract", "classifier"],
         "source": {
             "git_commit": deployment["git_commit"],
