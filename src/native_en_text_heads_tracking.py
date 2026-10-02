@@ -393,6 +393,7 @@ def _build_evaluations(
     predictions_path: Path,
     metrics_path: Path,
     checkpoint_path: str,
+    variant: str | None = None,
 ) -> list[dict[str, Any]]:
     scientific = config.get("config") if isinstance(config.get("config"), dict) else config
     tracking = config.get("tracking") if isinstance(config.get("tracking"), dict) else scientific.get("tracking", {})
@@ -428,30 +429,32 @@ def _build_evaluations(
             aggregation=aggregation,
             metric_namespace=METRIC_NAMESPACE,
             metrics_artifact_sha256=metrics_sha,
+            qualifier=f"head_variant:{variant}" if variant else None,
         )
-        result.append(
-            {
-                "evaluation_id": eid,
-                "dataset": dataset,
-                "split_name": split_name,
-                "split_protocol": split_protocol,
-                "checkpoint_role": "best_model",
-                "checkpoint_path": checkpoint_path,
-                "backend": backend,
-                "evaluation_view": view,
-                "aggregation": aggregation,
-                "metric_namespace": METRIC_NAMESPACE,
-                "metrics_artifact_path": str(metrics_path.relative_to(target)),
-                "predictions_artifact_path": str(predictions_path.relative_to(target)),
-                "metrics": [
-                    {"name": name, "value": float(metrics.get(name, 0.0)), "support": support}
-                    for name in ("macro_f1", "positive_f1", "uar", "accuracy", "negative_f1")
-                ],
-                "locally_verified": False,
-                "reportable": False,
-                "warnings": [],
-            }
-        )
+        record = {
+            "evaluation_id": eid,
+            "dataset": dataset,
+            "split_name": split_name,
+            "split_protocol": split_protocol,
+            "checkpoint_role": "best_model",
+            "checkpoint_path": checkpoint_path,
+            "backend": backend,
+            "evaluation_view": view,
+            "aggregation": aggregation,
+            "metric_namespace": METRIC_NAMESPACE,
+            "metrics_artifact_path": str(metrics_path.relative_to(target)),
+            "predictions_artifact_path": str(predictions_path.relative_to(target)),
+            "metrics": [
+                {"name": name, "value": float(metrics.get(name, 0.0)), "support": support}
+                for name in ("macro_f1", "positive_f1", "uar", "accuracy", "negative_f1")
+            ],
+            "locally_verified": False,
+            "reportable": False,
+            "warnings": [],
+        }
+        if variant:
+            record["head_variant"] = str(variant)
+        result.append(record)
     return result
 
 
@@ -461,6 +464,7 @@ def materialize_head_evidence(
     predictions_path: str | Path,
     metrics_path: str | Path,
     checkpoint_path: str,
+    variant: str | None = None,
 ) -> dict[str, Any]:
     target = Path(attempt_dir)
     sidecars = _sidecar(target)
@@ -488,13 +492,22 @@ def materialize_head_evidence(
                 "locally_verified": False,
             }
         )
+    # Union by path: keep every previously registered artifact (a later call
+    # must not drop another variant's evidence) while refusing contradictory
+    # content for the same path.
     artifact_doc = read_json(target / ARTIFACTS_FILE)
-    existing_by_path = {str(item["path"]): item for item in artifact_doc.get("artifacts", [])}
+    merged_artifacts = list(artifact_doc.get("artifacts", []))
+    artifact_index = {str(item["path"]): index for index, item in enumerate(merged_artifacts)}
     for item in records:
-        old = existing_by_path.get(item["path"])
-        if old is not None and old != item:
-            raise HeadTrackingError(f"artifact identity changed for {item['path']}")
-    artifact_doc["artifacts"] = [existing_by_path.get(item["path"], item) for item in records]
+        path_key = str(item["path"])
+        if path_key in artifact_index:
+            old = merged_artifacts[artifact_index[path_key]]
+            if old != item:
+                raise HeadTrackingError(f"artifact identity changed for {path_key}")
+        else:
+            artifact_index[path_key] = len(merged_artifacts)
+            merged_artifacts.append(item)
+    artifact_doc["artifacts"] = merged_artifacts
     write_json_atomic(target / ARTIFACTS_FILE, artifact_doc)
 
     predictions = Path(predictions_path).resolve()
@@ -507,14 +520,25 @@ def materialize_head_evidence(
         predictions_path=predictions,
         metrics_path=metrics,
         checkpoint_path=checkpoint_path,
+        variant=variant,
     )
+    # Union by evaluation id: keep every previously materialized evaluation
+    # (for example the other head variant) and remain idempotent on repeats.
     evaluation_doc = read_json(target / EVALUATIONS_FILE)
-    previous = {str(item["evaluation_id"]): item for item in evaluation_doc.get("evaluations", [])}
+    merged_evaluations = list(evaluation_doc.get("evaluations", []))
+    evaluation_index = {
+        str(item["evaluation_id"]): index for index, item in enumerate(merged_evaluations)
+    }
     for item in evaluations:
-        old = previous.get(item["evaluation_id"])
-        if old is not None and old != item:
-            raise HeadTrackingError(f"evaluation identity changed for {item['evaluation_id']}")
-    evaluation_doc["evaluations"] = [previous.get(item["evaluation_id"], item) for item in evaluations]
+        eid = str(item["evaluation_id"])
+        if eid in evaluation_index:
+            old = merged_evaluations[evaluation_index[eid]]
+            if old != item:
+                raise HeadTrackingError(f"evaluation identity changed for {eid}")
+        else:
+            evaluation_index[eid] = len(merged_evaluations)
+            merged_evaluations.append(item)
+    evaluation_doc["evaluations"] = merged_evaluations
     write_json_atomic(target / EVALUATIONS_FILE, evaluation_doc)
     state = read_status(target / STATUS_FILE)
     if state["state"] == "RUNNING":

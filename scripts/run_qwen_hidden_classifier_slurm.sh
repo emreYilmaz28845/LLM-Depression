@@ -95,6 +95,7 @@ for variant in variants:
         predictions_path=predictions,
         metrics_path=metrics,
         checkpoint_path=str(checkpoint),
+        variant=variant,
     )))
 PY
 fi

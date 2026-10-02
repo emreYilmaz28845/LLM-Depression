@@ -1128,6 +1128,164 @@ def command_repair(args: argparse.Namespace) -> int:
     return 0 if repaired else 1
 
 
+def _build_materialize_script(*, code_root: str, jobs: list[dict[str, Any]]) -> str:
+    """Repair evidence for already-fitted head attempts without refitting."""
+
+    python = _remote_python_block(
+        """
+import json, os, sys
+sys.path.insert(0, os.environ["PROJECT_ROOT"])
+from pathlib import Path
+from src.native_en_text_heads_tracking import materialize_head_evidence, record_head_job
+attempt_dir = Path(os.environ["Q3MS_ATTEMPT_DIR"])
+classifier_dir = Path(os.environ["Q3MS_CLASSIFIER_DIR"])
+variants = [item for item in os.environ.get("Q3MS_VARIANTS", "").split(":") if item]
+metadata = json.loads((attempt_dir / "metadata.json").read_text(encoding="utf-8"))
+checkpoint = (metadata.get("parent") or {}).get("parent_checkpoint_path")
+if not checkpoint:
+    raise SystemExit("attempt metadata has no parent checkpoint path")
+repaired = []
+for variant in variants:
+    variant_dir = classifier_dir / variant
+    predictions = variant_dir / "predictions_subject_level.jsonl"
+    metrics = variant_dir / "metrics.json"
+    if predictions.is_file() and metrics.is_file():
+        result = materialize_head_evidence(
+            attempt_dir,
+            predictions_path=predictions,
+            metrics_path=metrics,
+            checkpoint_path=str(checkpoint),
+            variant=variant,
+        )
+        repaired.append({"variant": variant, "result": result})
+if not repaired:
+    raise SystemExit("no fitted variant evidence found; refusing to fabricate evidence")
+original = os.environ.get("Q3MS_ORIGINAL_JOB_ID") or None
+record_head_job(
+    attempt_dir,
+    job_key="classifier",
+    job_type="hidden_classifier",
+    event_type="COMPLETED",
+    slurm_job_id=None,
+    status="COMPLETED",
+    exit_code="0:0",
+    reason="evidence materialization repair after failed classifier job",
+    resubmission_of_job_id=original,
+)
+print(json.dumps({"repaired": repaired}))
+"""
+    )
+    lines = [
+        "set -euo pipefail",
+        "export PYTHONDONTWRITEBYTECODE=1",
+        f"cd {shlex.quote(code_root)}",
+        f"export PROJECT_ROOT={shlex.quote(code_root)}",
+    ]
+    for job in jobs:
+        lines.extend(
+            [
+                f"echo '=== JOB {job['registry_key']} ==='",
+                f"export Q3MS_ATTEMPT_DIR={shlex.quote(job['remote_attempt_dir'])}",
+                f"export Q3MS_CLASSIFIER_DIR={shlex.quote(job['classifier_dir'])}",
+                f"export Q3MS_VARIANTS={shlex.quote(':'.join(job['variants']))}",
+                f"export Q3MS_ORIGINAL_JOB_ID={shlex.quote(str(job.get('original_classifier_job_id') or ''))}",
+                python.rstrip("\n"),
+            ]
+        )
+    return "\n".join(lines) + "\n"
+
+
+def command_materialize(args: argparse.Namespace) -> int:
+    """Repair evidence for terminal-failed classifier attempts without refitting."""
+
+    identity = resolve_lane_identity()
+    registry_path = Path(args.registry) if args.registry else identity.registry_path()
+    require_under(registry_path, identity.evidence_dir, "registry")
+    registry = _read_registry(registry_path)
+    for entry in registry:
+        _validate_registry_entry(entry, identity)
+    selected = [
+        entry
+        for entry in registry
+        if (not args.attempt_id or entry["attempt_id"] in set(args.attempt_id))
+        and entry.get("classifier_job_id")
+    ]
+    if not selected:
+        print("no registry entries selected")
+        return 0
+    deployment = _load_deployment(args.deployment_id)
+    code_root = str(deployment["deployed_code_path"])
+    host = args.scheduler_host or DEFAULT_SCHEDULER_HOST
+    states = _scheduler_states(sorted({str(e["classifier_job_id"]) for e in selected}), host)
+    prepared: list[dict[str, Any]] = []
+    for entry in selected:
+        state = (states.get(str(entry["classifier_job_id"])) or {}).get("state")
+        if state not in {"FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL", "PREEMPTED"}:
+            print(
+                f"skip {entry['registry_key']}: classifier job "
+                f"{entry['classifier_job_id']} is {state or 'unknown'}, not a terminal failure"
+            )
+            continue
+        variants = args.variants.split(":") if args.variants else list(HEAD_VARIANTS)
+        prepared.append(
+            {
+                "registry_key": entry["registry_key"],
+                "attempt_id": entry["attempt_id"],
+                "remote_attempt_dir": entry["remote_attempt_dir"],
+                "classifier_dir": entry["classifier_dir"],
+                "variants": variants,
+                "original_classifier_job_id": entry["classifier_job_id"],
+            }
+        )
+    if not prepared:
+        print("no terminal-failed classifier attempts to repair")
+        return 0
+    script = _build_materialize_script(code_root=code_root, jobs=prepared)
+    print(f"=== head evidence repair ({'execute' if args.execute else 'dry-run'}) ===")
+    print(f"deployment_id: {deployment['deployment_id']}")
+    print(f"attempts: {len(prepared)}")
+    for item in prepared:
+        print(
+            f"  {item['registry_key']} attempt={item['attempt_id']} "
+            f"failed_job={item['original_classifier_job_id']} variants={item['variants']}"
+        )
+    evidence_dir = identity.evidence_dir / "head_submit_evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    (evidence_dir / "materialize_script.sh").write_text(script, encoding="utf-8")
+    if not args.execute:
+        print(script)
+        print("dry-run complete; no mutation performed")
+        return 0
+    from src.experiment_tracking.submit import SshSubmitRunner
+
+    proc = SshSubmitRunner(host=host).run_script(script, timeout=1800)
+    (evidence_dir / "materialize_output.log").write_text(
+        proc.stdout + ("\n[stderr]\n" + proc.stderr if proc.stderr else ""), encoding="utf-8"
+    )
+    if proc.returncode != 0:
+        raise DispatchError(f"evidence repair failed: {proc.stderr.strip() or proc.stdout.strip()}")
+    repaired = 0
+    for item in prepared:
+        marker = f"=== JOB {item['registry_key']} ==="
+        if marker not in proc.stdout or '"repaired"' not in proc.stdout.split(marker, 1)[1].split("=== JOB", 1)[0]:
+            print(f"  {item['registry_key']}: repair did not confirm; leaving registry unchanged")
+            continue
+        entry = next(e for e in selected if e["attempt_id"] == item["attempt_id"])
+        new_entry = dict(entry)
+        new_entry.update(
+            {
+                "evidence_repaired_at_utc": _now(),
+                "repair_of_classifier_job_id": item["original_classifier_job_id"],
+                "evidence_repair": "materialize_head_evidence on existing fit outputs",
+            }
+        )
+        _append_registry(registry_path, new_entry)
+        repaired += 1
+        print(f"  {item['registry_key']}: evidence repaired (original failed job preserved)")
+    print(f"repaired attempts: {repaired}/{len(prepared)}")
+    return 0 if repaired else 1
+
+
 def _load_deployment(deployment_id: str | None) -> dict[str, Any]:
     root = PROJECT_ROOT / "outputs" / "exp_deploy"
     candidates: list[tuple[Path, dict[str, Any]]] = []
@@ -1583,6 +1741,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     repair_parser.add_argument("--dry-run", action="store_true")
     repair_parser.add_argument("--execute", action="store_true")
     repair_parser.set_defaults(func=command_repair)
+
+    materialize_parser = sub.add_parser(
+        "materialize", help="repair evidence for terminal-failed fitted head attempts"
+    )
+    materialize_parser.add_argument("--registry", type=Path, default=None)
+    materialize_parser.add_argument("--deployment-id", default=None)
+    materialize_parser.add_argument("--scheduler-host", default=None)
+    materialize_parser.add_argument("--attempt-id", action="append", default=None)
+    materialize_parser.add_argument(
+        "--variants", default=None, help="colon-separated variant override"
+    )
+    materialize_parser.add_argument("--dry-run", action="store_true")
+    materialize_parser.add_argument("--execute", action="store_true")
+    materialize_parser.set_defaults(func=command_materialize)
 
     status_parser = sub.add_parser("status", help="reconcile recorded jobs against squeue/sacct")
     status_parser.add_argument("--registry", type=Path, default=None)
