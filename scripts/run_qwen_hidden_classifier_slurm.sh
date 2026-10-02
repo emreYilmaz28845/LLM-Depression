@@ -38,6 +38,9 @@ LOG_ROOT="${LOG_ROOT:-$PROJECT_ROOT/logs/slurm_qwen_hidden_classifier}"
 
 export PROJECT_ROOT
 export PYTHONPATH="$QWEN_HIDDEN_DEPS:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+# Never write interpreter bytecode into the immutable deployment tree: the
+# deployment verifier treats transient __pycache__/*.pyc.<pid> files as drift.
+export PYTHONDONTWRITEBYTECODE=1
 cd "$PROJECT_ROOT"
 mkdir -p "$LOG_ROOT"
 exec > >(tee -a "$LOG_ROOT/classifier-${SLURM_JOB_ID}.out")
