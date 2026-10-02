@@ -469,6 +469,72 @@ def test_parse_submit_output_reads_ids_and_errors() -> None:
     assert parsed["d3tec_text_only_native|7|0"]["error"] == "extract sbatch returned no id"
 
 
+def test_repair_script_reuses_existing_extract_and_records_classifier_only() -> None:
+    job = {
+        "registry_key": "d3tec_text_only_native|1337|0",
+        "attempt_id": "attempt-1",
+        "remote_attempt_dir": "/gpfs/runtime/heads/d3tec_text_only_native/attempt-1",
+        "classifier_dir": "/gpfs/runtime/heads/d3tec_text_only_native/attempt-1/classifier",
+        "log_root": "/gpfs/runtime/logs/heads/d3tec_text_only_native/attempt-1",
+        "cache_dir": "/gpfs/runtime/heads_cache/d3tec/text_only/run_parent_fold_0_pseed1337_hseed1337",
+        "parent": {"checkpoint_dir": "/gpfs/parent/best_model"},
+        "condition": "text_only",
+        "extract_gpus": 1,
+        "submit_extract": False,
+        "existing_extract_id": "111",
+    }
+    script = dispatch._build_repair_script(
+        code_root="/gpfs/deploy/code",
+        jobs=[job],
+        scheduler_env={"attempt-1": {"ENV_ACTIVATE": "/gpfs/venvs/qwen38/bin/activate"}},
+        qwen_hidden_deps="/gpfs/deps/qwen_hidden",
+    )
+    assert "export Q3MS_EXTRACT_ID=111" in script
+    assert "Q3MS_RECORD_EXTRACT=0" in script
+    assert "--dependency=afterok:$Q3MS_EXTRACT_ID" in script
+    assert "SEED=1337" in script
+    assert "CLASSIFIER_VARIANTS=logreg_raw:xgb_raw" in script
+    assert "sbatch --parsable" in script
+
+
+def test_repair_script_submits_both_legs_when_extract_is_missing() -> None:
+    job = {
+        "registry_key": "d3tec_text_only_native|1337|0",
+        "attempt_id": "attempt-1",
+        "remote_attempt_dir": "/gpfs/runtime/heads/d3tec_text_only_native/attempt-1",
+        "classifier_dir": "/gpfs/runtime/heads/d3tec_text_only_native/attempt-1/classifier",
+        "log_root": "/gpfs/runtime/logs/heads/d3tec_text_only_native/attempt-1",
+        "cache_dir": "/gpfs/runtime/heads_cache/d3tec/text_only/run_parent_fold_0_pseed1337_hseed1337",
+        "parent": {"checkpoint_dir": "/gpfs/parent/best_model"},
+        "condition": "text_only",
+        "extract_gpus": 1,
+        "submit_extract": True,
+        "existing_extract_id": "",
+    }
+    script = dispatch._build_repair_script(
+        code_root="/gpfs/deploy/code",
+        jobs=[job],
+        scheduler_env={"attempt-1": {"ENV_ACTIVATE": "/gpfs/venvs/qwen38/bin/activate"}},
+        qwen_hidden_deps="/gpfs/deps/qwen_hidden",
+    )
+    assert "Q3MS_RECORD_EXTRACT=1" in script
+    assert "SKIP_CLASSIFIERS=1" in script
+
+
+def test_registry_read_keeps_latest_per_key(tmp_path: Path) -> None:
+    registry = tmp_path / "registry.jsonl"
+    registry.write_text(
+        json.dumps({"registry_key": "k", "attempt_id": "a", "extract_job_id": "1"})
+        + "\n"
+        + json.dumps({"registry_key": "k", "attempt_id": "a", "extract_job_id": "2"})
+        + "\n",
+        encoding="utf-8",
+    )
+    entries = dispatch._read_registry(registry)
+    assert len(entries) == 1
+    assert entries[0]["extract_job_id"] == "2"
+
+
 def test_coverage_reconciles_planned_keys(
     monkeypatch: pytest.MonkeyPatch, native_identity
 ) -> None:
