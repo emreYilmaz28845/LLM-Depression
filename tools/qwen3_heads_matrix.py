@@ -231,12 +231,33 @@ def _evaluate_fold_as_parent(
     closed with the exact reason.
     """
 
+    run_config_path = fold_dir / "run_config.yaml"
+    if not run_config_path.is_file():
+        # A run directory can exist before its training job writes run_config
+        # (the managed submit wrapper creates the fold directory first). That is
+        # an in-flight run: wait for it, do not block the key.
+        return {
+            "ok": False,
+            "classification": "nonterminal",
+            "reason": "run_config.yaml not written yet (run in flight)",
+            "record": None,
+        }
     payload = _recorded_config(fold_dir)
     if payload is None:
-        return {"ok": False, "reason": "run_config.yaml missing or unreadable", "record": None}
+        return {
+            "ok": False,
+            "classification": "invalid",
+            "reason": "run_config.yaml unreadable or malformed",
+            "record": None,
+        }
     recorded = payload.get("config")
     if not isinstance(recorded, dict):
-        return {"ok": False, "reason": "run_config.yaml has no resolved config block", "record": None}
+        return {
+            "ok": False,
+            "classification": "invalid",
+            "reason": "run_config.yaml has no resolved config block",
+            "record": None,
+        }
     # The requested training seed is the only approved top-level difference
     # between the cell config and a recorded attempt of another seed. Every
     # other scientific field must match; the recorded seed is validated
