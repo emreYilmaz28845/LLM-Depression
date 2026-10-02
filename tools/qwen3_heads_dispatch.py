@@ -761,7 +761,7 @@ def command_submit(args: argparse.Namespace) -> int:
         backend = str(route.get("backend"))
         if backend not in backend_env_cache:
             backend_env_cache[backend] = _backend_env(
-                str(PROJECT_ROOT / route["config"]),
+                f"{code_root}/{route['config']}",
                 code_root,
                 args.scheduler_host or DEFAULT_SCHEDULER_HOST,
             )
