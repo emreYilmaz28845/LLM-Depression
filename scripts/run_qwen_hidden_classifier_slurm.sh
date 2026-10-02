@@ -56,3 +56,42 @@ if [ -n "$CLASSIFIER_VARIANTS" ]; then
 fi
 printf 'Classifier command: '; printf '%q ' "${CMD[@]}"; printf '\n'
 "${CMD[@]}"
+
+# Optional managed-attempt materialization. Additive and inert unless
+# ATTEMPT_DIR and MATERIALIZE_VARIANTS are set by the production dispatch:
+# after the fixed fits finish, register the attempt's compact evidence and
+# evaluations and advance the official lifecycle to COMPLETED_ON_MN5.
+ATTEMPT_DIR="${ATTEMPT_DIR:-}"
+MATERIALIZE_VARIANTS="${MATERIALIZE_VARIANTS:-}"
+if [ -n "$ATTEMPT_DIR" ] && [ -n "$MATERIALIZE_VARIANTS" ]; then
+  echo "Materializing head evidence into $ATTEMPT_DIR"
+  python - "$ATTEMPT_DIR" "$CLASSIFIER_DIR" "$MATERIALIZE_VARIANTS" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, os.environ.get("PROJECT_ROOT", ""))
+from src.native_en_text_heads_tracking import materialize_head_evidence
+
+attempt_dir = Path(sys.argv[1])
+classifier_dir = Path(sys.argv[2])
+variants = [item for item in sys.argv[3].split(":") if item]
+metadata = json.loads((attempt_dir / "metadata.json").read_text(encoding="utf-8"))
+checkpoint = (metadata.get("parent") or {}).get("parent_checkpoint_path")
+if not checkpoint:
+    raise SystemExit("attempt metadata has no parent checkpoint path")
+for variant in variants:
+    variant_dir = classifier_dir / variant
+    predictions = variant_dir / "predictions_subject_level.jsonl"
+    metrics = variant_dir / "metrics.json"
+    if not predictions.is_file() or not metrics.is_file():
+        raise SystemExit(f"missing classifier evidence for variant {variant}")
+    print(json.dumps(materialize_head_evidence(
+        attempt_dir,
+        predictions_path=predictions,
+        metrics_path=metrics,
+        checkpoint_path=str(checkpoint),
+    )))
+PY
+fi
