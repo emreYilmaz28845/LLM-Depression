@@ -61,6 +61,8 @@ def _write_run(
     seed_override: int | None = None,
     state: str = "REPORTABLE",
     failed_event: bool = False,
+    completed_event: bool = True,
+    split_seed: int | None = None,
     attempt_id: str = "attempt-1",
     supersedes: str | None = None,
     drop_train_nodes: bool = False,
@@ -71,6 +73,8 @@ def _write_run(
     fold_dir.mkdir(parents=True, exist_ok=True)
     recorded = copy.deepcopy(cell_config)
     recorded["seed"] = seed if seed_override is None else seed_override
+    if split_seed is not None:
+        recorded.setdefault("split", {})["seed"] = split_seed
     if drop_train_nodes:
         resources = recorded.get("resources") or {}
         resources.pop("train_nodes", None)
@@ -117,15 +121,17 @@ def _write_run(
         (fold_dir / "status.json").write_text(
             json.dumps({"state": state}), encoding="utf-8"
         )
-        events = [
-            {
-                "job_key": "train",
-                "job_type": "train",
-                "event_type": "COMPLETED",
-                "status": "COMPLETED",
-                "exit_code": "0:0",
-            }
-        ]
+        events = []
+        if completed_event:
+            events.append(
+                {
+                    "job_key": "train",
+                    "job_type": "train",
+                    "event_type": "COMPLETED",
+                    "status": "COMPLETED",
+                    "exit_code": "0:0",
+                }
+            )
         if failed_event:
             events.append(
                 {
@@ -188,6 +194,76 @@ def test_other_seed_is_not_a_parent(synthetic_cell: Path) -> None:
     _write_run(synthetic_cell, cell_config=config, seed_override=2024)
     parent = _resolve(synthetic_cell, config, seed=1337)
     assert parent["status"] == "waiting_for_checkpoint"
+
+
+def test_resolves_for_each_requested_training_seed(synthetic_cell: Path) -> None:
+    config = _cell_config(synthetic_cell)
+    _write_run(synthetic_cell, cell_config=config, run_name="run_s7", seed_override=7)
+    _write_run(synthetic_cell, cell_config=config, run_name="run_s1337", seed_override=1337)
+    _write_run(synthetic_cell, cell_config=config, run_name="run_s2024", seed_override=2024)
+    for seed, expected_run in ((7, "run_s7"), (1337, "run_s1337"), (2024, "run_s2024")):
+        parent = heads.resolve_parent(
+            cell={"config": CELL_CONFIG},
+            cell_config=config,
+            run_root=synthetic_cell / "run_root",
+            fold=0,
+            seed=seed,
+            notice_version=None,
+        )
+        assert parent["status"] == "resolved"
+        assert parent["run_name"] == expected_run
+        assert parent["parent_training_seed"] == seed
+        assert parent["split_seed"] == 1337
+
+
+def test_wrong_seed_run_waits_instead_of_blocking(synthetic_cell: Path) -> None:
+    config = _cell_config(synthetic_cell)
+    _write_run(synthetic_cell, cell_config=config, seed_override=2024)
+    parent = _resolve(synthetic_cell, config, seed=7)
+    assert parent["status"] == "waiting_for_checkpoint"
+    assert any(
+        item["classification"] == "not_candidate" for item in parent["excluded_attempts"]
+    )
+
+
+def test_split_seed_mismatch_is_not_selected(synthetic_cell: Path) -> None:
+    config = _cell_config(synthetic_cell)
+    _write_run(synthetic_cell, cell_config=config, split_seed=2024)
+    parent = _resolve(synthetic_cell, config)
+    assert parent["status"] == "waiting_for_checkpoint"
+    assert any(
+        "split.seed" in str(item["reason"]) for item in parent["excluded_attempts"]
+    )
+
+
+def test_running_parent_without_completed_events_waits(synthetic_cell: Path) -> None:
+    config = _cell_config(synthetic_cell)
+    _write_run(
+        synthetic_cell,
+        cell_config=config,
+        state="RUNNING",
+        completed_event=False,
+    )
+    parent = _resolve(synthetic_cell, config)
+    assert parent["status"] == "waiting_for_checkpoint"
+    assert any(
+        item["classification"] == "nonterminal" for item in parent["excluded_attempts"]
+    )
+
+
+def test_submitted_parent_with_no_events_waits(synthetic_cell: Path) -> None:
+    config = _cell_config(synthetic_cell)
+    _write_run(
+        synthetic_cell,
+        cell_config=config,
+        state="SUBMITTED",
+        completed_event=False,
+    )
+    parent = _resolve(synthetic_cell, config)
+    assert parent["status"] == "waiting_for_checkpoint"
+    assert any(
+        item["classification"] == "nonterminal" for item in parent["excluded_attempts"]
+    )
 
 
 def test_english_cell_refuses_a_native_checkpoint(synthetic_cell: Path) -> None:
