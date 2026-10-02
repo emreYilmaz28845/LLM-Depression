@@ -747,6 +747,7 @@ def command_submit(args: argparse.Namespace) -> int:
         return 0
 
     scheduler_env: dict[str, dict[str, str]] = {}
+    backend_env_cache: dict[str, dict[str, str]] = {}
     prepared: list[dict[str, Any]] = []
     for item in jobs:
         route = item["route"]
@@ -757,11 +758,14 @@ def command_submit(args: argparse.Namespace) -> int:
         classifier_dir = f"{remote_attempt_dir}/classifier"
         job_log_root = str(runtime_root / "logs" / "heads" / route["route_id"] / attempt_id)
         require_under(job_log_root, runtime_root, "log root")
-        env = _backend_env(
-            str(PROJECT_ROOT / route["config"]),
-            code_root,
-            args.scheduler_host or DEFAULT_SCHEDULER_HOST,
-        )
+        backend = str(route.get("backend"))
+        if backend not in backend_env_cache:
+            backend_env_cache[backend] = _backend_env(
+                str(PROJECT_ROOT / route["config"]),
+                code_root,
+                args.scheduler_host or DEFAULT_SCHEDULER_HOST,
+            )
+        env = backend_env_cache[backend]
         scheduler_env[attempt_id] = env
         payload = _init_payload(
             job=job,
