@@ -745,14 +745,23 @@ def test_materialize_script_passes_variant_and_links_original_job() -> None:
                 "record_repair_event": True,
             }
         ],
+        provenance={
+            "deployment_id": "dep-1",
+            "source_git_commit": "c" * 40,
+            "source_manifest_sha256": "d" * 64,
+            "executed_at_utc": "2026-10-03T00:00:00Z",
+        },
     )
     assert "Q3MS_VARIANTS=logreg_raw:xgb_raw" in script
-    assert "variant=variant" in script
-    assert "resubmission_of_job_id" in script
-    assert "refusing to fabricate evidence" in script
-    assert "PYTHONDONTWRITEBYTECODE=1" in script
+    assert 'variant=item["variant"]' in script
+    assert "prevalidate_head_fit_outputs" in script
+    assert "record_head_repair_event" in script
+    assert "non-scheduler evidence materialization repair" in script
+    assert "Q3MS_DEPLOYMENT_ID=dep-1" in script
+    assert "Q3MS_SOURCE_COMMIT=" + "c" * 40 in script
     assert "Q3MS_RECORD_REPAIR_EVENT=1" in script
-    assert 'Q3MS_RECORD_REPAIR_EVENT") == "1"' in script
+    assert "slurm_job_id=None" not in script
+    assert "PYTHONDONTWRITEBYTECODE=1" in script
 
 
 def test_tracking_schema_override_and_uar_metric(tmp_path: Path) -> None:

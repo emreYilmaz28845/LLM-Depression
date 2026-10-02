@@ -16,10 +16,14 @@ import pytest
 from src.experiment_tracking.canonical import canonical_sha256, read_json
 from src.experiment_tracking.identity import evaluation_id, new_attempt_id
 from src.native_en_text_heads_tracking import (
+    REPAIR_JOB_KEY,
     HeadTrackingError,
+    _successful_required_jobs,
     initialize_head_attempt,
     materialize_head_evidence,
+    prevalidate_head_fit_outputs,
     record_head_job,
+    record_head_repair_event,
     transition_head_attempt,
 )
 
@@ -27,6 +31,7 @@ PREDICTIONS = [
     {"dataset": "d3tec", "subject_id": "s1", "label": 1, "predicted_class": 1},
     {"dataset": "d3tec", "subject_id": "s2", "label": 0, "predicted_class": 0},
 ]
+PARENT_ADAPTER_SHA = "a" * 64
 
 
 def _attempt(tmp_path: Path) -> Path:
@@ -54,6 +59,7 @@ def _attempt(tmp_path: Path) -> Path:
         parent={
             "parent_attempt_id": new_attempt_id("run_parent", "b" * 40),
             "parent_checkpoint_path": "/gpfs/parent/best_model",
+            "adapter_sha256": PARENT_ADAPTER_SHA,
         },
     )
     for state in ("DEPLOYED", "SUBMITTED", "RUNNING"):
@@ -97,6 +103,20 @@ def _materialize(attempt_dir: Path, variant: str, metrics: bytes) -> dict:
         metrics_path=metrics_path,
         checkpoint_path="/gpfs/parent/best_model",
         variant=variant,
+    )
+
+
+def _write_classifier_metadata(attempt_dir: Path, variant: str, adapter_sha: str = PARENT_ADAPTER_SHA) -> None:
+    variant_dir = attempt_dir / "classifier" / variant
+    variant_dir.mkdir(parents=True, exist_ok=True)
+    (variant_dir / "classifier_metadata.json").write_text(
+        json.dumps(
+            {
+                "seed": 1337,
+                "checkpoint_hashes": {"adapter_sha256": adapter_sha},
+            }
+        ),
+        encoding="utf-8",
     )
 
 
@@ -184,3 +204,49 @@ def test_evaluation_id_qualifier_is_additive() -> None:
     qualified = evaluation_id(**base, qualifier="head_variant:logreg_raw")
     assert qualified != expected_legacy
     assert evaluation_id(**base, qualifier="head_variant:xgb_raw") != qualified
+
+
+def test_prevalidate_requires_all_variants_before_writes(tmp_path: Path) -> None:
+    attempt_dir = _attempt(tmp_path)
+    _write_variant(attempt_dir, "logreg_raw", b'{"macro_f1": 0.5}\n')
+    _write_classifier_metadata(attempt_dir, "logreg_raw")
+    evaluations_before = read_json(attempt_dir / "evaluations.json")
+    with pytest.raises(HeadTrackingError, match="no fitted evidence"):
+        prevalidate_head_fit_outputs(
+            attempt_dir, attempt_dir / "classifier", ["logreg_raw", "xgb_raw"]
+        )
+    assert read_json(attempt_dir / "evaluations.json") == evaluations_before
+
+
+def test_prevalidate_rejects_adapter_mismatch(tmp_path: Path) -> None:
+    attempt_dir = _attempt(tmp_path)
+    for variant in ("logreg_raw", "xgb_raw"):
+        _write_variant(attempt_dir, variant, b'{"macro_f1": 0.5}\n')
+        _write_classifier_metadata(attempt_dir, variant, adapter_sha="b" * 64)
+    with pytest.raises(HeadTrackingError, match="parent adapter"):
+        prevalidate_head_fit_outputs(
+            attempt_dir, attempt_dir / "classifier", ["logreg_raw", "xgb_raw"]
+        )
+
+
+def test_repair_event_is_observed_idempotent_and_satisfies_gate(tmp_path: Path) -> None:
+    attempt_dir = _attempt(tmp_path)
+    record_head_repair_event(
+        attempt_dir, original_job_id="46955648", reason="non-scheduler repair"
+    )
+    record_head_repair_event(
+        attempt_dir, original_job_id="46955648", reason="non-scheduler repair"
+    )
+    events = [
+        json.loads(line)
+        for line in (attempt_dir / "jobs.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    repairs = [event for event in events if event.get("job_key") == REPAIR_JOB_KEY]
+    assert len(repairs) == 1
+    assert repairs[0]["event_type"] == "OBSERVED"
+    assert repairs[0]["slurm_job_id"] is None
+    assert repairs[0].get("exit_code") is None
+    assert repairs[0]["resubmission_of_job_id"] == "46955648"
+    _required, successful = _successful_required_jobs(attempt_dir)
+    assert "classifier" in successful

@@ -47,6 +47,7 @@ from src.metrics import classification_metrics
 
 
 HEAD_TRACKING_KIND = "native_en_text_heads_v2_head"
+REPAIR_JOB_KEY = "classifier_evidence_repair"
 EVALUATION_VIEW = "harmonized_all_windows_full_coverage"
 METRIC_NAMESPACE = "headline/binary_strict"
 
@@ -317,6 +318,104 @@ def record_head_job(
         event["exit_code"] = exit_code
     append_job_event(target / JOBS_FILE, event)
     return event
+
+
+def prevalidate_head_fit_outputs(
+    attempt_dir: str | Path,
+    classifier_dir: str | Path,
+    variants: Iterable[str],
+) -> list[dict[str, Any]]:
+    """Fail-closed prevalidation of every requested head variant.
+
+    Nothing may be written until every requested variant has its predictions,
+    metrics and classifier metadata, and every variant's classifier metadata
+    ties the fit to the same parent checkpoint adapter recorded by the attempt.
+    A missing variant, a missing identity field, or an adapter mismatch raises
+    before any materialization write.
+    """
+
+    target = Path(attempt_dir)
+    classifier_root = Path(classifier_dir)
+    metadata = read_json(target / METADATA_FILE)
+    parent = metadata.get("parent") or {}
+    parent_adapter = parent.get("adapter_sha256")
+    parent_checkpoint = parent.get("parent_checkpoint_path")
+    if not parent_checkpoint or not parent_adapter:
+        raise HeadTrackingError(
+            "attempt metadata lacks the parent checkpoint identity; refusing evidence repair"
+        )
+    run_config = yaml.safe_load((target / "run_config.yaml").read_text(encoding="utf-8")) or {}
+    scientific = run_config.get("config") if isinstance(run_config.get("config"), dict) else run_config
+    declared_seed = (scientific.get("classifier") or {}).get("seed")
+    outputs: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for variant in variants:
+        variant_dir = classifier_root / str(variant)
+        predictions = variant_dir / "predictions_subject_level.jsonl"
+        metrics = variant_dir / "metrics.json"
+        classifier_metadata_path = variant_dir / "classifier_metadata.json"
+        if not predictions.is_file() or not metrics.is_file() or not classifier_metadata_path.is_file():
+            missing.append(str(variant))
+            continue
+        classifier_metadata = read_json(classifier_metadata_path)
+        checkpoint_hashes = classifier_metadata.get("checkpoint_hashes") or {}
+        if str(checkpoint_hashes.get("adapter_sha256") or "") != str(parent_adapter):
+            raise HeadTrackingError(
+                f"variant {variant} fit is not tied to the attempt parent adapter"
+            )
+        if declared_seed is not None and int(classifier_metadata.get("seed", -1)) != int(declared_seed):
+            raise HeadTrackingError(
+                f"variant {variant} classifier seed {classifier_metadata.get('seed')} "
+                f"!= declared {declared_seed}"
+            )
+        outputs.append(
+            {
+                "variant": str(variant),
+                "predictions": str(predictions),
+                "metrics": str(metrics),
+            }
+        )
+    if missing:
+        raise HeadTrackingError(
+            "requested head variants have no fitted evidence: " + ", ".join(missing)
+        )
+    return outputs
+
+
+def record_head_repair_event(
+    attempt_dir: str | Path,
+    *,
+    original_job_id: str | None,
+    reason: str,
+) -> dict[str, Any]:
+    """Record a non-scheduler evidence-repair event idempotently.
+
+    The event is an OBSERVED job event under ``classifier_evidence_repair``; it
+    never claims the original classifier job completed and never carries a
+    Slurm job id. Repeating the same repair for the same original job is a
+    no-op.
+    """
+
+    target = Path(attempt_dir)
+    events = read_jsonl(target / JOBS_FILE)
+    for event in events:
+        if (
+            str(event.get("job_key")) == REPAIR_JOB_KEY
+            and event.get("event_type") == "OBSERVED"
+            and event.get("status") == "COMPLETED"
+            and str(event.get("resubmission_of_job_id") or "") == str(original_job_id or "")
+        ):
+            return event
+    return record_head_job(
+        target,
+        job_key=REPAIR_JOB_KEY,
+        job_type="hidden_classifier",
+        event_type="OBSERVED",
+        slurm_job_id=None,
+        status="COMPLETED",
+        reason=reason,
+        resubmission_of_job_id=original_job_id,
+    )
 
 
 def _artifact_type(path: Path) -> tuple[str, str]:
@@ -702,6 +801,17 @@ def _successful_required_jobs(target: Path) -> tuple[set[str], set[str]]:
         and event.get("status") == "COMPLETED"
         and str(event.get("exit_code", "0:0")).startswith("0:0")
     }
+    # A verified, explicitly linked evidence repair satisfies the classifier
+    # requirement without pretending the original scheduler job completed.
+    repaired = {
+        "classifier"
+        for event in events
+        if str(event.get("job_key")) == REPAIR_JOB_KEY
+        and event.get("event_type") == "OBSERVED"
+        and event.get("status") == "COMPLETED"
+        and event.get("resubmission_of_job_id")
+    }
+    successful |= repaired
     return required, successful
 
 
