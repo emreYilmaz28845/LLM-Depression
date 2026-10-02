@@ -461,6 +461,7 @@ def _backend_env(config_path: str, code_root: str, host: str) -> dict[str, str]:
     script = "\n".join(
         [
             "set -uo pipefail",
+            "export PYTHONDONTWRITEBYTECODE=1",
             f"source {shlex.quote(qwen_env)} >/dev/null 2>&1 || true",
             "bash "
             + shlex.quote(f"{code_root}/scripts/harmonized_backend_env.sh")
@@ -491,6 +492,7 @@ def _init_payload(
     remote_attempt_dir: str,
     deployment: dict[str, Any],
     identity: LaneIdentity,
+    supersedes_attempt_id: str | None = None,
 ) -> dict[str, Any]:
     if route.get("language") != identity.language:
         raise DispatchError(
@@ -524,6 +526,8 @@ def _init_payload(
             "split_sha256": (parent.get("split_fingerprint") or {}).get("sha256"),
         },
     }
+    if supersedes_attempt_id:
+        context["supersedes_attempt_id"] = supersedes_attempt_id
     scientific = {
         "campaign": identity.campaign,
         "route_id": route["route_id"],
@@ -616,6 +620,7 @@ def _build_submit_script(
 ) -> str:
     lines = [
         "set -uo pipefail",
+        "export PYTHONDONTWRITEBYTECODE=1",
         f"cd {shlex.quote(code_root)}",
         f"export PROJECT_ROOT={shlex.quote(code_root)}",
     ]
@@ -735,7 +740,9 @@ def command_submit(args: argparse.Namespace) -> int:
     registry_path = Path(args.registry) if args.registry else identity.registry_path()
     require_under(registry_path, identity.evidence_dir, "registry")
     registry = _read_registry(registry_path)
-    submitted_keys = {entry["registry_key"] for entry in registry}
+    registry_by_key = {entry["registry_key"]: entry for entry in registry}
+    submitted_keys = set(registry_by_key)
+    resubmit_keys = set(args.resubmit_key or [])
     seeds = {int(seed) for seed in (args.seed or plan.get("seeds") or [])}
 
     jobs: list[dict[str, Any]] = []
@@ -748,11 +755,18 @@ def command_submit(args: argparse.Namespace) -> int:
             if int(job["seed"]) not in seeds:
                 continue
             key = _key(route["route_id"], int(job["seed"]), int(job["fold"]))
-            if key in submitted_keys:
+            if key in submitted_keys and key not in resubmit_keys:
                 continue
             if args.key and key not in set(args.key):
                 continue
-            jobs.append({"route": route, "job": job, "registry_key": key})
+            jobs.append(
+                {
+                    "route": route,
+                    "job": job,
+                    "registry_key": key,
+                    "previous": registry_by_key.get(key) if key in resubmit_keys else None,
+                }
+            )
             if args.limit and len(jobs) >= int(args.limit):
                 break
         if args.limit and len(jobs) >= int(args.limit):
@@ -789,6 +803,7 @@ def command_submit(args: argparse.Namespace) -> int:
             remote_attempt_dir=remote_attempt_dir,
             deployment=deployment,
             identity=identity,
+            supersedes_attempt_id=(item.get("previous") or {}).get("attempt_id"),
         )
         prepared.append(
             {
@@ -902,6 +917,11 @@ def command_submit(args: argparse.Namespace) -> int:
             "git_commit": deployment["git_commit"],
             "submitted_at_utc": _now(),
         }
+        previous = item.get("previous") or {}
+        if previous:
+            entry["supersedes_attempt_id"] = previous.get("attempt_id")
+            entry["supersedes_registry_key"] = item["registry_key"]
+            entry["resubmitted_at_utc"] = _now()
         _validate_registry_entry(entry, identity)
         _append_registry(registry_path, entry)
         context_path = identity.evidence_dir / "head_contexts" / f"{item['attempt_id']}.json"
@@ -924,6 +944,7 @@ def _build_repair_script(
 
     lines = [
         "set -uo pipefail",
+        "export PYTHONDONTWRITEBYTECODE=1",
         f"cd {shlex.quote(code_root)}",
         f"export PROJECT_ROOT={shlex.quote(code_root)}",
     ]
@@ -1193,6 +1214,7 @@ print("terminal-events-recorded")
     script = "\n".join(
         [
             "set -euo pipefail",
+            "export PYTHONDONTWRITEBYTECODE=1",
             f"cd {shlex.quote(code_root)}",
             f"export PROJECT_ROOT={shlex.quote(code_root)}",
             f"export Q3MS_ATTEMPT_DIR={shlex.quote(attempt_dir)}",
@@ -1533,6 +1555,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     submit_parser.add_argument("--seed", action="append", type=int, default=None)
     submit_parser.add_argument("--route", action="append", default=None)
     submit_parser.add_argument("--key", action="append", default=None)
+    submit_parser.add_argument(
+        "--resubmit-key",
+        action="append",
+        default=None,
+        help="re-submit this registry key as a new attempt linked by supersedes",
+    )
     submit_parser.add_argument("--limit", type=int, default=None)
     submit_parser.add_argument("--scheduler-host", default=None)
     submit_parser.add_argument("--qwen-hidden-deps", default=None)
