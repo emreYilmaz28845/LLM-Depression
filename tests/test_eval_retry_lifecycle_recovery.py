@@ -54,13 +54,13 @@ def _event(**kwargs):
     return new_job_event(attempt_id=ATTEMPT, fold=0, at_utc=at, **kwargs)
 
 
-def _write_fold_events(fold: Path, events: list[dict]) -> None:
+def _write_fold_events(fold: Path, events: list[dict], *, state: str = "FAILED") -> None:
     (fold / "jobs.jsonl").write_text(
         "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
     )
     status = json.loads((fold / "status.json").read_text(encoding="utf-8"))
-    status["state"] = "FAILED"
-    status["history"].append({"from": "RUNNING", "to": "FAILED", "at_utc": status["updated_at_utc"]})
+    status["state"] = state
+    status["history"].append({"from": "RUNNING", "to": state, "at_utc": status["updated_at_utc"]})
     (fold / "status.json").write_text(json.dumps(status), encoding="utf-8")
 
 
@@ -76,6 +76,8 @@ def _fail_fold(
     train_retry: bool = False,
     retry_exit_code: str | None = "0:0",
     retry_submitted_minute: int | None = None,
+    original_event_type: str = "FAILED",
+    state: str = "FAILED",
 ) -> Path:
     train_submitted = _event(job_key="train", job_type="train", event_type="SUBMITTED",
                              slurm_job_id="101", status="PENDING", at=_t(0))
@@ -85,9 +87,9 @@ def _fail_fold(
     eval_submitted = _event(job_key="best_eval", job_type="evaluation", event_type="SUBMITTED",
                             slurm_job_id="102", status="PENDING", dependency_job_ids=["101"],
                             at=_t(5))
-    eval_failed = _event(job_key="best_eval", job_type="evaluation", event_type="FAILED",
-                         slurm_job_id="102", status="FAILED", at=_t(50))
-    eval_failed["exit_code"] = "1:0"
+    eval_failed = _event(job_key="best_eval", job_type="evaluation", event_type=original_event_type,
+                         slurm_job_id="102", status=original_event_type, at=_t(50))
+    eval_failed["exit_code"] = "1:0" if original_event_type == "FAILED" else "0:0"
     eval_completed = _event(job_key="best_eval", job_type="evaluation", event_type="COMPLETED",
                             slurm_job_id="102", status="COMPLETED", at=_t(50))
     eval_completed["exit_code"] = "0:0"
@@ -143,7 +145,7 @@ def _fail_fold(
             train_submitted, train_completed, eval_submitted, eval_failed, retry_submitted,
             retry_terminal,
         ]
-    _write_fold_events(fold, events)
+    _write_fold_events(fold, events, state=state)
     return fold
 
 
@@ -235,21 +237,31 @@ def test_failed_latest_retry_is_blocked(tmp_path: Path) -> None:
     fold = _fail_fold(_build_attempt(tmp_path), failed_latest=True)
     recovery = recover_failed_attempt_from_verified_retry(fold)
     assert recovery["recovered"] is False
-    assert "latest terminal event by at_utc" in recovery["reason"]
+    assert "no COMPLETED 0:0 terminal event" in recovery["reason"]
+
+
+def test_cancelled_original_with_linked_retry_recovers(tmp_path: Path) -> None:
+    fold = _fail_fold(
+        _build_attempt(tmp_path), original_event_type="CANCELLED", state="CANCELLED"
+    )
+    recovery = recover_failed_attempt_from_verified_retry(fold)
+    assert recovery["recovered"] is True
+    assert recovery["state"] == "COMPLETED_ON_MN5"
+    assert recovery["retry_jobs"][0]["failed_job_id"] == "102"
 
 
 def test_missing_exit_code_retry_is_blocked(tmp_path: Path) -> None:
     fold = _fail_fold(_build_attempt(tmp_path), retry_exit_code=None)
     recovery = recover_failed_attempt_from_verified_retry(fold)
     assert recovery["recovered"] is False
-    assert "not a COMPLETED 0:0" in recovery["reason"]
+    assert "no COMPLETED 0:0 terminal event" in recovery["reason"]
 
 
 def test_fake_zero_exit_code_prefix_is_blocked(tmp_path: Path) -> None:
     fold = _fail_fold(_build_attempt(tmp_path), retry_exit_code="0:01")
     recovery = recover_failed_attempt_from_verified_retry(fold)
     assert recovery["recovered"] is False
-    assert "not a COMPLETED 0:0" in recovery["reason"]
+    assert "no COMPLETED 0:0 terminal event" in recovery["reason"]
 
 
 def test_retry_submitted_before_predecessor_is_blocked(tmp_path: Path) -> None:
@@ -328,7 +340,99 @@ def test_late_failure_after_success_blocks_finish(tmp_path: Path) -> None:
         handle.write(json.dumps(late_failure) + "\n")
     finish = finish_gates(fold, **KW)
     assert finish["ok"] is False
-    assert "latest COMPLETED 0:0" in finish["next_action"]
+    assert "unresolved failure" in finish["next_action"]
+
+
+def test_late_mirrored_cancelled_failure_with_chain_passes_finish(tmp_path: Path) -> None:
+    fold = _build_attempt(tmp_path)
+    train_submitted = _event(job_key="train", job_type="train", event_type="SUBMITTED",
+                             slurm_job_id="101", status="PENDING", at=_t(0))
+    eval_submitted = _event(job_key="best_eval", job_type="evaluation", event_type="SUBMITTED",
+                            slurm_job_id="102", status="PENDING", dependency_job_ids=["101"],
+                            at=_t(5))
+    train_completed = _event(job_key="train", job_type="train", event_type="COMPLETED",
+                             slurm_job_id="101", status="COMPLETED", at=_t(40))
+    train_completed["exit_code"] = "0:0"
+    retry_submitted = new_job_event(
+        job_key="best_eval", job_type="evaluation", event_type="SUBMITTED",
+        attempt_id=ATTEMPT, fold=0, slurm_job_id="103", status="PENDING",
+        resubmission_of_job_id="102", dependency_job_ids=["101"], at_utc=_t(60),
+    )
+    retry_completed = new_job_event(
+        job_key="best_eval", job_type="evaluation", event_type="COMPLETED",
+        attempt_id=ATTEMPT, fold=0, slurm_job_id="103", status="COMPLETED",
+        dependency_job_ids=["101"], at_utc=_t(90),
+    )
+    retry_completed["exit_code"] = "0:0"
+    # The original cancellation was mirrored after the retry success (the
+    # collected cmdc fold case); its own linked chain still resolves it.
+    late_cancelled = _event(job_key="best_eval", job_type="evaluation", event_type="CANCELLED",
+                            slurm_job_id="102", status="CANCELLED", at=_t(120))
+    late_cancelled["exit_code"] = "0:0"
+    (fold / "jobs.jsonl").write_text(
+        "".join(
+            json.dumps(event) + "\n"
+            for event in (
+                train_submitted, eval_submitted, train_completed, retry_submitted,
+                retry_completed, late_cancelled,
+            )
+        ),
+        encoding="utf-8",
+    )
+    status = json.loads((fold / "status.json").read_text(encoding="utf-8"))
+    status["state"] = "COMPLETED_ON_MN5"
+    status["history"].append(
+        {"from": "RUNNING", "to": "COMPLETED_ON_MN5", "at_utc": status["updated_at_utc"]}
+    )
+    (fold / "status.json").write_text(json.dumps(status), encoding="utf-8")
+    finish = finish_gates(fold, **KW)
+    assert finish["ok"] is True
+    assert finish["state"] == "REPORTABLE"
+
+
+def test_mirror_normalizes_cancelled_sacct_status(tmp_path: Path, monkeypatch) -> None:
+    import types
+
+    from tools import exp as exp_module
+
+    monkeypatch.setattr(exp_module, "PROJECT_ROOT", tmp_path)
+    fold = tmp_path / "output_model" / "camp" / "audio_text" / "cmdc" / "run" / "fold_0"
+    fold.mkdir(parents=True)
+    (fold / "metadata.json").write_text(
+        json.dumps({"attempt_id": ATTEMPT, "fold": 0}), encoding="utf-8"
+    )
+    record = lifecycle.StatusRecord(ATTEMPT, 0, state="SUBMITTED")
+    record.transition("RUNNING", reason="training job started")
+    lifecycle.write_status(fold / "status.json", record)
+    (fold / "jobs.jsonl").write_text("", encoding="utf-8")
+    contract_path = tmp_path / "outputs" / "exp_submit" / ATTEMPT / "contract.json"
+    contract_path.parent.mkdir(parents=True)
+    contract_path.write_text(
+        json.dumps(
+            {
+                "attempt_id": ATTEMPT,
+                "fold": 0,
+                "job_type": "evaluation",
+                "local_fold_rel": "output_model/camp/audio_text/cmdc/run/fold_0",
+            }
+        ),
+        encoding="utf-8",
+    )
+    rec = types.SimpleNamespace(
+        job_key="best_eval", slurm_job_id="46953768",
+        account_state="CANCELLED by 0", exit_code="0:0",
+    )
+    exp_module._mirror_terminal_to_fold(
+        {"attempt_id": ATTEMPT, "job_type": "evaluation", "fold": 0}, rec
+    )
+    events = lifecycle.read_job_events(fold / "jobs.jsonl")
+    assert len(events) == 1
+    assert events[0]["event_type"] == "CANCELLED"
+    assert events[0]["status"] == "CANCELLED"
+    assert events[0]["exit_code"] == "0:0"
+    assert "CANCELLED by 0" in (events[0].get("reason") or "")
+    status = json.loads((fold / "status.json").read_text(encoding="utf-8"))
+    assert status["state"] == "CANCELLED"
 
 
 def test_generic_transition_still_refuses_failed_to_completed(tmp_path: Path) -> None:
@@ -339,6 +443,16 @@ def test_generic_transition_still_refuses_failed_to_completed(tmp_path: Path) ->
         record.transition("COMPLETED_ON_MN5")
     with pytest.raises(lifecycle.InvalidTransitionError):
         record.recover_failed_to_completed(reason="no evidence", verification={})
+    cancelled_status = dict(status)
+    cancelled_status["state"] = "CANCELLED"
+    cancelled_status["history"] = list(status["history"]) + [
+        {"from": "RUNNING", "to": "CANCELLED", "at_utc": status["updated_at_utc"]}
+    ]
+    cancelled = lifecycle.StatusRecord.from_dict(cancelled_status)
+    with pytest.raises(lifecycle.InvalidTransitionError):
+        cancelled.transition("COMPLETED_ON_MN5")
+    with pytest.raises(lifecycle.InvalidTransitionError):
+        cancelled.recover_failed_to_completed(reason="no evidence", verification={})
 
 
 def test_status_schema_requires_payload_for_failed_recovery(tmp_path: Path) -> None:
@@ -370,3 +484,11 @@ def test_status_schema_requires_payload_for_failed_recovery(tmp_path: Path) -> N
     )
     ok, errors = validate_status(recovered)
     assert ok is True, errors
+    bare_cancelled = json.loads((fold / "status.json").read_text(encoding="utf-8"))
+    bare_cancelled["state"] = "COMPLETED_ON_MN5"
+    bare_cancelled["history"].append(
+        {"from": "CANCELLED", "to": "COMPLETED_ON_MN5", "at_utc": bare_cancelled["updated_at_utc"]}
+    )
+    ok, errors = validate_status(bare_cancelled)
+    assert ok is False
+    assert any("verified_recovery" in error for error in errors)

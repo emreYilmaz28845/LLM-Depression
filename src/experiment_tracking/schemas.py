@@ -213,7 +213,7 @@ def validate_metadata(record: Any) -> tuple[bool, list[str]]:
 
 
 def _has_verified_recovery_payload(entry: dict[str, Any]) -> bool:
-    """True only for an explicit FAILED -> COMPLETED_ON_MN5 recovery entry.
+    """True only for an explicit FAILED/CANCELLED -> COMPLETED_ON_MN5 recovery entry.
 
     The generic transition table keeps refusing that edge; the only accepted
     form is a history entry carrying the append-only verification payload that
@@ -279,10 +279,13 @@ def validate_status(record: Any) -> tuple[bool, list[str]]:
         ):
             if is_allowed_transition(from_state, to_state):
                 pass
-            elif (from_state, to_state) == ("FAILED", "COMPLETED_ON_MN5"):
+            elif (from_state, to_state) in {
+                ("FAILED", "COMPLETED_ON_MN5"),
+                ("CANCELLED", "COMPLETED_ON_MN5"),
+            }:
                 errors.require(
                     _has_verified_recovery_payload(entry),
-                    f"{field} transition FAILED -> COMPLETED_ON_MN5 requires a verified_recovery payload",
+                    f"{field} transition {from_state} -> COMPLETED_ON_MN5 requires a verified_recovery payload",
                 )
             else:
                 errors.require(
