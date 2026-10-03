@@ -73,6 +73,42 @@ def _prepare_examples(
     return result
 
 
+def _extraction_logits_kwargs(model: Any) -> dict[str, Any]:
+    """Skip the full logits tensor when the LM head supports it.
+
+    Hidden-feature extraction only needs the final hidden state. For a long
+    transcript the full logits tensor is a large transient on a single 63 GB
+    GPU and was the allocation that failed. ``logits_to_keep=1`` leaves the
+    hidden states unchanged and only slices the logits computation, so the
+    extracted vector is identical. The keyword is passed only when the base
+    model's forward accepts it (Qwen3.5 does; the Omni Thinker and Gemma
+    forward signatures do not).
+    """
+
+    import inspect
+
+    candidates: list[Any] = [model]
+    base = None
+    getter = getattr(model, "get_base_model", None)
+    if callable(getter):
+        try:
+            base = getter()
+        except (TypeError, ValueError):
+            base = None
+    if base is None:
+        base = getattr(model, "base_model", None)
+    if base is not None:
+        candidates.append(base)
+    for candidate in candidates:
+        try:
+            parameters = inspect.signature(candidate.forward).parameters
+        except (TypeError, ValueError):
+            continue
+        if "logits_to_keep" in parameters:
+            return {"logits_to_keep": 1}
+    return {}
+
+
 def _extract_partition(
     model,
     processor,
@@ -92,6 +128,11 @@ def _extract_partition(
     else:
         collator = PromptOnlyExtractionCollator(processor)
     device = next(model.parameters()).device
+    logits_kwargs = _extraction_logits_kwargs(model)
+    if torch.cuda.is_available():
+        # The evaluation phase runs before extraction in the same process;
+        # release its cached blocks before the feature loop starts.
+        torch.cuda.empty_cache()
     vectors: list[np.ndarray] = []
     rows: list[dict[str, Any]] = []
     seen_samples: set[str] = set()
@@ -110,6 +151,7 @@ def _extract_partition(
                 use_cache=False,
                 output_hidden_states=True,
                 return_dict=True,
+                **logits_kwargs,
             )
         hidden = outputs.hidden_states[-1]
         mask, mask_source = aligned_attention_mask(
@@ -125,6 +167,12 @@ def _extract_partition(
                 f"Expected {expected_hidden_size} hidden features for the "
                 f"{'gemma4' if gemma_backend else 'qwen'} backend, got {vector.shape[0]}."
             )
+        # Release the per-example forward buffers promptly: a long transcript
+        # materializes the full hidden-state stack plus logits, and cached
+        # blocks otherwise accumulate across 500+ examples on one GPU.
+        del outputs, hidden, mask, inputs
+        if index % 5 == 0 and torch.cuda.is_available():
+            torch.cuda.empty_cache()
         sample_id = str(metadata["sample_id"])
         if sample_id in seen_samples:
             raise ValueError(f"Duplicate hidden feature sample identity: {sample_id}")

@@ -669,6 +669,7 @@ def build_job_specs(
     github_pr: int | None = None, overrides: list[str] | None = None,
     log_root: str | None = None, input_root: str | Path | None = None,
     pooled_runtime_root: str | Path | None = None,
+    folds_override: list[int] | None = None,
 ) -> dict[str, Any]:
     if stage not in {"smoke", "cv", "final"}:
         raise ValueError(stage)
@@ -681,11 +682,14 @@ def build_job_specs(
         configs = [path for path in configs]
         if len(configs) < 1:
             raise ValueError("Merged smoke requires at least one merged config.")
-        folds = [0]
+        folds = list(folds_override) if folds_override else [0]
     elif stage == "cv":
-        folds = list(range(5))
+        folds = list(folds_override) if folds_override else list(range(5))
     else:
-        folds = [0]
+        folds = list(folds_override) if folds_override else [0]
+    if any(int(fold) not in range(5) for fold in folds):
+        raise ValueError(f"Unsupported merged fold selection: {folds}")
+    folds = sorted({int(fold) for fold in folds})
     jobs: list[dict[str, Any]] = []
     config_identities: list[dict[str, Any]] = []
     route_readiness: dict[str, Any] = {}
@@ -868,7 +872,9 @@ def build_job_specs(
     # configs. Count the actual planned chain so retry registries remain
     # truthful without changing the default protocol scope. A route whose head
     # kind is deferred plans train + postprocess only.
-    expected = sum(3 if record["head_ready"] else 2 for record in config_identities) * len(folds)
+    expected = sum(3 if record["head_ready"] else 2 for record in config_identities) * (
+        5 if stage == "cv" else 1
+    )
     plan_identity = {
         "stage": stage,
         "configs": config_identities,
@@ -902,6 +908,7 @@ def build_job_specs(
         "schema_version": "symmetric_merged_job_registry.v2",
         "run_id": run_id,
         "stage": stage,
+        "scoped_folds": sorted(int(fold) for fold in folds) if folds_override else None,
         "source_commit": _source_commit(),
         "reservation": _reservation() or None,
         "research": {"github_issue": github_issue, "github_pr": github_pr},
@@ -936,6 +943,14 @@ def _submit_job(
         "RUN_ID": job["run_id"],
         "SOURCE_COMMIT": _source_commit(),
     }
+    # The project-local hidden-state dependencies are not part of the tracked
+    # deployment. Point every worker at the existing cluster copy explicitly so
+    # the head worker can import xgboost/scikit-learn; an unexported shell
+    # variable would never travel through sbatch.
+    export_values["QWEN_HIDDEN_DEPS"] = os.environ.get(
+        "QWEN_HIDDEN_DEPS",
+        "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/.deps/qwen_hidden",
+    )
     backend = str(job.get("model_backend") or "")
     if backend == "gemma4":
         export_values["ENV_ACTIVATE"] = os.environ.get(
@@ -1078,6 +1093,30 @@ def submit_registry(registry: dict[str, Any], *, dry_run: bool) -> dict[str, Any
     registry["planned_job_count"] = active_before
     registry["skipped_job_count"] = len(registry.get("jobs", [])) - active_before
     return registry
+
+
+def _config_identity_mismatch(
+    existing_configs: dict[str, str],
+    current_configs: dict[str, str],
+    *,
+    scoped_folds: list[int] | None,
+) -> dict[str, Any]:
+    """Return incompatible job/config identities, if any.
+
+    A full-stage rebuild must keep the exact job set. A fold-scoped retry
+    rebuilds only the selected folds, so only those rebuilt keys are compared
+    against the existing registry and the other folds stay untouched.
+    """
+
+    if scoped_folds:
+        return {
+            key: (existing_configs.get(key), value)
+            for key, value in current_configs.items()
+            if existing_configs.get(key) != value
+        }
+    if existing_configs == current_configs:
+        return {}
+    return {"existing": existing_configs, "current": current_configs}
 
 
 def merge_existing_registry(registry: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
@@ -1253,6 +1292,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stage", choices=("smoke", "cv", "final"), required=True)
     parser.add_argument("--config", action="append", type=Path, dest="configs")
     parser.add_argument("--run-id")
+    parser.add_argument(
+        "--fold",
+        action="append",
+        type=int,
+        default=None,
+        help="Restrict this submission to specific fold(s); used for scoped retries.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--registry", type=Path)
     parser.add_argument("--smoke-subjects", type=int, default=2)
@@ -1332,6 +1378,7 @@ def main() -> None:
         log_root=str(args.log_root) if args.log_root else None,
         input_root=args.input_root,
         pooled_runtime_root=args.pooled_runtime_root,
+        folds_override=sorted({int(value) for value in args.fold}) if args.fold else None,
     )
     registry_path = resolve_project_path(args.registry) if args.registry else PROJECT_ROOT / "outputs/symmetric_merged_jobs" / f"{run_id}.json"
     if registry_path.exists():
@@ -1356,7 +1403,11 @@ def main() -> None:
             for job in registry.get("jobs", [])
             if job.get("job_key")
         }
-        if existing_configs and existing_configs != current_configs:
+        if existing_configs and _config_identity_mismatch(
+            existing_configs,
+            current_configs,
+            scoped_folds=registry.get("scoped_folds"),
+        ):
             raise ValueError(f"Existing registry has incompatible job/config identities: {registry_path}")
         registry = merge_existing_registry(registry, existing)
         existing_stage_plans[args.stage] = current_stage_plan

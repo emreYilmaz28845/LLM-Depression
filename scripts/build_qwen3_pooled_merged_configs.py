@@ -321,6 +321,12 @@ ALLOWED_DIFF_PATHS = frozenset(
         "training.gradient_accumulation_steps",
         "execution.postprocess_gpus",
         "execution.train_nodes",
+        # The approved three-seed contract fixes the dataset split seed and the
+        # classifier/head seed independently of the top-level training seed.
+        # Both keys are declared explicitly so no resolver falls back to the
+        # training seed (see QWEN3_MULTISEED_MERGED_EXECUTION_PLAN Revision 2).
+        "protocol_settings.split_seed",
+        "heads.fixed_seed",
     }
 )
 COMPONENT_PATHS = ("config", "manifest_path", "metadata_path")
@@ -388,6 +394,11 @@ def derive(source: dict[str, Any], cell: tuple) -> dict[str, Any]:
         config.pop("model_revision", None)
 
     config["recipe_id"] = NATIVE_RECIPE if language == "native" else ENGLISH_RECIPE
+    # Approved three-seed contract: the split seed and the classifier/head seed
+    # stay 1337 for every training seed (7/1337/2024). Declaring them here keeps
+    # both resolvers away from the top-level training-seed fallback.
+    config.setdefault("protocol_settings", {})["split_seed"] = 1337
+    config.setdefault("heads", {})["fixed_seed"] = 1337
     config["components"] = (
         english_components(modality) if language == "english" else native_components(modality)
     )

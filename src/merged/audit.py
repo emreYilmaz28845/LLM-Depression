@@ -34,9 +34,47 @@ def _expected_head_methods(config: dict[str, Any]) -> tuple[str, ...]:
     return tuple(methods)
 
 
-def _job_registry_path(run_id: str) -> Path:
-    """Resolve the global merged-job registry independently of result layout."""
+def _audit_head_seed(
+    *,
+    expected_head_seed: int | None,
+    head_identity: dict[str, Any] | None,
+    classifier_metadata: dict[str, Any] | None,
+    method: str,
+    fold: int,
+    failures: list[str],
+) -> None:
+    """Enforce the declared classifier seed when the contract fixes it.
 
+    Legacy merged contracts do not declare ``heads.fixed_seed``; their audits
+    keep the historical behavior. The Qwen3 production contracts declare it, so
+    every fitted estimator must record the same seed and the LogReg provenance
+    must record its class_weight explicitly.
+    """
+
+    if expected_head_seed is None:
+        return
+    if head_identity is not None and int(head_identity.get("head_seed", -1)) != expected_head_seed:
+        failures.append(f"heads_seed_mismatch:{fold}")
+    if classifier_metadata is not None:
+        if int(classifier_metadata.get("head_seed", -1)) != expected_head_seed:
+            failures.append(f"head_seed_mismatch:{fold}:{method}")
+        if int(classifier_metadata.get("random_state", -1)) != expected_head_seed:
+            failures.append(f"head_random_state_mismatch:{fold}:{method}")
+        if method == "logreg" and "class_weight" not in classifier_metadata:
+            failures.append(f"head_class_weight_missing:{fold}:{method}")
+
+
+def _job_registry_path(run_id: str, registry_path: str | Path | None = None) -> Path:
+    """Resolve the merged-job registry, honoring an explicit runtime path.
+
+    The default stays the historical PROJECT_ROOT-relative location so local
+    audits of synced evidence keep working. A submission that writes its
+    registry into a writable runtime root passes that exact path here, which is
+    how the auditor sees the same roots as the submitter.
+    """
+
+    if registry_path is not None:
+        return Path(registry_path)
     return PROJECT_ROOT / "outputs" / "symmetric_merged_jobs" / f"{run_id}.json"
 
 
@@ -275,8 +313,10 @@ def audit_symmetric_run(
     run_id: str,
     expected_folds: int | None = None,
     allow_omitted_heavy_artifacts: bool = False,
+    overrides: list[str] | None = None,
+    registry_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    config = load_merged_config(config_path)
+    config = load_merged_config(config_path, overrides)
     protocol = load_protocol_artifact(config)
     config_sha256 = sha256_file(config_path)
     failures: list[str] = []
@@ -294,6 +334,8 @@ def audit_symmetric_run(
     expected_final_epoch: int | None = None
     expected_head_inner_folds = resolve_head_inner_folds(config, stage)
     expected_head_methods = _expected_head_methods(config)
+    declared_head_seed = (config.get("heads") or {}).get("fixed_seed")
+    expected_head_seed = int(declared_head_seed) if declared_head_seed is not None else None
     if stage == "final":
         cv_train_root = train_stage_root.parent / "cv"
         cv_epochs: list[int] = []
@@ -451,6 +493,14 @@ def audit_symmetric_run(
                 or int(head_identity.get("inner_folds", -1)) != expected_head_inner_folds
             ):
                 failures.append(f"heads_identity_mismatch:{fold}")
+            _audit_head_seed(
+                expected_head_seed=expected_head_seed,
+                head_identity=head_identity,
+                classifier_metadata=None,
+                method="identity",
+                fold=fold,
+                failures=failures,
+            )
         feature_metadata_path = fold_root / "features" / "feature_metadata.json"
         feature_subjects: dict[str, set[str]] = {}
         feature_samples: dict[str, set[str]] = {}
@@ -570,6 +620,14 @@ def audit_symmetric_run(
                         failures.append(f"head_holdout_subject_mismatch:{fold}:{method}")
                     if int(classifier_metadata.get("input_dimension", -1)) != int(fold_payload.get("feature_dimension") or -1):
                         failures.append(f"head_feature_dimension_mismatch:{fold}:{method}")
+                    _audit_head_seed(
+                        expected_head_seed=expected_head_seed,
+                        head_identity=None,
+                        classifier_metadata=classifier_metadata,
+                        method=method,
+                        fold=fold,
+                        failures=failures,
+                    )
             _audit_head_inner_folds(
                 fold_root / "heads" / "inner_folds.json",
                 fold_root / "features" / "outer_train_rows.jsonl",
@@ -587,12 +645,12 @@ def audit_symmetric_run(
                 elif optuna_summary.is_file() and int(read_json(optuna_summary).get("completed_trials", -1)) != 2:
                     failures.append(f"smoke_optuna_trial_count:{fold}")
         fold_results.append(fold_payload)
-    registry_path = _job_registry_path(run_id)
+    resolved_registry_path = _job_registry_path(run_id, registry_path)
     registry = None
-    if not registry_path.is_file():
-        failures.append(f"missing:job_registry:{registry_path}")
+    if not resolved_registry_path.is_file():
+        failures.append(f"missing:job_registry:{resolved_registry_path}")
     else:
-        registry = read_json(registry_path)
+        registry = read_json(resolved_registry_path)
         if not str(registry.get("source_commit", "")).strip():
             failures.append("job_registry_source_commit_missing")
         if not str(registry.get("plan_hash", "")).strip():
@@ -635,7 +693,7 @@ def audit_symmetric_run(
         "omitted_heavy_artifacts": sorted(omitted_heavy_artifacts),
         "deferred_head_support": sorted(deferred_head_support),
         "folds": fold_results,
-        "job_registry": str(registry_path) if registry is not None else None,
+        "job_registry": str(resolved_registry_path) if registry is not None else None,
         "requirements": {
             "dataset_fold_modality_method_coverage": not failures,
             "disjoint_splits": split_audit["status"] == "passed",
@@ -650,7 +708,7 @@ def audit_symmetric_run(
     return result
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Audit a symmetric merged stage.")
     parser.add_argument("--config", required=True)
     parser.add_argument("--stage", choices=("smoke", "cv", "final"), required=True)
@@ -661,7 +719,21 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Allow compact local result syncs to omit checkpoints, dense feature arrays, and classifier joblibs.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--override",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Lossless --set token; pass the same resolved overrides the submission used so the "
+        "audit resolves identical writable roots.",
+    )
+    parser.add_argument(
+        "--registry",
+        type=Path,
+        default=None,
+        help="Explicit merged-job registry path; defaults to the historical PROJECT_ROOT-relative location.",
+    )
+    return parser.parse_args(argv)
 
 
 def main() -> None:
@@ -673,6 +745,8 @@ def main() -> None:
         run_id=args.run_id,
         expected_folds=args.expected_folds,
         allow_omitted_heavy_artifacts=args.allow_omitted_heavy_artifacts,
+        overrides=list(args.override),
+        registry_path=args.registry,
     )
     print(json.dumps(result, indent=2), flush=True)
     raise SystemExit(0 if result["status"] == "passed" else 1)
