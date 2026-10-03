@@ -332,6 +332,148 @@ def _verify_eval_parent_contract(fold: Path, attempt_id: str, fold_number: int) 
     return {"ok": True, "contract_path": str(contract_path), "checkpoint_dir": checkpoint_dir}
 
 
+def _verify_retry_chains_for_leg(
+    key: str,
+    key_events: list[dict[str, Any]],
+    *,
+    attempt_id: str,
+    fold_number: int,
+    fold: Path,
+    completed_train_id: str | None,
+) -> dict[str, Any]:
+    """Verify one required leg: a strict completion plus superseded failures.
+
+    Returns ``{"ok": True, "chains": [...], "completed_id": <strict id>}`` or
+    ``{"ok": False, "reason": ...}``. Every failed/cancelled/timeout terminal
+    must be superseded by a retry linked through ``resubmission_of_job_id``
+    whose own clean COMPLETED 0:0 event has strictly increasing immutable
+    timestamps: predecessor submitted < retry submitted < retry completed.
+    A leg with no failures only needs at least one clean COMPLETED 0:0
+    terminal. Failures are resolved per terminal event, never by append order,
+    so late-mirrored failures cannot ride on an earlier success.
+    """
+    for event in key_events:
+        try:
+            event_fold = int(event.get("fold", -1))
+        except (TypeError, ValueError):
+            return {"ok": False, "reason": f"{key}: event fold is not an integer"}
+        if str(event.get("attempt_id")) != attempt_id or event_fold != fold_number:
+            return {"ok": False, "reason": f"{key}: event identity does not match the fold metadata"}
+    terminals = [event for event in key_events if event.get("event_type") in TERMINAL_EVENT_TYPES]
+    if not terminals:
+        return {"ok": False, "reason": f"{key}: no terminal job event"}
+    for event in terminals:
+        if _event_time(event) is None:
+            return {"ok": False, "reason": f"{key}: terminal event without a parseable at_utc timestamp"}
+    if not any(_strict_clean_completed(event) for event in terminals):
+        return {"ok": False, "reason": f"{key}: no COMPLETED 0:0 terminal event"}
+    completed_id = next(
+        (
+            str(event.get("slurm_job_id") or "")
+            for event in reversed(terminals)
+            if _strict_clean_completed(event) and str(event.get("slurm_job_id") or "")
+        ),
+        None,
+    )
+    chains: list[dict[str, str]] = []
+    failures = [event for event in terminals if event.get("event_type") in FAILED_TERMINAL_EVENT_TYPES]
+    for failed in failures:
+        failed_id = str(failed.get("slurm_job_id") or "")
+        if not failed_id:
+            return {"ok": False, "reason": f"{key}: failed terminal event without a Slurm job id cannot be linked"}
+        predecessor_submitted = next(
+            (
+                event
+                for event in key_events
+                if event.get("event_type") == "SUBMITTED"
+                and str(event.get("slurm_job_id") or "") == failed_id
+            ),
+            None,
+        )
+        if predecessor_submitted is None:
+            return {"ok": False, "reason": f"{key}: failed job {failed_id} has no SUBMITTED event to anchor chronology"}
+        submitted_retry = next(
+            (
+                event
+                for event in key_events
+                if event.get("event_type") == "SUBMITTED"
+                and str(event.get("resubmission_of_job_id") or "") == failed_id
+                and str(event.get("slurm_job_id") or "")
+            ),
+            None,
+        )
+        if submitted_retry is None:
+            return {"ok": False, "reason": f"{key}: failed job {failed_id} has no linked submitted retry"}
+        retry_id = str(submitted_retry["slurm_job_id"])
+        retry_completed = next(
+            (
+                event
+                for event in key_events
+                if event.get("event_type") == "COMPLETED"
+                and str(event.get("slurm_job_id") or "") == retry_id
+                and _strict_clean_completed(event)
+            ),
+            None,
+        )
+        if retry_completed is None:
+            return {"ok": False, "reason": f"{key}: retry job {retry_id} has no COMPLETED 0:0 event"}
+        predecessor_time = _event_time(predecessor_submitted)
+        submitted_time = _event_time(submitted_retry)
+        completed_time = _event_time(retry_completed)
+        if predecessor_time is None or submitted_time is None or completed_time is None:
+            return {"ok": False, "reason": f"{key}: retry chain events need parseable at_utc timestamps"}
+        if not (predecessor_time < submitted_time < completed_time):
+            return {
+                "ok": False,
+                "reason": (
+                    f"{key}: retry {retry_id} chronology invalid: predecessor submitted "
+                    f"{predecessor_submitted.get('at_utc')}, retry submitted {submitted_retry.get('at_utc')}, "
+                    f"retry completed {retry_completed.get('at_utc')}"
+                ),
+            }
+        if key == "best_eval":
+            if completed_train_id is None:
+                return {
+                    "ok": False,
+                    "reason": f"{key}: completed train job has no Slurm job id; cannot verify parent linkage",
+                }
+            dependencies = {
+                str(item)
+                for item in (retry_completed.get("dependency_job_ids") or [])
+                + (submitted_retry.get("dependency_job_ids") or [])
+            }
+            if dependencies:
+                if completed_train_id not in dependencies:
+                    return {
+                        "ok": False,
+                        "reason": (
+                            f"{key}: retry {retry_id} dependency link does not include the completed train job "
+                            f"{completed_train_id}"
+                        ),
+                    }
+            else:
+                parent = _verify_eval_parent_contract(fold, attempt_id, fold_number)
+                if not parent["ok"]:
+                    return {
+                        "ok": False,
+                        "reason": (
+                            f"{key}: retry {retry_id} has no scheduler dependency and no verified parent "
+                            f"contract: {parent['reason']}"
+                        ),
+                    }
+        chains.append(
+            {
+                "job_key": key,
+                "failed_job_id": failed_id,
+                "retry_job_id": retry_id,
+                "predecessor_submitted_at_utc": str(predecessor_submitted.get("at_utc")),
+                "retry_submitted_at_utc": str(submitted_retry.get("at_utc")),
+                "retry_completed_at_utc": str(retry_completed.get("at_utc")),
+            }
+        )
+    return {"ok": True, "chains": chains, "completed_id": completed_id}
+
+
 def recover_failed_attempt_from_verified_retry(fold_dir: str | Path) -> dict[str, Any]:
     """Recover a FAILED fold only when every failed required leg has a verified retry.
 
@@ -340,9 +482,9 @@ def recover_failed_attempt_from_verified_retry(fold_dir: str | Path) -> dict[str
     ``resubmission_of_job_id`` and a later cleanly COMPLETED terminal event for
     that retry. This helper is the single verification gate for the
     ``FAILED -> COMPLETED_ON_MN5`` recovery. It fails closed for unlinked
-    retries, wrong attempt/fold events, missing parent links, failed-latest
-    retries, missing or inexact exit codes and a FAILED state with no retry
-    evidence at all.
+    retries, wrong attempt/fold events, missing parent links, failed retries
+    without their own successor, missing or inexact exit codes and a FAILED
+    state with no retry evidence at all.
 
     Chronology is verified from the immutable event ``at_utc`` timestamps, not
     from append order: the retry must be submitted after its failed
@@ -350,22 +492,28 @@ def recover_failed_attempt_from_verified_retry(fold_dir: str | Path) -> dict[str
     terminal events record the reconciliation time, so the failed predecessor's
     SUBMITTED time is the only truthful anchor for "the retry follows the
     failure"; late-appended official evidence stays valid when its timestamps
-    are the real submission times.
+    are the real submission times. Every failure terminal is resolved
+    individually, so a failure mirrored after the retry success still cannot
+    ride on that success without its own linked chain.
 
     Recovery requires an explicit exact Slurm ``0:0`` exit code. When the
     best_eval retry carries no scheduler dependency ids, the attempt's
     submission contract must verify the parent: this exact attempt and fold,
     this fold's ``best_model`` checkpoint and its standalone eval dir.
 
-    The original FAILED events stay in the append-only job history and the
-    verification payload is recorded in the status history.
+    The original FAILED/CANCELLED events stay in the append-only job history and
+    the verification payload is recorded in the status history.
     """
     fold = Path(fold_dir)
     status_path = fold / "status.json"
     status = lifecycle.read_status(status_path)
     state = status.get("state")
-    if state != "FAILED":
-        return {"recovered": False, "state": state, "reason": f"state is {state!r}, not 'FAILED'"}
+    if state not in {"FAILED", "CANCELLED"}:
+        return {
+            "recovered": False,
+            "state": state,
+            "reason": f"state is {state!r}, not 'FAILED' or 'CANCELLED'",
+        }
     try:
         metadata = json.loads((fold / "metadata.json").read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
@@ -383,120 +531,24 @@ def recover_failed_attempt_from_verified_retry(fold_dir: str | Path) -> dict[str
         by_key.setdefault(str(event.get("job_key")), []).append(event)
 
     def blocked(reason: str) -> dict[str, Any]:
-        return {"recovered": False, "state": "FAILED", "reason": reason}
+        return {"recovered": False, "state": state, "reason": reason}
 
     verified: list[dict[str, str]] = []
-    train_retry_id: str | None = None
-    train_completed_id: str | None = None
+    completed_train_id: str | None = None
     for key in ("train", "best_eval"):
-        key_events = by_key.get(key, [])
-        for event in key_events:
-            if str(event.get("attempt_id")) != attempt_id or int(event.get("fold", -1)) != fold_number:
-                return blocked(f"{key}: event identity does not match the fold metadata")
-        terminals = [event for event in key_events if event.get("event_type") in TERMINAL_EVENT_TYPES]
-        if not terminals:
-            return blocked(f"{key}: no terminal job event")
-        ordered: list[tuple[datetime, int, dict[str, Any]]] = []
-        for index, event in enumerate(terminals):
-            at = _event_time(event)
-            if at is None:
-                return blocked(f"{key}: terminal event without a parseable at_utc timestamp")
-            ordered.append((at, index, event))
-        latest = max(ordered, key=lambda item: (item[0], item[1]))[2]
-        if not _strict_clean_completed(latest):
-            return blocked(
-                f"{key}: latest terminal event by at_utc is {latest.get('event_type')} "
-                f"{latest.get('status')} exit_code={latest.get('exit_code')!r}, not a COMPLETED 0:0"
-            )
+        result = _verify_retry_chains_for_leg(
+            key,
+            by_key.get(key, []),
+            attempt_id=attempt_id,
+            fold_number=fold_number,
+            fold=fold,
+            completed_train_id=completed_train_id,
+        )
+        if not result["ok"]:
+            return blocked(result["reason"])
+        verified.extend(result["chains"])
         if key == "train":
-            train_completed_id = str(latest.get("slurm_job_id") or "") or None
-        failures = [event for event in terminals if event.get("event_type") in FAILED_TERMINAL_EVENT_TYPES]
-        for failed in failures:
-            failed_id = str(failed.get("slurm_job_id") or "")
-            if not failed_id:
-                return blocked(f"{key}: failed terminal event without a Slurm job id cannot be linked")
-            predecessor_submitted = next(
-                (
-                    event
-                    for event in key_events
-                    if event.get("event_type") == "SUBMITTED"
-                    and str(event.get("slurm_job_id") or "") == failed_id
-                ),
-                None,
-            )
-            if predecessor_submitted is None:
-                return blocked(f"{key}: failed job {failed_id} has no SUBMITTED event to anchor chronology")
-            submitted_retry = next(
-                (
-                    event
-                    for event in key_events
-                    if event.get("event_type") == "SUBMITTED"
-                    and str(event.get("resubmission_of_job_id") or "") == failed_id
-                    and str(event.get("slurm_job_id") or "")
-                ),
-                None,
-            )
-            if submitted_retry is None:
-                return blocked(f"{key}: failed job {failed_id} has no linked submitted retry")
-            retry_id = str(submitted_retry["slurm_job_id"])
-            retry_completed = next(
-                (
-                    event
-                    for event in key_events
-                    if event.get("event_type") == "COMPLETED"
-                    and str(event.get("slurm_job_id") or "") == retry_id
-                    and _strict_clean_completed(event)
-                ),
-                None,
-            )
-            if retry_completed is None:
-                return blocked(f"{key}: retry job {retry_id} has no COMPLETED 0:0 event")
-            predecessor_time = _event_time(predecessor_submitted)
-            submitted_time = _event_time(submitted_retry)
-            completed_time = _event_time(retry_completed)
-            if predecessor_time is None or submitted_time is None or completed_time is None:
-                return blocked(f"{key}: retry chain events need parseable at_utc timestamps")
-            if not (predecessor_time < submitted_time < completed_time):
-                return blocked(
-                    f"{key}: retry {retry_id} chronology invalid: predecessor submitted "
-                    f"{predecessor_submitted.get('at_utc')}, retry submitted {submitted_retry.get('at_utc')}, "
-                    f"retry completed {retry_completed.get('at_utc')}"
-                )
-            if key == "best_eval":
-                if train_completed_id is None:
-                    return blocked(
-                        f"{key}: completed train job has no Slurm job id; cannot verify parent linkage"
-                    )
-                dependencies = {
-                    str(item)
-                    for item in (retry_completed.get("dependency_job_ids") or [])
-                    + (submitted_retry.get("dependency_job_ids") or [])
-                }
-                if dependencies:
-                    if train_completed_id not in dependencies:
-                        return blocked(
-                            f"{key}: retry {retry_id} dependency link does not include the completed train job "
-                            f"{train_completed_id}"
-                        )
-                else:
-                    parent = _verify_eval_parent_contract(fold, attempt_id, fold_number)
-                    if not parent["ok"]:
-                        return blocked(
-                            f"{key}: retry {retry_id} has no scheduler dependency and no verified parent "
-                            f"contract: {parent['reason']}"
-                        )
-            verified.append(
-                {
-                    "job_key": key,
-                    "failed_job_id": failed_id,
-                    "retry_job_id": retry_id,
-                    "predecessor_submitted_at_utc": str(predecessor_submitted.get("at_utc")),
-                    "retry_submitted_at_utc": str(submitted_retry.get("at_utc")),
-                    "retry_completed_at_utc": str(retry_completed.get("at_utc")),
-                }
-            )
-            if key == "train":
-                train_retry_id = retry_id
+            completed_train_id = result.get("completed_id")
     if not verified:
         return blocked("FAILED state has no linked retry evidence")
     record = lifecycle.StatusRecord.from_dict(status)
@@ -514,7 +566,9 @@ def recover_failed_attempt_from_verified_retry(fold_dir: str | Path) -> dict[str
         "recovered": True,
         "state": new_state,
         "retry_jobs": verified,
-        "train_retry_id": train_retry_id,
+        "train_retry_id": next(
+            (chain["retry_job_id"] for chain in verified if chain["job_key"] == "train"), None
+        ),
     }
 
 
@@ -533,7 +587,7 @@ def finish_gates(
     fold = Path(fold_dir)
     state, _history = read_state(fold)
 
-    if state == "FAILED":
+    if state in {"FAILED", "CANCELLED"}:
         recovery = recover_failed_attempt_from_verified_retry(fold)
         if not recovery["recovered"]:
             return {
@@ -549,19 +603,57 @@ def finish_gates(
         by_key: dict[str, list[dict[str, Any]]] = {}
         for event in events:
             by_key.setdefault(str(event.get("job_key")), []).append(event)
+        chain_attempt_id: str | None = None
+        chain_fold_number = 0
+        completed_train_id: str | None = None
         for key in ("train", "best_eval"):
-            terminals = [
-                e for e in by_key.get(key, []) if e.get("event_type") in TERMINAL_EVENT_TYPES
-            ]
-            if not terminals or not _clean_completed(terminals[-1]):
-                return {
-                    "ok": False,
-                    "state": state,
-                    "next_action": (
-                        f"job '{key}' lacks a latest COMPLETED 0:0 job event in {jobs_path}; "
-                        "run exp status to reconcile scheduler accounting first, or verify the linked retry"
-                    ),
-                }
+            key_events = by_key.get(key, [])
+            terminals = [e for e in key_events if e.get("event_type") in TERMINAL_EVENT_TYPES]
+            has_failure = any(e.get("event_type") in FAILED_TERMINAL_EVENT_TYPES for e in terminals)
+            if has_failure:
+                if chain_attempt_id is None:
+                    try:
+                        metadata = json.loads((fold / "metadata.json").read_text(encoding="utf-8"))
+                        chain_attempt_id = str(metadata.get("attempt_id") or "")
+                        chain_fold_number = int(metadata.get("fold", 0) or 0)
+                    except (OSError, ValueError, TypeError):
+                        return {
+                            "ok": False,
+                            "state": state,
+                            "next_action": (
+                                f"job '{key}' has a failure but the fold metadata is unreadable; "
+                                "cannot verify the linked retry chain"
+                            ),
+                        }
+                result = _verify_retry_chains_for_leg(
+                    key,
+                    key_events,
+                    attempt_id=chain_attempt_id,
+                    fold_number=chain_fold_number,
+                    fold=fold,
+                    completed_train_id=completed_train_id,
+                )
+                if not result["ok"]:
+                    return {
+                        "ok": False,
+                        "state": state,
+                        "next_action": f"job '{key}' has an unresolved failure: {result['reason']}",
+                    }
+                if key == "train":
+                    completed_train_id = result.get("completed_id")
+            else:
+                clean = [e for e in terminals if _clean_completed(e)]
+                if not clean:
+                    return {
+                        "ok": False,
+                        "state": state,
+                        "next_action": (
+                            f"job '{key}' lacks a COMPLETED 0:0 job event in {jobs_path}; "
+                            "run exp status to reconcile scheduler accounting first"
+                        ),
+                    }
+                if key == "train":
+                    completed_train_id = str(clean[-1].get("slurm_job_id") or "") or None
 
     validation = validate_attempt(
         fold,
