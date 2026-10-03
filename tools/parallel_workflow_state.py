@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse, json, hashlib, datetime, pathlib, sys, os, re, tempfile
+import argparse, json, hashlib, datetime, pathlib, sys, os, re, tempfile, time, uuid, fcntl, contextlib
 
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -9,6 +9,26 @@ from tools.journal_append import istanbul_now, journal_file
 
 SCHEMA_VERSION = "audiollm.parallel_workflow_execution.v1"
 PHASES = list(range(14))
+
+# CLI commands that load, modify and save the shared execution ledger. They are
+# wrapped in one exclusive process lock by main() so concurrent lanes never
+# interleave a read-modify-write transaction.
+MUTATING_COMMANDS = (
+    "enter",
+    "record",
+    "pass",
+    "hard-stop",
+    "complete",
+    "reopen",
+    "record-job",
+    "record-pr",
+    "remove-evidence",
+    "correct-pr",
+    "record-deployment",
+    "record-attempt",
+    "init",
+)
+LOCK_TIMEOUT_SECONDS = 120.0
 
 # Required evidence substrings per phase for pass validation
 REQUIRED_EVIDENCE_PATTERNS = {
@@ -27,19 +47,63 @@ def sha256_file(path: pathlib.Path) -> str:
     return h.hexdigest()
 
 def atomic_write_json(path: pathlib.Path, data: dict):
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    # ensure directory exists
+    """Write one complete JSON snapshot atomically with a per-call temp name.
+
+    A shared fixed temp path lets two processes interleave writes into the same
+    temp file and produce a torn document. A unique temp keeps every
+    intermediate write private; ``os.replace`` then publishes the complete
+    snapshot atomically, so readers only ever observe valid JSON.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, sort_keys=True)
-        f.write("\n")
-        f.flush()
-        os.fsync(f.fileno())
-    tmp.replace(path)
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
+    try:
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, sort_keys=True)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 def load_state(path: pathlib.Path) -> dict:
+    """Read one complete snapshot; writers publish via atomic replace."""
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+@contextlib.contextmanager
+def state_lock(path: pathlib.Path, timeout: float = LOCK_TIMEOUT_SECONDS):
+    """Exclusive process lock for a full state read-modify-write transaction.
+
+    The lock file lives beside the state file and is never replaced, so every
+    process serializes on the same inode. flock is released by the operating
+    system when the holding process exits, so a crash cannot leave a stale
+    lock behind.
+    """
+    lock_path = path.with_name(path.name + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o664)
+    try:
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"timed out waiting for the state lock {lock_path}")
+                time.sleep(0.05)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(fd)
 
 def validate_state_schema(state: dict) -> list[str]:
     errors = []
@@ -649,7 +713,16 @@ def main():
         # Simpler: just ensure schema valid and hard_stop clearing not allowed silently.
         # The hard_stop clearing check is in complete/enter/pass already refusing if HARD_STOP.
         pass
-    return args.func(args)
+    func = args.func
+    if getattr(args, "command", None) in MUTATING_COMMANDS:
+        target = getattr(args, "state", None) or getattr(args, "output", None)
+        if target:
+            # One exclusive lock spans the whole read-modify-write transaction:
+            # locking only the save step would still let a stale reader
+            # overwrite a concurrent update.
+            with state_lock(pathlib.Path(target)):
+                return func(args)
+    return func(args)
 
 if __name__ == "__main__":
     sys.exit(main())
