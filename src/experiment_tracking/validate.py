@@ -300,9 +300,15 @@ def _verify_eval_parent_contract(fold: Path, attempt_id: str, fold_number: int) 
         contract = json.loads(contract_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
         return {"ok": False, "reason": f"unreadable attempt contract: {error}"}
+    if not isinstance(contract, dict):
+        return {"ok": False, "reason": "attempt contract is not a JSON object"}
     if contract.get("attempt_id") != attempt_id:
         return {"ok": False, "reason": "contract attempt_id does not match the fold"}
-    if int(contract.get("fold", -1)) != fold_number:
+    try:
+        contract_fold = int(contract.get("fold", -1))
+    except (TypeError, ValueError):
+        return {"ok": False, "reason": "contract fold is not an integer"}
+    if contract_fold != fold_number:
         return {"ok": False, "reason": "contract fold does not match the fold"}
     if contract.get("kind", "standalone_backbone") != "standalone_backbone":
         return {"ok": False, "reason": "contract is not a standalone backbone submission"}
@@ -360,9 +366,17 @@ def recover_failed_attempt_from_verified_retry(fold_dir: str | Path) -> dict[str
     state = status.get("state")
     if state != "FAILED":
         return {"recovered": False, "state": state, "reason": f"state is {state!r}, not 'FAILED'"}
-    metadata = json.loads((fold / "metadata.json").read_text(encoding="utf-8"))
+    try:
+        metadata = json.loads((fold / "metadata.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        return {"recovered": False, "state": state, "reason": f"unreadable fold metadata: {error}"}
+    if not isinstance(metadata, dict):
+        return {"recovered": False, "state": state, "reason": "fold metadata is not an object"}
+    try:
+        fold_number = int(metadata.get("fold", 0) or 0)
+    except (TypeError, ValueError):
+        return {"recovered": False, "state": state, "reason": "fold metadata fold is not an integer"}
     attempt_id = str(metadata.get("attempt_id") or "")
-    fold_number = int(metadata.get("fold", 0) or 0)
     events = lifecycle.read_job_events(fold / "jobs.jsonl")
     by_key: dict[str, list[dict[str, Any]]] = {}
     for event in events:

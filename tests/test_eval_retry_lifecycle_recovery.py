@@ -300,6 +300,18 @@ def test_contract_with_wrong_checkpoint_dir_is_blocked(tmp_path: Path, monkeypat
     assert "best_model checkpoint" in recovery["reason"]
 
 
+def test_malformed_contract_is_blocked(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(validate_module, "EVAL_PARENT_SUBMIT_ROOT", tmp_path / "outputs" / "exp_submit")
+    fold = _fail_fold(_build_attempt(tmp_path), dependencies=())
+    path = _make_contract(tmp_path, fold)
+    contract = json.loads(path.read_text(encoding="utf-8"))
+    contract["fold"] = "not-a-number"
+    path.write_text(json.dumps(contract), encoding="utf-8")
+    recovery = recover_failed_attempt_from_verified_retry(fold)
+    assert recovery["recovered"] is False
+    assert "contract fold is not an integer" in recovery["reason"]
+
+
 def test_failed_state_without_failed_event_is_blocked(tmp_path: Path) -> None:
     fold = _fail_fold(_build_attempt(tmp_path), no_failure=True)
     recovery = recover_failed_attempt_from_verified_retry(fold)
