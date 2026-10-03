@@ -1150,6 +1150,19 @@ def _cmd_status(args) -> int:
     return 0
 
 
+def _normalized_job_event_status(event_type: str) -> str:
+    """Map a scheduler terminal event type to the job-event status enum.
+
+    Raw sacct states such as ``CANCELLED by 0`` are not valid job-event
+    statuses; the raw state is preserved in the event reason instead.
+    """
+    if event_type == "CANCELLED":
+        return "CANCELLED"
+    if event_type == "COMPLETED":
+        return "COMPLETED"
+    return "FAILED"
+
+
 def _mirror_terminal_to_fold(record: dict, rec) -> None:
     """Append the terminal job event to the local fold sidecar (if collected)
     and advance RUNNING -> COMPLETED_ON_MN5 once train+eval are COMPLETED 0:0."""
@@ -1179,6 +1192,13 @@ def _mirror_terminal_to_fold(record: dict, rec) -> None:
         for e in events
     )
     if not already:
+        normalized_status = _normalized_job_event_status(event_type)
+        raw_state = str(rec.account_state or "")
+        reason = (
+            f"sacct state {raw_state!r} exit {rec.exit_code!r}"
+            if raw_state and raw_state != normalized_status
+            else None
+        )
         event = lifecycle.new_job_event(
             job_key=rec.job_key,
             job_type=str(record.get("job_type", "train")),
@@ -1186,7 +1206,8 @@ def _mirror_terminal_to_fold(record: dict, rec) -> None:
             attempt_id=str(attempt_id),
             fold=int(record.get("fold", 0)),
             slurm_job_id=jid,
-            status=rec.account_state,
+            status=normalized_status,
+            reason=reason,
         )
         event["exit_code"] = rec.exit_code
         try:
@@ -1200,11 +1221,11 @@ def _mirror_terminal_to_fold(record: dict, rec) -> None:
         status = json.loads(status_path.read_text(encoding="utf-8"))
     except Exception:
         return
-    if status.get("state") == "FAILED":
-        # A later linked retry can complete after the original failure was
-        # mirrored locally. Recover only through the evidence-verified
-        # same-attempt gate; unlinked, wrong-parent or failed-latest retries
-        # stay FAILED.
+    if status.get("state") in {"FAILED", "CANCELLED"}:
+        # A later linked retry can complete after the original failure or
+        # cancellation was mirrored locally. Recover only through the
+        # evidence-verified same-attempt gate; unlinked, wrong-parent or
+        # failed-latest retries stay blocked.
         from src.experiment_tracking.validate import (
             recover_failed_attempt_from_verified_retry,
         )
@@ -1458,11 +1479,11 @@ def _cmd_validate(args) -> int:
     if not result["ok"]:
         print("VALIDATE FAILED", file=sys.stderr)
         return 1
-    if state == "FAILED":
-        # A fold can reach FAILED when exp.py status mirrors an original failed
-        # leg before a later linked retry completed. Recover only through the
-        # evidence-verified same-attempt retry gate; anything unlinked, wrong
-        # parent or not cleanly completed stays blocked.
+    if state in {"FAILED", "CANCELLED"}:
+        # A fold can reach FAILED/CANCELLED when exp.py status mirrors an
+        # original failed leg before a later linked retry completed. Recover
+        # only through the evidence-verified same-attempt retry gate; anything
+        # unlinked, wrong parent or not cleanly completed stays blocked.
         recovery = recover_failed_attempt_from_verified_retry(fold_dir)
         if not recovery["recovered"]:
             print(f"VALIDATE FAILED: {recovery['reason']}", file=sys.stderr)
