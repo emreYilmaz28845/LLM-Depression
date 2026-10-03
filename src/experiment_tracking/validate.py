@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import csv
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from src.experiment_tracking import lifecycle
+from src.experiment_tracking.canonical import parse_utc_timestamp
 from src.experiment_tracking.sidecars import (
     ModernSidecars,
     read_modern_sidecars,
@@ -254,13 +256,74 @@ def _fold_of(fold: Path) -> int:
 
 TERMINAL_EVENT_TYPES = frozenset({"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"})
 FAILED_TERMINAL_EVENT_TYPES = frozenset({"FAILED", "CANCELLED", "TIMEOUT"})
+EVAL_PARENT_SUBMIT_ROOT = Path(__file__).resolve().parents[2] / "outputs" / "exp_submit"
 
 
 def _clean_completed(event: dict[str, Any]) -> bool:
+    """Lenient terminal-success predicate for the ordinary finish gate."""
     if event.get("event_type") != "COMPLETED" or event.get("status") != "COMPLETED":
         return False
     code = event.get("exit_code")
     return not code or str(code).startswith("0:0")
+
+
+def _strict_clean_completed(event: dict[str, Any]) -> bool:
+    """Recovery predicate: an explicit exact Slurm ``0:0`` exit code is required."""
+    return (
+        event.get("event_type") == "COMPLETED"
+        and event.get("status") == "COMPLETED"
+        and str(event.get("exit_code") or "") == "0:0"
+    )
+
+
+def _event_time(event: dict[str, Any]) -> datetime | None:
+    raw = event.get("at_utc")
+    if not isinstance(raw, str):
+        return None
+    try:
+        return parse_utc_timestamp(raw)
+    except ValueError:
+        return None
+
+
+def _verify_eval_parent_contract(fold: Path, attempt_id: str, fold_number: int) -> dict[str, Any]:
+    """Verify eval parent linkage through the attempt's submitted contract.
+
+    Used only when the best_eval retry events carry no scheduler dependency
+    ids. The contract must describe this exact attempt and fold and must point
+    at this fold's ``best_model`` checkpoint and its standalone eval dir.
+    """
+    contract_path = EVAL_PARENT_SUBMIT_ROOT / attempt_id / "contract.json"
+    if not contract_path.is_file():
+        return {"ok": False, "reason": f"attempt submission contract not found at {contract_path}"}
+    try:
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        return {"ok": False, "reason": f"unreadable attempt contract: {error}"}
+    if contract.get("attempt_id") != attempt_id:
+        return {"ok": False, "reason": "contract attempt_id does not match the fold"}
+    if int(contract.get("fold", -1)) != fold_number:
+        return {"ok": False, "reason": "contract fold does not match the fold"}
+    if contract.get("kind", "standalone_backbone") != "standalone_backbone":
+        return {"ok": False, "reason": "contract is not a standalone backbone submission"}
+    repo_root = EVAL_PARENT_SUBMIT_ROOT.parent.parent
+    local_fold_rel = contract.get("local_fold_rel")
+    if not local_fold_rel or (repo_root / str(local_fold_rel)).resolve() != fold.resolve():
+        return {"ok": False, "reason": "contract local fold path does not match the fold"}
+    parts = fold.resolve().parts
+    if "output_model" not in parts:
+        return {"ok": False, "reason": "fold path lacks the output_model root"}
+    rel = Path(*parts[parts.index("output_model") :]).as_posix()
+    checkpoint_dir = str(contract.get("checkpoint_dir") or "").replace("\\", "/").rstrip("/")
+    standalone_dir = str(contract.get("standalone_eval_dir") or "").replace("\\", "/").rstrip("/")
+    if not checkpoint_dir.endswith(f"/{rel}/best_model"):
+        return {"ok": False, "reason": "contract checkpoint_dir is not this fold's best_model checkpoint"}
+    if not standalone_dir.endswith(f"/{rel}/best_model/standalone_eval"):
+        return {"ok": False, "reason": "contract standalone_eval_dir is not this fold's best_model standalone eval"}
+    qualifiers = contract.get("qualifiers")
+    if not isinstance(qualifiers, dict) or qualifiers.get("checkpoint_role") != "best_model":
+        return {"ok": False, "reason": "contract qualifiers do not record checkpoint_role=best_model"}
+    return {"ok": True, "contract_path": str(contract_path), "checkpoint_dir": checkpoint_dir}
 
 
 def recover_failed_attempt_from_verified_retry(fold_dir: str | Path) -> dict[str, Any]:
@@ -272,7 +335,21 @@ def recover_failed_attempt_from_verified_retry(fold_dir: str | Path) -> dict[str
     that retry. This helper is the single verification gate for the
     ``FAILED -> COMPLETED_ON_MN5`` recovery. It fails closed for unlinked
     retries, wrong attempt/fold events, missing parent links, failed-latest
-    retries and a FAILED state with no retry evidence at all.
+    retries, missing or inexact exit codes and a FAILED state with no retry
+    evidence at all.
+
+    Chronology is verified from the immutable event ``at_utc`` timestamps, not
+    from append order: the retry must be submitted after its failed
+    predecessor's own submission and before its own clean completion. Mirrored
+    terminal events record the reconciliation time, so the failed predecessor's
+    SUBMITTED time is the only truthful anchor for "the retry follows the
+    failure"; late-appended official evidence stays valid when its timestamps
+    are the real submission times.
+
+    Recovery requires an explicit exact Slurm ``0:0`` exit code. When the
+    best_eval retry carries no scheduler dependency ids, the attempt's
+    submission contract must verify the parent: this exact attempt and fold,
+    this fold's ``best_model`` checkpoint and its standalone eval dir.
 
     The original FAILED events stay in the append-only job history and the
     verification payload is recorded in the status history.
@@ -305,19 +382,36 @@ def recover_failed_attempt_from_verified_retry(fold_dir: str | Path) -> dict[str
         terminals = [event for event in key_events if event.get("event_type") in TERMINAL_EVENT_TYPES]
         if not terminals:
             return blocked(f"{key}: no terminal job event")
-        latest = terminals[-1]
-        if not _clean_completed(latest):
+        ordered: list[tuple[datetime, int, dict[str, Any]]] = []
+        for index, event in enumerate(terminals):
+            at = _event_time(event)
+            if at is None:
+                return blocked(f"{key}: terminal event without a parseable at_utc timestamp")
+            ordered.append((at, index, event))
+        latest = max(ordered, key=lambda item: (item[0], item[1]))[2]
+        if not _strict_clean_completed(latest):
             return blocked(
-                f"{key}: latest terminal event is {latest.get('event_type')} "
-                f"{latest.get('status')} {latest.get('exit_code')!r}, not a clean COMPLETED"
+                f"{key}: latest terminal event by at_utc is {latest.get('event_type')} "
+                f"{latest.get('status')} exit_code={latest.get('exit_code')!r}, not a COMPLETED 0:0"
             )
         if key == "train":
             train_completed_id = str(latest.get("slurm_job_id") or "") or None
-        failures = [event for event in terminals[:-1] if event.get("event_type") in FAILED_TERMINAL_EVENT_TYPES]
+        failures = [event for event in terminals if event.get("event_type") in FAILED_TERMINAL_EVENT_TYPES]
         for failed in failures:
             failed_id = str(failed.get("slurm_job_id") or "")
             if not failed_id:
                 return blocked(f"{key}: failed terminal event without a Slurm job id cannot be linked")
+            predecessor_submitted = next(
+                (
+                    event
+                    for event in key_events
+                    if event.get("event_type") == "SUBMITTED"
+                    and str(event.get("slurm_job_id") or "") == failed_id
+                ),
+                None,
+            )
+            if predecessor_submitted is None:
+                return blocked(f"{key}: failed job {failed_id} has no SUBMITTED event to anchor chronology")
             submitted_retry = next(
                 (
                     event
@@ -331,31 +425,62 @@ def recover_failed_attempt_from_verified_retry(fold_dir: str | Path) -> dict[str
             if submitted_retry is None:
                 return blocked(f"{key}: failed job {failed_id} has no linked submitted retry")
             retry_id = str(submitted_retry["slurm_job_id"])
-            after_failure = key_events[key_events.index(failed) + 1 :]
             retry_completed = next(
                 (
                     event
-                    for event in after_failure
+                    for event in key_events
                     if event.get("event_type") == "COMPLETED"
                     and str(event.get("slurm_job_id") or "") == retry_id
-                    and _clean_completed(event)
+                    and _strict_clean_completed(event)
                 ),
                 None,
             )
             if retry_completed is None:
-                return blocked(f"{key}: retry job {retry_id} has no clean COMPLETED event after the failure")
-            if key == "best_eval" and train_completed_id:
+                return blocked(f"{key}: retry job {retry_id} has no COMPLETED 0:0 event")
+            predecessor_time = _event_time(predecessor_submitted)
+            submitted_time = _event_time(submitted_retry)
+            completed_time = _event_time(retry_completed)
+            if predecessor_time is None or submitted_time is None or completed_time is None:
+                return blocked(f"{key}: retry chain events need parseable at_utc timestamps")
+            if not (predecessor_time < submitted_time < completed_time):
+                return blocked(
+                    f"{key}: retry {retry_id} chronology invalid: predecessor submitted "
+                    f"{predecessor_submitted.get('at_utc')}, retry submitted {submitted_retry.get('at_utc')}, "
+                    f"retry completed {retry_completed.get('at_utc')}"
+                )
+            if key == "best_eval":
+                if train_completed_id is None:
+                    return blocked(
+                        f"{key}: completed train job has no Slurm job id; cannot verify parent linkage"
+                    )
                 dependencies = {
                     str(item)
                     for item in (retry_completed.get("dependency_job_ids") or [])
                     + (submitted_retry.get("dependency_job_ids") or [])
                 }
-                if dependencies and train_completed_id not in dependencies:
-                    return blocked(
-                        f"{key}: retry {retry_id} dependency link does not include the completed train job "
-                        f"{train_completed_id}"
-                    )
-            verified.append({"job_key": key, "failed_job_id": failed_id, "retry_job_id": retry_id})
+                if dependencies:
+                    if train_completed_id not in dependencies:
+                        return blocked(
+                            f"{key}: retry {retry_id} dependency link does not include the completed train job "
+                            f"{train_completed_id}"
+                        )
+                else:
+                    parent = _verify_eval_parent_contract(fold, attempt_id, fold_number)
+                    if not parent["ok"]:
+                        return blocked(
+                            f"{key}: retry {retry_id} has no scheduler dependency and no verified parent "
+                            f"contract: {parent['reason']}"
+                        )
+            verified.append(
+                {
+                    "job_key": key,
+                    "failed_job_id": failed_id,
+                    "retry_job_id": retry_id,
+                    "predecessor_submitted_at_utc": str(predecessor_submitted.get("at_utc")),
+                    "retry_submitted_at_utc": str(submitted_retry.get("at_utc")),
+                    "retry_completed_at_utc": str(retry_completed.get("at_utc")),
+                }
+            )
             if key == "train":
                 train_retry_id = retry_id
     if not verified:
