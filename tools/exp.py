@@ -1200,6 +1200,19 @@ def _mirror_terminal_to_fold(record: dict, rec) -> None:
         status = json.loads(status_path.read_text(encoding="utf-8"))
     except Exception:
         return
+    if status.get("state") == "FAILED":
+        # A later linked retry can complete after the original failure was
+        # mirrored locally. Recover only through the evidence-verified
+        # same-attempt gate; unlinked, wrong-parent or failed-latest retries
+        # stay FAILED.
+        from src.experiment_tracking.validate import (
+            recover_failed_attempt_from_verified_retry,
+        )
+
+        recovery = recover_failed_attempt_from_verified_retry(fold_dir)
+        if recovery.get("recovered"):
+            print(f"  fold lifecycle recovered: FAILED -> COMPLETED_ON_MN5 ({fold_dir.name})")
+        return
     if status.get("state") not in {"SUBMITTED", "RUNNING"}:
         return
     if event_type in {"FAILED", "CANCELLED"}:
@@ -1395,6 +1408,7 @@ def _cmd_validate(args) -> int:
         ValidationError,
         advance_lifecycle,
         read_state,
+        recover_failed_attempt_from_verified_retry,
         validate_attempt,
     )
 
@@ -1444,6 +1458,18 @@ def _cmd_validate(args) -> int:
     if not result["ok"]:
         print("VALIDATE FAILED", file=sys.stderr)
         return 1
+    if state == "FAILED":
+        # A fold can reach FAILED when exp.py status mirrors an original failed
+        # leg before a later linked retry completed. Recover only through the
+        # evidence-verified same-attempt retry gate; anything unlinked, wrong
+        # parent or not cleanly completed stays blocked.
+        recovery = recover_failed_attempt_from_verified_retry(fold_dir)
+        if not recovery["recovered"]:
+            print(f"VALIDATE FAILED: {recovery['reason']}", file=sys.stderr)
+            return 1
+        retry_ids = ", ".join(item["retry_job_id"] for item in recovery["retry_jobs"])
+        print(f"lifecycle recovered: FAILED -> COMPLETED_ON_MN5 (linked retry job(s): {retry_ids})")
+        state = recovery["state"]
     # Official local verification of artifacts and evaluations (sets the
     # locally_verified flags the registry importer requires).
     from src.experiment_tracking.evidence import (
