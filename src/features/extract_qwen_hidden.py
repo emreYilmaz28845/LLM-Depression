@@ -702,6 +702,43 @@ def _place_model_for_extraction(model, config: dict[str, Any]) -> None:
     model.to(device=device, dtype=dtype)
 
 
+def _forward_final_hidden_states(
+    model, model_inputs: dict[str, Any], backend: str
+) -> tuple[Any, Any]:
+    """Run one forward pass and return the final hidden states and output mask.
+
+    The Qwen3.8 wrapper computes full-vocabulary logits even when labels are
+    absent and retains every layer's hidden state when ``output_hidden_states``
+    is on. On a single 64 GiB GPU the 27B weights leave no room for either, so
+    the base decoder is called directly for that backend: it returns the final
+    (post-norm) hidden state without logits or a per-layer tuple. Every other
+    backend keeps the existing wrapper call.
+    """
+
+    base = getattr(model, "model", None)
+    if backend == MODEL_BACKEND_QWEN38 and base is not None:
+        with torch.inference_mode():
+            outputs = base(
+                **model_inputs,
+                use_cache=False,
+                output_hidden_states=False,
+                return_dict=True,
+            )
+        hidden = getattr(outputs, "last_hidden_state", None)
+        if hidden is None:
+            hidden = outputs[0]
+        return hidden, getattr(outputs, "attention_mask", None)
+    with torch.inference_mode():
+        outputs = model(
+            **model_inputs,
+            labels=None,
+            use_cache=False,
+            output_hidden_states=True,
+            return_dict=True,
+        )
+    return outputs.hidden_states[-1], getattr(outputs, "attention_mask", None)
+
+
 def _extract_partition(
     *,
     model,
@@ -773,16 +810,7 @@ def _extract_partition(
                         f"Gemma text-only extraction must omit audio feature tensors: "
                         f"{sorted(extra_audio)}"
                     )
-        with torch.inference_mode():
-            outputs = model(
-                **model_inputs,
-                labels=None,
-                use_cache=False,
-                output_hidden_states=True,
-                return_dict=True,
-            )
-        hidden = outputs.hidden_states[-1]
-        output_mask = getattr(outputs, "attention_mask", None)
+        hidden, output_mask = _forward_final_hidden_states(model, model_inputs, backend)
         if gemma_backend:
             if tuple(hidden.shape[:2]) != tuple(model_inputs["attention_mask"].shape):
                 raise ValueError(
@@ -799,22 +827,16 @@ def _extract_partition(
         if not bool(np.isfinite(vector).all()):
             raise ValueError(f"Non-finite vector for sample {metadata['sample_id']}.")
         if index == 1:
-            with torch.inference_mode():
-                repeated_outputs = model(
-                    **model_inputs,
-                    labels=None,
-                    use_cache=False,
-                    output_hidden_states=True,
-                    return_dict=True,
-                )
-            repeated_hidden = repeated_outputs.hidden_states[-1]
+            repeated_hidden, repeated_output_mask = _forward_final_hidden_states(
+                model, model_inputs, backend
+            )
             if gemma_backend:
                 repeated_mask = model_inputs["attention_mask"].to(repeated_hidden.device)
             else:
                 repeated_mask, _ = aligned_attention_mask(
                     repeated_hidden,
                     model_inputs["attention_mask"],
-                    getattr(repeated_outputs, "attention_mask", None),
+                    repeated_output_mask,
                 )
             repeated_vector = (
                 last_valid_token(repeated_hidden, repeated_mask).cpu().numpy()[0].astype(np.float32, copy=False)
