@@ -770,15 +770,9 @@ def validate_head_attempt(attempt_dir: str | Path) -> dict[str, Any]:
 def finish_head_attempt(attempt_dir: str | Path) -> dict[str, Any]:
     target = Path(attempt_dir)
     sidecars = _sidecar(target)
-    events = read_jsonl(target / JOBS_FILE)
-    successful = {
-        str(event.get("job_key"))
-        for event in events
-        if event.get("event_type") == "COMPLETED"
-        and event.get("status") == "COMPLETED"
-        and str(event.get("exit_code", "0:0")).startswith("0:0")
-    }
-    required = set((yaml.safe_load((target / "run_config.yaml").read_text(encoding="utf-8")) or {}).get("tracking", {}).get("required_jobs", ["head"]))
+    # One consistent job/repair gate: scheduler completions plus verified,
+    # provenance-carrying non-scheduler evidence repairs.
+    required, successful = _successful_required_jobs(target)
     missing = sorted(required - successful)
     if missing:
         return {"ok": False, "state": sidecars.state, "next_action": f"missing successful jobs: {missing}"}
@@ -787,6 +781,34 @@ def finish_head_attempt(attempt_dir: str | Path) -> dict[str, Any]:
         record.transition("REPORTABLE", reason="head evidence and job gates passed")
         write_status(target / STATUS_FILE, record)
     return {"ok": record.state == "REPORTABLE", "state": record.state}
+
+
+def _verified_repair_claims(events: list[dict[str, Any]]) -> set[str]:
+    """Requirement keys satisfied by a well-formed non-scheduler repair event.
+
+    A repair claim only counts when it is an OBSERVED event under the repair job
+    key, marked COMPLETED, linked to the original classifier job, and carries
+    the provenance markers written by the repair tool. Malformed or unverified
+    claims are ignored.
+    """
+
+    claims: set[str] = set()
+    for event in events:
+        if str(event.get("job_key")) != REPAIR_JOB_KEY:
+            continue
+        if event.get("event_type") != "OBSERVED":
+            continue
+        if event.get("status") != "COMPLETED":
+            continue
+        if not event.get("resubmission_of_job_id"):
+            continue
+        reason = str(event.get("reason") or "")
+        if "non-scheduler evidence materialization repair" not in reason:
+            continue
+        if "original_classifier_job=" not in reason:
+            continue
+        claims.add("classifier")
+    return claims
 
 
 def _successful_required_jobs(target: Path) -> tuple[set[str], set[str]]:
@@ -800,18 +822,16 @@ def _successful_required_jobs(target: Path) -> tuple[set[str], set[str]]:
         if event.get("event_type") == "COMPLETED"
         and event.get("status") == "COMPLETED"
         and str(event.get("exit_code", "0:0")).startswith("0:0")
+        # A non-Slurm repair record must never masquerade as a scheduler
+        # completion; only the verified OBSERVED repair claim counts below.
+        and not (
+            event.get("slurm_job_id") is None
+            and "repair" in str(event.get("reason") or "").lower()
+        )
     }
     # A verified, explicitly linked evidence repair satisfies the classifier
     # requirement without pretending the original scheduler job completed.
-    repaired = {
-        "classifier"
-        for event in events
-        if str(event.get("job_key")) == REPAIR_JOB_KEY
-        and event.get("event_type") == "OBSERVED"
-        and event.get("status") == "COMPLETED"
-        and event.get("resubmission_of_job_id")
-    }
-    successful |= repaired
+    successful |= _verified_repair_claims(events)
     return required, successful
 
 
