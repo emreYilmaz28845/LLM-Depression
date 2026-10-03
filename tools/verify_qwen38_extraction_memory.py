@@ -26,6 +26,7 @@ from src.features.extract_qwen_hidden import (  # noqa: E402
     BACKEND_HIDDEN_SIZES,
     _forward_final_hidden_states,
     _load_saved_run,
+    _place_model_for_extraction,
     _qwen38_base_decoder,
 )
 from src.features.pooling import aligned_attention_mask, last_valid_token  # noqa: E402
@@ -49,6 +50,9 @@ def main() -> int:
     model_name = saved.get("resolved_model_name_or_path") or config["model_name_or_path"]
     processor = load_processor(checkpoint_dir, config)
     model = load_model_for_inference(str(model_name), checkpoint_dir, config)
+    # Mirror the extractor: the loader returns the model on CPU and the
+    # extraction path moves it onto the GPU before any forward pass.
+    _place_model_for_extraction(model, config)
 
     decoder = _qwen38_base_decoder(model)
     adapter_active = bool(
