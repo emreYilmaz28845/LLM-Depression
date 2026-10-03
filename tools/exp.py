@@ -1141,9 +1141,17 @@ def _cmd_status(args) -> int:
                     print(f"  appended TERMINAL event for {jid} ({terminal_status})")
             # Mirror the terminal evidence into the attempt's fold jobs.jsonl
             # through the official append-only API, then advance the fold
-            # lifecycle RUNNING -> COMPLETED_ON_MN5 when every required job
-            # has COMPLETED 0:0.
-            _mirror_terminal_to_fold(record, rec)
+            # lifecycle when every required job has COMPLETED 0:0. A refused
+            # append means the local job history is incomplete: fail the run
+            # instead of claiming a successful reconciliation.
+            mirror = _mirror_terminal_to_fold(record, rec)
+            if mirror.get("status") == "refused":
+                print(
+                    f"ERROR: could not persist terminal evidence for {rec.job_key} job {jid} "
+                    f"in {mirror.get('jobs_path')}: {mirror.get('error')}",
+                    file=sys.stderr,
+                )
+                had_error = True
 
     if had_error:
         return 1
@@ -1163,25 +1171,43 @@ def _normalized_job_event_status(event_type: str) -> str:
     return "FAILED"
 
 
-def _mirror_terminal_to_fold(record: dict, rec) -> None:
+def _mirror_terminal_to_fold(record: dict, rec) -> dict:
     """Append the terminal job event to the local fold sidecar (if collected)
-    and advance RUNNING -> COMPLETED_ON_MN5 once train+eval are COMPLETED 0:0."""
+    and advance the fold lifecycle.
+
+    Returns a result dict:
+      status: "not_collected" (no contract or no modern sidecar yet),
+              "already_present" (idempotent no-op),
+              "appended" (new terminal evidence persisted), or
+              "refused" (the required evidence could not be persisted).
+      jobs_path: str | None, error: str | None.
+
+    A "refused" result means the local job history is incomplete and the
+    status caller must fail instead of reporting a successful reconciliation.
+    """
     from src.experiment_tracking import lifecycle
     from src.experiment_tracking.sidecars import is_modern_tracked
 
+    result = {"status": "not_collected", "jobs_path": None, "error": None}
     attempt_id = record.get("attempt_id")
     submit_contract = PROJECT_ROOT / "outputs" / "exp_submit" / str(attempt_id) / "contract.json"
     if not submit_contract.is_file():
-        return
+        return result
     try:
         contract = json.loads(submit_contract.read_text(encoding="utf-8"))
     except Exception:
-        return
+        return result
     fold_dir = PROJECT_ROOT / contract.get("local_fold_rel", "")
     jobs_path = fold_dir / "jobs.jsonl"
+    result["jobs_path"] = str(jobs_path)
     if not is_modern_tracked(fold_dir):
-        return
-    events = lifecycle.read_job_events(jobs_path)
+        return result
+    try:
+        events = lifecycle.read_job_events(jobs_path)
+    except Exception as e:
+        result["status"] = "refused"
+        result["error"] = f"cannot read job history: {e}"
+        return result
     jid = str(rec.slurm_job_id)
     from src.experiment_tracking.monitor import terminal_event_type
 
@@ -1191,7 +1217,9 @@ def _mirror_terminal_to_fold(record: dict, rec) -> None:
         and e.get("event_type") in {"COMPLETED", "FAILED", "CANCELLED"}
         for e in events
     )
-    if not already:
+    if already:
+        result["status"] = "already_present"
+    else:
         normalized_status = _normalized_job_event_status(event_type)
         raw_state = str(rec.account_state or "")
         reason = (
@@ -1213,8 +1241,10 @@ def _mirror_terminal_to_fold(record: dict, rec) -> None:
         try:
             lifecycle.append_job_event(jobs_path, event)
         except Exception as e:
-            print(f"WARNING: could not append to {jobs_path}: {e}", file=sys.stderr)
-            return
+            result["status"] = "refused"
+            result["error"] = str(e)
+            return result
+        result["status"] = "appended"
     # Advance the fold lifecycle when both required jobs are COMPLETED 0:0.
     status_path = fold_dir / "status.json"
     try:
@@ -1233,9 +1263,9 @@ def _mirror_terminal_to_fold(record: dict, rec) -> None:
         recovery = recover_failed_attempt_from_verified_retry(fold_dir)
         if recovery.get("recovered"):
             print(f"  fold lifecycle recovered: FAILED -> COMPLETED_ON_MN5 ({fold_dir.name})")
-        return
+        return result
     if status.get("state") not in {"SUBMITTED", "RUNNING"}:
-        return
+        return result
     if event_type in {"FAILED", "CANCELLED"}:
         target_state = event_type
         record_obj = lifecycle.StatusRecord.from_dict(status)
@@ -1246,12 +1276,12 @@ def _mirror_terminal_to_fold(record: dict, rec) -> None:
             )
         except Exception as e:
             print(f"WARNING: lifecycle transition refused: {e}", file=sys.stderr)
-            return
+            return result
         lifecycle.write_status(status_path, record_obj)
         print(f"  fold lifecycle advanced to {target_state} ({fold_dir.name})")
-        return
+        return result
     if status.get("state") != "RUNNING":
-        return
+        return result
     refreshed = lifecycle.read_job_events(jobs_path)
     done_keys = {
         str(e.get("job_key"))
@@ -1266,9 +1296,10 @@ def _mirror_terminal_to_fold(record: dict, rec) -> None:
                                   reason="train and standalone eval COMPLETED 0:0 per sacct reconciliation")
         except Exception as e:
             print(f"WARNING: lifecycle transition refused: {e}", file=sys.stderr)
-            return
+            return result
         lifecycle.write_status(status_path, record_obj)
         print(f"  fold lifecycle advanced to COMPLETED_ON_MN5 ({fold_dir.name})")
+    return result
 
 def _normalized_local_evidence_rel(contract: dict) -> str | None:
     """Resolve legacy duplicate-prefix paths without mutating recorded contracts."""
