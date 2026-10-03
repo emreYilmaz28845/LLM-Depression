@@ -19,12 +19,14 @@ from src.native_en_text_heads_tracking import (
     REPAIR_JOB_KEY,
     HeadTrackingError,
     _successful_required_jobs,
+    finish_head_attempt,
     initialize_head_attempt,
     materialize_head_evidence,
     prevalidate_head_fit_outputs,
     record_head_job,
     record_head_repair_event,
     transition_head_attempt,
+    validate_head_attempt,
 )
 
 PREDICTIONS = [
@@ -46,6 +48,7 @@ def _attempt(tmp_path: Path) -> Path:
             "tracking_kind": "qwen3_multiseed_native_head",
             "run_schema_version": "audiollm.qwen3_multiseed_head_run.v1",
             "group_id": "group-x",
+            "required_jobs": ["extract", "classifier"],
         },
         config={
             "dataset": "d3tec",
@@ -229,14 +232,76 @@ def test_prevalidate_rejects_adapter_mismatch(tmp_path: Path) -> None:
         )
 
 
-def test_repair_event_is_observed_idempotent_and_satisfies_gate(tmp_path: Path) -> None:
+REPAIR_REASON = (
+    "non-scheduler evidence materialization repair; operation=materialize_head_evidence; "
+    "deployment=dep-1; source_commit=" + "c" * 40 + "; source_manifest_sha256=" + "d" * 64 + "; "
+    "executed_at_utc=2026-10-03T00:00:00Z; original_classifier_job=2"
+)
+
+
+def _failed_then_repaired_attempt(tmp_path: Path) -> Path:
     attempt_dir = _attempt(tmp_path)
-    record_head_repair_event(
-        attempt_dir, original_job_id="46955648", reason="non-scheduler repair"
+    record_head_job(
+        attempt_dir,
+        job_key="extract",
+        job_type="hidden_extraction",
+        event_type="COMPLETED",
+        slurm_job_id="1",
+        status="COMPLETED",
+        exit_code="0:0",
     )
-    record_head_repair_event(
-        attempt_dir, original_job_id="46955648", reason="non-scheduler repair"
+    record_head_job(
+        attempt_dir,
+        job_key="classifier",
+        job_type="hidden_classifier",
+        event_type="FAILED",
+        slurm_job_id="2",
+        status="FAILED",
+        exit_code="1:0",
     )
+    identical = b'{"macro_f1": 0.5}\n'
+    for variant in ("logreg_raw", "xgb_raw"):
+        _write_variant(attempt_dir, variant, identical)
+        _write_classifier_metadata(attempt_dir, variant)
+    outputs = prevalidate_head_fit_outputs(
+        attempt_dir, attempt_dir / "classifier", ["logreg_raw", "xgb_raw"]
+    )
+    for item in outputs:
+        materialize_head_evidence(
+            attempt_dir,
+            predictions_path=item["predictions"],
+            metrics_path=item["metrics"],
+            checkpoint_path="/gpfs/parent/best_model",
+            variant=item["variant"],
+        )
+    return attempt_dir
+
+
+def test_finish_rejects_synthetic_completed_repair_marker(tmp_path: Path) -> None:
+    attempt_dir = _failed_then_repaired_attempt(tmp_path)
+    # A COMPLETED classifier event with no Slurm id whose reason mentions a
+    # repair must not count as a scheduler completion.
+    record_head_job(
+        attempt_dir,
+        job_key="classifier",
+        job_type="hidden_classifier",
+        event_type="COMPLETED",
+        slurm_job_id=None,
+        status="COMPLETED",
+        exit_code="0:0",
+        reason="evidence materialization repair after failed classifier job",
+    )
+    validated = validate_head_attempt(attempt_dir)
+    assert validated["ok"] is True
+    finished = finish_head_attempt(attempt_dir)
+    assert finished["ok"] is False
+    assert "classifier" in finished["next_action"]
+
+
+def test_repair_event_is_observed_and_idempotent(tmp_path: Path) -> None:
+    attempt_dir = _attempt(tmp_path)
+    record_head_repair_event(attempt_dir, original_job_id="2", reason=REPAIR_REASON)
+    record_head_repair_event(attempt_dir, original_job_id="2", reason=REPAIR_REASON)
     events = [
         json.loads(line)
         for line in (attempt_dir / "jobs.jsonl").read_text(encoding="utf-8").splitlines()
@@ -247,6 +312,71 @@ def test_repair_event_is_observed_idempotent_and_satisfies_gate(tmp_path: Path) 
     assert repairs[0]["event_type"] == "OBSERVED"
     assert repairs[0]["slurm_job_id"] is None
     assert repairs[0].get("exit_code") is None
-    assert repairs[0]["resubmission_of_job_id"] == "46955648"
+    assert repairs[0]["resubmission_of_job_id"] == "2"
     _required, successful = _successful_required_jobs(attempt_dir)
     assert "classifier" in successful
+
+
+def test_materialize_repair_collect_validate_finish_end_to_end(tmp_path: Path) -> None:
+    attempt_dir = _failed_then_repaired_attempt(tmp_path)
+    record_head_repair_event(attempt_dir, original_job_id="2", reason=REPAIR_REASON)
+    validated = validate_head_attempt(attempt_dir)
+    assert validated["ok"] is True
+    assert validated["state"] == "LOCALLY_VALIDATED"
+    finished = finish_head_attempt(attempt_dir)
+    assert finished["ok"] is True
+    assert finished["state"] == "REPORTABLE"
+    events = [
+        json.loads(line)
+        for line in (attempt_dir / "jobs.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert any(
+        event.get("job_key") == "classifier" and event.get("event_type") == "FAILED"
+        for event in events
+    )
+
+
+def test_finish_blocks_without_repair(tmp_path: Path) -> None:
+    attempt_dir = _failed_then_repaired_attempt(tmp_path)
+    validated = validate_head_attempt(attempt_dir)
+    assert validated["ok"] is True
+    finished = finish_head_attempt(attempt_dir)
+    assert finished["ok"] is False
+    assert "classifier" in finished["next_action"]
+
+
+def test_finish_rejects_malformed_repair_claim(tmp_path: Path) -> None:
+    attempt_dir = _failed_then_repaired_attempt(tmp_path)
+    # Right shape, no provenance markers: unverified claim must not count.
+    record_head_job(
+        attempt_dir,
+        job_key=REPAIR_JOB_KEY,
+        job_type="hidden_classifier",
+        event_type="OBSERVED",
+        slurm_job_id=None,
+        status="COMPLETED",
+        reason="repair done",
+        resubmission_of_job_id="2",
+    )
+    validated = validate_head_attempt(attempt_dir)
+    assert validated["ok"] is True
+    finished = finish_head_attempt(attempt_dir)
+    assert finished["ok"] is False
+
+
+def test_finish_rejects_repair_claim_without_original_link(tmp_path: Path) -> None:
+    attempt_dir = _failed_then_repaired_attempt(tmp_path)
+    record_head_job(
+        attempt_dir,
+        job_key=REPAIR_JOB_KEY,
+        job_type="hidden_classifier",
+        event_type="OBSERVED",
+        slurm_job_id=None,
+        status="COMPLETED",
+        reason=REPAIR_REASON,
+    )
+    validated = validate_head_attempt(attempt_dir)
+    assert validated["ok"] is True
+    finished = finish_head_attempt(attempt_dir)
+    assert finished["ok"] is False
