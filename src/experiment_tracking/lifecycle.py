@@ -87,6 +87,37 @@ class StatusRecord:
         self.updated_at_utc = timestamp
         return self.state
 
+    def recover_failed_to_completed(self, *, reason: str, verification: dict[str, Any]) -> str:
+        """Verified same-attempt recovery: ``FAILED``/``CANCELLED`` -> ``COMPLETED_ON_MN5``.
+
+        Deliberately kept outside ``ALLOWED_TRANSITIONS``: only the
+        evidence-verified recovery helper in ``validate.py`` calls it, after
+        checking that every failed or cancelled required leg has a linked,
+        later, cleanly COMPLETED retry for the same attempt, fold and parent.
+        The verification payload is stored in the append-only history, so the
+        original failure and the recovery evidence both remain visible.
+        """
+        if self.state not in {"FAILED", "CANCELLED"}:
+            raise InvalidTransitionError(
+                f"verified recovery requires state 'FAILED' or 'CANCELLED', got {self.state!r}"
+            )
+        if not isinstance(verification, dict) or not verification.get("verified_retry_jobs"):
+            raise InvalidTransitionError(
+                "verified recovery requires linked retry evidence"
+            )
+        timestamp = format_utc_timestamp(utc_now())
+        entry = {
+            "from": self.state,
+            "to": "COMPLETED_ON_MN5",
+            "at_utc": timestamp,
+            "reason": reason,
+            "verified_recovery": dict(verification),
+        }
+        self.history.append(entry)
+        self.state = "COMPLETED_ON_MN5"
+        self.updated_at_utc = timestamp
+        return self.state
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema_version": SCHEMA_VERSION_STATUS,

@@ -14,6 +14,10 @@
 
 set -e
 set -o pipefail
+# Never write interpreter bytecode into the immutable deployment tree: the
+# deployment verifier allows final .pyc files but a concurrent import can
+# briefly expose atomic-write temp files (*.pyc.<id>) as unexpected files.
+export PYTHONDONTWRITEBYTECODE=1
 
 module purge
 module load bsc/1.0
