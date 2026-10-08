@@ -279,6 +279,20 @@ def test_head_chain_headroom_uses_the_same_lane_budget() -> None:
     assert dispatch.head_chain_headroom(80) == 0
 
 
+def test_missing_ledger_refuses_instead_of_empty_fallback(tmp_path: Path) -> None:
+    missing = tmp_path / "submissions.jsonl"
+    with pytest.raises(dispatch.AdmissionError):
+        dispatch.ledger_records(missing)
+    with pytest.raises(dispatch.AdmissionError):
+        dispatch.settled_keys(missing)
+    with pytest.raises(dispatch.AdmissionError):
+        dispatch.own_job_ids(missing, tmp_path / "empty")
+    # An explicitly created empty ledger is the supported first-ever bootstrap.
+    missing.write_text("", encoding="utf-8")
+    assert dispatch.ledger_records(missing) == []
+    assert dispatch.settled_keys(missing) == set()
+
+
 def _roundtrip(tmp_path: Path, stdout: str, stderr: str = "", rc: int = 0):
     """submit -> append -> reconcile, the exact production path."""
     ledger = tmp_path / "submissions.jsonl"

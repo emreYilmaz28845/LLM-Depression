@@ -30,6 +30,10 @@ Admission semantics (binding):
   distinct numeric job ids plus a non-empty attempt id; a single id, duplicate
   values, malformed ids, extra or missing keys, and a missing attempt id all
   stay uncertain and stop the wave. Nothing is retried automatically.
+- The append-only submission ledger is authoritative. A missing ledger refuses
+  immediately; it is never treated as "no deliveries" and an empty ledger is
+  never silently recreated. A genuine first-ever bootstrap must create an empty
+  ledger deliberately and record that decision.
 - The same accounting gates head-chain dispatch: reconcile own nonterminal jobs
   and refuse while ``own + 2 > 80`` before each head attempt.
 """
@@ -134,8 +138,15 @@ def user_queue_count(runner: Runner | None = None) -> int:
 
 
 def ledger_records(ledger_path: Path = LEDGER) -> list[dict]:
+    """Read the append-only ledger; refuse when the authoritative file is missing.
+
+    A missing ledger is never treated as "no deliveries": the delivered history
+    is authoritative for this lane and the accounting must not silently fall
+    back to local sidecars only. A genuine first-ever bootstrap must create an
+    empty ledger deliberately (``Path.touch``) and record that decision.
+    """
     if not ledger_path.exists():
-        return []
+        raise AdmissionError(f"authoritative submission ledger is missing: {ledger_path}")
     records = []
     for line in ledger_path.read_text(encoding="utf-8").splitlines():
         if line.strip():
