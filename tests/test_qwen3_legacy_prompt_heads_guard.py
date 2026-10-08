@@ -1,0 +1,198 @@
+"""Tests for the guarded head-chain integration (lane-owned wrapper).
+
+Pinned semantics: head deliveries need an exact two-job numeric proof, head
+chains only bind to the exact validated parent attempt, head jobs count in the
+same 80-slot own accounting as fits, and eligible head chains are submitted
+before new fits within the shared live budget.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from tools import qwen3_legacy_prompt_dispatch as dispatch
+from tools import qwen3_legacy_prompt_heads_guard as guard
+
+
+def test_valid_head_delivery_requires_exact_unique_numeric_pair() -> None:
+    assert guard.valid_head_delivery({"extract_job_id": "111", "classifier_job_id": "222"})
+    assert not guard.valid_head_delivery({"extract_job_id": "111"})
+    assert not guard.valid_head_delivery({"extract_job_id": "111", "classifier_job_id": "111"})
+    assert not guard.valid_head_delivery({"extract_job_id": "abc", "classifier_job_id": "222"})
+    assert not guard.valid_head_delivery({"extract_job_id": "111", "classifier_job_id": "222", "error": "boom"})
+    assert not guard.valid_head_delivery(
+        {"extract_job_id": "111", "classifier_job_id": "222", "extra": "333"}
+    )
+
+
+def test_parse_head_submit_output_blocks() -> None:
+    parsed = guard.parse_head_submit_output(
+        "=== JOB route|7|0 ===\nEXTRACT_ID=4701\nCLASSIFIER_ID=4702\n"
+        "=== JOB route|7|1 ===\nERROR=sbatch failed\n"
+    )
+    assert parsed["route|7|0"] == {"extract_job_id": "4701", "classifier_job_id": "4702"}
+    assert parsed["route|7|1"] == {"error": "sbatch failed"}
+
+
+def make_plan(entries: list[dict]) -> dict:
+    return {"routes": [{"route_id": "daic_text_only", "jobs": entries}]}
+
+
+def test_eligibility_requires_the_exact_validated_parent_attempt() -> None:
+    plan = make_plan(
+        [
+            {
+                "registry_key": "daic_text_only|7|0",
+                "seed": 7,
+                "fold": 0,
+                "parent_status": "resolved",
+                "parent": {"attempt_id": "att-good"},
+            },
+            {
+                "registry_key": "daic_text_only|7|1",
+                "seed": 7,
+                "fold": 1,
+                "parent_status": "resolved",
+                "parent": {"attempt_id": "att-stale"},
+            },
+        ]
+    )
+    validated = {("daic_text_only", 7, 0): "att-good", ("daic_text_only", 7, 1): "att-new"}
+    eligible = guard.eligible_head_jobs(plan, validated, submitted_keys=set())
+    assert [job["key"] for job in eligible] == ["daic_text_only|7|0"]
+    # Already submitted keys are skipped.
+    assert guard.eligible_head_jobs(plan, validated, {"daic_text_only|7|0"}) == []
+
+
+def test_validated_cells_requires_exact_attempt(tmp_path: Path) -> None:
+    ledger = tmp_path / "submissions.jsonl"
+    ledger.write_text(
+        json.dumps(
+            {
+                "key": "daic_text_only|s7|f0",
+                "run_name": "run_a",
+                "status": "submitted",
+                "attempt_id": "att-new",
+                "job_ids": {"train": "1", "best_eval": "2"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    receipts = tmp_path / "receipts.jsonl"
+    receipts.write_text(
+        json.dumps(
+            {
+                "key": "daic_text_only|s7|f0",
+                "attempt_id": "att-old",
+                "stage": "validate",
+                "ok": True,
+                "rc": 0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert guard.validated_cells(receipts, set(), ledger) == {}
+    receipts.write_text(
+        receipts.read_text(encoding="utf-8")
+        + json.dumps(
+            {
+                "key": "daic_text_only|s7|f0",
+                "attempt_id": "att-new",
+                "stage": "validate",
+                "ok": True,
+                "rc": 0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert guard.validated_cells(receipts, set(), ledger) == {("daic_text_only", 7, 0): "att-new"}
+
+
+def test_accounting_includes_head_deliveries(tmp_path: Path) -> None:
+    evidence = tmp_path / "evidence"
+    (evidence / "head_attempts/att-1").mkdir(parents=True)
+    (evidence / "head_submissions.jsonl").write_text(
+        json.dumps({"registry_key": "route|7|0", "extract_job_id": "4701", "classifier_job_id": "4702"})
+        + "\n",
+        encoding="utf-8",
+    )
+    (evidence / "head_attempts/att-1/jobs.jsonl").write_text(
+        json.dumps({"job_key": "extract", "event_type": "SUBMITTED", "slurm_job_id": "4703"}) + "\n",
+        encoding="utf-8",
+    )
+    ledger = tmp_path / "submissions.jsonl"
+    ledger.write_text("", encoding="utf-8")
+    ids, uncertain, unknown = dispatch.own_job_ids(ledger, tmp_path / "empty", evidence)
+    assert set(ids) == {"4701", "4702", "4703"} and unknown == [] and uncertain == 0
+
+
+def test_pass_prioritizes_heads_within_the_shared_budget() -> None:
+    state = {"own": 76}
+    order: list[str] = []
+
+    def reconcile():
+        return state["own"], 0
+
+    def submit_head(job):
+        state["own"] += 2
+        order.append("head")
+        return {"status": "submitted", "job_ids": {"extract": "1", "classifier": "2"}}
+
+    def submit_fit(fit):
+        state["own"] += 2
+        order.append("fit")
+        return {"status": "submitted", "job_ids": {"train": "3", "best_eval": "4"}}
+
+    summary = guard.run_campaign_pass(
+        head_jobs=[{"key": "r|7|0", "parent_attempt_id": "att"}],
+        fit_jobs=[{"key": "r|s7|f0"}, {"key": "r|s7|f1"}],
+        reconcile=reconcile,
+        submit_head=submit_head,
+        submit_fit=submit_fit,
+        on_record=lambda record: None,
+        max_fits=40,
+    )
+    assert order == ["head", "fit"]  # heads first, then one fit fills the budget
+    assert summary["heads_submitted"] == 1 and summary["fits_submitted"] == 1
+    assert summary["refused"] == 1 and "no lane headroom" in summary["reason"]
+
+
+def test_pass_refuses_without_headroom_and_submits_nothing() -> None:
+    def reconcile():
+        return 79, 0
+
+    summary = guard.run_campaign_pass(
+        head_jobs=[{"key": "r|7|0"}],
+        fit_jobs=[{"key": "r|s7|f0"}],
+        reconcile=reconcile,
+        submit_head=lambda job: (_ for _ in ()).throw(AssertionError("must not submit")),
+        submit_fit=lambda fit: (_ for _ in ()).throw(AssertionError("must not submit")),
+        on_record=lambda record: None,
+        max_fits=40,
+    )
+    assert summary["heads_submitted"] == 0 and summary["fits_submitted"] == 0
+    assert summary["refused"] == 1
+
+
+def test_pass_stops_on_unproven_head_delivery() -> None:
+    def reconcile():
+        return 70, 0
+
+    calls = {"fits": 0}
+
+    summary = guard.run_campaign_pass(
+        head_jobs=[{"key": "r|7|0"}],
+        fit_jobs=[{"key": "r|s7|f0"}],
+        reconcile=reconcile,
+        submit_head=lambda job: {"status": "uncertain", "job_ids": {}},
+        submit_fit=lambda fit: calls.__setitem__("fits", calls["fits"] + 1)
+        or {"status": "submitted"},
+        on_record=lambda record: None,
+        max_fits=40,
+    )
+    assert summary["heads_submitted"] == 0 and summary["refused"] == 1
+    assert calls["fits"] == 0  # the pass stops; no silent fallback to fits

@@ -159,7 +159,7 @@ def settled_keys(ledger_path: Path = LEDGER) -> set[str]:
 
 
 def own_job_ids(
-    ledger_path: Path = LEDGER, run_root: Path = RUN_ROOT
+    ledger_path: Path = LEDGER, run_root: Path = RUN_ROOT, evidence_dir: Path = EVIDENCE
 ) -> tuple[list[str], int, list[str]]:
     """Known own job IDs, uncertain-record count, and unknown preserved values.
 
@@ -201,7 +201,49 @@ def own_job_ids(
                 ids.add(text)
             else:
                 unknown.append(text)
+    ids, unknown = _merge_head_sources(ids, unknown, evidence_dir)
     return sorted(ids), uncertain, sorted(set(unknown))
+
+
+def _merge_head_sources(
+    ids: set[str], unknown: list[str], evidence_dir: Path = EVIDENCE
+) -> tuple[set[str], list[str]]:
+    """Include head extract/classifier deliveries in the own-ID accounting.
+
+    Two authoritative sources are scanned: the dispatch registry
+    (``head_submissions.jsonl``) and the per-attempt head sidecars
+    (``head_attempts/*/jobs.jsonl`` SUBMITTED events). Both are lane-owned
+    evidence, so head chains count against the same 80-job budget as fits.
+    """
+    registry = evidence_dir / "head_submissions.jsonl"
+    if registry.exists():
+        for line in registry.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            for field in ("extract_job_id", "classifier_job_id"):
+                value = entry.get(field)
+                if value is None or str(value).strip() == "":
+                    continue
+                text = str(value).strip()
+                if text.isdigit():
+                    ids.add(text)
+                else:
+                    unknown.append(text)
+    for sidecar in sorted((evidence_dir / "head_attempts").glob("*/jobs.jsonl")):
+        for line in sidecar.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            job_id = event.get("slurm_job_id")
+            if job_id is None or str(job_id).strip() == "":
+                continue
+            text = str(job_id).strip()
+            if text.isdigit():
+                ids.add(text)
+            else:
+                unknown.append(text)
+    return ids, unknown
 
 
 def reconciliation_failures(
