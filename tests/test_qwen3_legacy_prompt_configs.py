@@ -19,6 +19,7 @@ from pathlib import Path
 import yaml
 
 from scripts import build_qwen3_legacy_prompt_configs as legacy_configs
+from tools import audit_qwen3_legacy_prompt_controls as controls_audit
 from tools import qwen3_legacy_prompt_plan as planner
 from src.data.prompt_context import (
     LEGACY_QUESTION_CONTEXT_SENTENCES,
@@ -203,3 +204,28 @@ def test_planner_freezes_the_189_fit_matrix() -> None:
             "${PROJECT_ROOT}/output_model/qwen3_legacy_prompt_20261008/"
         )
         assert route["control_config"] != route["config"]
+
+
+def test_planner_production_graph_counts() -> None:
+    matrix = planner.build_matrix()
+    graph = planner.build_production_graph(matrix, "0" * 64)
+    assert graph["core_training"]["total_scheduler_jobs"] == 378
+    assert graph["downstream_heads"]["total_scheduler_jobs"] == 378
+    assert graph["total_with_downstream_scheduler_jobs"] == 756
+    assert sum(wave["fits"] for wave in graph["planned_waves"]) == 189
+    assert all(wave["scheduler_jobs"] <= 80 for wave in graph["planned_waves"])
+    assert graph["slot_policy"]["lane_cap_nonterminal"] == 80
+
+
+def test_control_audit_normalizes_both_key_formats() -> None:
+    assert controls_audit.normalize_key("daic_text_only_native|1337|0") == (
+        "daic_text_only_native",
+        1337,
+        0,
+    )
+    assert controls_audit.normalize_key("daic_text_only_native|s7|f0") == (
+        "daic_text_only_native",
+        7,
+        0,
+    )
+    assert controls_audit.normalize_key("not-a-key") is None

@@ -195,21 +195,96 @@ def check_matrix(matrix: dict[str, Any]) -> list[str]:
     return failures
 
 
+def build_production_graph(matrix: dict[str, Any], matrix_sha256: str) -> dict[str, Any]:
+    fits = matrix["fits"]
+    fit_count = len(fits)
+    wave_size = 40
+    waves = [
+        {
+            "wave": index + 1,
+            "fits": min(wave_size, fit_count - index * wave_size),
+            "scheduler_jobs": 2 * min(wave_size, fit_count - index * wave_size),
+        }
+        for index in range((fit_count + wave_size - 1) // wave_size)
+    ]
+    return {
+        "schema_version": "audiollm.qwen3_legacy_prompt_production_graph.v1",
+        "campaign": CAMPAIGN,
+        "lane": LANE,
+        "baseline_sha": BASELINE_SHA,
+        "matrix_sha256": matrix_sha256,
+        "core_training": {
+            "train_jobs": fit_count,
+            "eval_jobs": fit_count,
+            "total_scheduler_jobs": 2 * fit_count,
+            "per_fit_job_keys": ["train", "best_eval"],
+            "note": (
+                "best_eval depends on train; text shape 1 node x 4 GPUs accumulation 32, "
+                "audio shape 2 nodes x 4 GPUs accumulation 16, effective global batch 128"
+            ),
+        },
+        "downstream_heads": {
+            "extract_jobs": fit_count,
+            "classifier_jobs": fit_count,
+            "total_scheduler_jobs": 2 * fit_count,
+            "runner": "tools/qwen3_heads_dispatch.py",
+            "per_key_variants": ["logreg_raw", "xgb_raw"],
+            "head_seed": HEAD_SEED,
+            "note": "issued per parent key after each treatment training attempt completes",
+        },
+        "cpu_aux": {
+            "manifest_builds": 4,
+            "note": (
+                "D3TEC/Androids/DAIC/CMDC build manifests in their first training job; "
+                "Turkish pooled uses the prebuilt verified manifest"
+            ),
+        },
+        "smokes_submitted": {"chains": 2, "jobs": 4, "reportable": False},
+        "slot_policy": {
+            "lane_cap_nonterminal": 80,
+            "campaign_cap": 320,
+            "user_stop_threshold": 350,
+            "planned_wave_size_fits": wave_size,
+            "refill_after_terminal": True,
+            "no_peer_borrowing": True,
+        },
+        "planned_waves": waves,
+        "total_new_base_fits": fit_count,
+        "total_core_scheduler_jobs": 2 * fit_count,
+        "total_with_downstream_scheduler_jobs": 4 * fit_count,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--emit-matrix",
         default=str(ROOT / "outputs" / CAMPAIGN / "matrix.json"),
     )
+    parser.add_argument(
+        "--emit-production-graph",
+        default=str(ROOT / "outputs" / CAMPAIGN / "production_graph.json"),
+    )
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     matrix = build_matrix()
     failures = check_matrix(matrix)
+    matrix_text = json.dumps(matrix, indent=2, sort_keys=False) + "\n"
     if args.emit_matrix:
         output = Path(args.emit_matrix)
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(
-            json.dumps(matrix, indent=2, sort_keys=False) + "\n", encoding="utf-8"
+        output.write_text(matrix_text, encoding="utf-8")
+    if args.emit_production_graph:
+        graph_path = Path(args.emit_production_graph)
+        graph_path.parent.mkdir(parents=True, exist_ok=True)
+        graph_path.write_text(
+            json.dumps(
+                build_production_graph(matrix, sha256_text(matrix_text)),
+                indent=2,
+                sort_keys=False,
+            )
+            + "\n",
+            encoding="utf-8",
         )
     if failures:
         print("Legacy-prompt matrix check FAILED:")
@@ -223,7 +298,7 @@ def main() -> int:
             f"({matrix['summary']['text_fits']} text, {matrix['summary']['audio_fits']} audio)."
         )
     else:
-        print(f"Wrote matrix -> {args.emit_matrix}")
+        print(f"Wrote matrix -> {args.emit_matrix} and graph -> {args.emit_production_graph}")
     return 0
 
 
