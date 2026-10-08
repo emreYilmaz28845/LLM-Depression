@@ -96,6 +96,30 @@ def selections_for_fraction(
     return selections
 
 
+def compute_selection_sha256(
+    algorithm_version: str, sampling_seed: int, fraction: float, subjects: dict[str, Any]
+) -> str:
+    """Canonical selection hash over the exact membership payload.
+
+    This is the single definition used by both the training hook (``build_mask``)
+    and the head-side mask validation, so a mutated membership payload cannot
+    keep a stale accepted hash: the digest is always recomputed from
+    ``algorithm_version``, ``sampling_seed``, ``fraction`` and ``subjects``.
+    """
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "algorithm_version": str(algorithm_version),
+                "sampling_seed": int(sampling_seed),
+                "fraction": float(fraction),
+                "subjects": subjects,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 def build_mask(
     examples: list[dict[str, Any]],
     *,
@@ -123,18 +147,9 @@ def build_mask(
         "total_available": len(examples),
         "total_selected": sum(selected.values()),
     }
-    mask["selection_sha256"] = hashlib.sha256(
-        json.dumps(
-            {
-                "algorithm_version": mask["algorithm_version"],
-                "sampling_seed": mask["sampling_seed"],
-                "fraction": mask["fraction"],
-                "subjects": mask["subjects"],
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
+    mask["selection_sha256"] = compute_selection_sha256(
+        mask["algorithm_version"], mask["sampling_seed"], mask["fraction"], mask["subjects"]
+    )
     return mask
 
 

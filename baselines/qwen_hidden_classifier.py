@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -98,31 +99,134 @@ def _load_partition(cache_dir: Path, name: str) -> tuple[np.ndarray, list[dict[s
     return vectors, rows
 
 
+def _validate_train_mask(
+    mask: dict[str, Any], expected_selection_sha256: str | None = None
+) -> dict[str, Any]:
+    """Fail-closed validation of a window-cap mask artifact before fitting.
+
+    The recorded ``selection_sha256`` is never trusted on its own: the canonical
+    hash is recomputed from ``algorithm_version``, ``sampling_seed``,
+    ``fraction`` and ``subjects`` with the training definition
+    (``src.data.window_cap.compute_selection_sha256``), so a mutated membership
+    payload cannot keep a stale accepted hash. Schema and algorithm identity
+    must match, sample ids must be unique, and the expected hash (recorded in
+    run_config) must equal both the recorded and recomputed values.
+    """
+    if not isinstance(mask, dict):
+        raise ValueError("train mask must be a JSON object")
+    from src.data.window_cap import (
+        ALGORITHM_VERSION,
+        MASK_SCHEMA_VERSION,
+        compute_selection_sha256,
+    )
+
+    schema_version = str(mask.get("schema_version") or "")
+    if schema_version != MASK_SCHEMA_VERSION:
+        raise ValueError(
+            f"train mask schema_version {schema_version!r} != {MASK_SCHEMA_VERSION!r}"
+        )
+    algorithm_version = str(mask.get("algorithm_version") or "")
+    if algorithm_version != ALGORITHM_VERSION:
+        raise ValueError(
+            f"train mask algorithm_version {algorithm_version!r} != {ALGORITHM_VERSION!r}"
+        )
+    fraction = mask.get("fraction")
+    if (
+        isinstance(fraction, bool)
+        or not isinstance(fraction, (int, float))
+        or not 0.0 < float(fraction) <= 1.0
+    ):
+        raise ValueError(f"train mask fraction is invalid: {fraction!r}")
+    sampling_seed = mask.get("sampling_seed")
+    if isinstance(sampling_seed, bool) or not isinstance(sampling_seed, int):
+        raise ValueError(f"train mask sampling_seed is invalid: {sampling_seed!r}")
+    subjects = mask.get("subjects")
+    if not isinstance(subjects, dict) or not subjects:
+        raise ValueError("train mask has no subject selections")
+    seen: set[str] = set()
+    for subject_id, ids in subjects.items():
+        if not isinstance(ids, list) or not ids:
+            raise ValueError(f"train mask subject {subject_id!r} has no sample ids")
+        for item in ids:
+            if not isinstance(item, str) or not item:
+                raise ValueError(
+                    f"train mask subject {subject_id!r} has a non-string sample id: {item!r}"
+                )
+            if item in seen:
+                raise ValueError(f"train mask lists sample id {item!r} more than once")
+            seen.add(item)
+    recomputed = compute_selection_sha256(
+        algorithm_version, sampling_seed, float(fraction), subjects
+    )
+    recorded = str(mask.get("selection_sha256") or "")
+    if recomputed != recorded:
+        raise ValueError(
+            "train mask selection_sha256 does not match its membership: "
+            f"recorded {recorded!r}, recomputed {recomputed!r}"
+        )
+    if expected_selection_sha256 is not None:
+        expected = str(expected_selection_sha256)
+        if recomputed != expected:
+            raise ValueError(
+                f"train mask selection_sha256 {recomputed!r} != expected {expected!r} "
+                "from run_config"
+            )
+    return mask
+
+
 def _apply_train_mask(
     train_x: np.ndarray, train_rows: list[dict[str, Any]], mask: dict[str, Any]
 ) -> tuple[np.ndarray, list[dict[str, Any]], dict[str, Any]]:
     """Filter outer_train rows to the capped membership; evaluation stays full.
 
-    The mask artifact is the training-time ``window_cap_mask.json``. Every
-    selected sample id must exist in the cache, the mask subject set must match
-    the cache training subjects, and at least one row per subject is required
-    (the cap keeps max(1, ceil(fraction*n)) per subject by construction).
+    The mask artifact is the training-time ``window_cap_mask.json``. Before any
+    filtering this verifies, fail-closed: the recorded baseline membership hash
+    matches the exact outer_train subject/sample set, every selected sample id
+    exists in the cache and belongs to its declared subject, ids are unique,
+    and the mask subject set matches the cache training subjects (the cap keeps
+    max(1, ceil(fraction*n)) rows per subject by construction).
     """
+    baseline_sha = str(mask.get("baseline_input_sha256") or "")
+    if not baseline_sha:
+        raise ValueError(
+            "train mask has no baseline_input_sha256; cannot verify the exact "
+            "outer_train subject/sample membership"
+        )
+    canonical_membership = sorted(
+        [str(row["subject_id"]), str(row["sample_id"])] for row in train_rows
+    )
+    recomputed_baseline = hashlib.sha256(
+        json.dumps(canonical_membership, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    if recomputed_baseline != baseline_sha:
+        raise ValueError(
+            "train mask baseline_input_sha256 does not match the outer_train "
+            f"subject/sample membership: recorded {baseline_sha!r}, "
+            f"recomputed {recomputed_baseline!r}. Diagnose any intentional cache "
+            "membership difference before changing policy."
+        )
     subjects = mask.get("subjects")
     if not isinstance(subjects, dict) or not subjects:
         raise ValueError("train mask has no subject selections")
+    row_ids = [str(row["sample_id"]) for row in train_rows]
+    row_owner = {sample_id: str(row["subject_id"]) for sample_id, row in zip(row_ids, train_rows)}
     selected: set[str] = set()
-    for ids in subjects.values():
+    for subject_id, ids in subjects.items():
         if not isinstance(ids, list) or not ids:
             raise ValueError("every masked subject needs at least one sample id")
-        selected.update(str(item) for item in ids)
-    row_ids = [str(row["sample_id"]) for row in train_rows]
-    missing = sorted(selected - set(row_ids))
-    if missing:
-        raise ValueError(
-            f"train mask selects {len(missing)} sample ids missing from outer_train, "
-            f"e.g. {missing[:5]}"
-        )
+        for item in ids:
+            sample_id = str(item)
+            if sample_id in selected:
+                raise ValueError(f"train mask lists sample id {sample_id!r} more than once")
+            owner = row_owner.get(sample_id)
+            if owner is None:
+                raise ValueError(f"train mask sample id {sample_id!r} is missing from outer_train")
+            if owner != str(subject_id):
+                raise ValueError(
+                    f"train mask assigns sample {sample_id!r} to subject {subject_id!r} "
+                    f"but the outer_train cache has it under {owner!r}"
+                )
+            selected.add(sample_id)
     mask_subjects = {str(subject) for subject in subjects}
     row_subjects = {str(row["subject_id"]) for row in train_rows}
     if mask_subjects != row_subjects:
@@ -135,6 +239,7 @@ def _apply_train_mask(
     filtered_rows = [train_rows[index] for index in keep]
     metadata = {
         "selection_sha256": mask.get("selection_sha256"),
+        "baseline_input_sha256": mask.get("baseline_input_sha256"),
         "fraction": mask.get("fraction"),
         "sampling_seed": mask.get("sampling_seed"),
         "algorithm_version": mask.get("algorithm_version"),
@@ -442,6 +547,7 @@ def run_variant(
         # finite vectors, equal subject totals via the weight audit below.
     train_mask_metadata: dict[str, Any] | None = None
     if train_mask is not None:
+        _validate_train_mask(train_mask)
         train_x, train_rows, train_mask_metadata = _apply_train_mask(
             train_x, train_rows, train_mask
         )
@@ -748,12 +854,10 @@ def main() -> None:
         raise SystemExit("--train-mask and --train-mask-sha256 must be provided together.")
     if args.train_mask:
         train_mask = read_json(args.train_mask)
-        actual = str(train_mask.get("selection_sha256") or "")
-        if actual != args.train_mask_sha256:
-            raise SystemExit(
-                "train mask selection_sha256 mismatch: "
-                f"{actual!r} != {args.train_mask_sha256!r}"
-            )
+        try:
+            _validate_train_mask(train_mask, expected_selection_sha256=args.train_mask_sha256)
+        except ValueError as exc:
+            raise SystemExit(f"train mask rejected: {exc}") from exc
     args.output_dir.mkdir(parents=True, exist_ok=True)
     summaries = [
         run_variant(
