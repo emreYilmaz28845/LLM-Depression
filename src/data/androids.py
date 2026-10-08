@@ -12,6 +12,7 @@ from typing import Any
 import soundfile as sf
 
 from src.data.split_utils import deterministic_inner_split
+from src.data.window_mapping import source_window_index
 from src.utils import label_text_from_int
 
 
@@ -143,6 +144,14 @@ def discover_androids_interview_windows(
         duration = float(info.frames / info.samplerate)
         windows = equal_duration_windows(duration, segment_seconds)
         for window_index, (start_time, end_time) in enumerate(windows):
+            # The canonical 30-second segmentation owns the segment
+            # transcripts; a subdivided treatment window resolves the
+            # transcript of the source window that contains it.
+            source_window = (
+                window_index
+                if segment_seconds == ANDROIDS_DEFAULT_SEGMENT_SECONDS
+                else source_window_index(start_time, duration, ANDROIDS_DEFAULT_SEGMENT_SECONDS)
+            )
             rows.append(
                 {
                     "dataset": "androids_interview",
@@ -152,6 +161,7 @@ def discover_androids_interview_windows(
                     "window_id": androids_window_id(identity["turn_key"], window_index),
                     "window_index": window_index,
                     "segment_index": window_index,
+                    "source_window_index": source_window,
                     "num_windows": len(windows),
                     "num_segments": len(windows),
                     "audio_path": str(audio_path),
@@ -339,31 +349,44 @@ def build_androids_interview_manifest(
     for window in windows:
         turn_key = str(window["turn_key"])
         window_id = str(window["window_id"])
+        source_index = int(window.get("source_window_index", window["window_index"]))
+        source_window_id = androids_window_id(turn_key, source_index)
         full = full_transcripts.get(turn_key)
-        segment = segment_transcripts.get(window_id)
+        segment = segment_transcripts.get(source_window_id)
         if full is None or segment is None:
             raise ValueError(
                 f"ANDROIDS transcript coverage failure for {window_id}: "
-                f"full={full is not None} segment={segment is not None}"
+                f"full={full is not None} segment={segment is not None} "
+                f"(source window {source_window_id})"
             )
         if androids_audio_identity(full.get("audio_path", "")) != androids_audio_identity(
             window["audio_path"]
         ):
             raise ValueError(f"ANDROIDS full-turn audio path mismatch for {turn_key}.")
         for field in ("start_time", "end_time"):
-            if field not in segment or not math.isclose(
-                float(segment[field]), float(window[field]), rel_tol=0.0, abs_tol=1e-6
-            ):
+            if field not in segment:
                 raise ValueError(
-                    f"ANDROIDS interval mismatch for {window_id} field={field}: "
-                    f"cache={segment.get(field)!r} canonical={window[field]!r}"
+                    f"ANDROIDS source transcript missing {field} for {source_window_id}."
+                )
+            parent = float(segment[field])
+            child = float(window[field])
+            if source_window_id == window_id:
+                contained = math.isclose(parent, child, rel_tol=0.0, abs_tol=1e-6)
+            elif field == "start_time":
+                contained = child >= parent - 1e-6
+            else:
+                contained = child <= parent + 1e-6
+            if not contained:
+                raise ValueError(
+                    f"ANDROIDS interval mismatch for {window_id} (source {source_window_id}) "
+                    f"field={field}: cache={segment.get(field)!r} canonical={window[field]!r}"
                 )
         if androids_audio_identity(
             segment.get("audio_path", "")
         ) != androids_audio_identity(window["audio_path"]):
             raise ValueError(f"ANDROIDS audio path mismatch for {window_id}.")
         used_full.add(turn_key)
-        used_segments.add(window_id)
+        used_segments.add(source_window_id)
         subject_id = str(window["subject_id"])
         subject_meta.setdefault(
             subject_id,
@@ -391,6 +414,7 @@ def build_androids_interview_manifest(
                 "audio_paths": [window["audio_path"]],
                 "transcript": segment["transcript"],
                 "segment_transcript": segment["transcript"],
+                "source_window_id": source_window_id,
                 "full_turn_transcript": full["transcript"],
                 "transcript_path": str(segment_path),
                 "full_transcript_path": str(full_path),

@@ -97,3 +97,21 @@ def test_equal_duration_ceil_semantics_at_15_seconds() -> None:
         assert math.isclose(windows_15[-1][1], 44.0)
         for (_, end), (start, _) in zip(windows_15, windows_15[1:]):
             assert math.isclose(end, start)
+
+
+def test_source_window_index_maps_subdivisions_to_canonical_segments() -> None:
+    from src.data.window_mapping import source_window_index
+
+    # 44s response: 3x15s windows inside 2x30s canonical segments -> [0, 0, 1].
+    assert [source_window_index(s, 44.0) for s in (0.0, 44.0 / 3, 88.0 / 3)] == [0, 0, 1]
+    # 60s response: 4x15s windows inside 2x30s canonical segments -> [0, 0, 1, 1].
+    assert [source_window_index(s, 60.0) for s in (0.0, 15.0, 30.0, 45.0)] == [0, 0, 1, 1]
+    # Short single-window response stays in segment 0.
+    assert source_window_index(0.0, 15.0) == 0
+    # Boundaries: the last sample of a segment stays in it.
+    assert source_window_index(29.999, 60.0) == 0
+    assert source_window_index(30.0, 60.0) == 1
+    # Invalid inputs fail closed.
+    for bad in ((0.0, 0.0), (0.0, -1.0)):
+        with pytest.raises(ValueError):
+            source_window_index(*bad)

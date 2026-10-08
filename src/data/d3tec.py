@@ -12,6 +12,7 @@ from typing import Any
 import soundfile as sf
 
 from src.data.split_utils import assign_stratified_group_folds, deterministic_inner_split
+from src.data.window_mapping import source_window_index
 from src.utils import label_text_from_int
 
 
@@ -81,6 +82,14 @@ def discover_d3tec_response_windows(
             duration = float(info.frames / info.samplerate)
             windows = equal_duration_windows(duration, segment_seconds)
             for segment_index, (start_time, end_time) in enumerate(windows):
+                # The canonical 30-second segmentation owns the segment
+                # transcripts; a subdivided treatment window resolves the
+                # transcript of the source segment that contains it.
+                source_segment_index = (
+                    segment_index
+                    if segment_seconds == D3TEC_DEFAULT_SEGMENT_SECONDS
+                    else source_window_index(start_time, duration, D3TEC_DEFAULT_SEGMENT_SECONDS)
+                )
                 rows.append(
                     {
                         "dataset": "d3tec",
@@ -89,6 +98,7 @@ def discover_d3tec_response_windows(
                         "sample_id": sample_id(subject_id, prompt_id, segment_index),
                         "prompt_id": prompt_id,
                         "segment_index": segment_index,
+                        "source_segment_index": source_segment_index,
                         "num_segments": len(windows),
                         "audio_path": str(audio_path),
                         "start_time": start_time,
@@ -263,21 +273,25 @@ def build_d3tec_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> 
         subject_id = window["subject_id"]
         rid = window["response_id"]
         sid = window["sample_id"]
-        if rid not in full_transcripts or sid not in segment_transcripts:
+        source_index = int(window.get("source_segment_index", window["segment_index"]))
+        source_sid = sample_id(subject_id, int(window["prompt_id"]), source_index)
+        if rid not in full_transcripts or source_sid not in segment_transcripts:
             raise ValueError(
                 f"D3TEC transcript coverage failure for {sid}: "
-                f"full={rid in full_transcripts} segment={sid in segment_transcripts}"
+                f"full={rid in full_transcripts} segment={source_sid in segment_transcripts} "
+                f"(source segment {source_sid})"
             )
         used_full.add(rid)
-        used_segments.add(sid)
+        used_segments.add(source_sid)
         prompt_id = int(window["prompt_id"])
         paired = _response_audio_path(root, subject_id, prompt_id, "iPhoneSE2020")
         meta = subject_meta[subject_id]
         row = {
             **window,
             "audio_paths": [window["audio_path"]],
-            "transcript": segment_transcripts[sid]["transcript"],
-            "segment_transcript": segment_transcripts[sid]["transcript"],
+            "transcript": segment_transcripts[source_sid]["transcript"],
+            "segment_transcript": segment_transcripts[source_sid]["transcript"],
+            "source_segment_id": source_sid,
             "full_response_transcript": full_transcripts[rid]["transcript"],
             "transcript_path": str(segment_path),
             "full_transcript_path": str(full_path),
@@ -300,6 +314,7 @@ def build_d3tec_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> 
         join_audit_rows.append(
             {
                 "sample_id": sid,
+                "source_segment_id": source_sid,
                 "response_id": rid,
                 "audio_found": Path(window["audio_path"]).is_file(),
                 "segment_transcript_found": True,
