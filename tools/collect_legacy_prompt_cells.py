@@ -13,9 +13,12 @@ Correctness rules:
 - Collect success and validation success are tracked separately. A fit counts
   as validated only when both succeeded; a failed collect or validate is
   recorded in an append-only failure ledger with its return code and tail.
-- A fit that fails collection or validation twice is marked for explicit
-  diagnosis and skipped by later passes so it can never starve other cells;
-  its training attempt is never reissued here.
+- A fit that fails collection or validation twice for the same attempt is
+  marked for explicit diagnosis and skipped by later passes so it can never
+  starve other cells; failures are keyed by the exact ``(cell, attempt_id)``,
+  so a diagnosed new attempt of the same cell is processed normally and old
+  failure history is never reset or deleted. Its training attempt is never
+  reissued here.
 - The per-pass limit applies only to cells that are actually attempted, so
   validated cells do not consume the budget and later cells cannot starve.
 """
@@ -75,11 +78,19 @@ def successful_keys(receipts_path: Path = RECEIPTS) -> set[str]:
     return {key for key, _attempt in successful_receipts(receipts_path)}
 
 
-def failure_counts(failures_path: Path = FAILURES) -> dict[str, int]:
-    counts: dict[str, int] = {}
+def failure_counts(failures_path: Path = FAILURES) -> dict[tuple[str, str], int]:
+    """Failure counts per exact ``(logical cell, attempt_id)``.
+
+    Failures of a prior attempt never block a new attempt of the same logical
+    cell: a new attempt has its own identity and its own diagnosis budget. The
+    append-only failure history is never reset or deleted; records without an
+    attempt id cannot be attributed and therefore block nothing.
+    """
+    counts: dict[tuple[str, str], int] = {}
     for record in load_jsonl(failures_path):
-        if record.get("ok") is False:
-            counts[record["key"]] = counts.get(record["key"], 0) + 1
+        if record.get("ok") is False and record.get("attempt_id"):
+            pair = (record["key"], str(record["attempt_id"]))
+            counts[pair] = counts.get(pair, 0) + 1
     return counts
 
 
@@ -131,7 +142,7 @@ def skip_reason(
     *,
     receipts: set[tuple[str, str]],
     lifecycle: set[tuple[str, str, int]],
-    failures: dict[str, int],
+    failures: dict[tuple[str, str], int],
 ) -> str | None:
     attempt_id = str(record.get("attempt_id") or "")
     if attempt_id and (record["key"], attempt_id) in receipts:
@@ -140,7 +151,7 @@ def skip_reason(
     run_name = record.get("run_name")
     if attempt_id and fold is not None and (run_name, attempt_id, fold) in lifecycle:
         return "lifecycle"
-    if failures.get(record["key"], 0) >= DIAGNOSIS_THRESHOLD:
+    if attempt_id and failures.get((record["key"], attempt_id), 0) >= DIAGNOSIS_THRESHOLD:
         return "needs_diagnosis"
     return None
 
@@ -151,7 +162,7 @@ def plan_pass(
     *,
     receipts: set[tuple[str, str]],
     lifecycle: set[tuple[str, str, int]],
-    failures: dict[str, int],
+    failures: dict[tuple[str, str], int],
     limit: int,
 ) -> tuple[list[dict], dict[str, int]]:
     """Deterministic attempt list plus skipped counters; limit applies to attempts."""

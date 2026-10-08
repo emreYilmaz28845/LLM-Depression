@@ -260,6 +260,62 @@ def test_lifecycle_scan_reads_exact_attempt_and_fold(tmp_path: Path) -> None:
     assert proofs == {("run_x", "att-9", 2)}
 
 
+def test_prior_attempt_failures_do_not_block_new_attempt(tmp_path: Path) -> None:
+    records = make_records(1)
+    record = records[0]
+    record["attempt_id"] = "att-new"
+    states = completed_states(records)
+    failures = tmp_path / "failures.jsonl"
+    for _ in range(2):
+        cells.append_jsonl(
+            failures,
+            {
+                "key": record["key"],
+                "attempt_id": "att-old",
+                "stage": "validate",
+                "ok": False,
+                "rc": 1,
+            },
+        )
+    summary = cells.run_pass(
+        records,
+        states,
+        receipts_path=tmp_path / "receipts.jsonl",
+        failures_path=failures,
+        lifecycle=set(),
+        collect=lambda item: 0,
+        validate=lambda item: 0,
+        limit=6,
+    )
+    assert summary["attempted"] == 1 and summary["skipped_diagnosis"] == 0
+    assert summary["validated_ok"] == 1
+    assert len(cells.load_jsonl(failures)) == 2  # append-only history preserved
+
+    # The current attempt's own two failures still move it to diagnosis.
+    for _ in range(2):
+        cells.append_jsonl(
+            failures,
+            {
+                "key": record["key"],
+                "attempt_id": "att-new",
+                "stage": "validate",
+                "ok": False,
+                "rc": 1,
+            },
+        )
+    blocked = cells.run_pass(
+        records,
+        states,
+        receipts_path=tmp_path / "fresh_receipts.jsonl",
+        failures_path=failures,
+        lifecycle=set(),
+        collect=lambda item: 0,
+        validate=lambda item: 0,
+        limit=6,
+    )
+    assert blocked["attempted"] == 0 and blocked["skipped_diagnosis"] == 1
+
+
 def test_limit_applies_only_to_attempted_cells(tmp_path: Path) -> None:
     records = make_records(10)
     states = completed_states(records)
