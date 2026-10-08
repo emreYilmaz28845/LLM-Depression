@@ -153,33 +153,70 @@ def audit_segmented(dataset: str, treatment: dict, control: dict, segment_second
 
 def runtime_window_audit(
     dataset: str, rows: list[dict], config_path: str, segment_seconds: float
-) -> tuple[dict, list[str], dict[str, str]]:
+) -> tuple[dict, list[str], dict[tuple[str, str], str]]:
     """Run the actual harmonized response-window builder on the real config.
 
-    Returns (details, issues, prompt_text_by_subject). Audio paths are read but
-    never written into the report.
+    Coverage is anchored to the source audio durations (sf.info frames /
+    samplerate) and to the manifest's natural-unit set, so truncated coverage
+    or an entirely omitted unit is detected. Returns (details, issues,
+    prompt_text_by_unit). Audio paths are read but never written into the report.
     """
     import math
 
-    from src.data.runtime import _build_harmonized_response_window_examples
+    import soundfile as sf
+
+    from src.data.runtime import (  # noqa: PLC0415
+        _build_harmonized_response_window_examples,
+        _harmonized_natural_unit_id,
+    )
 
     config = load_yaml_with_overrides(config_path, [])
     examples = _build_harmonized_response_window_examples(rows, config, "audit")
     issues: list[str] = []
-    units: dict[tuple[str, str], list[tuple[float, float]]] = {}
-    subject_texts: dict[str, set[str]] = {}
+    expected_units: dict[tuple[str, str], float] = {}
+    expected_subjects: dict[str, int] = {}
+    for row in rows:
+        subject = str(row["subject_id"])
+        expected_subjects[subject] = int(row["label"])
+        unit_id = _harmonized_natural_unit_id(row, dataset)
+        response_id = f"{subject}::{unit_id}"
+        paths = row.get("audio_paths") or [row.get("audio_path")]
+        path = next((item for item in paths if item), None)
+        if not path:
+            issues.append(f"{subject}: source row lacks an audio path")
+            continue
+        info = sf.info(str(path))
+        expected_units[(subject, response_id)] = float(info.frames / info.samplerate)
+    emitted_units: dict[tuple[str, str], list[tuple[float, float]]] = {}
+    emitted_subjects: dict[str, int] = {}
+    unit_texts: dict[tuple[str, str], set[str]] = {}
+    sample_ids: list[str] = []
     for example in examples:
         subject = str(example["subject_id"])
-        subject_texts.setdefault(subject, set()).add(str(example["prompt_text"]))
+        emitted_subjects[subject] = int(example["label"])
+        sample_ids.append(str(example["sample_id"]))
         starts = list(example.get("audio_start_times") or [])
         ends = list(example.get("audio_end_times") or [])
         if len(starts) != 1 or len(ends) != 1 or starts[0] is None or ends[0] is None:
             issues.append(f"{subject}: emitted window lacks explicit start/end times")
             continue
         unit = (subject, str(example.get("response_id", "")))
-        units.setdefault(unit, []).append((float(starts[0]), float(ends[0])))
+        emitted_units.setdefault(unit, []).append((float(starts[0]), float(ends[0])))
+        unit_texts.setdefault(unit, set()).add(str(example["prompt_text"]))
+    if len(sample_ids) != len(set(sample_ids)):
+        issues.append("emitted sample IDs are not unique")
+    if set(emitted_units) != set(expected_units):
+        missing = sorted(set(expected_units) - set(emitted_units))
+        extra = sorted(set(emitted_units) - set(expected_units))
+        issues.append(
+            f"emitted unit set differs from the manifest natural-unit set: "
+            f"missing {len(missing)}, extra {len(extra)}"
+        )
+    if emitted_subjects != expected_subjects:
+        issues.append("emitted subject/label set differs from the manifest")
     max_window = 0.0
-    for (subject, _unit_id), windows in sorted(units.items()):
+    anchored = 0
+    for (subject, _response_id), windows in sorted(emitted_units.items()):
         windows.sort()
         if abs(windows[0][0]) > 1e-6:
             issues.append(f"{subject}: first emitted window starts at {windows[0][0]}")
@@ -187,12 +224,21 @@ def runtime_window_audit(
             if abs(left[1] - right[0]) > 1e-6:
                 issues.append(f"{subject}: emitted windows are not contiguous")
                 break
-        duration = windows[-1][1]
-        expected = max(1, int(math.ceil(duration / float(segment_seconds))))
-        if len(windows) != expected:
+        source_duration = expected_units.get((subject, _response_id))
+        last_end = windows[-1][1]
+        if source_duration is None:
+            continue
+        if abs(last_end - source_duration) > 1e-3:
+            issues.append(
+                f"{subject}: emitted coverage {last_end} != source duration {source_duration}"
+            )
+        else:
+            anchored += 1
+        expected_count = max(1, int(math.ceil(source_duration / float(segment_seconds))))
+        if len(windows) != expected_count:
             issues.append(
                 f"{subject}: emitted {len(windows)} windows != "
-                f"ceil(duration/{segment_seconds})={expected}"
+                f"ceil(source duration/{segment_seconds})={expected_count}"
             )
         for start, end in windows:
             length = end - start
@@ -200,18 +246,21 @@ def runtime_window_audit(
             if length <= 0 or length > float(segment_seconds) + 1e-6:
                 issues.append(f"{subject}: emitted window length {length} outside (0, {segment_seconds}]")
                 break
-    for subject, texts in sorted(subject_texts.items()):
+    for (subject, _response_id), texts in sorted(unit_texts.items()):
         if len(texts) != 1:
-            issues.append(f"{subject}: subject examples disagree on the rendered prompt text")
+            issues.append(f"{subject}: unit examples disagree on the rendered prompt text")
     return (
         {
             "examples": len(examples),
-            "units": len(units),
-            "subjects": len(subject_texts),
+            "units": len(emitted_units),
+            "expected_units": len(expected_units),
+            "coverage_anchored_units": anchored,
+            "subjects": len(emitted_subjects),
+            "unique_sample_ids": len(sample_ids) == len(set(sample_ids)),
             "max_window_seconds": round(max_window, 6),
         },
         issues,
-        {subject: next(iter(texts)) for subject, texts in subject_texts.items()},
+        {unit: next(iter(texts)) for unit, texts in unit_texts.items()},
     )
 
 
@@ -246,12 +295,12 @@ def audit_flat(
     issues.extend(issues_15)
     issues.extend(issues_30)
     if texts_15 != texts_30:
-        differing_subjects = sorted(
-            subject
-            for subject in set(texts_15) | set(texts_30)
-            if texts_15.get(subject) != texts_30.get(subject)
+        differing_units = sorted(
+            unit
+            for unit in set(texts_15) | set(texts_30)
+            if texts_15.get(unit) != texts_30.get(unit)
         )
-        issues.append(f"runtime prompt text differs for {len(differing_subjects)} subjects")
+        issues.append(f"runtime prompt text differs for {len(differing_units)} units")
     return {
         "rows": len(rows_15),
         "identical_rows": len(rows_15) - differing,
