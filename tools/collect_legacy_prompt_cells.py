@@ -3,11 +3,13 @@
 
 Correctness rules:
 
-- A fully completed fit is skipped only on authoritative evidence: a durable
-  successful validation receipt (append-only JSONL written after ``validate``
-  returned 0) or the managed lifecycle state ``LOCALLY_VALIDATED`` /
-  ``REPORTABLE`` in the local fold ``status.json``. Claimed log text is never
-  enough.
+- A fully completed fit is skipped only on authoritative evidence for the
+  exact current attempt: a durable validation receipt whose ``(logical cell,
+  attempt_id)`` matches, or a managed ``status.json`` whose own ``attempt_id``
+  and ``fold`` match the record and whose state is ``LOCALLY_VALIDATED`` /
+  ``REPORTABLE``. A receipt from a prior attempt, or a lifecycle sidecar that
+  cannot prove the exact attempt and fold, never causes a skip. Claimed log
+  text is never enough.
 - Collect success and validation success are tracked separately. A fit counts
   as validated only when both succeeded; a failed collect or validate is
   recorded in an append-only failure ledger with its return code and tail.
@@ -53,12 +55,24 @@ def append_jsonl(path: Path, record: dict) -> None:
         handle.write(json.dumps(record) + "\n")
 
 
-def successful_keys(receipts_path: Path = RECEIPTS) -> set[str]:
+def successful_receipts(receipts_path: Path = RECEIPTS) -> set[tuple[str, str]]:
+    """Successful receipts as exact ``(logical cell, attempt id)`` pairs.
+
+    A receipt without an attempt id cannot prove which delivery was validated
+    and is therefore never usable for skipping.
+    """
     return {
-        record["key"]
+        (record["key"], str(record["attempt_id"]))
         for record in load_jsonl(receipts_path)
-        if record.get("stage") == "validate" and record.get("ok") is True
+        if record.get("stage") == "validate"
+        and record.get("ok") is True
+        and record.get("attempt_id")
     }
+
+
+def successful_keys(receipts_path: Path = RECEIPTS) -> set[str]:
+    """Logical cells with at least one successful validation receipt (reported only)."""
+    return {key for key, _attempt in successful_receipts(receipts_path)}
 
 
 def failure_counts(failures_path: Path = FAILURES) -> dict[str, int]:
@@ -69,17 +83,27 @@ def failure_counts(failures_path: Path = FAILURES) -> dict[str, int]:
     return counts
 
 
-def lifecycle_validated(run_root: Path = RUN_ROOT) -> set[str]:
-    """Run names whose managed lifecycle sidecar is already validated."""
-    validated: set[str] = set()
+def lifecycle_validated(run_root: Path = RUN_ROOT) -> set[tuple[str, str, int]]:
+    """Validated lifecycle proofs as exact ``(run name, attempt id, fold)``.
+
+    The managed fold ``status.json`` is authoritative: it stores its own
+    ``attempt_id`` and ``fold``. A sidecar that is validated but lacks either
+    field, or that belongs to a different attempt, never causes a skip.
+    """
+    proofs: set[tuple[str, str, int]] = set()
     for status in run_root.glob("*/*/*/fold_*/status.json"):
         try:
-            state = json.loads(status.read_text(encoding="utf-8")).get("state")
+            data = json.loads(status.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if state in VALIDATED_STATES:
-            validated.add(status.parents[1].name)
-    return validated
+        if data.get("state") not in VALIDATED_STATES:
+            continue
+        attempt_id = data.get("attempt_id")
+        fold = data.get("fold")
+        if attempt_id is None or fold is None:
+            continue
+        proofs.add((status.parents[1].name, str(attempt_id), int(fold)))
+    return proofs
 
 
 def fold_number(key: str) -> int | None:
@@ -105,15 +129,16 @@ def fully_completed(records: list[dict], states: dict[str, str]) -> list[dict]:
 def skip_reason(
     record: dict,
     *,
-    receipts: set[str],
-    lifecycle: set[str],
+    receipts: set[tuple[str, str]],
+    lifecycle: set[tuple[str, str, int]],
     failures: dict[str, int],
 ) -> str | None:
-    if record["key"] in receipts:
+    attempt_id = str(record.get("attempt_id") or "")
+    if attempt_id and (record["key"], attempt_id) in receipts:
         return "receipt"
-    run_name = record.get("run_name")
     fold = fold_number(record["key"])
-    if run_name in lifecycle and fold is not None:
+    run_name = record.get("run_name")
+    if attempt_id and fold is not None and (run_name, attempt_id, fold) in lifecycle:
         return "lifecycle"
     if failures.get(record["key"], 0) >= DIAGNOSIS_THRESHOLD:
         return "needs_diagnosis"
@@ -124,8 +149,8 @@ def plan_pass(
     records: list[dict],
     states: dict[str, str],
     *,
-    receipts: set[str],
-    lifecycle: set[str],
+    receipts: set[tuple[str, str]],
+    lifecycle: set[tuple[str, str, int]],
     failures: dict[str, int],
     limit: int,
 ) -> tuple[list[dict], dict[str, int]]:
@@ -155,12 +180,12 @@ def run_pass(
     *,
     receipts_path: Path,
     failures_path: Path,
-    lifecycle: set[str],
+    lifecycle: set[tuple[str, str, int]],
     collect: Callable[[dict], int],
     validate: Callable[[dict], int],
     limit: int,
 ) -> dict[str, int]:
-    receipts = successful_keys(receipts_path)
+    receipts = successful_receipts(receipts_path)
     failures = failure_counts(failures_path)
     to_process, counters = plan_pass(
         records,
