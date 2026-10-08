@@ -354,3 +354,131 @@ def test_parse_delivered_job_ids_handles_head_output() -> None:
         "extract_id:5001": "5001",
         "classifier_id:5002": "5002",
     }
+
+
+def _run_and_read_reservations(paths: dict, command: list[str]) -> list[dict]:
+    with pytest.raises(admission.AdmissionError):
+        admission.run_submit(
+            command,
+            jobs_this_submit=2,
+            wave_fits=1,
+            kind="fit",
+            attempt_hint=None,
+            submit_timeout=30,
+            **paths,
+        )
+    return admission.read_reservations(paths["reservations_path"])
+
+
+def test_duplicate_job_ids_stay_uncertain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _write_sources(tmp_path)
+    monkeypatch.setattr(admission, "run_ssh", _fake_ssh(queue="", sacct=""))
+    command = [
+        sys.executable,
+        "-c",
+        "print(\"submitted jobs: {'train': '9001', 'best_eval': '9001'}\")",
+    ]
+    entries = _run_and_read_reservations(paths, command)
+    assert [entry["event"] for entry in entries] == ["reserved", "uncertain"]
+    record = entries[-1]
+    assert record["job_ids"] == {"train": "9001", "best_eval": "9001"}
+    assert record["proof"] == {
+        "expected": 2,
+        "parsed": 2,
+        "unique": 1,
+        "numeric": True,
+        "rc": 0,
+    }
+    assert "duplicate job ids" in record["error"]
+    assert admission.snapshot(**paths)["reserved_jobs"] == 2
+
+
+def test_oversized_delivery_stays_uncertain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _write_sources(tmp_path)
+    monkeypatch.setattr(admission, "run_ssh", _fake_ssh(queue="", sacct=""))
+    command = [
+        sys.executable,
+        "-c",
+        "print(\"submitted jobs: {'train': '9001', 'best_eval': '9002', "
+        "'extra': '9003'}\")",
+    ]
+    entries = _run_and_read_reservations(paths, command)
+    assert [entry["event"] for entry in entries] == ["reserved", "uncertain"]
+    record = entries[-1]
+    assert record["proof"]["parsed"] == 3
+    assert record["proof"]["unique"] == 3
+    assert "oversized delivery 3 for expected 2" in record["error"]
+    assert admission.snapshot(**paths)["reserved_jobs"] == 2
+
+
+def test_short_delivery_stays_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _write_sources(tmp_path)
+    monkeypatch.setattr(admission, "run_ssh", _fake_ssh(queue="", sacct=""))
+    command = [
+        sys.executable,
+        "-c",
+        "print(\"submitted jobs: {'train': '9001'}\")",
+    ]
+    entries = _run_and_read_reservations(paths, command)
+    assert [entry["event"] for entry in entries] == ["reserved", "partial"]
+    assert entries[-1]["proof"]["parsed"] == 1
+    assert "short delivery 1 of 2" in entries[-1]["error"]
+    assert admission.snapshot(**paths)["reserved_jobs"] == 2
+
+
+def test_non_numeric_job_id_stays_uncertain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _write_sources(tmp_path)
+    monkeypatch.setattr(admission, "run_ssh", _fake_ssh(queue="", sacct=""))
+    command = [
+        sys.executable,
+        "-c",
+        "print(\"submitted jobs: {'train': 'abc123', 'best_eval': '9002'}\")",
+    ]
+    entries = _run_and_read_reservations(paths, command)
+    assert [entry["event"] for entry in entries] == ["reserved", "uncertain"]
+    assert "non-numeric job id" in entries[-1]["error"]
+    assert entries[-1]["proof"]["numeric"] is False
+
+
+def test_reconcile_compares_distinct_ids_to_reserved_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _write_sources(tmp_path)
+    admission.append_reservation(
+        paths["reservations_path"],
+        {
+            "event": "reserved",
+            "reservation_id": "r3",
+            "at_utc": "2026-10-08T00:00:00Z",
+            "kind": "fit",
+            "jobs_reserved": 2,
+        },
+    )
+    admission.append_reservation(
+        paths["reservations_path"],
+        {
+            "event": "partial",
+            "reservation_id": "r3",
+            "at_utc": "2026-10-08T00:00:01Z",
+            "job_ids": {"train": "7001", "best_eval": "7001"},
+            "error": "duplicate job ids",
+        },
+    )
+    monkeypatch.setattr(admission, "run_ssh", _fake_ssh(queue="", sacct="7001|FAILED\n"))
+    results = admission.reconcile(
+        paths["reservations_path"],
+        reservation_id=None,
+        manual_note=None,
+        scheduler=paths["scheduler"],
+        user=paths["user"],
+    )
+    assert results[0]["resolution"] == "still active"
+    assert admission.snapshot(**paths)["reserved_jobs"] == 2

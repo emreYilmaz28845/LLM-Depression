@@ -450,7 +450,19 @@ def run_submit(
         ) from exc
     output = (result.stdout or "") + "\n" + (result.stderr or "")
     delivered = parse_delivered_job_ids(output)
-    if result.returncode == 0 and len(delivered) >= jobs_this_submit * wave_fits:
+    expected = jobs_this_submit * wave_fits
+    values = list(delivered.values())
+    unique_ids = set(values)
+    numeric = all(job_id.isdigit() for job_id in values)
+    duplicates = len(values) != len(unique_ids)
+    oversized = len(values) > expected
+    proof_ok = (
+        result.returncode == 0
+        and len(values) == expected
+        and len(unique_ids) == expected
+        and numeric
+    )
+    if proof_ok:
         append_reservation(
             reservations_path,
             {
@@ -458,11 +470,36 @@ def run_submit(
                 "reservation_id": reservation_id,
                 "at_utc": _now(),
                 "job_ids": delivered,
+                "proof": {
+                    "expected": expected,
+                    "parsed": len(values),
+                    "unique": len(unique_ids),
+                    "numeric": numeric,
+                    "rc": result.returncode,
+                },
             },
         )
         print(output.rstrip())
         return 0
-    event = "partial" if delivered else "uncertain"
+    reasons: list[str] = []
+    if result.returncode != 0:
+        reasons.append(f"rc={result.returncode}")
+    if duplicates:
+        reasons.append("duplicate job ids")
+    if oversized:
+        reasons.append(f"oversized delivery {len(values)} for expected {expected}")
+    if len(values) < expected:
+        reasons.append(f"short delivery {len(values)} of {expected}")
+    if not numeric:
+        reasons.append("non-numeric job id")
+    # Only a short delivery of unique numeric ids is a partial known subset;
+    # duplicate, oversized or malformed deliveries are not proven legs and stay
+    # uncertain. Every failure keeps the full reservation counted.
+    event = (
+        "partial"
+        if values and numeric and not duplicates and not oversized
+        else "uncertain"
+    )
     append_reservation(
         reservations_path,
         {
@@ -470,13 +507,20 @@ def run_submit(
             "reservation_id": reservation_id,
             "at_utc": _now(),
             "job_ids": delivered,
-            "error": f"submit rc={result.returncode}; delivered {len(delivered)} of "
-            f"{jobs_this_submit * wave_fits}",
+            "proof": {
+                "expected": expected,
+                "parsed": len(values),
+                "unique": len(unique_ids),
+                "numeric": numeric,
+                "rc": result.returncode,
+            },
+            "error": "; ".join(reasons) or "delivery not proven",
         },
     )
     print(output.rstrip(), file=sys.stderr)
     raise AdmissionError(
-        f"submit {event} delivery; reservation {reservation_id} stays counted until reconciled"
+        f"submit {event} delivery ({'; '.join(reasons) or 'not proven'}); "
+        f"reservation {reservation_id} stays counted until reconciled"
     )
 
 
@@ -496,7 +540,9 @@ def reconcile(
             continue
         if record.get("status") not in RESERVATION_ACTIVE_STATUSES:
             continue
-        known_ids = [str(job_id) for job_id in (record.get("job_ids") or {}).values() if job_id]
+        distinct_ids = sorted(
+            {str(job_id) for job_id in (record.get("job_ids") or {}).values() if job_id}
+        )
         if manual_note and (reservation_id is None or rid == reservation_id):
             append_reservation(
                 reservations_path,
@@ -509,14 +555,14 @@ def reconcile(
             )
             results.append({"reservation_id": rid, "resolution": "manual", "note": manual_note})
             continue
-        if not known_ids:
+        if not distinct_ids:
             results.append(
                 {"reservation_id": rid, "resolution": "unresolved", "reason": "no job ids known"}
             )
             continue
-        states, _ = resolve_states(sorted(set(known_ids)), scheduler=scheduler, user=user)
-        if all(states.get(job_id) in TERMINAL_STATES for job_id in known_ids) and (
-            int(record.get("jobs_reserved") or 0) <= len(known_ids)
+        states, _ = resolve_states(distinct_ids, scheduler=scheduler, user=user)
+        if all(states.get(job_id) in TERMINAL_STATES for job_id in distinct_ids) and (
+            int(record.get("jobs_reserved") or 0) <= len(distinct_ids)
         ):
             append_reservation(
                 reservations_path,
@@ -524,8 +570,8 @@ def reconcile(
                     "event": "reconciled",
                     "reservation_id": rid,
                     "at_utc": _now(),
-                    "resolved_ids": known_ids,
-                    "states": {job_id: states.get(job_id) for job_id in known_ids},
+                    "resolved_ids": distinct_ids,
+                    "states": {job_id: states.get(job_id) for job_id in distinct_ids},
                 },
             )
             results.append({"reservation_id": rid, "resolution": "terminal", "states": states})
@@ -534,7 +580,7 @@ def reconcile(
                 {
                     "reservation_id": rid,
                     "resolution": "still active",
-                    "states": {job_id: states.get(job_id) for job_id in known_ids},
+                    "states": {job_id: states.get(job_id) for job_id in distinct_ids},
                 }
             )
     return results
