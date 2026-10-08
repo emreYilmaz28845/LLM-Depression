@@ -151,11 +151,79 @@ def audit_segmented(dataset: str, treatment: dict, control: dict, segment_second
     }, issues
 
 
-def audit_flat(dataset: str, treatment: dict, control: dict, segment_seconds: float) -> tuple[dict, list[str]]:
+def runtime_window_audit(
+    dataset: str, rows: list[dict], config_path: str, segment_seconds: float
+) -> tuple[dict, list[str], dict[str, str]]:
+    """Run the actual harmonized response-window builder on the real config.
+
+    Returns (details, issues, prompt_text_by_subject). Audio paths are read but
+    never written into the report.
+    """
     import math
 
-    import soundfile as sf
+    from src.data.runtime import _build_harmonized_response_window_examples
 
+    config = load_yaml_with_overrides(config_path, [])
+    examples = _build_harmonized_response_window_examples(rows, config, "audit")
+    issues: list[str] = []
+    units: dict[tuple[str, str], list[tuple[float, float]]] = {}
+    subject_texts: dict[str, set[str]] = {}
+    for example in examples:
+        subject = str(example["subject_id"])
+        subject_texts.setdefault(subject, set()).add(str(example["prompt_text"]))
+        starts = list(example.get("audio_start_times") or [])
+        ends = list(example.get("audio_end_times") or [])
+        if len(starts) != 1 or len(ends) != 1 or starts[0] is None or ends[0] is None:
+            issues.append(f"{subject}: emitted window lacks explicit start/end times")
+            continue
+        unit = (subject, str(example.get("response_id", "")))
+        units.setdefault(unit, []).append((float(starts[0]), float(ends[0])))
+    max_window = 0.0
+    for (subject, _unit_id), windows in sorted(units.items()):
+        windows.sort()
+        if abs(windows[0][0]) > 1e-6:
+            issues.append(f"{subject}: first emitted window starts at {windows[0][0]}")
+        for left, right in zip(windows, windows[1:]):
+            if abs(left[1] - right[0]) > 1e-6:
+                issues.append(f"{subject}: emitted windows are not contiguous")
+                break
+        duration = windows[-1][1]
+        expected = max(1, int(math.ceil(duration / float(segment_seconds))))
+        if len(windows) != expected:
+            issues.append(
+                f"{subject}: emitted {len(windows)} windows != "
+                f"ceil(duration/{segment_seconds})={expected}"
+            )
+        for start, end in windows:
+            length = end - start
+            max_window = max(max_window, length)
+            if length <= 0 or length > float(segment_seconds) + 1e-6:
+                issues.append(f"{subject}: emitted window length {length} outside (0, {segment_seconds}]")
+                break
+    for subject, texts in sorted(subject_texts.items()):
+        if len(texts) != 1:
+            issues.append(f"{subject}: subject examples disagree on the rendered prompt text")
+    return (
+        {
+            "examples": len(examples),
+            "units": len(units),
+            "subjects": len(subject_texts),
+            "max_window_seconds": round(max_window, 6),
+        },
+        issues,
+        {subject: next(iter(texts)) for subject, texts in subject_texts.items()},
+    )
+
+
+def audit_flat(
+    dataset: str,
+    treatment: dict,
+    control: dict,
+    treatment_config: str,
+    control_config: str,
+    segment_seconds: float,
+    control_segment_seconds: float,
+) -> tuple[dict, list[str]]:
     issues: list[str] = []
     rows_15 = {str(row["sample_id"]): row for row in treatment["rows"]}
     rows_30 = {str(row["sample_id"]): row for row in control["rows"]}
@@ -168,30 +236,28 @@ def audit_flat(dataset: str, treatment: dict, control: dict, segment_seconds: fl
         if left != right:
             differing += 1
     if differing:
-        issues.append(f"{differing} rows differ between the arms for {dataset}")
-    # Boundary/coverage of the treatment window plan on the real audio: the
-    # equal_duration rule partitions each unit into ceil(duration / 15)
-    # contiguous windows, each at most 15 seconds, covering the whole unit.
-    checked = 0
-    for sample_id, row in sorted(rows_15.items()):
-        paths = row.get("audio_paths") or [row.get("audio_path")]
-        path = next((item for item in paths if item), None)
-        if not path:
-            issues.append(f"{sample_id}: no audio path for the window-plan check")
-            continue
-        info = sf.info(str(path))
-        duration = float(info.frames / info.samplerate)
-        count = max(1, int(math.ceil(duration / float(segment_seconds))))
-        window = duration / count
-        if count > 1 and window > float(segment_seconds) + 1e-6:
-            issues.append(f"{sample_id}: window {window} exceeds {segment_seconds}")
-        if count * window + 1e-6 < duration:
-            issues.append(f"{sample_id}: windows do not cover the unit duration")
-        checked += 1
+        issues.append(f"{differing} manifest rows differ between the arms for {dataset}")
+    details_15, issues_15, texts_15 = runtime_window_audit(
+        dataset, treatment["rows"], treatment_config, segment_seconds
+    )
+    details_30, issues_30, texts_30 = runtime_window_audit(
+        dataset, control["rows"], control_config, control_segment_seconds
+    )
+    issues.extend(issues_15)
+    issues.extend(issues_30)
+    if texts_15 != texts_30:
+        differing_subjects = sorted(
+            subject
+            for subject in set(texts_15) | set(texts_30)
+            if texts_15.get(subject) != texts_30.get(subject)
+        )
+        issues.append(f"runtime prompt text differs for {len(differing_subjects)} subjects")
     return {
         "rows": len(rows_15),
         "identical_rows": len(rows_15) - differing,
-        "window_plan_checked": checked,
+        "runtime_treatment": details_15,
+        "runtime_control": details_30,
+        "runtime_texts_equal": texts_15 == texts_30,
     }, issues
 
 
@@ -236,15 +302,22 @@ def main() -> int:
         ]
         issues.append(f"rendered subject prompt text differs: {differing[:10]}")
 
-    segment_seconds = float(
-        (load_yaml_with_overrides(args.treatment_config, []).get("data") or {}).get(
-            "segment_seconds", 15.0
-        )
-    )
+    treatment_parsed = load_yaml_with_overrides(args.treatment_config, [])
+    control_parsed = load_yaml_with_overrides(args.control_config, [])
+    segment_seconds = float((treatment_parsed.get("data") or {}).get("segment_seconds", 15.0))
+    control_segment_seconds = float((control_parsed.get("data") or {}).get("segment_seconds", 30.0))
     if dataset in SEGMENTED_DATASETS:
         details, detail_issues = audit_segmented(dataset, treatment, control, segment_seconds)
     else:
-        details, detail_issues = audit_flat(dataset, treatment, control, segment_seconds)
+        details, detail_issues = audit_flat(
+            dataset,
+            treatment,
+            control,
+            args.treatment_config,
+            args.control_config,
+            segment_seconds,
+            control_segment_seconds,
+        )
     issues.extend(detail_issues)
 
     report = {
