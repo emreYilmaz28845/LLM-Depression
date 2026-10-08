@@ -36,7 +36,7 @@ esac
 PERMANENT=/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression
 POOLED_RUNTIME=/gpfs/projects/etur92/ozu647717/AudioLLM/experiment_runtime/feat-qwen3-turkish-pooled-defaults-20260929
 RUNTIME=/gpfs/projects/etur92/ozu647717/AudioLLM/experiment_runtime/feat-qwen3-androids-official-folds-20261008
-REGISTRY_DIR="$RUNTIME/registries"
+REGISTRY_DIR="${REGISTRY_DIR:-$RUNTIME/registries}"
 LOG_ROOT="$RUNTIME/logs/symmetric_merged"
 CAMPAIGN_BASE=qwen3_androids_official_folds_20261008
 
