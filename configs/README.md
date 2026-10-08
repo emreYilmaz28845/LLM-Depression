@@ -352,7 +352,7 @@ Validators and generation:
 ```bash
 python scripts/build_canonical_backend_configs.py --check      # 12 canonical + 3 pooled defaults
 python scripts/build_qwen3_english_configs.py --check          # 8 English cells + the default matrix
-python scripts/build_qwen3_pooled_merged_configs.py --check    # the 4 merged contracts
+python scripts/build_qwen3_pooled_merged_configs.py --check    # the 5 merged contracts
 python tools/qwen3_pooled_defaults.py --check                  # the selection map and readiness
 ```
 

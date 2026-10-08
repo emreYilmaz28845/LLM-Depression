@@ -70,7 +70,7 @@ fi
 mkdir -p "$LOG_ROOT"
 exec > >(tee -a "$LOG_ROOT/postprocess-${SLURM_JOB_ID}.out")
 exec 2> >(tee -a "$LOG_ROOT/postprocess-${SLURM_JOB_ID}.err" >&2)
-export PROJECT_ROOT PYTHONHASHSEED="${PYTHONHASHSEED:-0}"
+export PROJECT_ROOT PYTHONHASHSEED="${PYTHONHASHSEED:-0}" PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 export PYTHONPATH="$PROJECT_ROOT/.deps/qwen_hidden:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 CMD=("$PYTHON_BIN" -m src.merged.postprocess \
     --config "$CONFIG" --stage "$STAGE" --fold "$FOLD" --run-id "$RUN_ID" \

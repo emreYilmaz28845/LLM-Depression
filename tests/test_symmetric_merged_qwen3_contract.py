@@ -28,6 +28,7 @@ from src.merged.configuration import (
     validate_evaluation_contract,
     validate_merged_resources,
 )
+from src.merged.runtime import load_merged_config
 
 ROOT = Path(__file__).resolve().parents[1]
 MERGED = ROOT / "configs/experiments/merged"
@@ -420,3 +421,88 @@ def test_two_node_train_job_requests_both_nodes_and_exports_the_rendezvous(monke
     export = next(argument for argument in argv if argument.startswith("--export="))
     assert "NNODES=2" in export
     assert "NPROC_PER_NODE=4" in export
+
+
+def test_pooled_contracts_declare_explicit_split_and_head_seeds() -> None:
+    """The approved three-seed contract fixes both seeds in every contract.
+
+    The split seed must not follow the top-level training seed (that would
+    change fold/inner-validation membership between seeds), and the classifier
+    seed must stay 1337 for every parent checkpoint. Both are declared in the
+    generated contracts so no resolver falls back.
+    """
+
+    from src.merged.heads import resolve_fixed_head_seed
+    from src.merged.protocol import resolve_protocol_split_seed
+
+    for name, path in POOLED.items():
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert raw["protocol_settings"]["split_seed"] == 1337, name
+        assert raw["heads"]["fixed_seed"] == 1337, name
+        resolved = load_merged_config(
+            path,
+            [
+                "--set=seed=7",
+                "--set=heads.fixed_seed=1337",
+                "--set=protocol_settings.split_seed=1337",
+            ],
+        )
+        assert resolve_protocol_split_seed(resolved) == 1337, name
+        assert resolve_fixed_head_seed(resolved) == 1337, name
+
+
+def test_pooled_contract_generator_reproduces_the_disk_contracts(tmp_path) -> None:
+    """The supported generator workflow must stay the source of truth.
+
+    ``--check`` compares the derived contracts with the checked-in files and
+    fails on any drift outside the allowed diff, so this catches an edit that
+    bypasses the generator (including a future accidental recipe change).
+    """
+
+    from scripts import build_qwen3_pooled_merged_configs as merged_configs
+
+    assert merged_configs.main(["--check", "--audit-output", str(tmp_path / "audit.json")]) == 0
+
+
+def test_submit_job_exports_the_project_local_hidden_dependencies(monkeypatch) -> None:
+    """Head jobs must carry the explicit QWEN_HIDDEN_DEPS path through sbatch.
+
+    The tracked deployment does not include ``.deps/``; an unexported shell
+    variable would leave the head worker without xgboost/scikit-learn.
+    """
+
+    import scripts.submit_symmetric_merged as planner
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_check_output(arguments, cwd=None, text=None):
+        captured["argv"] = list(arguments)
+        return "12345\n"
+
+    monkeypatch.setattr(planner.subprocess, "check_output", fake_check_output)
+    monkeypatch.setenv(
+        "QWEN_HIDDEN_DEPS",
+        "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/.deps/qwen_hidden",
+    )
+    job = {
+        "kind": "head",
+        "config": "/deployed/config.yaml",
+        "stage": "cv",
+        "fold": 0,
+        "run_id": "r",
+        "modality": "text_only",
+        "model_backend": "qwen38",
+        "resource": {"gpus": 0, "cpus": 20, "time": 10},
+    }
+    job_id = planner._submit_job(
+        job,
+        worker=Path("scripts/run_symmetric_merged_head_slurm.sh"),
+        dependency_id=None,
+        throttle_dependency_id=None,
+    )
+    assert job_id == "12345"
+    export = next(argument for argument in captured["argv"] if str(argument).startswith("--export="))
+    assert (
+        "QWEN_HIDDEN_DEPS=/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/.deps/qwen_hidden"
+        in export
+    )

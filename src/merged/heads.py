@@ -542,11 +542,14 @@ def run_merged_heads(
     )
     if method is not None and output_root_override is None:
         output_root = output_root / method
+    # The approved classifier seed is independent of the parent training seed.
+    seed = resolve_fixed_head_seed(merged_config)
     identity = {
         "schema_version": "symmetric_merged_heads_identity.v1",
         "stage": stage,
         "optuna_policy_stage": str(optuna_stage or stage),
         "fold": int(fold),
+        "head_seed": int(seed),
         "run_id": run_id,
         "feature_metadata": str(feature_dir / "feature_metadata.json"),
         "feature_dimension": int(train_x.shape[1]),
@@ -602,7 +605,6 @@ def run_merged_heads(
     )
     save_json(assignments, output_root / "inner_folds.json")
     y_train = np.asarray([int(row["label"]) for row in train_rows], dtype=np.int64)
-    seed = resolve_fixed_head_seed(merged_config)
     method_summaries: dict[str, Any] = {}
     for method_name in selected_methods:
         if expected_trial_count == 0 and method_name == "xgb_optuna":
@@ -612,7 +614,14 @@ def run_merged_heads(
         if method_name == "logreg":
             estimator = _new_logreg(seed)
             weight_audit = _fit_weighted(estimator, train_x, y_train, train_rows)
-            params = {"C": 1.0, "standardized": True}
+            params = {
+                "C": 1.0,
+                "standardized": True,
+                "solver": "liblinear",
+                "max_iter": 5000,
+                "class_weight": None,
+                "random_state": int(seed),
+            }
         elif method_name == FIXED_HEAD:
             params = fixed_xgb_params(merged_config, seed, int(((merged_config.get("heads") or {}).get("optuna") or {}).get("xgb_threads", 20)))
             estimator = _new_xgb(params)
@@ -639,10 +648,19 @@ def run_merged_heads(
         write_jsonl(all_prediction_rows, method_dir / "predictions_subject_level.jsonl")
         _write_csv(all_prediction_rows, method_dir / "predictions_subject_level.csv")
         save_json(metrics, method_dir / "metrics_by_dataset.json")
+        classifier_provenance: dict[str, Any] = {
+            "head_seed": int(seed),
+            "random_state": int(seed),
+        }
+        if method_name == "logreg":
+            # The merged contract keeps natural class prevalence; record the
+            # resolved class_weight explicitly instead of relying on a default.
+            classifier_provenance["class_weight"] = None
         save_json(
             {
                 "method": method_name,
                 "params": params,
+                **classifier_provenance,
                 "weight_audit": weight_audit,
                 "threshold": float((merged_config.get("protocol_settings") or {}).get("threshold", 0.5)),
                 "input_dimension": int(train_x.shape[1]),
