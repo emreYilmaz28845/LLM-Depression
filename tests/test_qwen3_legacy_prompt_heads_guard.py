@@ -338,6 +338,7 @@ def test_maybe_refresh_plan_skips_without_lane_planner(tmp_path: Path, monkeypat
     def boom(*args, **kwargs):
         raise AssertionError("no subprocess may run without the lane planner")
 
+    monkeypatch.setattr(guard, "TREATMENT_PLANNER", tmp_path / "missing_planner.py")
     monkeypatch.setattr(guard.subprocess, "run", boom)
     attempted = guard.maybe_refresh_plan(
         {("daic_text_only", 7, 0): "att"},
@@ -373,6 +374,35 @@ def test_maybe_refresh_plan_uses_only_the_lane_planner(tmp_path: Path, monkeypat
         runtime_cache_root="/gpfs/example/heads_cache",
         refresh_interval=3600,
     )
-    assert attempted is True and len(commands) == 1
+    assert attempted is True and len(commands) == 2
     assert str(planner) in commands[0]
-    assert not any("qwen3_heads_matrix.py" in str(token) for token in commands[0])
+    assert any("qwen3_heads_dispatch.py" in str(token) for token in commands[1])
+    assert "plan" in commands[1]
+    assert not any("qwen3_heads_matrix.py" in str(token) for token in commands[0] + commands[1])
+
+
+def test_shared_plan_without_registry_key_is_eligible() -> None:
+    """The shared dispatch plan does not emit registry_key; the guard derives it."""
+    plan = {
+        "routes": [
+            {
+                "route_id": "d3tec_text_only",
+                "jobs": [
+                    {
+                        "seed": 7,
+                        "fold": 1,
+                        "parent_status": "resolved",
+                        "parent": {"attempt_id": "att-f1", "adapter_sha256": "abc"},
+                    }
+                ],
+            }
+        ]
+    }
+    jobs = guard.eligible_head_jobs(
+        plan,
+        {("d3tec_text_only", 7, 1): "att-f1"},
+        set(),
+        set(),
+        {"d3tec_text_only|7|1"},
+    )
+    assert [job["key"] for job in jobs] == ["d3tec_text_only|7|1"]

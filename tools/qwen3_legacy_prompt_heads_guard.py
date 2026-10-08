@@ -197,20 +197,35 @@ def maybe_refresh_plan(
             "(the generic control matrix is never used)"
         )
         return False
-    command = [
-        sys.executable,
-        str(TREATMENT_PLANNER),
-        "--emit-matrix",
-        str(matrix_path),
-        "--run-root",
-        str(run_root),
-        "--cache-root",
-        runtime_cache_root,
+    commands = [
+        # Step 1: lane-owned treatment-only planner with in-place GPFS proofs.
+        [
+            sys.executable,
+            str(TREATMENT_PLANNER),
+            "--emit-matrix",
+            str(matrix_path),
+            "--run-root",
+            str(run_root),
+            "--cache-root",
+            runtime_cache_root,
+        ],
+        # Step 2: shared dispatch plan over the treatment-only matrix emitted
+        # by step 1. The shared matrix inventory tool is never invoked here.
+        [
+            sys.executable,
+            "tools/qwen3_heads_dispatch.py",
+            "plan",
+            "--matrix",
+            str(matrix_path),
+            "--language",
+            "native",
+        ],
     ]
-    result = subprocess.run(command, cwd=LANE, capture_output=True, text=True, timeout=1800)
-    if result.returncode != 0:
-        print(f"treatment plan refresh failed rc={result.returncode}")
-        return False
+    for command in commands:
+        result = subprocess.run(command, cwd=LANE, capture_output=True, text=True, timeout=1800)
+        if result.returncode != 0:
+            print(f"plan refresh step failed rc={result.returncode}: {command[1]}")
+            return False
     stamp.write_text(json.dumps({"ts": int(time.time()), "validated": len(validated)}) + "\n", encoding="utf-8")
     return True
 
@@ -251,6 +266,10 @@ def eligible_head_jobs(
             # plan registry keys are route|seed|fold; normalize to the same cell
             key_cell = parse_cell(key or "")
             cell = key_cell if key_cell else cell
+            # Shared dispatch plans (and this lane's treatment planner output)
+            # do not necessarily carry an explicit registry_key; derive the
+            # canonical key from the route/seed/fold triple in that case.
+            key = key or f"{cell[0]}|{cell[1]}|{cell[2]}"
             if key in submitted_keys or key in recorded:
                 continue
             if approved_keys is not None and key not in approved_keys:
