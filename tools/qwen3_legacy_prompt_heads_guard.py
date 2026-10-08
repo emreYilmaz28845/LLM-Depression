@@ -44,6 +44,7 @@ PLAN = EVIDENCE / "head_dispatch_plan_v1.json"
 REGISTRY = EVIDENCE / "head_submissions.jsonl"
 LEDGER = EVIDENCE / "submissions.jsonl"
 HEAD_JOB_FIELDS = ("extract_job_id", "classifier_job_id")
+TREATMENT_PLANNER = LANE / "tools/qwen3_legacy_prompt_head_plan.py"
 RUNTIME_CACHE_ROOT = (
     "/gpfs/projects/etur92/ozu647717/AudioLLM/experiment_runtime/"
     "feat-qwen3-legacy-prompt-20261008/heads_cache"
@@ -187,34 +188,29 @@ def maybe_refresh_plan(
     stamp = evidence_dir / ".head_plan_refresh_stamp"
     if stamp.exists() and time.time() - stamp.stat().st_mtime < refresh_interval:
         return False
-    commands = [
-        [
-            sys.executable,
-            "tools/qwen3_heads_matrix.py",
-            "--scan-root",
-            str(run_root),
-            "--campaign-root",
-            str(run_root),
-            "--cache-root",
-            runtime_cache_root,
-            "--emit",
-            str(matrix_path),
-        ],
-        [
-            sys.executable,
-            "tools/qwen3_heads_dispatch.py",
-            "plan",
-            "--matrix",
-            str(matrix_path),
-            "--language",
-            "native",
-        ],
+    if not TREATMENT_PLANNER.exists():
+        # The generic shared matrix is a control-config/English inventory and
+        # must never overwrite the treatment plan; a lane-owned treatment
+        # planner is required before any refresh can happen.
+        print(
+            "lane-owned treatment planner unavailable; plan refresh skipped "
+            "(the generic control matrix is never used)"
+        )
+        return False
+    command = [
+        sys.executable,
+        str(TREATMENT_PLANNER),
+        "--emit-matrix",
+        str(matrix_path),
+        "--run-root",
+        str(run_root),
+        "--cache-root",
+        runtime_cache_root,
     ]
-    for command in commands:
-        result = subprocess.run(command, cwd=LANE, capture_output=True, text=True, timeout=1800)
-        if result.returncode != 0:
-            print(f"plan refresh step failed rc={result.returncode}: {command[1]}")
-            return False
+    result = subprocess.run(command, cwd=LANE, capture_output=True, text=True, timeout=1800)
+    if result.returncode != 0:
+        print(f"treatment plan refresh failed rc={result.returncode}")
+        return False
     stamp.write_text(json.dumps({"ts": int(time.time()), "validated": len(validated)}) + "\n", encoding="utf-8")
     return True
 

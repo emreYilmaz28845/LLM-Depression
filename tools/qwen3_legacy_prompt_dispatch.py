@@ -485,12 +485,19 @@ def run_wave(
     reconcile: Callable[[], tuple[int, int]],
     submit: Callable[[dict], dict],
     on_record: Callable[[dict], None] | None = None,
+    settled_provider: Callable[[], set[str]] | None = None,
 ) -> int:
-    """Submit up to ``max_fits`` fits; per-fit admission, no capacity double-count."""
+    """Submit up to ``max_fits`` fits; per-fit admission, no capacity double-count.
+
+    With ``settled_provider``, a key that became settled (delivered by another
+    route) while this wave was waiting is skipped without consuming budget.
+    """
     processed = 0
     for fit in fits:
         if processed >= max_fits:
             break
+        if settled_provider is not None and fit["key"] in settled_provider():
+            continue
         try:
             own, user = reconcile()
             per_fit_admission(own, user)
@@ -511,6 +518,40 @@ def run_wave(
     return processed
 
 
+def execute_locked_wave(
+    matrix_fits: list[dict],
+    *,
+    max_fits: int,
+    ledger_path: Path,
+    reconcile: Callable[[], tuple[int, int]],
+    on_record: Callable[[dict], None],
+    runner: Callable[..., int] = run_wave,
+    lock: Callable[[], object] = acquire_submit_lock,
+    settled: Callable[[Path], set[str]] = settled_keys,
+    submit: Callable[[dict], dict] | None = None,
+) -> int:
+    """Authoritative wave execution strictly inside the shared submit lock.
+
+    The settled/remaining list is computed *after* the exclusive lock is held,
+    so a direct fit CLI that waited behind a head/campaign pass can never
+    submit a stale list; ``run_wave`` additionally rechecks each key as it goes.
+    """
+    with lock():
+        settled_now = settled(ledger_path)
+        remaining = [fit for fit in matrix_fits if fit["key"] not in settled_now]
+        if not remaining:
+            print("no unsubmitted fits remain")
+            return 0
+        return runner(
+            remaining,
+            max_fits,
+            reconcile=reconcile,
+            submit=submit or submit_fit,
+            on_record=on_record,
+            settled_provider=lambda: settled(ledger_path),
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--max-fits", type=int, default=WAVE_HARD_CAP_FITS)
@@ -527,11 +568,6 @@ def main() -> int:
         return 2
 
     matrix = json.loads(Path(args.matrix).read_text(encoding="utf-8"))
-    settled = settled_keys(ledger_path)
-    remaining = [fit for fit in matrix["fits"] if fit["key"] not in settled]
-    if not remaining:
-        print("no unsubmitted fits remain")
-        return 0
 
     def reconcile() -> tuple[int, int]:
         job_ids, uncertain, unknown = own_job_ids(ledger_path)
@@ -544,17 +580,16 @@ def main() -> int:
             ledger.write(json.dumps(entry) + "\n")
 
     if not args.execute:
-        print(f"dry: {len(remaining)} unsubmitted fits, wave cap {args.max_fits}")
+        print(f"dry: wave cap {args.max_fits}, settled/remaining computed under lock")
         return 0
 
-    with acquire_submit_lock():
-        processed = run_wave(
-            remaining,
-            args.max_fits,
-            reconcile=reconcile,
-            submit=submit_fit,
-            on_record=record,
-        )
+    processed = execute_locked_wave(
+        matrix["fits"],
+        max_fits=args.max_fits,
+        ledger_path=ledger_path,
+        reconcile=reconcile,
+        on_record=record,
+    )
     print(f"wave complete: {processed} fits processed")
     return 0
 

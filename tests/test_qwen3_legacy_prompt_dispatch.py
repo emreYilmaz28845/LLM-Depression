@@ -307,6 +307,72 @@ def test_submit_lock_is_exclusive(tmp_path: Path) -> None:
         fcntl.flock(third, fcntl.LOCK_UN)
 
 
+def test_run_wave_rechecks_settled_keys() -> None:
+    fit_list = fits(3)
+    seen = {"calls": 0}
+
+    def provider():
+        seen["calls"] += 1
+        return {fit_list[1]["key"]} if seen["calls"] >= 2 else set()
+
+    order: list[str] = []
+    processed = dispatch.run_wave(
+        fit_list,
+        10,
+        reconcile=lambda: (0, 0),
+        submit=lambda fit: order.append(fit["key"]) or {"status": "submitted", "job_ids": {}},
+        settled_provider=provider,
+    )
+    assert order == [fit_list[0]["key"], fit_list[2]["key"]]
+    assert processed == 2
+
+
+def test_lock_wait_settlement_prevents_duplicate(tmp_path: Path) -> None:
+    ledger = tmp_path / "submissions.jsonl"
+    ledger.write_text("", encoding="utf-8")
+    fit_list = fits(2)
+    seen: list[str] = []
+    blocked_key = fit_list[1]["key"]
+
+    class FakeLock:
+        def __enter__(self):
+            # A competing route delivers fit B while this CLI waits for the lock.
+            with ledger.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "key": blocked_key,
+                            "status": "submitted",
+                            "job_ids": {"train": "11", "best_eval": "12"},
+                        }
+                    )
+                    + "\n"
+                )
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_runner(remaining, max_fits, *, reconcile, submit, on_record, settled_provider):
+        for fit in remaining:
+            if fit["key"] in settled_provider():
+                continue
+            seen.append(fit["key"])
+        return len(seen)
+
+    processed = dispatch.execute_locked_wave(
+        fit_list,
+        max_fits=10,
+        ledger_path=ledger,
+        reconcile=lambda: (0, 0),
+        on_record=lambda record: None,
+        runner=fake_runner,
+        lock=lambda: FakeLock(),
+    )
+    assert seen == [fit_list[0]["key"]]
+    assert processed == 1 and blocked_key not in seen
+
+
 def _roundtrip(tmp_path: Path, stdout: str, stderr: str = "", rc: int = 0):
     """submit -> append -> reconcile, the exact production path."""
     ledger = tmp_path / "submissions.jsonl"

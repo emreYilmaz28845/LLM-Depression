@@ -332,3 +332,47 @@ def test_maybe_refresh_plan_is_throttled(tmp_path: Path) -> None:
         refresh_interval=3600,
     )
     assert attempted is False  # fresh stamp: no rebuild subprocess
+
+
+def test_maybe_refresh_plan_skips_without_lane_planner(tmp_path: Path, monkeypatch) -> None:
+    def boom(*args, **kwargs):
+        raise AssertionError("no subprocess may run without the lane planner")
+
+    monkeypatch.setattr(guard.subprocess, "run", boom)
+    attempted = guard.maybe_refresh_plan(
+        {("daic_text_only", 7, 0): "att"},
+        plan_path=tmp_path / "missing_plan.json",
+        matrix_path=tmp_path / "matrix.json",
+        evidence_dir=tmp_path,
+        run_root=tmp_path,
+        runtime_cache_root="/gpfs/example/heads_cache",
+        refresh_interval=3600,
+    )
+    assert attempted is False
+
+
+def test_maybe_refresh_plan_uses_only_the_lane_planner(tmp_path: Path, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    planner = tmp_path / "planner.py"
+    planner.write_text("", encoding="utf-8")
+    monkeypatch.setattr(guard, "TREATMENT_PLANNER", planner)
+    commands: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        commands.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(guard.subprocess, "run", fake_run)
+    attempted = guard.maybe_refresh_plan(
+        {("daic_text_only", 7, 0): "att"},
+        plan_path=tmp_path / "missing_plan.json",
+        matrix_path=tmp_path / "matrix.json",
+        evidence_dir=tmp_path,
+        run_root=tmp_path,
+        runtime_cache_root="/gpfs/example/heads_cache",
+        refresh_interval=3600,
+    )
+    assert attempted is True and len(commands) == 1
+    assert str(planner) in commands[0]
+    assert not any("qwen3_heads_matrix.py" in str(token) for token in commands[0])
