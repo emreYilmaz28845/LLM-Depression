@@ -127,6 +127,13 @@ def rewrite_component_paths(
     return payload
 
 
+def component_config_path(value: str) -> Path:
+    """Component configs ship with the audited code, not with the input root."""
+
+    path = Path(value)
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-root", required=True)
@@ -229,7 +236,7 @@ def main() -> int:
                 "dataset": dataset,
                 "config_path": str(component.get("config")),
                 "config": load_yaml_with_overrides(
-                    _resolve_component_path(component["config"]), []
+                    component_config_path(str(component.get("config"))), []
                 ),
                 "manifest_hash": None,
                 "rows": rows,
