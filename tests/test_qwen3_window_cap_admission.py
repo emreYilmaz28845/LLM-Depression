@@ -482,3 +482,125 @@ def test_reconcile_compares_distinct_ids_to_reserved_count(
     )
     assert results[0]["resolution"] == "still active"
     assert admission.snapshot(**paths)["reserved_jobs"] == 2
+
+
+def test_run_submit_reads_delivery_evidence_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _write_sources(tmp_path)
+    monkeypatch.setattr(
+        admission, "run_ssh", _fake_ssh(queue="", sacct="9001|COMPLETED\n9002|COMPLETED\n")
+    )
+    evidence = tmp_path / "submit_output.log"
+    command = [
+        sys.executable,
+        "-c",
+        f"open({str(evidence)!r}, 'w').write('EXTRACT_ID=9001\\nCLASSIFIER_ID=9002\\n')",
+    ]
+    rc = admission.run_submit(
+        command,
+        jobs_this_submit=2,
+        wave_fits=1,
+        kind="head",
+        attempt_hint="h1",
+        submit_timeout=30,
+        delivery_files=[evidence],
+        **paths,
+    )
+    assert rc == 0
+    entries = admission.read_reservations(paths["reservations_path"])
+    assert [entry["event"] for entry in entries] == ["reserved", "delivered"]
+    assert set(entries[-1]["job_ids"].values()) == {"9001", "9002"}
+
+
+def test_reconcile_with_operator_ids_converts_uncertain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _write_sources(tmp_path)
+    admission.append_reservation(
+        paths["reservations_path"],
+        {
+            "event": "reserved",
+            "reservation_id": "r4",
+            "at_utc": "2026-10-08T00:00:00Z",
+            "kind": "head",
+            "jobs_reserved": 2,
+        },
+    )
+    admission.append_reservation(
+        paths["reservations_path"],
+        {"event": "uncertain", "reservation_id": "r4", "at_utc": "2026-10-08T00:00:01Z"},
+    )
+    monkeypatch.setattr(
+        admission, "run_ssh", _fake_ssh(queue="", sacct="9001|RUNNING\n9002|PENDING\n")
+    )
+    results = admission.reconcile(
+        paths["reservations_path"],
+        reservation_id="r4",
+        manual_note="ids read from submit_output.log",
+        job_ids="9001,9002",
+        scheduler=paths["scheduler"],
+        user=paths["user"],
+    )
+    assert results[0]["resolution"] == "delivered"
+    assert results[0]["source"] == "operator_supplied"
+    snap = admission.snapshot(**paths)
+    assert snap["reserved_jobs"] == 0
+    assert sorted(snap["own_nonterminal_jobs"]) == ["9001", "9002"]
+
+
+def test_reconcile_operator_ids_are_validated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _write_sources(tmp_path)
+    admission.append_reservation(
+        paths["reservations_path"],
+        {
+            "event": "reserved",
+            "reservation_id": "r5",
+            "at_utc": "2026-10-08T00:00:00Z",
+            "kind": "fit",
+            "jobs_reserved": 2,
+        },
+    )
+    admission.append_reservation(
+        paths["reservations_path"],
+        {"event": "uncertain", "reservation_id": "r5", "at_utc": "2026-10-08T00:00:01Z"},
+    )
+    monkeypatch.setattr(admission, "run_ssh", _fake_ssh(queue="", sacct=""))
+    with pytest.raises(admission.AdmissionError, match="requires --reservation-id"):
+        admission.reconcile(
+            paths["reservations_path"],
+            reservation_id=None,
+            manual_note=None,
+            job_ids="9001,9002",
+            scheduler=paths["scheduler"],
+            user=paths["user"],
+        )
+    with pytest.raises(admission.AdmissionError, match="for a 2-job reservation"):
+        admission.reconcile(
+            paths["reservations_path"],
+            reservation_id="r5",
+            manual_note=None,
+            job_ids="9001,9002,9003",
+            scheduler=paths["scheduler"],
+            user=paths["user"],
+        )
+    with pytest.raises(admission.AdmissionError, match="duplicates"):
+        admission.reconcile(
+            paths["reservations_path"],
+            reservation_id="r5",
+            manual_note=None,
+            job_ids="9001,9001",
+            scheduler=paths["scheduler"],
+            user=paths["user"],
+        )
+    with pytest.raises(admission.AdmissionError, match="numeric"):
+        admission.reconcile(
+            paths["reservations_path"],
+            reservation_id="r5",
+            manual_note=None,
+            job_ids="abc,9002",
+            scheduler=paths["scheduler"],
+            user=paths["user"],
+        )

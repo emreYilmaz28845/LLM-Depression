@@ -403,6 +403,7 @@ def run_submit(
     scheduler: str,
     user: str,
     submit_timeout: int,
+    delivery_files: list[Path] | None = None,
 ) -> int:
     """Admission check, durable reservation, then the real submit command."""
     snap = snapshot(
@@ -450,6 +451,17 @@ def run_submit(
         ) from exc
     output = (result.stdout or "") + "\n" + (result.stderr or "")
     delivered = parse_delivered_job_ids(output)
+    for delivery_file in delivery_files or []:
+        if not delivery_file.is_file():
+            continue
+        try:
+            delivered.update(
+                parse_delivered_job_ids(delivery_file.read_text(encoding="utf-8"))
+            )
+        except OSError as exc:
+            raise AdmissionError(
+                f"delivery evidence file unreadable at {delivery_file}: {exc}"
+            ) from exc
     expected = jobs_this_submit * wave_fits
     values = list(delivered.values())
     unique_ids = set(values)
@@ -531,6 +543,7 @@ def reconcile(
     manual_note: str | None,
     scheduler: str,
     user: str,
+    job_ids: str | None = None,
 ) -> list[dict]:
     entries = read_reservations(reservations_path)
     statuses = reservation_statuses(entries)
@@ -539,6 +552,43 @@ def reconcile(
         if reservation_id and rid != reservation_id:
             continue
         if record.get("status") not in RESERVATION_ACTIVE_STATUSES:
+            continue
+        if job_ids is not None:
+            if reservation_id is None:
+                raise AdmissionError("--job-ids requires --reservation-id")
+            supplied = [token.strip() for token in job_ids.split(",") if token.strip()]
+            if not supplied or not all(token.isdigit() for token in supplied):
+                raise AdmissionError("operator job ids must be non-empty numeric ids")
+            if len(set(supplied)) != len(supplied):
+                raise AdmissionError("operator job ids contain duplicates")
+            reserved = int(record.get("jobs_reserved") or 0)
+            if len(supplied) > reserved:
+                raise AdmissionError(
+                    f"operator supplied {len(supplied)} ids for a {reserved}-job reservation"
+                )
+            event = "delivered" if len(supplied) == reserved else "partial"
+            append_reservation(
+                reservations_path,
+                {
+                    "event": event,
+                    "reservation_id": rid,
+                    "at_utc": _now(),
+                    "job_ids": {
+                        f"operator_{index}": job_id
+                        for index, job_id in enumerate(supplied)
+                    },
+                    "source": "operator_supplied",
+                    "manual_note": manual_note,
+                },
+            )
+            results.append(
+                {
+                    "reservation_id": rid,
+                    "resolution": event,
+                    "job_ids": supplied,
+                    "source": "operator_supplied",
+                }
+            )
             continue
         distinct_ids = sorted(
             {str(job_id) for job_id in (record.get("job_ids") or {}).values() if job_id}
@@ -607,10 +657,22 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--wave-fits", type=int, default=1)
     run.add_argument("--kind", choices=("fit", "head", "aux"), required=True)
     run.add_argument("--attempt-hint", default=None)
+    run.add_argument(
+        "--delivery-file",
+        action="append",
+        type=Path,
+        default=[],
+        help="file the command writes with EXTRACT_ID/CLASSIFIER_ID or submitted-jobs evidence",
+    )
     run.add_argument("submit_command", nargs=argparse.REMAINDER)
     rec = sub.add_parser("reconcile")
     rec.add_argument("--reservation-id", default=None)
     rec.add_argument("--manual-note", default=None)
+    rec.add_argument(
+        "--job-ids",
+        default=None,
+        help="comma-separated distinct numeric ids proven for an uncertain reservation",
+    )
     return parser
 
 
@@ -655,6 +717,7 @@ def main(argv: list[str] | None = None) -> int:
                 kind=args.kind,
                 attempt_hint=args.attempt_hint,
                 submit_timeout=args.submit_timeout,
+                delivery_files=list(args.delivery_file or []),
                 **common,
             )
         if args.command == "reconcile":
@@ -662,6 +725,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.reservations,
                 reservation_id=args.reservation_id,
                 manual_note=args.manual_note,
+                job_ids=args.job_ids,
                 scheduler=args.scheduler,
                 user=args.user,
             )
