@@ -3,7 +3,9 @@
 These tests pin the binding semantics: scheduler/SSH failures never count as
 "no jobs", own nonterminal job accounting includes ledger and sidecar IDs with
 conservative handling of uncertain submissions, planned waves cannot exceed
-the lane allocation, and refill capacity is limited by actual headroom.
+the lane allocation, the per-fit condition is exactly own+2 <= 80 and
+user < 350 (never processed-count vs remaining capacity), and every uncertain
+submit outcome is preserved.
 """
 
 from __future__ import annotations
@@ -31,6 +33,21 @@ def fake_runner(returncode: int = 0, stdout: str = "", stderr: str = ""):
     return runner, calls
 
 
+def fits(count: int) -> list[dict]:
+    return [
+        {
+            "key": f"route|s7|f{index}",
+            "run_name": f"run_{index}",
+            "config": "configs/main/x.yaml",
+            "dataset": "daic",
+            "modality": "text_only",
+            "seed": 7,
+            "fold": 0,
+        }
+        for index in range(count)
+    ]
+
+
 def test_user_queue_parses_delimited_counts() -> None:
     runner, calls = fake_runner(stdout="47071730|PENDING\n47071733|RUNNING\n")
     assert dispatch.user_queue_count(runner) == 2
@@ -51,18 +68,54 @@ def test_unparseable_scheduler_output_refuses() -> None:
 
 def test_oversized_wave_is_rejected() -> None:
     with pytest.raises(dispatch.AdmissionError):
-        dispatch.admission(own_nonterminal=0, user_queue=0, max_fits=41)
-    assert dispatch.admission(own_nonterminal=0, user_queue=0, max_fits=40) == 40
+        dispatch.validate_wave_size(41)
+    assert dispatch.validate_wave_size(40) is None
 
 
-def test_user_stop_threshold_and_headroom() -> None:
+def test_per_fit_condition_and_user_stop_threshold() -> None:
+    assert dispatch.per_fit_admission(78, 10) is None
     with pytest.raises(dispatch.AdmissionError):
-        dispatch.admission(own_nonterminal=0, user_queue=350, max_fits=1)
-    assert dispatch.admission(own_nonterminal=78, user_queue=10, max_fits=40) == 1
+        dispatch.per_fit_admission(79, 10)
     with pytest.raises(dispatch.AdmissionError):
-        dispatch.admission(own_nonterminal=79, user_queue=10, max_fits=40)
+        dispatch.per_fit_admission(80, 10)
     with pytest.raises(dispatch.AdmissionError):
-        dispatch.admission(own_nonterminal=80, user_queue=10, max_fits=40)
+        dispatch.per_fit_admission(0, 350)
+
+
+def test_wave_simulation_from_own0_submits_forty_fits() -> None:
+    state = {"own": 0}
+
+    def reconcile():
+        return state["own"], 0
+
+    def submit(fit):
+        state["own"] += 2
+        return {"status": "submitted", "job_ids": {"train": "1", "best_eval": "2"}}
+
+    assert dispatch.run_wave(fits(100), 40, reconcile=reconcile, submit=submit) == 40
+
+
+def test_wave_simulation_from_own40_submits_twenty_fits() -> None:
+    state = {"own": 40}
+
+    def reconcile():
+        return state["own"], 0
+
+    def submit(fit):
+        state["own"] += 2
+        return {"status": "submitted", "job_ids": {"train": "1", "best_eval": "2"}}
+
+    assert dispatch.run_wave(fits(100), 40, reconcile=reconcile, submit=submit) == 20
+
+
+def test_wave_simulation_from_own79_submits_zero_fits() -> None:
+    def reconcile():
+        return 79, 0
+
+    def submit(fit):
+        raise AssertionError("must not submit without headroom")
+
+    assert dispatch.run_wave(fits(10), 40, reconcile=reconcile, submit=submit) == 0
 
 
 def test_uncertain_and_unresolved_ids_count_conservatively() -> None:
@@ -102,47 +155,76 @@ def test_own_ids_from_ledger_and_fold_sidecars(tmp_path: Path) -> None:
     assert uncertain == 1
 
 
-def test_refill_simulation_limits_by_terminal_reconciliation(tmp_path: Path) -> None:
-    ledger = tmp_path / "submissions.jsonl"
-    fit_keys = [f"route|s7|f{n}" for n in range(40)]
-    records = []
-    for index, key in enumerate(fit_keys):
-        records.append(
-            {
-                "key": key,
-                "status": "submitted",
-                "job_ids": {"train": str(47070000 + 2 * index), "best_eval": str(47070001 + 2 * index)},
-            }
-        )
-    ledger.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
-    ids, uncertain = dispatch.own_job_ids(ledger, tmp_path / "empty")
-    assert len(ids) == 80 and uncertain == 0
-    # All still nonterminal: no headroom.
-    states = {job_id: "RUNNING" for job_id in ids}
-    own = dispatch.own_nonterminal_count(ids, states, uncertain)
+def test_query_job_states_uses_full_queue_then_sacct() -> None:
+    def runner(args, **kwargs):
+        command = args[-1]
+        assert "squeue -j" not in command  # old-ID queue queries are forbidden
+        if "squeue -u" in command:
+            return SimpleNamespace(returncode=0, stdout="100|RUNNING\n101|PENDING\n", stderr="")
+        if "sacct" in command:
+            return SimpleNamespace(returncode=0, stdout="200|COMPLETED\n", stderr="")
+        raise AssertionError(command)
+
+    states, user = dispatch.query_job_states(["100", "200", "300"], runner)
+    assert states == {"100": "RUNNING", "200": "COMPLETED"}
+    assert user == 2
+
+
+def test_sacct_failure_refuses() -> None:
+    def runner(args, **kwargs):
+        command = args[-1]
+        if "squeue -u" in command:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=1, stdout="", stderr="sacct: error")
+
     with pytest.raises(dispatch.AdmissionError):
-        dispatch.admission(own, user_queue=5, max_fits=1)
-    # Half terminal: refill limited to the exact remaining headroom.
-    states = {job_id: ("COMPLETED" if int(job_id) % 4 < 2 else "RUNNING") for job_id in ids}
-    own = dispatch.own_nonterminal_count(ids, states, uncertain)
-    assert own == 40
-    assert dispatch.admission(own, user_queue=5, max_fits=40) == 20
+        dispatch.query_job_states(["99999999"], runner)
 
 
-def test_submit_fit_records_uncertain_without_automatic_retry(tmp_path: Path) -> None:
-    fit = {
-        "key": "daic_text_only|s7|f0",
-        "run_name": "q3lp_daic_text_only_s7_f0",
-        "config": "configs/main/daic_text_only_harmonized_selmacrof1_likelihood_v1_legacyprompt_v1.yaml",
-        "dataset": "daic",
-        "modality": "text_only",
-        "seed": 7,
-        "fold": 0,
-    }
-    runner, _ = fake_runner(returncode=1, stdout="", stderr="boom")
+def test_submit_fit_timeout_preserves_partial_delivery(tmp_path: Path) -> None:
+    def runner(command, **kwargs):
+        raise subprocess.TimeoutExpired(
+            command,
+            1200,
+            output='garbage before {"attempt_id": "20261008T000000Z-x-abc-1234"} after',
+            stderr="partial stderr",
+        )
+
+    fit = fits(1)[0]
     record = dispatch.submit_fit(fit, runner)
-    assert record["status"] == "uncertain" and record["job_ids"] == {}
-    assert dispatch.settled_keys  # callable exists for append-only settlement
+    assert record["status"] == "uncertain"
+    assert record["reason"] == "timeout"
+    assert record["attempt_id"] == "20261008T000000Z-x-abc-1234"
+    assert record["job_ids"] == {}
+    assert "partial stderr" in record["tail"]
+
+
+def test_submit_fit_oserror_and_unexpected_error_are_uncertain() -> None:
+    def os_runner(command, **kwargs):
+        raise OSError("ssh exploded")
+
+    def weird_runner(command, **kwargs):
+        raise ValueError("odd failure")
+
+    fit = fits(1)[0]
+    assert dispatch.submit_fit(fit, os_runner)["status"] == "uncertain"
+    assert dispatch.submit_fit(fit, weird_runner)["status"] == "uncertain"
+
+
+def test_submit_fit_nonzero_rc_preserves_ids_and_is_uncertain() -> None:
+    def runner(command, **kwargs):
+        return SimpleNamespace(
+            returncode=1,
+            stdout='{"attempt_id": "20261008T000000Z-x-abc-9999"}\n'
+            "submitted jobs: {'train': '4701', 'best_eval': '4702'}\n",
+            stderr="late failure",
+        )
+
+    fit = fits(1)[0]
+    record = dispatch.submit_fit(fit, runner)
+    assert record["status"] == "uncertain"
+    assert record["attempt_id"] == "20261008T000000Z-x-abc-9999"
+    assert record["job_ids"] == {"train": "4701", "best_eval": "4702"}
 
 
 def test_cli_rejects_oversized_wave_before_any_network_call() -> None:

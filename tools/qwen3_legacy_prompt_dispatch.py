@@ -10,19 +10,23 @@ Admission semantics (binding):
 - The lane's own nonterminal count is computed from every authoritative
   delivered job ID recorded for this lane: the append-only submission ledger
   plus every local fold-sidecar ``jobs.jsonl`` SUBMITTED event (covers smokes,
-  auxiliaries, downstream jobs and historical attempts). IDs are reconciled
-  against the live scheduler (``squeue`` then ``sacct``); IDs that cannot be
-  resolved count as nonterminal (fail closed), and uncertain/failed ledger
-  records count conservatively as two jobs.
+  auxiliaries, downstream jobs and historical attempts). Own IDs are resolved
+  by fetching the full user queue once (``squeue -u`` filtered to own IDs, so
+  IDs that already left the queue cannot break the query) and then querying
+  ``sacct`` for the remaining IDs. IDs absent from both count as nonterminal
+  (fail closed); uncertain/failed ledger or submit records count conservatively
+  as two jobs.
 - Before every single fit (two jobs: train + best_eval) both counts are
-  re-checked. Submission proceeds only while ``user_queue < 350`` and
-  ``own_nonterminal + 2 <= 80``. Planned waves larger than the 80-job lane
-  allocation (or larger than 40 fits) are rejected outright.
-- The ledger is append-only. A partial or uncertain submission is preserved
-  and never retried automatically.
-
-The same accounting must gate head-chain dispatch: reconcile own nonterminal
-jobs and refuse while ``own + 2 > 80`` before each head attempt.
+  re-checked. The per-fit condition is exactly ``user_queue < 350`` and
+  ``own_nonterminal + 2 <= 80``; the loop never compares the processed count
+  against a remaining-capacity number. Planned waves larger than the 80-job
+  lane allocation (or larger than 40 fits) are rejected outright.
+- Every submit outcome that is not a clean parsed success is recorded as
+  ``uncertain`` in the append-only ledger with any partial stdout/stderr,
+  attempt id and job ids preserved, and its two-job reservation stays in the
+  own-nonterminal count until reconciled. Nothing is retried automatically.
+- The same accounting gates head-chain dispatch: reconcile own nonterminal jobs
+  and refuse while ``own + 2 > 80`` before each head attempt.
 """
 
 from __future__ import annotations
@@ -55,16 +59,6 @@ LANE_CAP_NONTERMINAL = 80
 WAVE_HARD_CAP_FITS = 40
 JOBS_PER_FIT = 2
 
-NONTERMINAL_STATES = {
-    "PENDING",
-    "RUNNING",
-    "CONFIGURING",
-    "COMPLETING",
-    "RESIZING",
-    "SUSPENDED",
-    "REQUEUED",
-    "UNKNOWN",
-}
 TERMINAL_STATES = {
     "COMPLETED",
     "FAILED",
@@ -78,12 +72,14 @@ TERMINAL_STATES = {
     "SPECIAL_EXIT",
 }
 
+Runner = Callable[..., subprocess.CompletedProcess]
+
 
 class AdmissionError(RuntimeError):
     """Raised when admission cannot be verified or the budget is exceeded."""
 
 
-def run_ssh(command: str, runner: Callable[..., subprocess.CompletedProcess] | None = None) -> str:
+def run_ssh(command: str, runner: Runner | None = None) -> str:
     runner = runner or subprocess.run
     result = runner(
         [
@@ -123,9 +119,13 @@ def parse_delimited(output: str) -> dict[str, str]:
     return states
 
 
-def user_queue_count(runner: Callable[..., subprocess.CompletedProcess] | None = None) -> int:
-    output = run_ssh("squeue -u ozu647717 -h -o '%i|%T'", runner)
-    return len(parse_delimited(output))
+def user_queue(runner: Runner | None = None) -> dict[str, str]:
+    """The full user queue as job id -> state."""
+    return parse_delimited(run_ssh("squeue -u ozu647717 -h -o '%i|%T'", runner))
+
+
+def user_queue_count(runner: Runner | None = None) -> int:
+    return len(user_queue(runner))
 
 
 def ledger_records(ledger_path: Path = LEDGER) -> list[dict]:
@@ -171,12 +171,17 @@ def _chunks(items: list[str], size: int = 200) -> Iterable[list[str]]:
 
 
 def query_job_states(
-    job_ids: list[str], runner: Callable[..., subprocess.CompletedProcess] | None = None
-) -> dict[str, str]:
-    states: dict[str, str] = {}
-    for chunk in _chunks(job_ids):
-        output = run_ssh(f"squeue -j {','.join(chunk)} -h -o '%i|%T'", runner)
-        states.update(parse_delimited(output))
+    job_ids: list[str], runner: Runner | None = None
+) -> tuple[dict[str, str], int]:
+    """Resolve own job states from the full user queue, then sacct for the rest.
+
+    Returns the state map and the user-wide queue count from the same queue
+    fetch. IDs present in neither source are left unresolved and later count as
+    nonterminal. ``squeue -j`` is deliberately not used: IDs that already left
+    the queue can make that query fail.
+    """
+    queue = user_queue(runner)
+    states = {job_id: queue[job_id] for job_id in job_ids if job_id in queue}
     missing = [job_id for job_id in job_ids if job_id not in states]
     for chunk in _chunks(missing):
         output = run_ssh(
@@ -191,7 +196,7 @@ def query_job_states(
             job_id = job_id.strip()
             if job_id in chunk and job_id not in states:
                 states[job_id] = state.strip().split()[0] if state.strip() else "UNKNOWN"
-    return states
+    return states, len(queue)
 
 
 def own_nonterminal_count(
@@ -208,12 +213,19 @@ def own_nonterminal_count(
     return count
 
 
-def admission(
-    own_nonterminal: int,
-    user_queue: int,
-    max_fits: int,
-) -> int:
-    """Return the number of fits this call may submit; refuse otherwise."""
+def per_fit_admission(own_nonterminal: int, user_queue_size: int) -> None:
+    """The exact per-fit condition; anything else refuses."""
+    if user_queue_size >= USER_QUEUE_STOP:
+        raise AdmissionError(
+            f"user queue {user_queue_size} is at or above the {USER_QUEUE_STOP} stop threshold"
+        )
+    if own_nonterminal + JOBS_PER_FIT > LANE_CAP_NONTERMINAL:
+        raise AdmissionError(
+            f"no lane headroom: own nonterminal {own_nonterminal} of {LANE_CAP_NONTERMINAL}"
+        )
+
+
+def validate_wave_size(max_fits: int) -> None:
     if max_fits < 1:
         raise AdmissionError("max_fits must be at least 1")
     if max_fits > WAVE_HARD_CAP_FITS or max_fits * JOBS_PER_FIT > LANE_CAP_NONTERMINAL:
@@ -221,34 +233,58 @@ def admission(
             f"planned wave of {max_fits} fits exceeds the lane allocation "
             f"({LANE_CAP_NONTERMINAL} nonterminal jobs)"
         )
-    if user_queue >= USER_QUEUE_STOP:
-        raise AdmissionError(
-            f"user queue {user_queue} is at or above the {USER_QUEUE_STOP} stop threshold"
-        )
-    headroom = (LANE_CAP_NONTERMINAL - own_nonterminal) // JOBS_PER_FIT
-    if headroom <= 0:
-        raise AdmissionError(
-            f"no lane headroom: own nonterminal {own_nonterminal} of {LANE_CAP_NONTERMINAL}"
-        )
-    return min(max_fits, headroom)
 
 
 def head_chain_headroom(own_nonterminal: int) -> int:
-    """Head-chain capacity at the same 80-job lane budget.
-
-    A head chain is two scheduler jobs per parent key (extract + classifier),
-    so the same accounting used for training fits applies; return 0 when no
-    full chain fits, and require the caller to refuse in that case.
-    """
+    """Head-chain capacity at the same 80-job lane budget (2 jobs per chain)."""
     if own_nonterminal + JOBS_PER_FIT > LANE_CAP_NONTERMINAL:
         return 0
     return (LANE_CAP_NONTERMINAL - own_nonterminal) // JOBS_PER_FIT
 
 
-def submit_fit(
+def _extract_delivery(text: str) -> tuple[str | None, dict[str, str]]:
+    attempt = re.search(r'"attempt_id": "([^"]+)"', text)
+    jobs = re.search(r"submitted jobs: (\{[^}]*\})", text)
+    attempt_id = attempt.group(1) if attempt else None
+    job_ids: dict[str, str] = {}
+    if jobs:
+        try:
+            parsed = ast.literal_eval(jobs.group(1))
+            if isinstance(parsed, dict):
+                job_ids = {str(key): str(value) for key, value in parsed.items()}
+        except (ValueError, SyntaxError):
+            job_ids = {}
+    return attempt_id, job_ids
+
+
+def _text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def uncertain_record(
     fit: dict,
-    runner: Callable[..., subprocess.CompletedProcess] | None = None,
+    reason: str,
+    stdout: str = "",
+    stderr: str = "",
 ) -> dict:
+    attempt_id, job_ids = _extract_delivery(stdout)
+    return {
+        "key": fit["key"],
+        "run_name": fit["run_name"],
+        "ts": int(time.time()),
+        "status": "uncertain",
+        "reason": reason,
+        "attempt_id": attempt_id,
+        "job_ids": job_ids,
+        "tail": (stdout + "\n" + stderr)[-800:],
+    }
+
+
+def submit_fit(fit: dict, runner: Runner | None = None) -> dict:
     command = [
         sys.executable,
         "tools/exp.py",
@@ -277,27 +313,70 @@ def submit_fit(
         "--execute",
     ]
     runner = runner or subprocess.run
-    result = runner(command, cwd=LANE, capture_output=True, text=True, timeout=1200)
-    record = {
-        "key": fit["key"],
-        "run_name": fit["run_name"],
-        "ts": int(time.time()),
-        "status": "uncertain",
-        "job_ids": {},
-        "attempt_id": None,
-    }
+    try:
+        result = runner(command, cwd=LANE, capture_output=True, text=True, timeout=1200)
+    except subprocess.TimeoutExpired as exc:
+        return uncertain_record(
+            fit,
+            "timeout",
+            _text(getattr(exc, "stdout", "")),
+            _text(getattr(exc, "stderr", "")),
+        )
+    except OSError as exc:
+        return uncertain_record(fit, f"oserror: {exc}")
+    except Exception as exc:  # fail closed on any unexpected runner failure
+        return uncertain_record(fit, f"runner error: {type(exc).__name__}: {exc}")
+
+    stdout = result.stdout or ""
+    stderr = result.stderr or ""
     if result.returncode == 0:
-        attempt = re.search(r'"attempt_id": "([^"]+)"', result.stdout)
-        jobs = re.search(r"submitted jobs: (\{[^}]*\})", result.stdout)
-        if attempt and jobs:
-            record["attempt_id"] = attempt.group(1)
-            record["job_ids"] = ast.literal_eval(jobs.group(1))
-            record["status"] = "submitted"
-        else:
-            record["tail"] = result.stdout[-600:]
-    else:
-        record["tail"] = (result.stdout + result.stderr)[-600:]
-    return record
+        attempt_id, job_ids = _extract_delivery(stdout)
+        if attempt_id and job_ids:
+            return {
+                "key": fit["key"],
+                "run_name": fit["run_name"],
+                "ts": int(time.time()),
+                "status": "submitted",
+                "job_ids": job_ids,
+                "attempt_id": attempt_id,
+            }
+        return uncertain_record(fit, "unparsed success output", stdout, stderr)
+    # A non-zero return code may still have delivered remote jobs; preserve
+    # everything the output shows and count it conservatively.
+    return uncertain_record(fit, f"submit rc={result.returncode}", stdout, stderr)
+
+
+def run_wave(
+    fits: list[dict],
+    max_fits: int,
+    *,
+    reconcile: Callable[[], tuple[int, int]],
+    submit: Callable[[dict], dict],
+    on_record: Callable[[dict], None] | None = None,
+) -> int:
+    """Submit up to ``max_fits`` fits; per-fit admission, no capacity double-count."""
+    processed = 0
+    for fit in fits:
+        if processed >= max_fits:
+            break
+        own, user = reconcile()
+        try:
+            per_fit_admission(own, user)
+        except AdmissionError as error:
+            print(f"REFUSED before fit {processed + 1}: {error}")
+            break
+        record = submit(fit)
+        processed += 1
+        if on_record is not None:
+            on_record(record)
+        if record.get("status") != "submitted":
+            print("stopping wave on non-submitted fit (fail-closed)")
+            break
+        print(
+            f"{fit['key']} {record['status']} {record['job_ids']} (own={own}, user={user})",
+            flush=True,
+        )
+    return processed
 
 
 def main() -> int:
@@ -308,49 +387,41 @@ def main() -> int:
     parser.add_argument("--matrix", default=str(MATRIX))
     args = parser.parse_args()
 
-    matrix = json.loads(Path(args.matrix).read_text(encoding="utf-8"))
-    settled = settled_keys(Path(args.ledger))
-    remaining = [fit for fit in matrix["fits"] if fit["key"] not in settled]
-
-    if args.max_fits > WAVE_HARD_CAP_FITS or args.max_fits * JOBS_PER_FIT > LANE_CAP_NONTERMINAL:
-        print(
-            f"REFUSED: planned wave of {args.max_fits} fits exceeds the lane "
-            f"allocation ({LANE_CAP_NONTERMINAL} nonterminal jobs)"
-        )
+    ledger_path = Path(args.ledger)
+    try:
+        validate_wave_size(args.max_fits)
+    except AdmissionError as error:
+        print(f"REFUSED: {error}")
         return 2
 
-    submitted: list[dict] = []
-    while len(submitted) < args.max_fits and remaining:
-        try:
-            job_ids, uncertain = own_job_ids(Path(args.ledger))
-            states = query_job_states(job_ids)
-            own = own_nonterminal_count(job_ids, states, uncertain)
-            user = user_queue_count()
-            allowed = admission(own, user, args.max_fits - len(submitted))
-        except AdmissionError as error:
-            print(f"REFUSED before fit {len(submitted) + 1}: {error}")
-            break
-        if len(submitted) >= allowed:
-            print(f"REFUSED after {len(submitted)} fits: lane headroom reached")
-            break
-        fit = remaining.pop(0)
-        if not args.execute:
-            print(f"dry: {fit['key']} own={own} user={user} allowed={allowed}")
-            submitted.append({"key": fit["key"], "status": "dry"})
-            continue
-        record = submit_fit(fit)
-        with Path(args.ledger).open("a", encoding="utf-8") as ledger:
-            ledger.write(json.dumps(record) + "\n")
-        submitted.append(record)
-        print(
-            f"{fit['key']} {record['status']} {record['job_ids']} "
-            f"(own={own}, user={user}, allowed={allowed})",
-            flush=True,
-        )
-        if record["status"] != "submitted":
-            print("stopping wave on non-submitted fit (fail-closed)")
-            break
-    print(f"wave complete: {len(submitted)} fits processed")
+    matrix = json.loads(Path(args.matrix).read_text(encoding="utf-8"))
+    settled = settled_keys(ledger_path)
+    remaining = [fit for fit in matrix["fits"] if fit["key"] not in settled]
+    if not remaining:
+        print("no unsubmitted fits remain")
+        return 0
+
+    def reconcile() -> tuple[int, int]:
+        job_ids, uncertain = own_job_ids(ledger_path)
+        states, user = query_job_states(job_ids)
+        return own_nonterminal_count(job_ids, states, uncertain), user
+
+    def record(entry: dict) -> None:
+        with ledger_path.open("a", encoding="utf-8") as ledger:
+            ledger.write(json.dumps(entry) + "\n")
+
+    if not args.execute:
+        print(f"dry: {len(remaining)} unsubmitted fits, wave cap {args.max_fits}")
+        return 0
+
+    processed = run_wave(
+        remaining,
+        args.max_fits,
+        reconcile=reconcile,
+        submit=submit_fit,
+        on_record=record,
+    )
+    print(f"wave complete: {processed} fits processed")
     return 0
 
 
