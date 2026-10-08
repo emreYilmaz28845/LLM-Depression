@@ -331,3 +331,14 @@ def test_harmonized_unit_transcript_prefers_full_fields() -> None:
         )
         == "turn"
     )
+
+
+def test_androids_window_contract_is_versioned() -> None:
+    from src.data.androids import (
+        ANDROIDS_INTERVIEW_WINDOW_COUNT,
+        ANDROIDS_INTERVIEW_WINDOW_COUNT_15S,
+        expected_androids_window_count,
+    )
+
+    assert expected_androids_window_count(30.0) == ANDROIDS_INTERVIEW_WINDOW_COUNT == 1302
+    assert expected_androids_window_count(15.0) == ANDROIDS_INTERVIEW_WINDOW_COUNT_15S == 1970

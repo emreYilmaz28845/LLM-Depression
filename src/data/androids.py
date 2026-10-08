@@ -21,10 +21,25 @@ ANDROIDS_INTERVIEW_PATIENT_COUNT = 64
 ANDROIDS_INTERVIEW_CONTROL_COUNT = 52
 ANDROIDS_INTERVIEW_TURN_COUNT = 874
 ANDROIDS_INTERVIEW_WINDOW_COUNT = 1302
+# Opt-in 15-second segmentation: window count locked from the real corpus
+# audit (2026-10-08, 1970 = sum over turns of ceil(turn duration / 15)). The
+# canonical 30-second expectation above is unchanged.
+ANDROIDS_INTERVIEW_WINDOW_COUNT_15S = 1970
 ANDROIDS_DEFAULT_SEGMENT_SECONDS = 30.0
 # Versioned opt-in for the window15 comparison arm: the canonical recipe stays
 # 30 seconds, and the only additional accepted duration is 15 seconds.
 ANDROIDS_ALLOWED_SEGMENT_SECONDS = (ANDROIDS_DEFAULT_SEGMENT_SECONDS, 15.0)
+
+
+def expected_androids_window_count(segment_seconds: float) -> int:
+    """Corpus-contract window expectation for the active segmentation.
+
+    The canonical 30-second expectation is the historical lock; the 15-second
+    opt-in expectation is locked from the real corpus audit (2026-10-08).
+    """
+    if math.isclose(float(segment_seconds), 15.0, rel_tol=0.0, abs_tol=1e-9):
+        return ANDROIDS_INTERVIEW_WINDOW_COUNT_15S
+    return ANDROIDS_INTERVIEW_WINDOW_COUNT
 
 _RECORDING_RE = re.compile(
     r"^(?P<numeric_id>\d+)_(?P<condition>[CP])(?P<gender>[FM])"
@@ -170,11 +185,12 @@ def discover_androids_interview_windows(
             rows.append(row)
     if enforce_corpus_contract:
         expected_classes = Counter({0: ANDROIDS_INTERVIEW_CONTROL_COUNT, 1: ANDROIDS_INTERVIEW_PATIENT_COUNT})
+        expected_windows = expected_androids_window_count(segment_seconds)
         if (
             len(subject_ids) != ANDROIDS_INTERVIEW_SUBJECT_COUNT
             or len(seen_recordings) != ANDROIDS_INTERVIEW_SUBJECT_COUNT
             or len(audio_files) != ANDROIDS_INTERVIEW_TURN_COUNT
-            or len(rows) != ANDROIDS_INTERVIEW_WINDOW_COUNT
+            or len(rows) != expected_windows
             or class_counts != expected_classes
         ):
             raise ValueError(
@@ -182,7 +198,7 @@ def discover_androids_interview_windows(
                 f"subjects={len(subject_ids)} classes={dict(class_counts)} "
                 f"turns={len(audio_files)} windows={len(rows)}; expected "
                 f"{ANDROIDS_INTERVIEW_SUBJECT_COUNT}, {dict(expected_classes)}, "
-                f"{ANDROIDS_INTERVIEW_TURN_COUNT}, {ANDROIDS_INTERVIEW_WINDOW_COUNT}."
+                f"{ANDROIDS_INTERVIEW_TURN_COUNT}, {expected_windows}."
             )
     return rows
 
