@@ -12,7 +12,7 @@ from typing import Any
 import soundfile as sf
 
 from src.data.split_utils import assign_stratified_group_folds, deterministic_inner_split
-from src.data.window_mapping import source_window_index
+from src.data.window_mapping import reference_fields
 from src.utils import label_text_from_int
 
 
@@ -82,30 +82,27 @@ def discover_d3tec_response_windows(
             duration = float(info.frames / info.samplerate)
             windows = equal_duration_windows(duration, segment_seconds)
             for segment_index, (start_time, end_time) in enumerate(windows):
-                # The canonical 30-second segmentation owns the segment
-                # transcripts; a subdivided treatment window resolves the
-                # transcript of the source segment that contains it.
-                source_segment_index = (
-                    segment_index
-                    if segment_seconds == D3TEC_DEFAULT_SEGMENT_SECONDS
-                    else source_window_index(start_time, duration, D3TEC_DEFAULT_SEGMENT_SECONDS)
+                row = {
+                    "dataset": "d3tec",
+                    "subject_id": subject_id,
+                    "response_id": response_id(subject_id, prompt_id),
+                    "sample_id": sample_id(subject_id, prompt_id, segment_index),
+                    "prompt_id": prompt_id,
+                    "segment_index": segment_index,
+                    "num_segments": len(windows),
+                    "audio_path": str(audio_path),
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "segment_duration": end_time - start_time,
+                }
+                # Only the subdivided path records the canonical reference; the
+                # canonical 30-second manifest schema stays byte-identical.
+                row.update(
+                    reference_fields(
+                        segment_seconds, D3TEC_DEFAULT_SEGMENT_SECONDS, start_time, duration
+                    )
                 )
-                rows.append(
-                    {
-                        "dataset": "d3tec",
-                        "subject_id": subject_id,
-                        "response_id": response_id(subject_id, prompt_id),
-                        "sample_id": sample_id(subject_id, prompt_id, segment_index),
-                        "prompt_id": prompt_id,
-                        "segment_index": segment_index,
-                        "source_segment_index": source_segment_index,
-                        "num_segments": len(windows),
-                        "audio_path": str(audio_path),
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "segment_duration": end_time - start_time,
-                    }
-                )
+                rows.append(row)
     return rows
 
 
@@ -269,29 +266,68 @@ def build_d3tec_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> 
     join_audit_rows: list[dict[str, Any]] = []
     used_full: set[str] = set()
     used_segments: set[str] = set()
+    use_text = bool((config.get("data") or {}).get("use_text", False))
+    declared_scope = (
+        str((config.get("data") or {}).get("audio_text_transcript_scope", "segment_aligned"))
+        .strip()
+        .lower()
+    )
+    if (
+        segment_seconds != D3TEC_DEFAULT_SEGMENT_SECONDS
+        and use_text
+        and declared_scope == "segment_aligned"
+    ):
+        raise ValueError(
+            "D3TEC segment_aligned transcript scope is unsupported for subdivided "
+            f"windows ({segment_seconds}s): aligned ASR exists only for the canonical "
+            "30-second segmentation. Declare full_subject scope for the window15 arm."
+        )
     for window in windows:
         subject_id = window["subject_id"]
         rid = window["response_id"]
         sid = window["sample_id"]
-        source_index = int(window.get("source_segment_index", window["segment_index"]))
-        source_sid = sample_id(subject_id, int(window["prompt_id"]), source_index)
-        if rid not in full_transcripts or source_sid not in segment_transcripts:
-            raise ValueError(
-                f"D3TEC transcript coverage failure for {sid}: "
-                f"full={rid in full_transcripts} segment={source_sid in segment_transcripts} "
-                f"(source segment {source_sid})"
-            )
-        used_full.add(rid)
-        used_segments.add(source_sid)
+        source_ref = window.get("source_reference_index")
+        if source_ref is None:
+            # Canonical 30-second path: unchanged behavior and schema.
+            if rid not in full_transcripts or sid not in segment_transcripts:
+                raise ValueError(
+                    f"D3TEC transcript coverage failure for {sid}: "
+                    f"full={rid in full_transcripts} segment={sid in segment_transcripts}"
+                )
+            segment_record = segment_transcripts[sid]
+            used_full.add(rid)
+            used_segments.add(sid)
+            transcript_text = segment_record["transcript"]
+            reference_row: dict[str, Any] = {}
+        else:
+            source_sid = sample_id(subject_id, int(window["prompt_id"]), int(source_ref))
+            if rid not in full_transcripts or source_sid not in segment_transcripts:
+                raise ValueError(
+                    f"D3TEC canonical segment reference missing for {sid}: "
+                    f"full={rid in full_transcripts} "
+                    f"segment={source_sid in segment_transcripts} (reference {source_sid})"
+                )
+            segment_record = segment_transcripts[source_sid]
+            used_full.add(rid)
+            used_segments.add(source_sid)
+            # No aligned ASR exists for the child window. Record the canonical
+            # segment metadata as a reference only; never present it as the
+            # child window's aligned transcript.
+            transcript_text = ""
+            reference_row = {
+                "source_segment_ref": source_sid,
+                "canonical_segment_transcript_ref": segment_record["transcript"],
+                "segment_transcript_scope": "canonical_reference_only",
+            }
         prompt_id = int(window["prompt_id"])
         paired = _response_audio_path(root, subject_id, prompt_id, "iPhoneSE2020")
         meta = subject_meta[subject_id]
         row = {
             **window,
             "audio_paths": [window["audio_path"]],
-            "transcript": segment_transcripts[source_sid]["transcript"],
-            "segment_transcript": segment_transcripts[source_sid]["transcript"],
-            "source_segment_id": source_sid,
+            "transcript": transcript_text,
+            "segment_transcript": transcript_text,
+            **reference_row,
             "full_response_transcript": full_transcripts[rid]["transcript"],
             "transcript_path": str(segment_path),
             "full_transcript_path": str(full_path),
@@ -314,7 +350,14 @@ def build_d3tec_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> 
         join_audit_rows.append(
             {
                 "sample_id": sid,
-                "source_segment_id": source_sid,
+                **(
+                    {
+                        "source_segment_ref": reference_row["source_segment_ref"],
+                        "segment_transcript_scope": "canonical_reference_only",
+                    }
+                    if reference_row
+                    else {}
+                ),
                 "response_id": rid,
                 "audio_found": Path(window["audio_path"]).is_file(),
                 "segment_transcript_found": True,

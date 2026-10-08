@@ -99,19 +99,58 @@ def test_equal_duration_ceil_semantics_at_15_seconds() -> None:
             assert math.isclose(end, start)
 
 
-def test_source_window_index_maps_subdivisions_to_canonical_segments() -> None:
-    from src.data.window_mapping import source_window_index
+def test_source_reference_index_is_a_reference_not_containment() -> None:
+    from src.data.window_mapping import reference_fields, source_reference_index
 
-    # 44s response: 3x15s windows inside 2x30s canonical segments -> [0, 0, 1].
-    assert [source_window_index(s, 44.0) for s in (0.0, 44.0 / 3, 88.0 / 3)] == [0, 0, 1]
-    # 60s response: 4x15s windows inside 2x30s canonical segments -> [0, 0, 1, 1].
-    assert [source_window_index(s, 60.0) for s in (0.0, 15.0, 30.0, 45.0)] == [0, 0, 1, 1]
-    # Short single-window response stays in segment 0.
-    assert source_window_index(0.0, 15.0) == 0
-    # Boundaries: the last sample of a segment stays in it.
-    assert source_window_index(29.999, 60.0) == 0
-    assert source_window_index(30.0, 60.0) == 1
-    # Invalid inputs fail closed.
+    # duration 70: canonical widths are 70/3; the 15s child [14,28] references
+    # canonical window 0 but extends past its end 70/3 -- a reference, not a
+    # containment or alignment claim.
+    assert source_reference_index(14.0, 70.0) == 0
+    assert 28.0 > 70.0 / 3
+    starts = [index * (70.0 / 5) for index in range(5)]
+    assert [source_reference_index(start, 70.0) for start in starts] == [0, 0, 1, 1, 2]
+    # duration 90: first child [0,15] references canonical [0,30]; the treatment
+    # path must not apply exact interval equality.
+    assert source_reference_index(0.0, 90.0) == 0
+    # Unchanged 30-second identity: no reference fields are added.
+    assert reference_fields(30.0, 30.0, 12.0, 70.0) == {}
+    # Subdivided path adds the reference index.
+    assert reference_fields(15.0, 30.0, 14.0, 70.0) == {"source_reference_index": 0}
+    # Boundaries and invalid inputs.
+    assert source_reference_index(29.999, 60.0) == 0
+    assert source_reference_index(30.0, 60.0) == 1
     for bad in ((0.0, 0.0), (0.0, -1.0)):
         with pytest.raises(ValueError):
-            source_window_index(*bad)
+            source_reference_index(*bad)
+
+
+def test_androids_discovery_schema_identity_and_references(tmp_path: Path) -> None:
+    import numpy as np
+    import soundfile as sf
+
+    from src.data.androids import discover_androids_interview_windows
+
+    clip_dir = tmp_path / "Interview-Task" / "audio_clip" / "001_CF20_5"
+    clip_dir.mkdir(parents=True)
+    for turn, seconds in ((1, 45.0), (2, 20.0)):
+        sf.write(
+            clip_dir / f"001_CF20_5_{turn}.wav",
+            np.zeros(int(seconds * 1000), dtype="float32"),
+            1000,
+        )
+    rows_30 = discover_androids_interview_windows(
+        tmp_path, segment_seconds=30.0, enforce_corpus_contract=False
+    )
+    # Canonical 30-second schema is unchanged: no reference fields anywhere.
+    assert all("source_reference_index" not in row for row in rows_30)
+    assert len(rows_30) == 3  # ceil(45/30) + ceil(20/30)
+    rows_15 = discover_androids_interview_windows(
+        tmp_path, segment_seconds=15.0, enforce_corpus_contract=False
+    )
+    assert len(rows_15) == 5  # ceil(45/15) + ceil(20/15)
+    refs: dict[int, list[int]] = {}
+    for row in rows_15:
+        assert "source_reference_index" in row
+        refs.setdefault(int(row["turn_id"]), []).append(int(row["source_reference_index"]))
+    assert refs[1] == [0, 0, 1]
+    assert refs[2] == [0, 0]
