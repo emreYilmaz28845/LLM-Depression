@@ -146,24 +146,40 @@ def head_recorded_keys(ledger_path: Path = LEDGER) -> set[str]:
     return keys
 
 
-def plan_resolved_cells(plan: dict) -> set[tuple[str, int, int]]:
-    cells: set[tuple[str, int, int]] = set()
+def plan_resolved_attempts(plan: dict) -> dict[tuple[str, int, int], str]:
+    """Resolved plan entries as ``cell -> exact parent attempt``.
+
+    Real shared dispatch plans omit ``registry_key``; the cell is then
+    normalized from the route's ``route_id`` (or ``dataset``) plus the job's
+    seed/fold, exactly like ``eligible_head_jobs``. Keeping the parent attempt
+    means a replaced attempt (a new validated parent for the same cell) also
+    requests a plan refresh.
+    """
+    resolved: dict[tuple[str, int, int], str] = {}
     for route in plan.get("routes") or []:
         for job in route.get("jobs") or []:
             if job.get("parent_status") != "resolved":
                 continue
             cell = parse_cell(job.get("registry_key") or "")
-            if cell is not None:
-                cells.add(cell)
-    return cells
+            if cell is None:
+                route_id = route.get("route_id") or route.get("dataset")
+                if route_id is None or "seed" not in job or "fold" not in job:
+                    continue
+                cell = (str(route_id), int(job["seed"]), int(job["fold"]))
+            resolved[cell] = str((job.get("parent") or {}).get("attempt_id") or "")
+    return resolved
+
+
+def plan_resolved_cells(plan: dict) -> set[tuple[str, int, int]]:
+    return set(plan_resolved_attempts(plan))
 
 
 def plan_needs_refresh(validated: dict[tuple[str, int, int], str], plan: dict | None) -> bool:
-    """True when a validated training cell has no resolved head-plan entry."""
+    """True when a validated cell lacks a resolved entry or the attempt changed."""
     if plan is None:
         return True
-    resolved = plan_resolved_cells(plan)
-    return any(cell not in resolved for cell in validated)
+    resolved = plan_resolved_attempts(plan)
+    return any(resolved.get(cell) != attempt for cell, attempt in validated.items())
 
 
 def maybe_refresh_plan(

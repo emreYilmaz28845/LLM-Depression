@@ -319,6 +319,29 @@ def test_plan_refresh_detection() -> None:
     assert guard.plan_needs_refresh({("daic_text_only", 7, 1): "att"}, resolved_plan)
 
 
+def test_plan_refresh_normalizes_keyless_shared_plan_and_replaced_attempts() -> None:
+    """Real shared plans omit registry_key and refreshes must honor replacements."""
+    cell = ("daic_text_only", 7, 0)
+    plan = {
+        "routes": [
+            {
+                "route_id": "daic_text_only",
+                "jobs": [
+                    {
+                        "seed": 7,
+                        "fold": 0,
+                        "parent_status": "resolved",
+                        "parent": {"attempt_id": "att-1"},
+                    }
+                ],
+            }
+        ]
+    }
+    assert guard.plan_resolved_cells(plan) == {cell}
+    assert not guard.plan_needs_refresh({cell: "att-1"}, plan)
+    assert guard.plan_needs_refresh({cell: "att-2"}, plan)
+
+
 def test_maybe_refresh_plan_is_throttled(tmp_path: Path) -> None:
     stamp = tmp_path / ".head_plan_refresh_stamp"
     stamp.write_text("{}", encoding="utf-8")
