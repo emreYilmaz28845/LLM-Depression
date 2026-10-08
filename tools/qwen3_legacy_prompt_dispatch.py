@@ -24,7 +24,11 @@ Admission semantics (binding):
 - Every submit outcome that is not a clean parsed success is recorded as
   ``uncertain`` in the append-only ledger with any partial stdout/stderr,
   attempt id and job ids preserved, and its two-job reservation stays in the
-  own-nonterminal count until reconciled. Nothing is retried automatically.
+  own-nonterminal count until reconciled. A parsed success additionally
+  requires exactly the expected keys ``train`` and ``best_eval`` carrying
+  distinct numeric job ids plus a non-empty attempt id; a single id, duplicate
+  values, malformed ids, extra or missing keys, and a missing attempt id all
+  stay uncertain and stop the wave. Nothing is retried automatically.
 - The same accounting gates head-chain dispatch: reconcile own nonterminal jobs
   and refuse while ``own + 2 > 80`` before each head attempt.
 """
@@ -145,14 +149,21 @@ def settled_keys(ledger_path: Path = LEDGER) -> set[str]:
 def own_job_ids(
     ledger_path: Path = LEDGER, run_root: Path = RUN_ROOT
 ) -> tuple[list[str], int]:
-    """Authoritative delivered IDs for this lane plus conservative uncertain count."""
+    """Authoritative delivered IDs for this lane plus conservative uncertain count.
+
+    Only cleanly ``submitted`` ledger records contribute job IDs. An
+    ``uncertain``/``failed`` record contributes exactly a two-job reservation
+    and keeps its preserved IDs as evidence only, so a partially parsed pair is
+    never double-counted against the reservation.
+    """
     ids: set[str] = set()
     uncertain = 0
     for record in ledger_records(ledger_path):
-        for value in (record.get("job_ids") or {}).values():
-            if value:
-                ids.add(str(value))
-        if record.get("status") in {"uncertain", "failed"}:
+        if record.get("status") == "submitted":
+            for value in (record.get("job_ids") or {}).values():
+                if value:
+                    ids.add(str(value))
+        elif record.get("status") in {"uncertain", "failed"}:
             uncertain += 1
     for sidecar in sorted(run_root.glob("*/*/*/fold_*/jobs.jsonl")):
         for line in sidecar.read_text(encoding="utf-8").splitlines():
@@ -265,6 +276,17 @@ def _text(value: object) -> str:
     return str(value)
 
 
+def _valid_delivery(job_ids: dict[str, str]) -> bool:
+    """Exactly the expected unique numeric train + best_eval pair."""
+    if set(job_ids) != {"train", "best_eval"}:
+        return False
+    train = str(job_ids["train"]).strip()
+    best = str(job_ids["best_eval"]).strip()
+    if not train.isdigit() or not best.isdigit():
+        return False
+    return train != best
+
+
 def uncertain_record(
     fit: dict,
     reason: str,
@@ -331,7 +353,7 @@ def submit_fit(fit: dict, runner: Runner | None = None) -> dict:
     stderr = result.stderr or ""
     if result.returncode == 0:
         attempt_id, job_ids = _extract_delivery(stdout)
-        if attempt_id and job_ids:
+        if attempt_id and _valid_delivery(job_ids):
             return {
                 "key": fit["key"],
                 "run_name": fit["run_name"],
@@ -340,7 +362,10 @@ def submit_fit(fit: dict, runner: Runner | None = None) -> dict:
                 "job_ids": job_ids,
                 "attempt_id": attempt_id,
             }
-        return uncertain_record(fit, "unparsed success output", stdout, stderr)
+        reason = "unparsed success output"
+        if attempt_id and not _valid_delivery(job_ids):
+            reason = f"invalid delivered job ids: {job_ids!r}"
+        return uncertain_record(fit, reason, stdout, stderr)
     # A non-zero return code may still have delivered remote jobs; preserve
     # everything the output shows and count it conservatively.
     return uncertain_record(fit, f"submit rc={result.returncode}", stdout, stderr)

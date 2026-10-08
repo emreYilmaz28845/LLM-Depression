@@ -244,3 +244,95 @@ def test_head_chain_headroom_uses_the_same_lane_budget() -> None:
     assert dispatch.head_chain_headroom(78) == 1
     assert dispatch.head_chain_headroom(79) == 0
     assert dispatch.head_chain_headroom(80) == 0
+
+
+def _roundtrip(tmp_path: Path, stdout: str, stderr: str = "", rc: int = 0):
+    """submit -> append -> reconcile, the exact production path."""
+    ledger = tmp_path / "submissions.jsonl"
+    run_root = tmp_path / "empty"
+
+    def runner(command, **kwargs):
+        return SimpleNamespace(returncode=rc, stdout=stdout, stderr=stderr)
+
+    record = dispatch.submit_fit(fits(1)[0], runner)
+    with ledger.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record) + "\n")
+    ids, uncertain = dispatch.own_job_ids(ledger, run_root)
+    states = {job_id: "RUNNING" for job_id in ids}
+    own = dispatch.own_nonterminal_count(ids, states, uncertain)
+    return record, ids, uncertain, own, dispatch.settled_keys(ledger)
+
+
+DEFAULT_JOBS = "{'train': '4701', 'best_eval': '4702'}"
+
+
+def _submit_stdout(attempt_id: str = "20261008T000000Z-x-abc-1234", jobs: str = "") -> str:
+    delivery = jobs or DEFAULT_JOBS
+    return f'{{"attempt_id": "{attempt_id}"}}\nsubmitted jobs: {delivery}\n'
+
+
+def test_roundtrip_valid_pair_is_submitted_and_counted(tmp_path: Path) -> None:
+    record, ids, uncertain, own, settled = _roundtrip(tmp_path, _submit_stdout())
+    assert record["status"] == "submitted"
+    assert ids == ["4701", "4702"] and uncertain == 0 and own == 2
+    assert settled == {"route|s7|f0"}
+
+
+def test_roundtrip_single_id_stays_uncertain_with_reservation(tmp_path: Path) -> None:
+    record, ids, uncertain, own, settled = _roundtrip(
+        tmp_path, _submit_stdout(jobs="{'train': '4701'}")
+    )
+    assert record["status"] == "uncertain"
+    assert "invalid delivered job ids" in record["reason"]
+    assert uncertain == 1 and own == 2
+    assert settled == {"route|s7|f0"}
+
+
+def test_roundtrip_duplicate_ids_stay_uncertain(tmp_path: Path) -> None:
+    record, _, uncertain, own, _ = _roundtrip(
+        tmp_path, _submit_stdout(jobs="{'train': '4701', 'best_eval': '4701'}")
+    )
+    assert record["status"] == "uncertain"
+    assert uncertain == 1 and own == 2
+
+
+def test_roundtrip_malformed_ids_stay_uncertain(tmp_path: Path) -> None:
+    record, _, uncertain, own, _ = _roundtrip(
+        tmp_path, _submit_stdout(jobs="{'train': 'abc', 'best_eval': '4702'}")
+    )
+    assert record["status"] == "uncertain"
+    assert uncertain == 1 and own == 2
+
+
+def test_roundtrip_extra_or_missing_keys_stay_uncertain(tmp_path: Path) -> None:
+    jobs_cases = (
+        "{'train': '4701', 'best_eval': '4702', 'extra': '4703'}",
+        "{'best_eval': '4702'}",
+    )
+    for index, jobs in enumerate(jobs_cases):
+        case = tmp_path / f"case_{index}"
+        case.mkdir()
+        record, _, uncertain, own, _ = _roundtrip(case, _submit_stdout(jobs=jobs))
+        assert record["status"] == "uncertain", jobs
+        assert uncertain == 1 and own == 2
+
+
+def test_roundtrip_missing_attempt_id_stays_uncertain(tmp_path: Path) -> None:
+    stdout = "submitted jobs: {'train': '4701', 'best_eval': '4702'}\n"
+    record, _, uncertain, own, _ = _roundtrip(tmp_path, stdout)
+    assert record["status"] == "uncertain"
+    assert uncertain == 1 and own == 2
+
+
+def test_wave_stops_on_uncertain_without_retry() -> None:
+    calls = {"count": 0}
+
+    def reconcile():
+        return 0, 0
+
+    def submit(fit):
+        calls["count"] += 1
+        return {"status": "uncertain", "job_ids": {}, "reason": "invalid"}
+
+    processed = dispatch.run_wave(fits(10), 40, reconcile=reconcile, submit=submit)
+    assert processed == 1 and calls["count"] == 1
