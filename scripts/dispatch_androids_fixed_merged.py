@@ -9,17 +9,23 @@ Admission semantics (mirrors the verified cross-lane dispatcher pattern):
   is never treated as "no jobs".
 - The lane's own nonterminal count is computed from every authoritative
   delivered job ID recorded for this lane: all run registries under
-  ``<runtime>/registries`` plus archived registries, with unresolved IDs counted
-  as nonterminal (fail closed). Uncertain submission records in the append-only
-  submissions ledger reserve their leg size until their IDs resolve.
+  ``<runtime>/registries`` (including archived registries and the shared
+  CV/final run registries), with unresolved IDs counted as nonterminal (fail
+  closed). Unreadable or malformed registries refuse admission. Uncertain
+  submission records reserve their unresolved remainder until reconciled.
 - Before every leg (one route/seed chain: 15 jobs for cv, 3 for smoke/final)
   both counts are re-checked: ``user_queue < 350`` and
-  ``own_nonterminal + leg_size <= 80``. The loop never relies on an initial
-  wave-size count; it reconciles before each leg and stops on the first refusal.
-- Every submit outcome that is not a clean parsed success is recorded as
-  ``uncertain`` in the append-only ledger with partial output preserved, and its
-  reservation stays in the own-nonterminal count until reconciled. Nothing is
-  retried automatically.
+  ``own_nonterminal + leg_size <= 80``. The loop reconciles before each leg and
+  stops on the first refusal; it never relies on an initial wave-size count.
+- A leg counts as delivered only when the shared run registry gained exactly the
+  expected number of unique new job IDs for that stage. The submitter reports
+  the whole registry (historic CV IDs remain when a final leg is appended), so
+  completeness is proven from the registry diff, and duplicate IDs can never
+  prove a complete leg. Partial or unverifiable delivery stays ``uncertain``
+  with the discovered IDs and registry evidence preserved; nothing is retried
+  automatically. Reservation schema: ``expected`` (leg cardinality) and
+  ``remaining`` (expected minus unique discovered IDs); legacy records are read
+  conservatively without subtracting IDs twice.
 """
 
 from __future__ import annotations
@@ -132,6 +138,25 @@ def registry_job_ids(registries_dir: Path) -> set[str]:
     return ids
 
 
+def registry_stage_job_ids(registry_path: Path, stage: str) -> list[str]:
+    """Numeric job IDs of one stage in a single run registry (duplicates kept)."""
+
+    try:
+        payload = json.loads(registry_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise AdmissionError(f"unreadable registry {registry_path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise AdmissionError(f"malformed registry (not a mapping): {registry_path}")
+    ids: list[str] = []
+    for job in payload.get("jobs") or []:
+        if str(job.get("stage")) != stage:
+            continue
+        job_id = str(job.get("job_id") or "")
+        if job_id.isdigit():
+            ids.append(job_id)
+    return ids
+
+
 def ledger_records(ledger_path: Path) -> list[dict]:
     if not ledger_path.exists():
         return []
@@ -145,21 +170,39 @@ def ledger_records(ledger_path: Path) -> list[dict]:
 def ledger_reservations(ledger_path: Path) -> tuple[set[str], int]:
     """Delivered IDs from the ledger plus conservative reservations.
 
-    An uncertain/failed record reserves the unresolved remainder of its leg: the
-    parsed job IDs are counted through normal state resolution, and everything
-    the record cannot prove delivered stays reserved.
+    Reservation schema (one meaning per field): a record stores ``expected``
+    (leg cardinality) and ``remaining`` (``expected`` minus the unique discovered
+    IDs).  Legacy records are read conservatively: an old ``reservation`` value
+    is treated as an already-remaining count (never subtracted again), and a
+    record with no counts at all reserves its full stage leg size.
     """
 
     ids: set[str] = set()
     reservation = 0
     for record in ledger_records(ledger_path):
-        parsed = [
+        parsed = {
             str(value) for value in (record.get("job_ids") or []) if str(value).isdigit()
-        ]
+        }
         ids.update(parsed)
-        if record.get("status") in {"uncertain", "failed"}:
-            expected = int(record.get("reservation") or 0)
-            reservation += max(0, expected - len(parsed))
+        if record.get("status") not in {"uncertain", "failed"}:
+            continue
+        if record.get("attempted") is False:
+            continue
+        remaining = record.get("remaining")
+        if remaining is not None:
+            reservation += max(0, int(remaining))
+            continue
+        expected = record.get("expected")
+        if expected is not None:
+            reservation += max(0, int(expected) - len(parsed))
+            continue
+        legacy = record.get("reservation")
+        if legacy is not None:
+            # Legacy ambiguous field: treat it as the remaining count, the
+            # conservative reading that never subtracts known IDs twice.
+            reservation += max(0, int(legacy))
+            continue
+        reservation += LEG_JOBS.get(str(record.get("stage") or ""), 0)
     return ids, reservation
 
 
@@ -223,6 +266,15 @@ def _extract_delivery(stdout: str) -> dict | None:
     return None
 
 
+def _evidence_job_ids(stdout: str) -> list[str]:
+    payload = _extract_delivery(stdout)
+    if not payload:
+        return []
+    return sorted(
+        {str(value) for value in payload.get("job_ids") or [] if str(value).isdigit()}
+    )
+
+
 def submit_leg(
     *,
     stage: str,
@@ -233,12 +285,15 @@ def submit_leg(
     input_root: str,
     pooled_runtime_root: str,
     runtime: str,
+    registries_dir: Path | None = None,
     runner: Runner | None = None,
 ) -> dict:
     campaign_suffix, modality = ROUTES[route]
     run_id = f"qmsm_{route}_s{seed}"
     registry_path = f"{runtime}/registries/{run_id}.json"
     expected = LEG_JOBS.get(stage, 0)
+    reg_dir = registries_dir or Path(runtime) / "registries"
+    before = registry_job_ids(reg_dir)
     command = [
         sys.executable,
         "scripts/submit_symmetric_merged.py",
@@ -279,61 +334,87 @@ def submit_leg(
         }
     )
     runner = runner or subprocess.run
+    result = None
+    failure_reason: str | None = None
+    stdout = stderr = ""
     try:
         result = runner(
             command, cwd=deployment_code, capture_output=True, text=True, timeout=1200, env=env
         )
     except subprocess.TimeoutExpired as exc:
-        return uncertain_record(
-            stage,
-            route,
-            seed,
-            "timeout",
-            _text(getattr(exc, "stdout", "")),
-            _text(getattr(exc, "stderr", "")),
-            registry=registry_path,
-        )
+        stdout = _text(getattr(exc, "stdout", ""))
+        stderr = _text(getattr(exc, "stderr", ""))
+        failure_reason = "timeout"
     except OSError as exc:
-        return uncertain_record(stage, route, seed, f"oserror: {exc}", registry=registry_path)
+        failure_reason = f"oserror: {exc}"
     except Exception as exc:  # noqa: BLE001 - fail closed after possible delivery
+        failure_reason = f"unexpected runner error: {type(exc).__name__}: {exc}"
+    if result is not None:
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        if result.returncode != 0:
+            failure_reason = f"submit rc={result.returncode}"
+
+    evidence = _evidence_job_ids(stdout)
+    if failure_reason is not None:
+        # Delivery may have happened; preserve every known ID and reserve the
+        # unresolved remainder (full reservation when nothing parses).
         return uncertain_record(
             stage,
             route,
             seed,
-            f"unexpected runner error: {type(exc).__name__}: {exc}",
+            failure_reason,
+            stdout,
+            stderr,
+            job_ids=evidence,
             registry=registry_path,
+            expected=expected,
         )
-    stdout, stderr = result.stdout or "", result.stderr or ""
-    if result.returncode == 0:
-        payload = _extract_delivery(stdout)
-        if payload:
-            job_ids = [str(value) for value in payload.get("job_ids") or []]
-            if len(job_ids) == expected:
-                return {
-                    "ts": int(time.time()),
-                    "status": "submitted",
-                    "stage": stage,
-                    "route": route,
-                    "seed": seed,
-                    "run_id": payload.get("run_id"),
-                    "registry": registry_path,
-                    "job_ids": job_ids,
-                }
-            return uncertain_record(
-                stage,
-                route,
-                seed,
-                f"partial delivery {len(job_ids)}/{expected}",
-                stdout,
-                stderr,
-                job_ids=job_ids,
-                registry=registry_path,
-            )
+
+    try:
+        after = registry_job_ids(reg_dir)
+        stage_ids = registry_stage_job_ids(Path(registry_path), stage)
+    except AdmissionError as exc:
         return uncertain_record(
-            stage, route, seed, "unparsed success output", stdout, stderr, registry=registry_path
+            stage,
+            route,
+            seed,
+            f"post-submit registry read failed: {exc}",
+            stdout,
+            stderr,
+            job_ids=evidence,
+            registry=registry_path,
+            expected=expected,
         )
+    fresh = sorted(after - before)
+    unique_stage = set(stage_ids)
+    if len(stage_ids) != len(unique_stage):
+        reason = f"duplicate stage ids ({len(stage_ids)} entries, {len(unique_stage)} unique)"
+    elif len(fresh) != expected:
+        reason = f"incomplete fresh delivery {len(fresh)}/{expected}"
+    else:
+        return {
+            "ts": int(time.time()),
+            "status": "submitted",
+            "stage": stage,
+            "route": route,
+            "seed": seed,
+            "run_id": run_id,
+            "registry": registry_path,
+            "job_ids": fresh,
+            "registry_job_total": len(after),
+        }
+    discovered = sorted(set(fresh) | set(evidence) | unique_stage)
     return uncertain_record(
-        stage, route, seed, f"submit rc={result.returncode}", stdout, stderr, registry=registry_path
+        stage,
+        route,
+        seed,
+        reason,
+        stdout,
+        stderr,
+        job_ids=discovered,
+        registry=registry_path,
+        expected=expected,
     )
 
 
@@ -355,9 +436,11 @@ def uncertain_record(
     *,
     job_ids: Iterable[str] = (),
     registry: str = "",
+    expected: int | None = None,
+    attempted: bool = True,
 ) -> dict:
-    expected = LEG_JOBS.get(stage, 0)
-    parsed = [str(value) for value in job_ids if str(value).isdigit()]
+    leg_expected = LEG_JOBS.get(stage, 0) if expected is None else int(expected)
+    parsed = sorted({str(value) for value in job_ids if str(value).isdigit()})
     return {
         "ts": int(time.time()),
         "status": "uncertain",
@@ -366,8 +449,10 @@ def uncertain_record(
         "seed": seed,
         "reason": reason,
         "registry": registry,
+        "attempted": attempted,
+        "expected": leg_expected,
+        "remaining": max(0, leg_expected - len(parsed)),
         "job_ids": parsed,
-        "reservation": max(0, expected - len(parsed)),
         "tail": (stdout + "\n" + stderr)[-800:],
     }
 
@@ -421,16 +506,21 @@ def main() -> int:
             print(line)
             processed += 1
             continue
-        record = submit_leg(
-            stage=args.stage,
-            route=route,
-            seed=seed,
-            deployment_code=args.deployment_code,
-            source_commit=args.source_commit,
-            input_root=args.input_root,
-            pooled_runtime_root=args.pooled_runtime_root,
-            runtime=args.runtime,
-        )
+        try:
+            record = submit_leg(
+                stage=args.stage,
+                route=route,
+                seed=seed,
+                deployment_code=args.deployment_code,
+                source_commit=args.source_commit,
+                input_root=args.input_root,
+                pooled_runtime_root=args.pooled_runtime_root,
+                runtime=args.runtime,
+                registries_dir=registries_dir,
+            )
+        except AdmissionError as error:
+            print(f"REFUSED before {route} s{seed}: {error}")
+            return 2
         with ledger_path.open("a", encoding="utf-8") as ledger:
             ledger.write(json.dumps(record) + "\n")
         processed += 1
