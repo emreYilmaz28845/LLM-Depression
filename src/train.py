@@ -1743,7 +1743,9 @@ def main() -> None:
             }
         )
         config["training"]["window_cap"] = window_cap_cfg
-        if accelerator.is_main_process:
+        # Setup runs before the Accelerator exists (it is built later in main),
+        # so rank identity must come from the torchrun environment here.
+        if int(os.environ.get("RANK", "0")) == 0:
             save_json(window_cap_mask, run_root / "window_cap_mask.json")
             save_json(window_cap_audit, logs_dir / "window_cap_audit.json")
         LOGGER.info(

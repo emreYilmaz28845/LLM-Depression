@@ -190,3 +190,41 @@ def test_omitted_responses_recorded() -> None:
     assert audit["omitted_example_count"] == 6
     assert audit["omitted_response_count"] == 6
     assert audit["omitted_examples_per_subject"] == {"a": 6}
+
+
+def test_train_window_cap_block_never_uses_accelerator_before_assignment() -> None:
+    """The cap hook runs in setup, before main() builds the Accelerator.
+
+    Regression guard for the first smoke failure: referencing
+    ``accelerator.is_main_process`` at the hook raised UnboundLocalError
+    because the Accelerator is constructed much later in main().
+    """
+    import ast
+
+    source = (ROOT / "src" / "train.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    main_fn = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    )
+    assignment_line = None
+    for node in ast.walk(main_fn):
+        targets = []
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id == "accelerator":
+                if assignment_line is None or node.lineno < assignment_line:
+                    assignment_line = node.lineno
+    assert assignment_line is not None, "train.py main() must assign accelerator"
+    offenders = sorted(
+        node.lineno
+        for node in ast.walk(main_fn)
+        if isinstance(node, ast.Name)
+        and node.id == "accelerator"
+        and node.lineno < assignment_line
+    )
+    assert offenders == [], f"accelerator referenced before assignment at lines {offenders}"
