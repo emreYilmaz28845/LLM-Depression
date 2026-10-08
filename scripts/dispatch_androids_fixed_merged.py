@@ -470,6 +470,36 @@ def uncertain_record(
     }
 
 
+def select_legs(
+    planned: list[tuple[str, int]],
+    handled: set[tuple[str, int]],
+    legs: str = "",
+) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
+    """Return (to_process, skipped_handled).
+
+    Legs already present in the ledger for this stage are never re-attempted:
+    submitted legs are settled and uncertain/failed legs stay blocked until an
+    explicit reconciliation, so nothing is retried automatically.  ``legs`` is
+    an optional comma-separated ``route:seed`` selection for precise waves.
+    """
+
+    selected = planned
+    if legs.strip():
+        wanted: list[tuple[str, int]] = []
+        for token in legs.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            route, _, seed_text = token.partition(":")
+            if route not in ROUTES or not seed_text.strip().lstrip("-").isdigit():
+                raise AdmissionError(f"invalid leg selection {token!r}")
+            wanted.append((route, int(seed_text)))
+        selected = wanted
+    to_process = [item for item in selected if item not in handled]
+    skipped = [item for item in selected if item in handled]
+    return to_process, skipped
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", required=True, choices=["smoke", "cv", "final"])
@@ -482,6 +512,7 @@ def main() -> int:
     parser.add_argument("--routes", nargs="*", default=list(ROUTES))
     parser.add_argument("--seeds", nargs="*", type=int, default=[7, 1337, 2024])
     parser.add_argument("--only", default="")
+    parser.add_argument("--legs", default="", help="comma-separated route:seed selection for precise waves")
     parser.add_argument("--max-legs", type=int, default=5, help="hard cap on legs per invocation")
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()
@@ -499,6 +530,24 @@ def main() -> int:
         for seed in args.seeds
         if not args.only or args.only == route
     ]
+    records = ledger_records(ledger_path)
+    handled = {
+        (str(record.get("route")), int(record.get("seed")))
+        for record in records
+        if record.get("stage") == args.stage
+        and record.get("route")
+        and str(record.get("seed")).isdigit()
+    }
+    try:
+        planned, skipped = select_legs(planned, handled, args.legs)
+    except AdmissionError as error:
+        print(f"REFUSED: {error}")
+        return 2
+    if skipped:
+        print(f"skipping {len(skipped)} handled leg(s): {', '.join(f'{r} s{s}' for r, s in skipped)}")
+    if not planned:
+        print("no unhandled legs remain for this stage")
+        return 0
 
     processed = 0
     for route, seed in planned:

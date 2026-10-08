@@ -12,6 +12,7 @@ from scripts.dispatch_androids_fixed_merged import (
     leg_admission,
     ledger_reservations,
     registry_job_ids,
+    select_legs,
     submit_leg,
 )
 
@@ -255,6 +256,31 @@ def test_own_lane_cap_enforced() -> None:
     leg_admission(65, 100, 15)  # exactly at the 80-job lane allocation
     with pytest.raises(AdmissionError):
         leg_admission(66, 100, 15)
+
+
+def test_leg_selection_and_handled_skipping() -> None:
+    planned = [
+        ("native_text_only", 7),
+        ("native_text_only", 1337),
+        ("native_audio_only", 7),
+    ]
+    handled = {("native_text_only", 7)}
+    to_process, skipped = select_legs(planned, handled)
+    assert to_process == [("native_text_only", 1337), ("native_audio_only", 7)]
+    assert skipped == [("native_text_only", 7)]
+
+    to_process, skipped = select_legs(planned, set(), "native_audio_only:7,native_text_only:1337")
+    assert to_process == [("native_audio_only", 7), ("native_text_only", 1337)]
+    assert skipped == []
+
+    to_process, skipped = select_legs(planned, handled, "native_text_only:7")
+    assert to_process == []
+    assert skipped == [("native_text_only", 7)]
+
+    with pytest.raises(AdmissionError):
+        select_legs(planned, set(), "not_a_route:7")
+    with pytest.raises(AdmissionError):
+        select_legs(planned, set(), "native_text_only:abc")
 
 
 def test_user_threshold_enforced() -> None:
