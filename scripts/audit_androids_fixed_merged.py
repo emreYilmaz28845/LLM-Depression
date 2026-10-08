@@ -61,7 +61,11 @@ def main() -> int:
         config_path = REPO_ROOT / f"configs/experiments/merged/symmetric_merged_qwen3_pooled_{route}.yaml"
         declared = load_merged_config(config_path, [])
         merged_root = Path(args.input_root) / "outputs/symmetric_merged" / f"{args.campaign_base}_{campaign_suffix}" / modality
-        tokens = [f"--set=output_dirs.merged_root={merged_root}"]
+        run_root = Path(args.input_root) / "output_model/symmetric_merged" / f"{args.campaign_base}_{campaign_suffix}_likelihood" / modality
+        tokens = [
+            f"--set=output_dirs.merged_root={merged_root}",
+            f"--set=output_dirs.run_root={run_root}",
+        ]
         tokens += _runtime_override_tokens(
             declared,
             input_root=args.input_root,
