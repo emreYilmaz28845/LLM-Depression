@@ -21,6 +21,9 @@ ANDROIDS_INTERVIEW_CONTROL_COUNT = 52
 ANDROIDS_INTERVIEW_TURN_COUNT = 874
 ANDROIDS_INTERVIEW_WINDOW_COUNT = 1302
 ANDROIDS_DEFAULT_SEGMENT_SECONDS = 30.0
+# Versioned opt-in for the window15 comparison arm: the canonical recipe stays
+# 30 seconds, and the only additional accepted duration is 15 seconds.
+ANDROIDS_ALLOWED_SEGMENT_SECONDS = (ANDROIDS_DEFAULT_SEGMENT_SECONDS, 15.0)
 
 _RECORDING_RE = re.compile(
     r"^(?P<numeric_id>\d+)_(?P<condition>[CP])(?P<gender>[FM])"
@@ -302,13 +305,14 @@ def build_androids_interview_manifest(
     root = Path(config["dataset_root"])
     data_cfg = config.get("data", {})
     segment_seconds = float(data_cfg.get("segment_seconds", ANDROIDS_DEFAULT_SEGMENT_SECONDS))
-    if not math.isclose(
-        segment_seconds,
-        ANDROIDS_DEFAULT_SEGMENT_SECONDS,
-        rel_tol=0.0,
-        abs_tol=1e-9,
+    if not any(
+        math.isclose(segment_seconds, allowed, rel_tol=0.0, abs_tol=1e-9)
+        for allowed in ANDROIDS_ALLOWED_SEGMENT_SECONDS
     ):
-        raise ValueError("ANDROIDS Interview requires data.segment_seconds=30.")
+        raise ValueError(
+            "ANDROIDS Interview requires data.segment_seconds in "
+            f"{sorted(ANDROIDS_ALLOWED_SEGMENT_SECONDS)}."
+        )
     if str(data_cfg.get("segment_partition", "equal_duration")) != "equal_duration":
         raise ValueError("ANDROIDS Interview supports only equal_duration segmentation.")
     if int(config.get("split", {}).get("outer_folds", 5)) != 5:
