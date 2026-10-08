@@ -215,6 +215,10 @@ def test_planner_production_graph_counts() -> None:
     assert sum(wave["fits"] for wave in graph["planned_waves"]) == 189
     assert all(wave["scheduler_jobs"] <= 80 for wave in graph["planned_waves"])
     assert graph["slot_policy"]["lane_cap_nonterminal"] == 80
+    envs = graph["environments"]["per_backend"]
+    assert set(envs) == {"qwen38", "qwen3omni"}
+    assert all("qwen_mn5_rebuilt" not in path for path in envs.values())
+    assert all(path.endswith("/bin/activate") for path in envs.values())
 
 
 def test_control_audit_normalizes_both_key_formats() -> None:

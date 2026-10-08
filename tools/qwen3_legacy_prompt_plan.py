@@ -62,6 +62,14 @@ FOLDS_BY_DATASET = {
     "turkish": (0, 1, 2, 3, 4),
 }
 
+# Verified backend-specific activation scripts. Submissions must pass these
+# explicitly; the worker default (qwen_mn5_rebuilt) lacks the Qwen3-Omni
+# processor class and is never valid for this campaign.
+ENVIRONMENTS = {
+    "qwen38": "/gpfs/projects/etur92/ozu647717/venvs/qwen38_fsdp_fastpath_20260921/bin/activate",
+    "qwen3omni": "/gpfs/projects/etur92/ozu647717/venvs/qwen3omni/bin/activate",
+}
+
 
 def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -247,6 +255,14 @@ def build_production_graph(matrix: dict[str, Any], matrix_sha256: str) -> dict[s
             "planned_wave_size_fits": wave_size,
             "refill_after_terminal": True,
             "no_peer_borrowing": True,
+        },
+        "environments": {
+            "per_backend": ENVIRONMENTS,
+            "note": (
+                "every train and evaluation submission must pass --env-activate with the "
+                "backend-specific path; the worker default qwen_mn5_rebuilt lacks "
+                "Qwen3OmniMoeProcessor and is invalid for this campaign"
+            ),
         },
         "planned_waves": waves,
         "total_new_base_fits": fit_count,
