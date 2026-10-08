@@ -19,6 +19,7 @@ from pathlib import Path
 import yaml
 
 from scripts import build_qwen3_legacy_prompt_configs as legacy_configs
+from tools import qwen3_legacy_prompt_plan as planner
 from src.data.prompt_context import (
     LEGACY_QUESTION_CONTEXT_SENTENCES,
     PROMPTCONTEXT_QUESTION_CONTEXT_SENTENCES,
@@ -178,3 +179,27 @@ def test_canonical_generators_and_default_selection_remain_current() -> None:
             command, cwd=ROOT, capture_output=True, text=True, timeout=300
         )
         assert completed.returncode == 0, (command, completed.stdout, completed.stderr)
+
+
+def test_planner_freezes_the_189_fit_matrix() -> None:
+    matrix = planner.build_matrix()
+    assert planner.check_matrix(matrix) == []
+    assert matrix["summary"] == {
+        "routes": 15,
+        "fits": 189,
+        "text_fits": 63,
+        "audio_fits": 126,
+    }
+    assert matrix["training_seeds"] == [7, 1337, 2024]
+    assert matrix["split_seed"] == 1337 and matrix["head_seed"] == 1337
+    run_names = [fit["run_name"] for fit in matrix["fits"]]
+    assert len(set(run_names)) == 189
+    assert all(name.startswith("q3lp_") for name in run_names)
+    assert all(legacy_configs.MARKER in fit["config"] for fit in matrix["fits"])
+    for route in matrix["routes"]:
+        expected = (0,) if route["dataset"] == "daic" else (0, 1, 2, 3, 4)
+        assert tuple(route["folds"]) == expected
+        assert route["run_root"].startswith(
+            "${PROJECT_ROOT}/output_model/qwen3_legacy_prompt_20261008/"
+        )
+        assert route["control_config"] != route["config"]
