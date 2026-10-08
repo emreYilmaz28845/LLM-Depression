@@ -217,6 +217,40 @@ def test_ledger_legacy_reservation_not_double_subtracted(tmp_path) -> None:
     assert reservation == 12
 
 
+def test_round_trip_final_partial1_with_old_cv_stdout(tmp_path) -> None:
+    runtime = tmp_path / "rt"
+    run_id = "qmsm_native_text_only_s1337"
+    cv_ids = [str(i) for i in range(400, 415)]
+    _append_registry(runtime, run_id, [_job(value, "cv") for value in cv_ids])
+    runner = _runner(runtime, run_id, [_job("500", "final")])
+    record = _submit(tmp_path, runner, stage="final")
+    assert record["status"] == "uncertain"
+    assert record["expected"] == 3
+    assert record["remaining"] == 2
+    assert record["job_ids"] == ["500"]
+    assert set(record["historical_job_ids"]) == set(cv_ids)
+    ids, reservation = _round_trip(tmp_path, record)
+    assert reservation == 2
+    assert ids == {"500"}
+
+
+def test_round_trip_final_rc1_only_old_cv_stdout(tmp_path) -> None:
+    runtime = tmp_path / "rt"
+    run_id = "qmsm_native_text_only_s1337"
+    cv_ids = [str(i) for i in range(600, 615)]
+    _append_registry(runtime, run_id, [_job(value, "cv") for value in cv_ids])
+    runner = _runner(runtime, run_id, [], rc=1)
+    record = _submit(tmp_path, runner, stage="final")
+    assert record["status"] == "uncertain"
+    assert record["expected"] == 3
+    assert record["remaining"] == 3
+    assert record["job_ids"] == []
+    assert set(record["historical_job_ids"]) == set(cv_ids)
+    ids, reservation = _round_trip(tmp_path, record)
+    assert reservation == 3
+    assert ids == set()
+
+
 def test_own_lane_cap_enforced() -> None:
     leg_admission(65, 100, 15)  # exactly at the 80-job lane allocation
     with pytest.raises(AdmissionError):

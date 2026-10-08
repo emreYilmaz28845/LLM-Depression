@@ -356,9 +356,13 @@ def submit_leg(
             failure_reason = f"submit rc={result.returncode}"
 
     evidence = _evidence_job_ids(stdout)
+    new_evidence = sorted(set(evidence) - before)
+    historical_evidence = sorted(set(evidence) & before)
     if failure_reason is not None:
-        # Delivery may have happened; preserve every known ID and reserve the
-        # unresolved remainder (full reservation when nothing parses).
+        # Delivery may have happened; reserve the remainder from NEW IDs only
+        # (the submitter prints the whole registry, so historical IDs must never
+        # shrink the current leg's reservation) and preserve the historical IDs
+        # separately.
         return uncertain_record(
             stage,
             route,
@@ -366,7 +370,8 @@ def submit_leg(
             failure_reason,
             stdout,
             stderr,
-            job_ids=evidence,
+            job_ids=new_evidence,
+            historical_job_ids=historical_evidence,
             registry=registry_path,
             expected=expected,
         )
@@ -382,7 +387,8 @@ def submit_leg(
             f"post-submit registry read failed: {exc}",
             stdout,
             stderr,
-            job_ids=evidence,
+            job_ids=new_evidence,
+            historical_job_ids=historical_evidence,
             registry=registry_path,
             expected=expected,
         )
@@ -404,7 +410,8 @@ def submit_leg(
             "job_ids": fresh,
             "registry_job_total": len(after),
         }
-    discovered = sorted(set(fresh) | set(evidence) | unique_stage)
+    new_discovered = sorted(set(fresh) | set(new_evidence))
+    historical_discovered = sorted(set(historical_evidence) | (set(evidence) - set(new_discovered)))
     return uncertain_record(
         stage,
         route,
@@ -412,7 +419,8 @@ def submit_leg(
         reason,
         stdout,
         stderr,
-        job_ids=discovered,
+        job_ids=new_discovered,
+        historical_job_ids=historical_discovered,
         registry=registry_path,
         expected=expected,
     )
@@ -435,12 +443,16 @@ def uncertain_record(
     stderr: str = "",
     *,
     job_ids: Iterable[str] = (),
+    historical_job_ids: Iterable[str] = (),
     registry: str = "",
     expected: int | None = None,
     attempted: bool = True,
 ) -> dict:
     leg_expected = LEG_JOBS.get(stage, 0) if expected is None else int(expected)
     parsed = sorted({str(value) for value in job_ids if str(value).isdigit()})
+    historical = sorted(
+        {str(value) for value in historical_job_ids if str(value).isdigit()} - set(parsed)
+    )
     return {
         "ts": int(time.time()),
         "status": "uncertain",
@@ -453,6 +465,7 @@ def uncertain_record(
         "expected": leg_expected,
         "remaining": max(0, leg_expected - len(parsed)),
         "job_ids": parsed,
+        "historical_job_ids": historical,
         "tail": (stdout + "\n" + stderr)[-800:],
     }
 
