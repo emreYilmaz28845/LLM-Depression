@@ -7,15 +7,16 @@ Admission semantics (binding):
   ``squeue`` query with the SSH return code checked. A failed SSH command, a
   non-zero scheduler return code, or an unparseable line refuses submission;
   it is never treated as "no jobs".
-- The lane's own nonterminal count is computed from every authoritative
-  delivered job ID recorded for this lane: the append-only submission ledger
-  plus every local fold-sidecar ``jobs.jsonl`` SUBMITTED event (covers smokes,
-  auxiliaries, downstream jobs and historical attempts). Own IDs are resolved
-  by fetching the full user queue once (``squeue -u`` filtered to own IDs, so
-  IDs that already left the queue cannot break the query) and then querying
-  ``sacct`` for the remaining IDs. IDs absent from both count as nonterminal
-  (fail closed); uncertain/failed ledger or submit records count conservatively
-  as two jobs.
+- The lane's own nonterminal count keeps ownership of every unique numeric
+  job id recorded for this lane (all ledger records plus every local
+  fold-sidecar ``jobs.jsonl`` SUBMITTED event), and each uncertain/failed
+  record adds its full two-job reservation; a safe overcount is accepted.
+  Own IDs are resolved by fetching the full user queue once (``squeue -u``
+  filtered to own IDs, so IDs that already left the queue cannot break the
+  query) and then querying ``sacct`` for the remaining IDs. Non-numeric
+  preserved ids, or ids that neither source can resolve, stop admission until
+  manually reconciled (fail closed); the wave is never allowed to continue on
+  an unknown own job.
 - Before every single fit (two jobs: train + best_eval) both counts are
   re-checked. The per-fit condition is exactly ``user_queue < 350`` and
   ``own_nonterminal + 2 <= 80``; the loop never compares the processed count
@@ -148,22 +149,33 @@ def settled_keys(ledger_path: Path = LEDGER) -> set[str]:
 
 def own_job_ids(
     ledger_path: Path = LEDGER, run_root: Path = RUN_ROOT
-) -> tuple[list[str], int]:
-    """Authoritative delivered IDs for this lane plus conservative uncertain count.
+) -> tuple[list[str], int, list[str]]:
+    """Known own job IDs, uncertain-record count, and unknown preserved values.
 
-    Only cleanly ``submitted`` ledger records contribute job IDs. An
-    ``uncertain``/``failed`` record contributes exactly a two-job reservation
-    and keeps its preserved IDs as evidence only, so a partially parsed pair is
-    never double-counted against the reservation.
+    Every unique numeric job id from every ledger record (submitted, uncertain
+    and failed) and from every local fold-sidecar ``jobs.jsonl`` is preserved in
+    the accounting; keeping ownership of a known job always takes priority over
+    avoiding a possible overcount. Each uncertain/failed record additionally
+    contributes its full two-job reservation, so a partial delivery can
+    overcount but never disappears. Non-numeric or blank preserved values are
+    returned separately and must stop admission until reconciled.
     """
     ids: set[str] = set()
+    unknown: list[str] = []
     uncertain = 0
     for record in ledger_records(ledger_path):
-        if record.get("status") == "submitted":
-            for value in (record.get("job_ids") or {}).values():
-                if value:
-                    ids.add(str(value))
-        elif record.get("status") in {"uncertain", "failed"}:
+        status = record.get("status")
+        if status not in {"submitted", "uncertain", "failed"}:
+            continue
+        for value in (record.get("job_ids") or {}).values():
+            text = str(value).strip()
+            if not text:
+                continue
+            if text.isdigit():
+                ids.add(text)
+            else:
+                unknown.append(text)
+        if status in {"uncertain", "failed"}:
             uncertain += 1
     for sidecar in sorted(run_root.glob("*/*/*/fold_*/jobs.jsonl")):
         for line in sidecar.read_text(encoding="utf-8").splitlines():
@@ -171,9 +183,35 @@ def own_job_ids(
                 continue
             event = json.loads(line)
             job_id = event.get("slurm_job_id")
-            if job_id:
-                ids.add(str(job_id))
-    return sorted(ids), uncertain
+            if job_id is None or str(job_id).strip() == "":
+                continue
+            text = str(job_id).strip()
+            if text.isdigit():
+                ids.add(text)
+            else:
+                unknown.append(text)
+    return sorted(ids), uncertain, sorted(set(unknown))
+
+
+def reconciliation_failures(
+    job_ids: list[str], states: dict[str, str], unknown_ids: list[str]
+) -> list[str]:
+    failures: list[str] = []
+    if unknown_ids:
+        failures.append(f"non-numeric preserved ids: {unknown_ids[:10]}")
+    unresolved = [job_id for job_id in job_ids if job_id not in states]
+    if unresolved:
+        failures.append(f"unresolved ids: {unresolved[:10]}")
+    return failures
+
+
+def require_reconciled(
+    job_ids: list[str], states: dict[str, str], unknown_ids: list[str]
+) -> None:
+    """Admission must stop while any own id is unknown or unresolved."""
+    failures = reconciliation_failures(job_ids, states, unknown_ids)
+    if failures:
+        raise AdmissionError("reconciliation required: " + "; ".join(failures))
 
 
 def _chunks(items: list[str], size: int = 200) -> Iterable[list[str]]:
@@ -384,8 +422,8 @@ def run_wave(
     for fit in fits:
         if processed >= max_fits:
             break
-        own, user = reconcile()
         try:
+            own, user = reconcile()
             per_fit_admission(own, user)
         except AdmissionError as error:
             print(f"REFUSED before fit {processed + 1}: {error}")
@@ -427,8 +465,9 @@ def main() -> int:
         return 0
 
     def reconcile() -> tuple[int, int]:
-        job_ids, uncertain = own_job_ids(ledger_path)
+        job_ids, uncertain, unknown = own_job_ids(ledger_path)
         states, user = query_job_states(job_ids)
+        require_reconciled(job_ids, states, unknown)
         return own_nonterminal_count(job_ids, states, uncertain), user
 
     def record(entry: dict) -> None:

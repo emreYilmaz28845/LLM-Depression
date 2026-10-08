@@ -150,9 +150,42 @@ def test_own_ids_from_ledger_and_fold_sidecars(tmp_path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    ids, uncertain = dispatch.own_job_ids(ledger, run_root)
+    ids, uncertain, unknown = dispatch.own_job_ids(ledger, run_root)
     assert "47073846" in ids and "47073847" in ids and "47071730" in ids
-    assert uncertain == 1
+    assert uncertain == 1 and unknown == []
+
+
+def test_oversized_three_id_uncertain_counts_at_least_three_without_sidecars(
+    tmp_path: Path,
+) -> None:
+    """Known IDs keep ownership: 3 delivered ids + full 2 reservation (>= 3)."""
+    record, ids, uncertain, own, _ = _roundtrip(
+        tmp_path,
+        _submit_stdout(jobs="{'train': '4701', 'best_eval': '4702', 'extra': '4703'}"),
+    )
+    assert record["status"] == "uncertain"
+    assert ids == ["4701", "4702", "4703"]
+    assert uncertain == 1 and own == 5 and own >= 3
+
+
+def test_unknown_non_numeric_id_stops_admission(tmp_path: Path) -> None:
+    record, ids, uncertain, own, _ = _roundtrip(
+        tmp_path, _submit_stdout(jobs="{'train': 'abc', 'best_eval': '4702'}")
+    )
+    assert record["status"] == "uncertain"
+    assert ids == ["4702"] and uncertain == 1 and own == 3
+    ledger = tmp_path / "submissions.jsonl"
+    run_root = tmp_path / "empty"
+    job_ids, uncertain2, unknown = dispatch.own_job_ids(ledger, run_root)
+    with pytest.raises(dispatch.AdmissionError):
+        dispatch.require_reconciled(job_ids, {job_id: "RUNNING" for job_id in job_ids}, unknown)
+
+
+def test_unresolved_numeric_id_stops_admission() -> None:
+    with pytest.raises(dispatch.AdmissionError):
+        dispatch.require_reconciled(["99999999"], {}, [])
+    # Resolved ids pass.
+    assert dispatch.require_reconciled(["4701"], {"4701": "COMPLETED"}, []) is None
 
 
 def test_query_job_states_uses_full_queue_then_sacct() -> None:
@@ -257,7 +290,7 @@ def _roundtrip(tmp_path: Path, stdout: str, stderr: str = "", rc: int = 0):
     record = dispatch.submit_fit(fits(1)[0], runner)
     with ledger.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record) + "\n")
-    ids, uncertain = dispatch.own_job_ids(ledger, run_root)
+    ids, uncertain, _unknown = dispatch.own_job_ids(ledger, run_root)
     states = {job_id: "RUNNING" for job_id in ids}
     own = dispatch.own_nonterminal_count(ids, states, uncertain)
     return record, ids, uncertain, own, dispatch.settled_keys(ledger)
@@ -284,44 +317,44 @@ def test_roundtrip_single_id_stays_uncertain_with_reservation(tmp_path: Path) ->
     )
     assert record["status"] == "uncertain"
     assert "invalid delivered job ids" in record["reason"]
-    assert uncertain == 1 and own == 2
+    assert ids == ["4701"] and uncertain == 1 and own == 3
     assert settled == {"route|s7|f0"}
 
 
 def test_roundtrip_duplicate_ids_stay_uncertain(tmp_path: Path) -> None:
-    record, _, uncertain, own, _ = _roundtrip(
+    record, ids, uncertain, own, _ = _roundtrip(
         tmp_path, _submit_stdout(jobs="{'train': '4701', 'best_eval': '4701'}")
     )
     assert record["status"] == "uncertain"
-    assert uncertain == 1 and own == 2
+    assert ids == ["4701"] and uncertain == 1 and own == 3
 
 
 def test_roundtrip_malformed_ids_stay_uncertain(tmp_path: Path) -> None:
-    record, _, uncertain, own, _ = _roundtrip(
+    record, ids, uncertain, own, _ = _roundtrip(
         tmp_path, _submit_stdout(jobs="{'train': 'abc', 'best_eval': '4702'}")
     )
     assert record["status"] == "uncertain"
-    assert uncertain == 1 and own == 2
+    assert ids == ["4702"] and uncertain == 1 and own == 3
 
 
 def test_roundtrip_extra_or_missing_keys_stay_uncertain(tmp_path: Path) -> None:
     jobs_cases = (
-        "{'train': '4701', 'best_eval': '4702', 'extra': '4703'}",
-        "{'best_eval': '4702'}",
+        ("{'train': '4701', 'best_eval': '4702', 'extra': '4703'}", 5),
+        ("{'best_eval': '4702'}", 3),
     )
-    for index, jobs in enumerate(jobs_cases):
+    for index, (jobs, expected_own) in enumerate(jobs_cases):
         case = tmp_path / f"case_{index}"
         case.mkdir()
         record, _, uncertain, own, _ = _roundtrip(case, _submit_stdout(jobs=jobs))
         assert record["status"] == "uncertain", jobs
-        assert uncertain == 1 and own == 2
+        assert uncertain == 1 and own == expected_own
 
 
 def test_roundtrip_missing_attempt_id_stays_uncertain(tmp_path: Path) -> None:
     stdout = "submitted jobs: {'train': '4701', 'best_eval': '4702'}\n"
-    record, _, uncertain, own, _ = _roundtrip(tmp_path, stdout)
+    record, ids, uncertain, own, _ = _roundtrip(tmp_path, stdout)
     assert record["status"] == "uncertain"
-    assert uncertain == 1 and own == 2
+    assert ids == ["4701", "4702"] and uncertain == 1 and own == 4
 
 
 def test_wave_stops_on_uncertain_without_retry() -> None:
