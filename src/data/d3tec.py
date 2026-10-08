@@ -240,6 +240,19 @@ def _fold_distribution(
     return report
 
 
+def child_window_transcript_fields(full_response_transcript: str) -> tuple[str, str]:
+    """Transcript fields for a subdivided child window.
+
+    No aligned ASR exists for a child window. The manifest's generic
+    ``transcript`` field carries the canonical full response transcript -- the
+    byte-for-byte subject-level text the ``full_subject`` audio_text scope
+    consumes -- so the manifest validation invariant (non-empty transcript)
+    holds without inventing aligned text; ``segment_transcript`` stays empty and
+    the canonical segment metadata remains a reference only.
+    """
+    return str(full_response_transcript), ""
+
+
 def build_d3tec_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> dict[str, Any]:
     del quarantine  # D3TEC is complete by contract; missing canonical inputs are fatal.
     root = Path(config["dataset_root"])
@@ -298,6 +311,7 @@ def build_d3tec_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> 
             used_full.add(rid)
             used_segments.add(sid)
             transcript_text = segment_record["transcript"]
+            segment_text = transcript_text
             reference_row: dict[str, Any] = {}
         else:
             source_sid = sample_id(subject_id, int(window["prompt_id"]), int(source_ref))
@@ -310,10 +324,13 @@ def build_d3tec_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> 
             segment_record = segment_transcripts[source_sid]
             used_full.add(rid)
             used_segments.add(source_sid)
-            # No aligned ASR exists for the child window. Record the canonical
-            # segment metadata as a reference only; never present it as the
-            # child window's aligned transcript.
-            transcript_text = ""
+            # No aligned ASR exists for the child window: the generic
+            # transcript field carries the canonical full response transcript
+            # (byte-for-byte subject-level text) and segment_transcript stays
+            # empty; the canonical segment metadata is a reference only.
+            transcript_text, segment_text = child_window_transcript_fields(
+                full_transcripts[rid]["transcript"]
+            )
             reference_row = {
                 "source_segment_ref": source_sid,
                 "canonical_segment_transcript_ref": segment_record["transcript"],
@@ -326,7 +343,7 @@ def build_d3tec_manifest(config: dict[str, Any], quarantine: dict[str, Any]) -> 
             **window,
             "audio_paths": [window["audio_path"]],
             "transcript": transcript_text,
-            "segment_transcript": transcript_text,
+            "segment_transcript": segment_text,
             **reference_row,
             "full_response_transcript": full_transcripts[rid]["transcript"],
             "transcript_path": str(segment_path),

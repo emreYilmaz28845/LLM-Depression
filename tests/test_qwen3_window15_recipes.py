@@ -295,3 +295,31 @@ def test_treatment_configs_declare_processor_minimum() -> None:
         parsed = yaml.safe_load((LANE / route["treatment_config"]).read_text(encoding="utf-8"))
         assert int(parsed["data"]["processor_min_audio_samples"]) == 201, route_id
         assert "data.processor_min_audio_samples" in route["declared_diff"], route_id
+
+
+def test_child_window_transcript_fields_keep_full_text_and_empty_segment() -> None:
+    from src.data.androids import child_window_transcript_fields as androids_fields
+    from src.data.d3tec import child_window_transcript_fields as d3tec_fields
+
+    for fields in (d3tec_fields, androids_fields):
+        transcript, segment = fields("full canonical text")
+        assert transcript == "full canonical text"
+        assert segment == ""
+
+
+def test_harmonized_unit_transcript_prefers_full_fields() -> None:
+    from src.data.runtime import _harmonized_unit_transcript
+
+    assert (
+        _harmonized_unit_transcript(
+            {"full_response_transcript": "full", "transcript": "manifest"}, "d3tec"
+        )
+        == "full"
+    )
+    assert (
+        _harmonized_unit_transcript(
+            {"full_turn_transcript": "turn", "transcript": "manifest"},
+            "androids_interview",
+        )
+        == "turn"
+    )

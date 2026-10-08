@@ -304,6 +304,19 @@ def _fold_report(
     return report
 
 
+def child_window_transcript_fields(full_turn_transcript: str) -> tuple[str, str]:
+    """Transcript fields for a subdivided child window.
+
+    No aligned ASR exists for a child window. The manifest's generic
+    ``transcript`` field carries the canonical full turn transcript -- the
+    byte-for-byte subject-level text the ``full_subject`` audio_text scope
+    consumes -- so the manifest validation invariant (non-empty transcript)
+    holds without inventing aligned text; ``segment_transcript`` stays empty and
+    the canonical window metadata remains a reference only.
+    """
+    return str(full_turn_transcript), ""
+
+
 def build_androids_interview_manifest(
     config: dict[str, Any],
     quarantine: dict[str, Any],
@@ -392,6 +405,7 @@ def build_androids_interview_manifest(
             used_full.add(turn_key)
             used_segments.add(window_id)
             transcript_text = segment["transcript"]
+            segment_text = transcript_text
             reference_row: dict[str, Any] = {}
         else:
             source_window_id = androids_window_id(turn_key, int(source_ref))
@@ -425,9 +439,13 @@ def build_androids_interview_manifest(
                 raise ValueError(f"ANDROIDS audio path mismatch for {window_id}.")
             used_full.add(turn_key)
             used_segments.add(source_window_id)
-            # No aligned ASR exists for the child window: record the canonical
-            # window metadata as a reference only.
-            transcript_text = ""
+            # No aligned ASR exists for the child window: the generic
+            # transcript field carries the canonical full turn transcript
+            # (byte-for-byte subject-level text) and segment_transcript stays
+            # empty; the canonical window metadata is a reference only.
+            transcript_text, segment_text = child_window_transcript_fields(
+                full["transcript"]
+            )
             reference_row = {
                 "source_window_ref": source_window_id,
                 "canonical_window_transcript_ref": segment["transcript"],
@@ -459,7 +477,7 @@ def build_androids_interview_manifest(
                 **window,
                 "audio_paths": [window["audio_path"]],
                 "transcript": transcript_text,
-                "segment_transcript": transcript_text,
+                "segment_transcript": segment_text,
                 **reference_row,
                 "full_turn_transcript": full["transcript"],
                 "transcript_path": str(segment_path),
