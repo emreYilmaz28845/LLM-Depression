@@ -47,6 +47,7 @@ from src.metrics import classification_metrics
 
 
 HEAD_TRACKING_KIND = "native_en_text_heads_v2_head"
+REPAIR_JOB_KEY = "classifier_evidence_repair"
 EVALUATION_VIEW = "harmonized_all_windows_full_coverage"
 METRIC_NAMESPACE = "headline/binary_strict"
 
@@ -121,7 +122,9 @@ def initialize_head_attempt(
         "required_jobs": list(context.get("required_jobs") or ["head"]),
     }
     run_config = {
-        "schema_version": "native_en_text_heads_v2_run.v1",
+        "schema_version": str(
+            context.get("run_schema_version") or "native_en_text_heads_v2_run.v1"
+        ),
         "config": config,
         "tracking": tracking,
     }
@@ -317,6 +320,104 @@ def record_head_job(
     return event
 
 
+def prevalidate_head_fit_outputs(
+    attempt_dir: str | Path,
+    classifier_dir: str | Path,
+    variants: Iterable[str],
+) -> list[dict[str, Any]]:
+    """Fail-closed prevalidation of every requested head variant.
+
+    Nothing may be written until every requested variant has its predictions,
+    metrics and classifier metadata, and every variant's classifier metadata
+    ties the fit to the same parent checkpoint adapter recorded by the attempt.
+    A missing variant, a missing identity field, or an adapter mismatch raises
+    before any materialization write.
+    """
+
+    target = Path(attempt_dir)
+    classifier_root = Path(classifier_dir)
+    metadata = read_json(target / METADATA_FILE)
+    parent = metadata.get("parent") or {}
+    parent_adapter = parent.get("adapter_sha256")
+    parent_checkpoint = parent.get("parent_checkpoint_path")
+    if not parent_checkpoint or not parent_adapter:
+        raise HeadTrackingError(
+            "attempt metadata lacks the parent checkpoint identity; refusing evidence repair"
+        )
+    run_config = yaml.safe_load((target / "run_config.yaml").read_text(encoding="utf-8")) or {}
+    scientific = run_config.get("config") if isinstance(run_config.get("config"), dict) else run_config
+    declared_seed = (scientific.get("classifier") or {}).get("seed")
+    outputs: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for variant in variants:
+        variant_dir = classifier_root / str(variant)
+        predictions = variant_dir / "predictions_subject_level.jsonl"
+        metrics = variant_dir / "metrics.json"
+        classifier_metadata_path = variant_dir / "classifier_metadata.json"
+        if not predictions.is_file() or not metrics.is_file() or not classifier_metadata_path.is_file():
+            missing.append(str(variant))
+            continue
+        classifier_metadata = read_json(classifier_metadata_path)
+        checkpoint_hashes = classifier_metadata.get("checkpoint_hashes") or {}
+        if str(checkpoint_hashes.get("adapter_sha256") or "") != str(parent_adapter):
+            raise HeadTrackingError(
+                f"variant {variant} fit is not tied to the attempt parent adapter"
+            )
+        if declared_seed is not None and int(classifier_metadata.get("seed", -1)) != int(declared_seed):
+            raise HeadTrackingError(
+                f"variant {variant} classifier seed {classifier_metadata.get('seed')} "
+                f"!= declared {declared_seed}"
+            )
+        outputs.append(
+            {
+                "variant": str(variant),
+                "predictions": str(predictions),
+                "metrics": str(metrics),
+            }
+        )
+    if missing:
+        raise HeadTrackingError(
+            "requested head variants have no fitted evidence: " + ", ".join(missing)
+        )
+    return outputs
+
+
+def record_head_repair_event(
+    attempt_dir: str | Path,
+    *,
+    original_job_id: str | None,
+    reason: str,
+) -> dict[str, Any]:
+    """Record a non-scheduler evidence-repair event idempotently.
+
+    The event is an OBSERVED job event under ``classifier_evidence_repair``; it
+    never claims the original classifier job completed and never carries a
+    Slurm job id. Repeating the same repair for the same original job is a
+    no-op.
+    """
+
+    target = Path(attempt_dir)
+    events = read_jsonl(target / JOBS_FILE)
+    for event in events:
+        if (
+            str(event.get("job_key")) == REPAIR_JOB_KEY
+            and event.get("event_type") == "OBSERVED"
+            and event.get("status") == "COMPLETED"
+            and str(event.get("resubmission_of_job_id") or "") == str(original_job_id or "")
+        ):
+            return event
+    return record_head_job(
+        target,
+        job_key=REPAIR_JOB_KEY,
+        job_type="hidden_classifier",
+        event_type="OBSERVED",
+        slurm_job_id=None,
+        status="COMPLETED",
+        reason=reason,
+        resubmission_of_job_id=original_job_id,
+    )
+
+
 def _artifact_type(path: Path) -> tuple[str, str]:
     name = path.name.lower()
     if "prediction" in name:
@@ -366,6 +467,9 @@ def _metric_payload(rows: list[dict[str, Any]], *, strict_invalid: bool = False)
         if strict_invalid else raw_predictions
     )
     metrics = classification_metrics(labels, predictions)
+    # UAR is the unweighted average recall (balanced accuracy), the same
+    # quantity the repository writes as binary_strict_uar for backbone runs.
+    metrics["uar"] = metrics["macro_recall"]
     tn, fp = metrics["confusion_matrix"][0]
     fn, _ = metrics["confusion_matrix"][1]
     negative_precision = tn / (tn + fn) if tn + fn else 0.0
@@ -388,6 +492,7 @@ def _build_evaluations(
     predictions_path: Path,
     metrics_path: Path,
     checkpoint_path: str,
+    variant: str | None = None,
 ) -> list[dict[str, Any]]:
     scientific = config.get("config") if isinstance(config.get("config"), dict) else config
     tracking = config.get("tracking") if isinstance(config.get("tracking"), dict) else scientific.get("tracking", {})
@@ -423,30 +528,32 @@ def _build_evaluations(
             aggregation=aggregation,
             metric_namespace=METRIC_NAMESPACE,
             metrics_artifact_sha256=metrics_sha,
+            qualifier=f"head_variant:{variant}" if variant else None,
         )
-        result.append(
-            {
-                "evaluation_id": eid,
-                "dataset": dataset,
-                "split_name": split_name,
-                "split_protocol": split_protocol,
-                "checkpoint_role": "best_model",
-                "checkpoint_path": checkpoint_path,
-                "backend": backend,
-                "evaluation_view": view,
-                "aggregation": aggregation,
-                "metric_namespace": METRIC_NAMESPACE,
-                "metrics_artifact_path": str(metrics_path.relative_to(target)),
-                "predictions_artifact_path": str(predictions_path.relative_to(target)),
-                "metrics": [
-                    {"name": name, "value": float(metrics.get(name, 0.0)), "support": support}
-                    for name in ("macro_f1", "positive_f1", "accuracy", "negative_f1")
-                ],
-                "locally_verified": False,
-                "reportable": False,
-                "warnings": [],
-            }
-        )
+        record = {
+            "evaluation_id": eid,
+            "dataset": dataset,
+            "split_name": split_name,
+            "split_protocol": split_protocol,
+            "checkpoint_role": "best_model",
+            "checkpoint_path": checkpoint_path,
+            "backend": backend,
+            "evaluation_view": view,
+            "aggregation": aggregation,
+            "metric_namespace": METRIC_NAMESPACE,
+            "metrics_artifact_path": str(metrics_path.relative_to(target)),
+            "predictions_artifact_path": str(predictions_path.relative_to(target)),
+            "metrics": [
+                {"name": name, "value": float(metrics.get(name, 0.0)), "support": support}
+                for name in ("macro_f1", "positive_f1", "uar", "accuracy", "negative_f1")
+            ],
+            "locally_verified": False,
+            "reportable": False,
+            "warnings": [],
+        }
+        if variant:
+            record["head_variant"] = str(variant)
+        result.append(record)
     return result
 
 
@@ -456,6 +563,7 @@ def materialize_head_evidence(
     predictions_path: str | Path,
     metrics_path: str | Path,
     checkpoint_path: str,
+    variant: str | None = None,
 ) -> dict[str, Any]:
     target = Path(attempt_dir)
     sidecars = _sidecar(target)
@@ -483,13 +591,22 @@ def materialize_head_evidence(
                 "locally_verified": False,
             }
         )
+    # Union by path: keep every previously registered artifact (a later call
+    # must not drop another variant's evidence) while refusing contradictory
+    # content for the same path.
     artifact_doc = read_json(target / ARTIFACTS_FILE)
-    existing_by_path = {str(item["path"]): item for item in artifact_doc.get("artifacts", [])}
+    merged_artifacts = list(artifact_doc.get("artifacts", []))
+    artifact_index = {str(item["path"]): index for index, item in enumerate(merged_artifacts)}
     for item in records:
-        old = existing_by_path.get(item["path"])
-        if old is not None and old != item:
-            raise HeadTrackingError(f"artifact identity changed for {item['path']}")
-    artifact_doc["artifacts"] = [existing_by_path.get(item["path"], item) for item in records]
+        path_key = str(item["path"])
+        if path_key in artifact_index:
+            old = merged_artifacts[artifact_index[path_key]]
+            if old != item:
+                raise HeadTrackingError(f"artifact identity changed for {path_key}")
+        else:
+            artifact_index[path_key] = len(merged_artifacts)
+            merged_artifacts.append(item)
+    artifact_doc["artifacts"] = merged_artifacts
     write_json_atomic(target / ARTIFACTS_FILE, artifact_doc)
 
     predictions = Path(predictions_path).resolve()
@@ -502,14 +619,25 @@ def materialize_head_evidence(
         predictions_path=predictions,
         metrics_path=metrics,
         checkpoint_path=checkpoint_path,
+        variant=variant,
     )
+    # Union by evaluation id: keep every previously materialized evaluation
+    # (for example the other head variant) and remain idempotent on repeats.
     evaluation_doc = read_json(target / EVALUATIONS_FILE)
-    previous = {str(item["evaluation_id"]): item for item in evaluation_doc.get("evaluations", [])}
+    merged_evaluations = list(evaluation_doc.get("evaluations", []))
+    evaluation_index = {
+        str(item["evaluation_id"]): index for index, item in enumerate(merged_evaluations)
+    }
     for item in evaluations:
-        old = previous.get(item["evaluation_id"])
-        if old is not None and old != item:
-            raise HeadTrackingError(f"evaluation identity changed for {item['evaluation_id']}")
-    evaluation_doc["evaluations"] = [previous.get(item["evaluation_id"], item) for item in evaluations]
+        eid = str(item["evaluation_id"])
+        if eid in evaluation_index:
+            old = merged_evaluations[evaluation_index[eid]]
+            if old != item:
+                raise HeadTrackingError(f"evaluation identity changed for {eid}")
+        else:
+            evaluation_index[eid] = len(merged_evaluations)
+            merged_evaluations.append(item)
+    evaluation_doc["evaluations"] = merged_evaluations
     write_json_atomic(target / EVALUATIONS_FILE, evaluation_doc)
     state = read_status(target / STATUS_FILE)
     if state["state"] == "RUNNING":
@@ -642,15 +770,9 @@ def validate_head_attempt(attempt_dir: str | Path) -> dict[str, Any]:
 def finish_head_attempt(attempt_dir: str | Path) -> dict[str, Any]:
     target = Path(attempt_dir)
     sidecars = _sidecar(target)
-    events = read_jsonl(target / JOBS_FILE)
-    successful = {
-        str(event.get("job_key"))
-        for event in events
-        if event.get("event_type") == "COMPLETED"
-        and event.get("status") == "COMPLETED"
-        and str(event.get("exit_code", "0:0")).startswith("0:0")
-    }
-    required = set((yaml.safe_load((target / "run_config.yaml").read_text(encoding="utf-8")) or {}).get("tracking", {}).get("required_jobs", ["head"]))
+    # One consistent job/repair gate: scheduler completions plus verified,
+    # provenance-carrying non-scheduler evidence repairs.
+    required, successful = _successful_required_jobs(target)
     missing = sorted(required - successful)
     if missing:
         return {"ok": False, "state": sidecars.state, "next_action": f"missing successful jobs: {missing}"}
@@ -659,6 +781,34 @@ def finish_head_attempt(attempt_dir: str | Path) -> dict[str, Any]:
         record.transition("REPORTABLE", reason="head evidence and job gates passed")
         write_status(target / STATUS_FILE, record)
     return {"ok": record.state == "REPORTABLE", "state": record.state}
+
+
+def _verified_repair_claims(events: list[dict[str, Any]]) -> set[str]:
+    """Requirement keys satisfied by a well-formed non-scheduler repair event.
+
+    A repair claim only counts when it is an OBSERVED event under the repair job
+    key, marked COMPLETED, linked to the original classifier job, and carries
+    the provenance markers written by the repair tool. Malformed or unverified
+    claims are ignored.
+    """
+
+    claims: set[str] = set()
+    for event in events:
+        if str(event.get("job_key")) != REPAIR_JOB_KEY:
+            continue
+        if event.get("event_type") != "OBSERVED":
+            continue
+        if event.get("status") != "COMPLETED":
+            continue
+        if not event.get("resubmission_of_job_id"):
+            continue
+        reason = str(event.get("reason") or "")
+        if "non-scheduler evidence materialization repair" not in reason:
+            continue
+        if "original_classifier_job=" not in reason:
+            continue
+        claims.add("classifier")
+    return claims
 
 
 def _successful_required_jobs(target: Path) -> tuple[set[str], set[str]]:
@@ -672,7 +822,16 @@ def _successful_required_jobs(target: Path) -> tuple[set[str], set[str]]:
         if event.get("event_type") == "COMPLETED"
         and event.get("status") == "COMPLETED"
         and str(event.get("exit_code", "0:0")).startswith("0:0")
+        # A non-Slurm repair record must never masquerade as a scheduler
+        # completion; only the verified OBSERVED repair claim counts below.
+        and not (
+            event.get("slurm_job_id") is None
+            and "repair" in str(event.get("reason") or "").lower()
+        )
     }
+    # A verified, explicitly linked evidence repair satisfies the classifier
+    # requirement without pretending the original scheduler job completed.
+    successful |= _verified_repair_claims(events)
     return required, successful
 
 

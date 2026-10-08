@@ -212,6 +212,30 @@ def validate_metadata(record: Any) -> tuple[bool, list[str]]:
     return errors.result()
 
 
+def _has_verified_recovery_payload(entry: dict[str, Any]) -> bool:
+    """True only for an explicit FAILED/CANCELLED -> COMPLETED_ON_MN5 recovery entry.
+
+    The generic transition table keeps refusing that edge; the only accepted
+    form is a history entry carrying the append-only verification payload that
+    ``validate.recover_failed_attempt_from_verified_retry`` records after it has
+    matched a linked retry for every failed required leg.
+    """
+    payload = entry.get("verified_recovery")
+    if not isinstance(payload, dict):
+        return False
+    jobs = payload.get("verified_retry_jobs")
+    if not isinstance(jobs, list) or not jobs:
+        return False
+    for item in jobs:
+        if not isinstance(item, dict):
+            return False
+        for key in ("job_key", "failed_job_id", "retry_job_id"):
+            value = item.get(key)
+            if not isinstance(value, str) or not value:
+                return False
+    return True
+
+
 def validate_status(record: Any) -> tuple[bool, list[str]]:
     errors = _FieldErrors()
     if not isinstance(record, dict):
@@ -253,10 +277,21 @@ def validate_status(record: Any) -> tuple[bool, list[str]]:
             and from_state in LIFECYCLE_STATES
             and to_state in LIFECYCLE_STATES
         ):
-            errors.require(
-                is_allowed_transition(from_state, to_state),
-                f"{field} transition {from_state} -> {to_state} is not allowed",
-            )
+            if is_allowed_transition(from_state, to_state):
+                pass
+            elif (from_state, to_state) in {
+                ("FAILED", "COMPLETED_ON_MN5"),
+                ("CANCELLED", "COMPLETED_ON_MN5"),
+            }:
+                errors.require(
+                    _has_verified_recovery_payload(entry),
+                    f"{field} transition {from_state} -> COMPLETED_ON_MN5 requires a verified_recovery payload",
+                )
+            else:
+                errors.require(
+                    False,
+                    f"{field} transition {from_state} -> {to_state} is not allowed",
+                )
         _check_timestamp(errors, entry.get("at_utc"), f"{field}.at_utc")
         errors.require(
             entry.get("reason") is None or isinstance(entry["reason"], str),

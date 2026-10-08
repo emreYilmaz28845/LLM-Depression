@@ -93,6 +93,7 @@ def evaluation_id(
     aggregation: str,
     metric_namespace: str,
     metrics_artifact_sha256: str | None,
+    qualifier: str | None = None,
 ) -> str:
     payload = {
         "attempt_id": attempt_id,
@@ -108,6 +109,11 @@ def evaluation_id(
         "metric_namespace": metric_namespace,
         "metrics_artifact_sha256": metrics_artifact_sha256,
     }
+    if qualifier is not None:
+        # Additive qualifier for evidence families that share every other
+        # identity field (for example two fixed head variants whose metrics are
+        # byte-identical). Existing callers omit it and keep their IDs.
+        payload["qualifier"] = qualifier
     return "eval-" + canonical_sha256(payload)[:24]
 
 
