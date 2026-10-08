@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -104,18 +105,30 @@ def user_queue(scheduler: str, runner: Runner | None = None) -> dict[str, str]:
 
 
 def registry_job_ids(registries_dir: Path) -> set[str]:
-    """Every authoritative delivered job ID recorded for this lane."""
+    """Every authoritative delivered job ID recorded for this lane.
+
+    Unreadable, malformed or non-mapping registries refuse admission: dropping a
+    registry would silently lose own delivered IDs.  Planning (dry-run)
+    registries only carry synthetic ``dry_*`` identifiers and are ignored.
+    """
 
     ids: set[str] = set()
+    if not registries_dir.is_dir():
+        raise AdmissionError(f"registries directory missing: {registries_dir}")
     for path in sorted(registries_dir.rglob("*.json")):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
+        except (OSError, ValueError) as exc:
+            raise AdmissionError(f"unreadable registry {path}: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise AdmissionError(f"malformed registry (not a mapping): {path}")
+        planning = str(payload.get("submission_mode") or "") in {"dry_run", "planned"}
         for job in payload.get("jobs") or []:
             job_id = str(job.get("job_id") or "")
             if job_id.isdigit():
                 ids.add(job_id)
+            elif job_id and not planning:
+                raise AdmissionError(f"non-numeric delivered job id {job_id!r} in {path}")
     return ids
 
 
@@ -130,15 +143,23 @@ def ledger_records(ledger_path: Path) -> list[dict]:
 
 
 def ledger_reservations(ledger_path: Path) -> tuple[set[str], int]:
-    """Delivered IDs from the ledger plus reservations for unresolved submits."""
+    """Delivered IDs from the ledger plus conservative reservations.
+
+    An uncertain/failed record reserves the unresolved remainder of its leg: the
+    parsed job IDs are counted through normal state resolution, and everything
+    the record cannot prove delivered stays reserved.
+    """
 
     ids: set[str] = set()
     reservation = 0
     for record in ledger_records(ledger_path):
-        job_ids = [str(value) for value in (record.get("job_ids") or []) if str(value).isdigit()]
-        ids.update(job_ids)
-        if record.get("status") in {"uncertain", "failed"} and not job_ids:
-            reservation += int(record.get("reservation") or 0)
+        parsed = [
+            str(value) for value in (record.get("job_ids") or []) if str(value).isdigit()
+        ]
+        ids.update(parsed)
+        if record.get("status") in {"uncertain", "failed"}:
+            expected = int(record.get("reservation") or 0)
+            reservation += max(0, expected - len(parsed))
     return ids, reservation
 
 
@@ -216,6 +237,8 @@ def submit_leg(
 ) -> dict:
     campaign_suffix, modality = ROUTES[route]
     run_id = f"qmsm_{route}_s{seed}"
+    registry_path = f"{runtime}/registries/{run_id}.json"
+    expected = LEG_JOBS.get(stage, 0)
     command = [
         sys.executable,
         "scripts/submit_symmetric_merged.py",
@@ -226,7 +249,7 @@ def submit_leg(
         "--run-id",
         run_id,
         "--registry",
-        f"{runtime}/registries/{run_id}.json",
+        registry_path,
         "--set",
         f"seed={seed}",
         "--set",
@@ -262,25 +285,56 @@ def submit_leg(
         )
     except subprocess.TimeoutExpired as exc:
         return uncertain_record(
-            stage, route, seed, "timeout", _text(getattr(exc, "stdout", "")), _text(getattr(exc, "stderr", ""))
+            stage,
+            route,
+            seed,
+            "timeout",
+            _text(getattr(exc, "stdout", "")),
+            _text(getattr(exc, "stderr", "")),
+            registry=registry_path,
         )
     except OSError as exc:
-        return uncertain_record(stage, route, seed, f"oserror: {exc}")
+        return uncertain_record(stage, route, seed, f"oserror: {exc}", registry=registry_path)
+    except Exception as exc:  # noqa: BLE001 - fail closed after possible delivery
+        return uncertain_record(
+            stage,
+            route,
+            seed,
+            f"unexpected runner error: {type(exc).__name__}: {exc}",
+            registry=registry_path,
+        )
     stdout, stderr = result.stdout or "", result.stderr or ""
     if result.returncode == 0:
         payload = _extract_delivery(stdout)
         if payload:
-            return {
-                "ts": int(time.time()),
-                "status": "submitted",
-                "stage": stage,
-                "route": route,
-                "seed": seed,
-                "run_id": payload.get("run_id"),
-                "job_ids": [str(value) for value in payload.get("job_ids") or []],
-            }
-        return uncertain_record(stage, route, seed, "unparsed success output", stdout, stderr)
-    return uncertain_record(stage, route, seed, f"submit rc={result.returncode}", stdout, stderr)
+            job_ids = [str(value) for value in payload.get("job_ids") or []]
+            if len(job_ids) == expected:
+                return {
+                    "ts": int(time.time()),
+                    "status": "submitted",
+                    "stage": stage,
+                    "route": route,
+                    "seed": seed,
+                    "run_id": payload.get("run_id"),
+                    "registry": registry_path,
+                    "job_ids": job_ids,
+                }
+            return uncertain_record(
+                stage,
+                route,
+                seed,
+                f"partial delivery {len(job_ids)}/{expected}",
+                stdout,
+                stderr,
+                job_ids=job_ids,
+                registry=registry_path,
+            )
+        return uncertain_record(
+            stage, route, seed, "unparsed success output", stdout, stderr, registry=registry_path
+        )
+    return uncertain_record(
+        stage, route, seed, f"submit rc={result.returncode}", stdout, stderr, registry=registry_path
+    )
 
 
 def _text(value: object) -> str:
@@ -292,8 +346,18 @@ def _text(value: object) -> str:
 
 
 def uncertain_record(
-    stage: str, route: str, seed: int, reason: str, stdout: str = "", stderr: str = ""
+    stage: str,
+    route: str,
+    seed: int,
+    reason: str,
+    stdout: str = "",
+    stderr: str = "",
+    *,
+    job_ids: Iterable[str] = (),
+    registry: str = "",
 ) -> dict:
+    expected = LEG_JOBS.get(stage, 0)
+    parsed = [str(value) for value in job_ids if str(value).isdigit()]
     return {
         "ts": int(time.time()),
         "status": "uncertain",
@@ -301,7 +365,9 @@ def uncertain_record(
         "route": route,
         "seed": seed,
         "reason": reason,
-        "reservation": LEG_JOBS.get(stage, 0),
+        "registry": registry,
+        "job_ids": parsed,
+        "reservation": max(0, expected - len(parsed)),
         "tail": (stdout + "\n" + stderr)[-800:],
     }
 
