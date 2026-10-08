@@ -390,6 +390,7 @@ def test_duplicate_job_ids_stay_uncertain(
         "unique": 1,
         "numeric": True,
         "rc": 0,
+        "evidence": {},
     }
     assert "duplicate job ids" in record["error"]
     assert admission.snapshot(**paths)["reserved_jobs"] == 2
@@ -604,3 +605,60 @@ def test_reconcile_operator_ids_are_validated(
             scheduler=paths["scheduler"],
             user=paths["user"],
         )
+
+
+def test_stale_delivery_file_cannot_prove_new_delivery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _write_sources(tmp_path)
+    monkeypatch.setattr(admission, "run_ssh", _fake_ssh(queue="", sacct=""))
+    evidence = tmp_path / "submit_output.log"
+    evidence.write_text("EXTRACT_ID=1111\nCLASSIFIER_ID=2222\n", encoding="utf-8")
+    command = [sys.executable, "-c", "pass"]
+    with pytest.raises(admission.AdmissionError, match="uncertain delivery"):
+        admission.run_submit(
+            command,
+            jobs_this_submit=2,
+            wave_fits=1,
+            kind="head",
+            attempt_hint="stale",
+            submit_timeout=30,
+            delivery_files=[evidence],
+            **paths,
+        )
+    entries = admission.read_reservations(paths["reservations_path"])
+    assert [entry["event"] for entry in entries] == ["reserved", "uncertain"]
+    assert entries[-1]["job_ids"] == {}
+    assert entries[-1]["proof"]["evidence"][str(evidence)] == "unchanged"
+    assert admission.snapshot(**paths)["reserved_jobs"] == 2
+
+
+def test_appended_delivery_file_counts_only_new_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _write_sources(tmp_path)
+    monkeypatch.setattr(
+        admission, "run_ssh", _fake_ssh(queue="", sacct="9001|COMPLETED\n9002|COMPLETED\n")
+    )
+    evidence = tmp_path / "submit_output.log"
+    evidence.write_text("EXTRACT_ID=1111\nCLASSIFIER_ID=2222\n", encoding="utf-8")
+    command = [
+        sys.executable,
+        "-c",
+        f"open({str(evidence)!r}, 'a').write('EXTRACT_ID=9001\\nCLASSIFIER_ID=9002\\n')",
+    ]
+    rc = admission.run_submit(
+        command,
+        jobs_this_submit=2,
+        wave_fits=1,
+        kind="head",
+        attempt_hint="append",
+        submit_timeout=30,
+        delivery_files=[evidence],
+        **paths,
+    )
+    assert rc == 0
+    entries = admission.read_reservations(paths["reservations_path"])
+    assert [entry["event"] for entry in entries] == ["reserved", "delivered"]
+    assert set(entries[-1]["job_ids"].values()) == {"9001", "9002"}
+    assert entries[-1]["proof"]["evidence"][str(evidence)] == "appended"

@@ -416,6 +416,19 @@ def run_submit(
         user=user,
     )
     admission_check(snap, jobs_this_submit, wave_fits)
+    # Fingerprint delivery evidence files BEFORE the command: only content that
+    # is new for this invocation may prove the delivery. A stale unchanged file
+    # can never release the reservation.
+    delivery_snapshots: dict[Path, bytes | None] = {}
+    for delivery_file in delivery_files or []:
+        try:
+            delivery_snapshots[delivery_file] = (
+                delivery_file.read_bytes() if delivery_file.is_file() else None
+            )
+        except OSError as exc:
+            raise AdmissionError(
+                f"delivery evidence file unreadable before submit at {delivery_file}: {exc}"
+            ) from exc
     reservation_id = f"{_now().replace(':', '').replace('-', '')}-{os.urandom(3).hex()}"
     append_reservation(
         reservations_path,
@@ -451,17 +464,30 @@ def run_submit(
         ) from exc
     output = (result.stdout or "") + "\n" + (result.stderr or "")
     delivered = parse_delivered_job_ids(output)
+    evidence_modes: dict[str, str] = {}
     for delivery_file in delivery_files or []:
+        snapshot_bytes = delivery_snapshots.get(delivery_file)
         if not delivery_file.is_file():
+            evidence_modes[str(delivery_file)] = "missing"
             continue
         try:
-            delivered.update(
-                parse_delivered_job_ids(delivery_file.read_text(encoding="utf-8"))
-            )
+            current = delivery_file.read_bytes()
         except OSError as exc:
             raise AdmissionError(
-                f"delivery evidence file unreadable at {delivery_file}: {exc}"
+                f"delivery evidence file unreadable after submit at {delivery_file}: {exc}"
             ) from exc
+        if snapshot_bytes is not None and current == snapshot_bytes:
+            evidence_modes[str(delivery_file)] = "unchanged"
+            continue
+        if snapshot_bytes is not None and current.startswith(snapshot_bytes):
+            new_bytes = current[len(snapshot_bytes) :]
+            evidence_modes[str(delivery_file)] = "appended"
+        else:
+            new_bytes = current
+            evidence_modes[str(delivery_file)] = "new_or_rewritten"
+        delivered.update(
+            parse_delivered_job_ids(new_bytes.decode("utf-8", errors="replace"))
+        )
     expected = jobs_this_submit * wave_fits
     values = list(delivered.values())
     unique_ids = set(values)
@@ -488,6 +514,7 @@ def run_submit(
                     "unique": len(unique_ids),
                     "numeric": numeric,
                     "rc": result.returncode,
+                    "evidence": evidence_modes,
                 },
             },
         )
@@ -525,6 +552,7 @@ def run_submit(
                 "unique": len(unique_ids),
                 "numeric": numeric,
                 "rc": result.returncode,
+                "evidence": evidence_modes,
             },
             "error": "; ".join(reasons) or "delivery not proven",
         },
