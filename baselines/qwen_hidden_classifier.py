@@ -98,6 +98,53 @@ def _load_partition(cache_dir: Path, name: str) -> tuple[np.ndarray, list[dict[s
     return vectors, rows
 
 
+def _apply_train_mask(
+    train_x: np.ndarray, train_rows: list[dict[str, Any]], mask: dict[str, Any]
+) -> tuple[np.ndarray, list[dict[str, Any]], dict[str, Any]]:
+    """Filter outer_train rows to the capped membership; evaluation stays full.
+
+    The mask artifact is the training-time ``window_cap_mask.json``. Every
+    selected sample id must exist in the cache, the mask subject set must match
+    the cache training subjects, and at least one row per subject is required
+    (the cap keeps max(1, ceil(fraction*n)) per subject by construction).
+    """
+    subjects = mask.get("subjects")
+    if not isinstance(subjects, dict) or not subjects:
+        raise ValueError("train mask has no subject selections")
+    selected: set[str] = set()
+    for ids in subjects.values():
+        if not isinstance(ids, list) or not ids:
+            raise ValueError("every masked subject needs at least one sample id")
+        selected.update(str(item) for item in ids)
+    row_ids = [str(row["sample_id"]) for row in train_rows]
+    missing = sorted(selected - set(row_ids))
+    if missing:
+        raise ValueError(
+            f"train mask selects {len(missing)} sample ids missing from outer_train, "
+            f"e.g. {missing[:5]}"
+        )
+    mask_subjects = {str(subject) for subject in subjects}
+    row_subjects = {str(row["subject_id"]) for row in train_rows}
+    if mask_subjects != row_subjects:
+        raise ValueError(
+            "train mask subject set does not match outer_train subjects; "
+            f"only_in_mask={sorted(mask_subjects - row_subjects)[:5]} "
+            f"only_in_cache={sorted(row_subjects - mask_subjects)[:5]}"
+        )
+    keep = [index for index, sample_id in enumerate(row_ids) if sample_id in selected]
+    filtered_rows = [train_rows[index] for index in keep]
+    metadata = {
+        "selection_sha256": mask.get("selection_sha256"),
+        "fraction": mask.get("fraction"),
+        "sampling_seed": mask.get("sampling_seed"),
+        "algorithm_version": mask.get("algorithm_version"),
+        "available_rows": len(train_rows),
+        "selected_rows": len(filtered_rows),
+        "selected_subject_count": len(mask_subjects),
+    }
+    return train_x[keep], filtered_rows, metadata
+
+
 def _variant_pipeline(variant: str, seed: int, *, unweighted: bool = False):
     from sklearn.decomposition import PCA
     from sklearn.linear_model import LogisticRegression
@@ -361,6 +408,7 @@ def run_variant(
     oversampling_ratio: float | None = None,
     oversampling_seed: int = 1337,
     protocol_backend_mode: str | None = None,
+    train_mask: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     train_x, train_rows = _load_partition(cache_dir, "outer_train")
     test_x, test_rows = _load_partition(cache_dir, "final_eval")
@@ -392,6 +440,18 @@ def run_variant(
         # Harmonized (non-DAIC) Gemma caches enforce the generic invariants
         # already proven above: both classes, disjoint fit/holdout subjects,
         # finite vectors, equal subject totals via the weight audit below.
+    train_mask_metadata: dict[str, Any] | None = None
+    if train_mask is not None:
+        train_x, train_rows, train_mask_metadata = _apply_train_mask(
+            train_x, train_rows, train_mask
+        )
+        train_y = np.asarray([int(row["label"]) for row in train_rows], dtype=np.int64)
+        train_subjects = {str(row["subject_id"]) for row in train_rows}
+        if set(train_y.tolist()) != {0, 1}:
+            raise ValueError("Capped training rows must contain both classes.")
+        overlap = sorted(train_subjects & test_subjects)
+        if overlap:
+            raise ValueError(f"Training/held-out subject leakage after mask: {overlap[:10]}")
     result_identity = {
         "schema_version": FIXED_RESULT_SCHEMA_VERSION,
         "variant": variant,
@@ -404,6 +464,8 @@ def run_variant(
         "cache_identity": cache_identity(cache_dir),
         "aggregation_policy": classifier_aggregation_policy(metadata),
     }
+    if train_mask_metadata is not None:
+        result_identity["train_mask"] = train_mask_metadata
     result_identity["config_sha256"] = canonical_sha256(result_identity)
     variant_dir = output_root / variant
     identity_path = variant_dir / "result_config.json"
@@ -630,6 +692,8 @@ def run_variant(
         "result_config_sha256": result_identity["config_sha256"],
         "response_prediction_count": len(response_rows) if response_rows else None,
     }
+    if train_mask_metadata is not None:
+        artifact_metadata["train_mask"] = train_mask_metadata
     write_jsonl(sample_rows, variant_dir / "predictions_sample_level.jsonl")
     write_jsonl(subject_rows, variant_dir / "predictions_subject_level.jsonl")
     _write_csv(sample_rows, variant_dir / "predictions_sample_level.csv")
@@ -663,11 +727,33 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Use method-specific Qwen backend qualifiers for the v2 text-head study.",
     )
+    parser.add_argument(
+        "--train-mask",
+        type=Path,
+        default=None,
+        help="window_cap_mask.json produced by the capped training run.",
+    )
+    parser.add_argument(
+        "--train-mask-sha256",
+        default=None,
+        help="Expected selection_sha256 of --train-mask (recorded in run_config).",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    train_mask = None
+    if bool(args.train_mask) != bool(args.train_mask_sha256):
+        raise SystemExit("--train-mask and --train-mask-sha256 must be provided together.")
+    if args.train_mask:
+        train_mask = read_json(args.train_mask)
+        actual = str(train_mask.get("selection_sha256") or "")
+        if actual != args.train_mask_sha256:
+            raise SystemExit(
+                "train mask selection_sha256 mismatch: "
+                f"{actual!r} != {args.train_mask_sha256!r}"
+            )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     summaries = [
         run_variant(
@@ -679,6 +765,7 @@ def main() -> None:
             oversampling_ratio=args.oversampling_ratio,
             oversampling_seed=args.oversampling_seed,
             protocol_backend_mode=args.protocol_backend_mode,
+            train_mask=train_mask,
         )
         for variant in args.variants
     ]
