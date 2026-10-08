@@ -233,3 +233,32 @@ def test_control_audit_normalizes_both_key_formats() -> None:
         0,
     )
     assert controls_audit.normalize_key("not-a-key") is None
+
+
+def test_manifest_contract_pins_all_five_datasets() -> None:
+    import json
+
+    contract = json.loads(
+        (
+            ROOT / "experiments/definitions/qwen3_legacy_prompt_manifest_contract.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert contract["campaign"] == "qwen3_legacy_prompt_20261008"
+    assert contract["policy"] == "prebuilt"
+    assert set(contract["datasets"]) == {
+        "daic",
+        "d3tec",
+        "androids_interview",
+        "cmdc",
+        "turkish",
+    }
+    for dataset, record in contract["datasets"].items():
+        for key in (
+            "manifest_jsonl_sha256",
+            "manifest_csv_sha256",
+            "folds_json_sha256",
+            "manifest_metadata_sha256",
+            "recorded_manifest_hash",
+        ):
+            assert len(record[key]) == 64, (dataset, key)
+        assert record["rows"] > 0 and record["subjects"] > 0
