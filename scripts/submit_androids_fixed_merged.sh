@@ -42,6 +42,11 @@ CAMPAIGN_BASE=qwen3_androids_official_folds_20261008
 
 export SYMMETRIC_MERGED_SOURCE_COMMIT="$SOURCE_COMMIT"
 export QWEN_HIDDEN_DEPS="$PERMANENT/.deps/qwen_hidden"
+# Freeze the verified backend-specific environments explicitly.  The submitter
+# appends /bin/activate, so these are venv directories.  qwen_mn5_rebuilt is NOT
+# a Qwen3 environment (it lacks Qwen3OmniMoeProcessor) and must never be used.
+export QWEN38_ENV_ACTIVATE="${QWEN38_ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen38_fsdp_fastpath_20260921}"
+export QWEN3OMNI_ENV_ACTIVATE="${QWEN3OMNI_ENV_ACTIVATE:-/gpfs/projects/etur92/ozu647717/venvs/qwen3omni}"
 mkdir -p "$REGISTRY_DIR" "$LOG_ROOT"
 
 cd "$DEPLOYMENT_CODE"
