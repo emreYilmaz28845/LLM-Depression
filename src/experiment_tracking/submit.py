@@ -29,6 +29,14 @@ REMOTE_RUNTIME_BASE = Path("/gpfs/projects/etur92/ozu647717/AudioLLM/experiment_
 TRAIN_JOB_KEY = "train"
 EVAL_JOB_KEY = "best_eval"
 
+# Qwen3 model backends need classes (for example Qwen3OmniMoeProcessor) that
+# the worker default environment (qwen_mn5_rebuilt) does not provide. Standalone
+# submissions for these backends must carry an explicit activation, otherwise a
+# worker would silently fall back to the default environment and fail at model
+# load. The check runs inside resolve_contract, which is local and precedes any
+# remote verification, context transfer or sbatch in both dry-run and execute.
+QWEN3_BACKENDS = frozenset({"qwen3omni", "qwen38"})
+
 
 class SubmissionError(RuntimeError):
     """Raised when a submission contract is invalid or submission must fail."""
@@ -148,6 +156,16 @@ def resolve_contract(
     if dataset != config_dict.get("dataset"):
         raise SubmissionError(
             f"dataset qualifier {dataset!r} does not match resolved config dataset {config_dict.get('dataset')!r}"
+        )
+    model_backend = str(config_dict.get("model_backend") or "").strip().lower()
+    activation = str(env_activate).strip() if env_activate is not None else ""
+    if model_backend in QWEN3_BACKENDS and not activation:
+        raise SubmissionError(
+            f"model_backend {model_backend!r} requires an explicit --env-activate; "
+            "without it the worker scripts fall back to the default environment "
+            "(qwen_mn5_rebuilt), which cannot load Qwen3 model classes. Pass the "
+            "verified activation, for example --env-activate "
+            "/gpfs/projects/etur92/ozu647717/venvs/qwen3omni/bin/activate for qwen3omni."
         )
     config_train_nodes = int((config_dict.get("resources") or {}).get("train_nodes", 1) or 1)
     resolved_train_nodes = config_train_nodes if train_nodes is None else int(train_nodes)

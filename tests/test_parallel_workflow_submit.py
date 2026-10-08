@@ -293,3 +293,53 @@ def test_worker_scripts_decode_overrides_json_b64():
         '--dependency=afterok:$TRAIN_JOB_ID'
     ) in wrapper
     assert '"${TRAIN_SBATCH_ARGS[@]}"' in wrapper
+
+
+def _qwen3_config(backend="qwen3omni", **eval_kwargs):
+    config = _config(**eval_kwargs)
+    config["model_backend"] = backend
+    return config
+
+
+def test_qwen3_missing_activation_refused_before_any_contract_output():
+    # resolve_contract is the first step of _cmd_submit and is documented to be
+    # network-free, so refusal here happens before any remote verification,
+    # context transfer or sbatch in both dry-run and execute mode.
+    for backend in ("qwen3omni", "qwen38"):
+        with pytest.raises(SubmissionError, match="--env-activate"):
+            resolve_contract(
+                deployment=_deployment(),
+                config_dict=_qwen3_config(backend),
+                **BASE_KW,
+            )
+
+
+def test_qwen3_blank_activation_is_refused():
+    with pytest.raises(SubmissionError, match="--env-activate"):
+        resolve_contract(
+            deployment=_deployment(),
+            config_dict=_qwen3_config(),
+            env_activate="   ",
+            **BASE_KW,
+        )
+
+
+def test_qwen3_explicit_valid_activation_passes_and_renders_export():
+    activation = "/gpfs/projects/etur92/ozu647717/venvs/qwen3omni/bin/activate"
+    contract = resolve_contract(
+        deployment=_deployment(),
+        config_dict=_qwen3_config(),
+        env_activate=activation,
+        **BASE_KW,
+    )
+    assert contract["env_activate"] == activation
+    script = build_remote_submit_script(contract)
+    assert f"export ENV_ACTIVATE={activation}" in script
+
+
+def test_non_qwen3_backend_without_activation_is_unchanged():
+    config = _config()
+    config["model_backend"] = "gemma4"
+    contract = resolve_contract(deployment=_deployment(), config_dict=config, **BASE_KW)
+    assert contract["env_activate"] is None
+    assert "ENV_ACTIVATE" not in build_remote_submit_script(contract)
