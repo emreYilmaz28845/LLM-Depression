@@ -68,11 +68,16 @@ def _write_run(
     drop_train_nodes: bool = False,
     world_size: int | None = None,
     write_sidecars: bool = True,
+    window_cap: dict | None = None,
+    write_mask: bool = True,
+    mask_override: dict | None = None,
 ) -> Path:
     fold_dir = tmp_path / "run_root" / run_name / f"fold_{fold}"
     fold_dir.mkdir(parents=True, exist_ok=True)
     recorded = copy.deepcopy(cell_config)
     recorded["seed"] = seed if seed_override is None else seed_override
+    if window_cap is not None:
+        recorded.setdefault("training", {})["window_cap"] = copy.deepcopy(window_cap)
     if split_seed is not None:
         recorded.setdefault("split", {})["seed"] = split_seed
     if drop_train_nodes:
@@ -150,6 +155,23 @@ def _write_run(
         checkpoint.mkdir(parents=True, exist_ok=True)
         (checkpoint / "adapter_config.json").write_text("{}", encoding="utf-8")
         (checkpoint / "adapter_model.safetensors").write_bytes(b"weights")
+    if window_cap is not None and write_mask:
+        mask = {
+            "schema_version": "audiollm.window_cap_mask.v1",
+            "algorithm_version": window_cap.get(
+                "algorithm_version", "sha256-subject-permutation-v1"
+            ),
+            "sampling_seed": window_cap.get("sampling_seed", 1337),
+            "fraction": window_cap.get("fraction", 0.5),
+            "baseline_input_sha256": window_cap.get("baseline_input_sha256"),
+            "subjects": {"s1": ["s1_w0"]},
+            "selection_sha256": window_cap.get("selection_sha256"),
+        }
+        if mask_override is not None:
+            mask.update(mask_override)
+        (fold_dir / "window_cap_mask.json").write_text(
+            json.dumps(mask), encoding="utf-8"
+        )
     return fold_dir
 
 
@@ -577,3 +599,84 @@ def test_check_matrix_fails_closed_on_tampering() -> None:
     assert any("extract dependency" in failure for failure in failures)
     assert any("parent training seed" in failure for failure in failures)
     assert any("head seed" in failure for failure in failures)
+
+
+def _declared_cap(**overrides) -> dict:
+    block = {
+        "enabled": True,
+        "fraction": 0.5,
+        "sampling_seed": 1337,
+        "algorithm_version": "sha256-subject-permutation-v1",
+    }
+    block.update(overrides)
+    return block
+
+
+def _recorded_cap(
+    selection_sha256: str = "a" * 64,
+    baseline_input_sha256: str = "b" * 64,
+    **overrides,
+) -> dict:
+    block = {
+        **_declared_cap(**overrides),
+        "selection_sha256": selection_sha256,
+        "baseline_input_sha256": baseline_input_sha256,
+        "selected_example_count": 3,
+        "available_example_count": 6,
+    }
+    return block
+
+
+def test_capped_parent_records_train_mask_block(synthetic_cell: Path) -> None:
+    config = _cell_config(synthetic_cell)
+    config.setdefault("training", {})["window_cap"] = _declared_cap()
+    _write_run(synthetic_cell, cell_config=config, window_cap=_recorded_cap())
+    parent = _resolve(synthetic_cell, config)
+    assert parent["status"] == "resolved"
+    train_mask = parent["train_mask"]
+    assert train_mask["expected_selection_sha256"] == "a" * 64
+    assert train_mask["baseline_input_sha256"] == "b" * 64
+    assert train_mask["mask_path"].endswith("window_cap_mask.json")
+    assert train_mask["fraction"] == 0.5
+    assert train_mask["sampling_seed"] == 1337
+    assert train_mask["algorithm_version"] == "sha256-subject-permutation-v1"
+
+
+def test_uncapped_parent_has_no_train_mask_block(synthetic_cell: Path) -> None:
+    config = _cell_config(synthetic_cell)
+    _write_run(synthetic_cell, cell_config=config)
+    parent = _resolve(synthetic_cell, config)
+    assert parent["status"] == "resolved"
+    assert "train_mask" not in parent
+
+
+def test_capped_parent_without_mask_file_is_invalid(synthetic_cell: Path) -> None:
+    config = _cell_config(synthetic_cell)
+    config.setdefault("training", {})["window_cap"] = _declared_cap()
+    _write_run(
+        synthetic_cell,
+        cell_config=config,
+        window_cap=_recorded_cap(),
+        write_mask=False,
+    )
+    parent = _resolve(synthetic_cell, config)
+    assert parent["status"] == "blocked_failed_parent"
+    assert any(
+        item["classification"] == "invalid" for item in parent["excluded_attempts"]
+    )
+
+
+def test_capped_parent_mask_hash_mismatch_is_invalid(synthetic_cell: Path) -> None:
+    config = _cell_config(synthetic_cell)
+    config.setdefault("training", {})["window_cap"] = _declared_cap()
+    _write_run(
+        synthetic_cell,
+        cell_config=config,
+        window_cap=_recorded_cap(),
+        mask_override={"selection_sha256": "c" * 64},
+    )
+    parent = _resolve(synthetic_cell, config)
+    assert parent["status"] == "blocked_failed_parent"
+    assert any(
+        item["classification"] == "invalid" for item in parent["excluded_attempts"]
+    )
