@@ -42,11 +42,13 @@ from __future__ import annotations
 
 import argparse
 import ast
+import fcntl
 import json
 import re
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -67,6 +69,7 @@ USER_QUEUE_STOP = 350
 LANE_CAP_NONTERMINAL = 80
 WAVE_HARD_CAP_FITS = 40
 JOBS_PER_FIT = 2
+SUBMIT_LOCK = EVIDENCE / ".submit.lock"
 
 TERMINAL_STATES = {
     "COMPLETED",
@@ -86,6 +89,22 @@ Runner = Callable[..., subprocess.CompletedProcess]
 
 class AdmissionError(RuntimeError):
     """Raised when admission cannot be verified or the budget is exceeded."""
+
+
+@contextmanager
+def acquire_submit_lock(lock_path: Path = SUBMIT_LOCK):
+    """One exclusive lane-level submit lock shared by every submit route.
+
+    Used by the fit dispatcher CLI and by the head guard so a refill and a head
+    admission can never race. ``flock`` is held for the duration of the pass.
+    """
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield handle
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def run_ssh(command: str, runner: Runner | None = None) -> str:
@@ -429,12 +448,9 @@ def submit_fit(fit: dict, runner: Runner | None = None) -> dict:
     try:
         result = runner(command, cwd=LANE, capture_output=True, text=True, timeout=1200)
     except subprocess.TimeoutExpired as exc:
-        return uncertain_record(
-            fit,
-            "timeout",
-            _text(getattr(exc, "stdout", "")),
-            _text(getattr(exc, "stderr", "")),
-        )
+        partial_stdout = _text(getattr(exc, "output", None) or getattr(exc, "stdout", ""))
+        partial_stderr = _text(getattr(exc, "stderr", ""))
+        return uncertain_record(fit, "timeout", partial_stdout, partial_stderr)
     except OSError as exc:
         return uncertain_record(fit, f"oserror: {exc}")
     except Exception as exc:  # fail closed on any unexpected runner failure
@@ -531,13 +547,14 @@ def main() -> int:
         print(f"dry: {len(remaining)} unsubmitted fits, wave cap {args.max_fits}")
         return 0
 
-    processed = run_wave(
-        remaining,
-        args.max_fits,
-        reconcile=reconcile,
-        submit=submit_fit,
-        on_record=record,
-    )
+    with acquire_submit_lock():
+        processed = run_wave(
+            remaining,
+            args.max_fits,
+            reconcile=reconcile,
+            submit=submit_fit,
+            on_record=record,
+        )
     print(f"wave complete: {processed} fits processed")
     return 0
 

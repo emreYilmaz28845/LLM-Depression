@@ -24,7 +24,6 @@ same lane budget and delivery proof as training fits:
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import re
 import subprocess
@@ -44,8 +43,11 @@ EVIDENCE = LANE / "outputs/qwen3_legacy_prompt_20261008"
 PLAN = EVIDENCE / "head_dispatch_plan_v1.json"
 REGISTRY = EVIDENCE / "head_submissions.jsonl"
 LEDGER = EVIDENCE / "submissions.jsonl"
-LOCK = EVIDENCE / ".submit.lock"
 HEAD_JOB_FIELDS = ("extract_job_id", "classifier_job_id")
+RUNTIME_CACHE_ROOT = (
+    "/gpfs/projects/etur92/ozu647717/AudioLLM/experiment_runtime/"
+    "feat-qwen3-legacy-prompt-20261008/heads_cache"
+)
 
 
 class HeadGuardError(RuntimeError):
@@ -124,12 +126,124 @@ def validated_cells(
     return validated
 
 
+def head_recorded_keys(ledger_path: Path = LEDGER) -> set[str]:
+    """Every head key already recorded in the append-only ledger, any status.
+
+    A reserved/uncertain/failed head record excludes the key from eligibility
+    until explicit evidence-based reconciliation or a deliberate new attempt;
+    the guard never reissues an unchanged head key automatically.
+    """
+    keys: set[str] = set()
+    if not ledger_path.exists():
+        return keys
+    for line in ledger_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("stage") == "head" and str(record.get("key", "")).startswith("head::"):
+            keys.add(str(record["key"])[len("head::") :])
+    return keys
+
+
+def plan_resolved_cells(plan: dict) -> set[tuple[str, int, int]]:
+    cells: set[tuple[str, int, int]] = set()
+    for route in plan.get("routes") or []:
+        for job in route.get("jobs") or []:
+            if job.get("parent_status") != "resolved":
+                continue
+            cell = parse_cell(job.get("registry_key") or "")
+            if cell is not None:
+                cells.add(cell)
+    return cells
+
+
+def plan_needs_refresh(validated: dict[tuple[str, int, int], str], plan: dict | None) -> bool:
+    """True when a validated training cell has no resolved head-plan entry."""
+    if plan is None:
+        return True
+    resolved = plan_resolved_cells(plan)
+    return any(cell not in resolved for cell in validated)
+
+
+def maybe_refresh_plan(
+    validated: dict[tuple[str, int, int], str],
+    *,
+    plan_path: Path = PLAN,
+    matrix_path: Path,
+    evidence_dir: Path = EVIDENCE,
+    run_root: Path = dispatch.RUN_ROOT,
+    runtime_cache_root: str,
+    refresh_interval: int = 3600,
+) -> bool:
+    """Rebuild matrix + dispatch plan when newly validated parents need it.
+
+    Throttled so repeated passes with unresolvable parents (for example while
+    adapters are not hashable on this host) do not rebuild every pass. Returns
+    True when a rebuild was attempted.
+    """
+    plan = json.loads(plan_path.read_text(encoding="utf-8")) if plan_path.exists() else None
+    if not plan_needs_refresh(validated, plan):
+        return False
+    stamp = evidence_dir / ".head_plan_refresh_stamp"
+    if stamp.exists() and time.time() - stamp.stat().st_mtime < refresh_interval:
+        return False
+    commands = [
+        [
+            sys.executable,
+            "tools/qwen3_heads_matrix.py",
+            "--scan-root",
+            str(run_root),
+            "--campaign-root",
+            str(run_root),
+            "--cache-root",
+            runtime_cache_root,
+            "--emit",
+            str(matrix_path),
+        ],
+        [
+            sys.executable,
+            "tools/qwen3_heads_dispatch.py",
+            "plan",
+            "--matrix",
+            str(matrix_path),
+            "--language",
+            "native",
+        ],
+    ]
+    for command in commands:
+        result = subprocess.run(command, cwd=LANE, capture_output=True, text=True, timeout=1800)
+        if result.returncode != 0:
+            print(f"plan refresh step failed rc={result.returncode}: {command[1]}")
+            return False
+    stamp.write_text(json.dumps({"ts": int(time.time()), "validated": len(validated)}) + "\n", encoding="utf-8")
+    return True
+
+
+def approved_head_keys(matrix_path: Path = EVIDENCE / "matrix.json") -> set[str]:
+    """The exact approved Native head keys for the 189-fit treatment matrix.
+
+    The generic head inventory contains English and other lanes; the executable
+    dispatch is restricted to the approved 15 Native routes / 189 cells, tied
+    to treatment parents. Keys are normalized to the plan's ``route|seed|fold``.
+    """
+    matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
+    keys: set[str] = set()
+    for fit in matrix.get("fits") or []:
+        cell = parse_cell(fit.get("key") or "")
+        if cell is not None:
+            keys.add(f"{cell[0]}|{cell[1]}|{cell[2]}")
+    return keys
+
+
 def eligible_head_jobs(
     plan: dict,
     validated: dict[tuple[str, int, int], str],
     submitted_keys: set[str],
+    recorded_keys: set[str] | None = None,
+    approved_keys: set[str] | None = None,
 ) -> list[dict]:
-    """Resolved plan entries whose exact parent attempt is validated and unsubmitted."""
+    """Resolved plan entries whose exact parent attempt is validated and unrecorded."""
+    recorded = recorded_keys or set()
     jobs: list[dict] = []
     for route in plan.get("routes") or []:
         for job in route.get("jobs") or []:
@@ -141,7 +255,9 @@ def eligible_head_jobs(
             # plan registry keys are route|seed|fold; normalize to the same cell
             key_cell = parse_cell(key or "")
             cell = key_cell if key_cell else cell
-            if key in submitted_keys:
+            if key in submitted_keys or key in recorded:
+                continue
+            if approved_keys is not None and key not in approved_keys:
                 continue
             attempt = validated.get(cell)
             if not attempt or attempt != parent.get("attempt_id"):
@@ -170,6 +286,14 @@ def registry_submitted_keys(registry_path: Path = REGISTRY) -> set[str]:
 def head_ledger_record(
     job: dict, entry: dict[str, str], attempt_id: str | None, status: str, tail: str = ""
 ) -> dict:
+    parsed_ids = {}
+    for source_key, target_key in (
+        ("extract_job_id", "extract"),
+        ("classifier_job_id", "classifier"),
+    ):
+        value = entry.get(source_key)
+        if value is not None and str(value).strip():
+            parsed_ids[target_key] = str(value).strip()
     record = {
         "key": f"head::{job['key']}",
         "stage": "head",
@@ -177,18 +301,13 @@ def head_ledger_record(
         "status": status,
         "attempt_id": attempt_id,
         "parent_attempt_id": job.get("parent_attempt_id"),
-        "job_ids": (
-            {
-                "extract": entry.get("extract_job_id"),
-                "classifier": entry.get("classifier_job_id"),
-            }
-            if status == "submitted"
-            else {}
-        ),
+        # Known IDs are always preserved, including on uncertain outcomes, so a
+        # potentially delivered head job can never escape the own accounting.
+        "job_ids": parsed_ids,
     }
     if status != "submitted":
         record["reason"] = "invalid or missing head delivery"
-        record["tail"] = tail[-600:]
+        record["tail"] = tail[-800:]
     return record
 
 
@@ -233,7 +352,11 @@ def run_campaign_pass(
     return summary
 
 
-def submit_head_via_shared(job: dict, deployment_id: str) -> dict:
+def submit_head_via_shared(
+    job: dict,
+    deployment_id: str,
+    runner: Callable[..., subprocess.CompletedProcess] | None = None,
+) -> dict:
     command = [
         sys.executable,
         "tools/qwen3_heads_dispatch.py",
@@ -244,11 +367,27 @@ def submit_head_via_shared(job: dict, deployment_id: str) -> dict:
         deployment_id,
         "--execute",
     ]
+    runner = runner or subprocess.run
     try:
-        result = subprocess.run(command, cwd=LANE, capture_output=True, text=True, timeout=1800)
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        return head_ledger_record(job, {}, None, "uncertain", tail=str(exc))
-    parsed = parse_head_submit_output(result.stdout or "")
+        result = runner(command, cwd=LANE, capture_output=True, text=True, timeout=1800)
+    except subprocess.TimeoutExpired as exc:
+        partial = _text(getattr(exc, "output", None) or getattr(exc, "stdout", ""))
+        parsed = parse_head_submit_output(partial)
+        return head_ledger_record(
+            job,
+            parsed.get(job["key"]) or {},
+            _latest_attempt(job["key"]),
+            "uncertain",
+            tail=partial + "\n" + _text(getattr(exc, "stderr", "")),
+        )
+    except OSError as exc:
+        return head_ledger_record(job, {}, _latest_attempt(job["key"]), "uncertain", tail=str(exc))
+    except Exception as exc:  # fail closed on any unexpected runner failure
+        return head_ledger_record(
+            job, {}, _latest_attempt(job["key"]), "uncertain", tail=f"{type(exc).__name__}: {exc}"
+        )
+    stdout = result.stdout or ""
+    parsed = parse_head_submit_output(stdout)
     entry = parsed.get(job["key"]) or {}
     attempt_id = _latest_attempt(job["key"])
     if result.returncode == 0 and valid_head_delivery(entry) and attempt_id:
@@ -258,8 +397,16 @@ def submit_head_via_shared(job: dict, deployment_id: str) -> dict:
         entry,
         attempt_id,
         "uncertain",
-        tail=(result.stdout or "") + (result.stderr or ""),
+        tail=stdout + (result.stderr or ""),
     )
+
+
+def _text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
 
 
 def _latest_attempt(key: str) -> str | None:
@@ -282,12 +429,22 @@ def main() -> int:
     args = parser.parse_args()
 
     EVIDENCE.mkdir(parents=True, exist_ok=True)
-    with LOCK.open("a+") as lock_handle:
-        fcntl.flock(lock_handle, fcntl.LOCK_EX)
-        plan = json.loads(PLAN.read_text(encoding="utf-8")) if PLAN.exists() else {"routes": []}
+    with dispatch.acquire_submit_lock():
         validated = validated_cells()
-        heads = eligible_head_jobs(plan, validated, registry_submitted_keys())
-        records = [r for r in dispatch.ledger_records() if r.get("status") == "submitted"]
+        maybe_refresh_plan(
+            validated,
+            plan_path=PLAN,
+            matrix_path=EVIDENCE / "heads_matrix.json",
+            runtime_cache_root=RUNTIME_CACHE_ROOT,
+        )
+        plan = json.loads(PLAN.read_text(encoding="utf-8")) if PLAN.exists() else {"routes": []}
+        heads = eligible_head_jobs(
+            plan,
+            validated,
+            registry_submitted_keys(),
+            head_recorded_keys(),
+            approved_head_keys(),
+        )
         settled = dispatch.settled_keys()
         matrix = json.loads((EVIDENCE / "matrix.json").read_text(encoding="utf-8"))
         fits = [f for f in matrix["fits"] if f["key"] not in settled]

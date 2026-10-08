@@ -293,6 +293,20 @@ def test_missing_ledger_refuses_instead_of_empty_fallback(tmp_path: Path) -> Non
     assert dispatch.settled_keys(missing) == set()
 
 
+def test_submit_lock_is_exclusive(tmp_path: Path) -> None:
+    import fcntl
+
+    lock_path = tmp_path / ".submit.lock"
+    with dispatch.acquire_submit_lock(lock_path):
+        with lock_path.open("a+") as second:
+            with pytest.raises((BlockingIOError, OSError)):
+                fcntl.flock(second, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    # Released afterwards: a nonblocking acquisition succeeds.
+    with lock_path.open("a+") as third:
+        fcntl.flock(third, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(third, fcntl.LOCK_UN)
+
+
 def _roundtrip(tmp_path: Path, stdout: str, stderr: str = "", rc: int = 0):
     """submit -> append -> reconcile, the exact production path."""
     ledger = tmp_path / "submissions.jsonl"

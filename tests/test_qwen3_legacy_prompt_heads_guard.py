@@ -2,13 +2,16 @@
 
 Pinned semantics: head deliveries need an exact two-job numeric proof, head
 chains only bind to the exact validated parent attempt, head jobs count in the
-same 80-slot own accounting as fits, and eligible head chains are submitted
-before new fits within the shared live budget.
+same 80-slot own accounting as fits, eligible head chains are submitted before
+new fits within the shared live budget, uncertain head records preserve known
+IDs and exclude the key from automatic reissue, and stale plans are rebuilt
+when newly validated parents land.
 """
 
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 from tools import qwen3_legacy_prompt_dispatch as dispatch
@@ -63,6 +66,38 @@ def test_eligibility_requires_the_exact_validated_parent_attempt() -> None:
     assert [job["key"] for job in eligible] == ["daic_text_only|7|0"]
     # Already submitted keys are skipped.
     assert guard.eligible_head_jobs(plan, validated, {"daic_text_only|7|0"}) == []
+
+
+def test_eligibility_is_restricted_to_approved_native_keys() -> None:
+    plan = make_plan(
+        [
+            {
+                "registry_key": "daic_text_only|7|0",
+                "seed": 7,
+                "fold": 0,
+                "parent_status": "resolved",
+                "parent": {"attempt_id": "att-good"},
+            },
+            {
+                "registry_key": "d3tec_audio_text_english|7|0",
+                "seed": 7,
+                "fold": 0,
+                "parent_status": "resolved",
+                "parent": {"attempt_id": "att-other"},
+            },
+        ]
+    )
+    validated = {
+        ("daic_text_only", 7, 0): "att-good",
+        ("d3tec_audio_text_english", 7, 0): "att-other",
+    }
+    eligible = guard.eligible_head_jobs(
+        plan,
+        validated,
+        submitted_keys=set(),
+        approved_keys={"daic_text_only|7|0"},
+    )
+    assert [job["key"] for job in eligible] == ["daic_text_only|7|0"]
 
 
 def test_validated_cells_requires_exact_attempt(tmp_path: Path) -> None:
@@ -196,3 +231,104 @@ def test_pass_stops_on_unproven_head_delivery() -> None:
     )
     assert summary["heads_submitted"] == 0 and summary["refused"] == 1
     assert calls["fits"] == 0  # the pass stops; no silent fallback to fits
+
+
+def test_uncertain_head_record_preserves_known_ids() -> None:
+    record = guard.head_ledger_record(
+        {"key": "r|7|0", "parent_attempt_id": "att"},
+        {"extract_job_id": "4701"},
+        "att-head",
+        "uncertain",
+        tail="partial",
+    )
+    assert record["status"] == "uncertain"
+    assert record["job_ids"] == {"extract": "4701"}
+    assert record["attempt_id"] == "att-head"
+
+
+def test_timeout_preserves_partial_stdout_and_ids() -> None:
+    def runner(command, **kwargs):
+        raise subprocess.TimeoutExpired(
+            command,
+            1800,
+            output="=== JOB r|7|0 ===\nEXTRACT_ID=4701\n",
+            stderr="ssh stalled",
+        )
+
+    job = {"key": "r|7|0", "parent_attempt_id": "att"}
+    record = guard.submit_head_via_shared(job, "dep", runner)
+    assert record["status"] == "uncertain"
+    assert record["job_ids"] == {"extract": "4701"}
+    assert "EXTRACT_ID=4701" in record["tail"] and "ssh stalled" in record["tail"]
+
+
+def test_timeout_then_record_then_next_pass_excludes(tmp_path: Path) -> None:
+    plan = make_plan(
+        [
+            {
+                "registry_key": "daic_text_only|7|0",
+                "seed": 7,
+                "fold": 0,
+                "parent_status": "resolved",
+                "parent": {"attempt_id": "att-good"},
+            }
+        ]
+    )
+    validated = {("daic_text_only", 7, 0): "att-good"}
+    ledger = tmp_path / "submissions.jsonl"
+    ledger.write_text("", encoding="utf-8")
+
+    def on_record(record: dict) -> None:
+        with ledger.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record) + "\n")
+
+    summary = guard.run_campaign_pass(
+        head_jobs=[{"key": "daic_text_only|7|0"}],
+        fit_jobs=[],
+        reconcile=lambda: (70, 0),
+        submit_head=lambda job: guard.head_ledger_record(
+            job, {"extract_job_id": "4701"}, "att-head", "uncertain", tail="timeout"
+        ),
+        submit_fit=lambda fit: {"status": "submitted"},
+        on_record=on_record,
+        max_fits=1,
+    )
+    assert summary["heads_submitted"] == 0 and summary["refused"] == 1
+    recorded = guard.head_recorded_keys(ledger)
+    assert recorded == {"daic_text_only|7|0"}
+    # No automatic unchanged retry: the recorded key is excluded even though no
+    # registry entry exists.
+    assert guard.eligible_head_jobs(plan, validated, set(), recorded) == []
+
+
+def test_plan_refresh_detection() -> None:
+    cell = ("daic_text_only", 7, 0)
+    assert guard.plan_needs_refresh({cell: "att"}, None)
+    resolved_plan = make_plan(
+        [
+            {
+                "registry_key": "daic_text_only|7|0",
+                "seed": 7,
+                "fold": 0,
+                "parent_status": "resolved",
+                "parent": {"attempt_id": "att"},
+            }
+        ]
+    )
+    assert not guard.plan_needs_refresh({cell: "att"}, resolved_plan)
+    assert guard.plan_needs_refresh({("daic_text_only", 7, 1): "att"}, resolved_plan)
+
+
+def test_maybe_refresh_plan_is_throttled(tmp_path: Path) -> None:
+    stamp = tmp_path / ".head_plan_refresh_stamp"
+    stamp.write_text("{}", encoding="utf-8")
+    attempted = guard.maybe_refresh_plan(
+        {("daic_text_only", 7, 0): "att"},
+        plan_path=tmp_path / "missing_plan.json",
+        matrix_path=tmp_path / "matrix.json",
+        evidence_dir=tmp_path,
+        run_root=tmp_path,
+        runtime_cache_root="/gpfs/example/heads_cache",
+        refresh_interval=3600,
+    )
+    assert attempted is False  # fresh stamp: no rebuild subprocess
