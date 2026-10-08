@@ -5,11 +5,21 @@ from typing import Any
 import numpy as np
 import torch
 
+from src.model.audio_padding import pad_audio_arrays
+
 
 class Qwen2AudioSFTCollator:
-    def __init__(self, processor, debug: bool = False):
+    def __init__(self, processor, debug: bool = False, min_audio_samples: int = 0):
         self.processor = processor
         self.debug = debug
+        # Opt-in processor-input zero padding (0 disables it). The window15
+        # recipes declare data.processor_min_audio_samples; baseline 30s
+        # behavior is unchanged because the key is absent by default.
+        self.min_audio_samples = int(min_audio_samples)
+        self.padded_examples = 0
+        self.padded_samples_total = 0
+        self.min_real_samples: int | None = None
+        self.padded_sample_ids: list[str] = []
         self.last_debug_example: dict[str, Any] | None = None
 
     def _processor_kwargs(self, text: str, audio: list[np.ndarray] | None) -> dict[str, Any]:
@@ -25,6 +35,16 @@ class Qwen2AudioSFTCollator:
 
     def _process_single(self, example: dict[str, Any]) -> dict[str, Any]:
         audio = example["audio_arrays"] if example["audio_arrays"] else None
+        if audio is not None and self.min_audio_samples > 0:
+            real_min = min(int(np.asarray(array).shape[0]) for array in audio)
+            if self.min_real_samples is None or real_min < self.min_real_samples:
+                self.min_real_samples = real_min
+            audio, padded_total = pad_audio_arrays(audio, self.min_audio_samples)
+            if padded_total > 0:
+                self.padded_examples += 1
+                self.padded_samples_total += padded_total
+                if len(self.padded_sample_ids) < 100:
+                    self.padded_sample_ids.append(str(example.get("sample_id", "")))
         processor_kwargs = self._processor_kwargs(example["training_text"], audio)
         prompt_kwargs = self._processor_kwargs(example["prompt_text"], audio)
         processed_full = self.processor(
@@ -67,6 +87,17 @@ class Qwen2AudioSFTCollator:
                 "unmasked_token_ids": [int(token_id) for token_id in labels[prompt_len:] if token_id != -100],
             }
         return output
+
+    def padding_audit(self) -> dict[str, Any]:
+        """Real-vs-padded waveform record for the opt-in processor minimum."""
+        return {
+            "policy": "processor_input_zero_padding",
+            "processor_min_audio_samples": self.min_audio_samples,
+            "padded_examples": self.padded_examples,
+            "padded_samples_total": self.padded_samples_total,
+            "min_real_samples": self.min_real_samples,
+            "padded_sample_ids_sample": list(self.padded_sample_ids),
+        }
 
     def __call__(self, batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
         processed_items = [self._process_single(example) for example in batch]

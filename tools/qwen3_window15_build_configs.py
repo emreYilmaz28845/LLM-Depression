@@ -7,7 +7,11 @@ with only the declared window/input identity changes:
 - recipe marker ``single30`` -> ``single15``;
 - DAIC: ``manifest_variant`` -> ``unprocessed_participant_speech_packed30_15s_v1``
   and ``data.participant_chunk_samples`` 480000 -> 240000;
-- response datasets: ``data.segment_seconds`` 30.0 -> 15.0.
+- response datasets: ``data.segment_seconds`` 30.0 -> 15.0;
+- both: ``data.processor_min_audio_samples: 201`` opts the 15s arm into numeric
+  zero padding at the processor input only (the canonical packing keeps its
+  short-tail convention; the verified Qwen3-Omni processor minimum is 201
+  samples, see ``src/model/audio_padding.py`` for the probe provenance).
 
 The generator edits only those exact lines so every other byte (including
 prompt templates and their scalar style) stays identical. ``--check`` verifies
@@ -29,7 +33,13 @@ if str(LANE) not in sys.path:
     sys.path.insert(0, str(LANE))
 
 CONTRACT = LANE / "outputs/qwen3_window15_20261008/contracts/treatment_contract.json"
-ALLOWED_KEYS = {"recipe_id", "manifest_variant", "data.segment_seconds", "data.participant_chunk_samples"}
+ALLOWED_KEYS = {
+    "recipe_id",
+    "manifest_variant",
+    "data.segment_seconds",
+    "data.participant_chunk_samples",
+    "data.processor_min_audio_samples",
+}
 
 
 def generate(control_text: str) -> tuple[str, list[str]]:
@@ -56,8 +66,18 @@ def generate(control_text: str) -> tuple[str, list[str]]:
             "  participant_chunk_samples: 240000",
             "participant_chunk_samples 480000->240000",
         )
+        sub_once(
+            r"^(  participant_chunk_samples: 240000)$",
+            r"\1\n  processor_min_audio_samples: 201",
+            "processor_min_audio_samples 201 (opt-in)",
+        )
     else:
         sub_once(r"^  segment_seconds: 30\.0$", "  segment_seconds: 15.0", "segment_seconds 30->15")
+        sub_once(
+            r"^(  segment_seconds: 15\.0)$",
+            r"\1\n  processor_min_audio_samples: 201",
+            "processor_min_audio_samples 201 (opt-in)",
+        )
     return text, changes
 
 

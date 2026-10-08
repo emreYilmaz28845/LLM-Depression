@@ -28,6 +28,7 @@ data:
   silence_audio: false
   sample_mode: participant_speech_packed30
   participant_chunk_samples: 240000
+  processor_min_audio_samples: 201
   inter_span_silence_samples: 0
   train_chunk_policy: all_chunks_subject_normalized
   eval_chunk_policy: all_chunks_mean_score

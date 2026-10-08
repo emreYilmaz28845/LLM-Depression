@@ -27,6 +27,7 @@ data:
   silence_audio: false
   sample_mode: harmonized_response_windows
   segment_seconds: 15.0
+  processor_min_audio_samples: 201
   segment_partition: equal_duration
   audio_text_transcript_scope: full_subject
   train_chunk_policy: all_windows_hierarchical_weighted

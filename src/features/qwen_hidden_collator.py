@@ -5,6 +5,8 @@ from typing import Any
 import numpy as np
 import torch
 
+from src.model.audio_padding import pad_audio_arrays
+
 
 MODEL_INPUT_KEYS = {
     "input_ids",
@@ -17,14 +19,37 @@ MODEL_INPUT_KEYS = {
 class PromptOnlyExtractionCollator:
     """Process prompt-only examples while keeping labels as external metadata."""
 
-    def __init__(self, processor):
+    def __init__(self, processor, min_audio_samples: int = 0):
         self.processor = processor
+        # Opt-in processor-input zero padding (0 disables it), shared with
+        # training and evaluation through data.processor_min_audio_samples.
+        self.min_audio_samples = int(min_audio_samples)
+        self.padded_examples = 0
+        self.padded_samples_total = 0
+        self.padded_sample_ids: list[str] = []
+
+    def padding_audit(self) -> dict[str, Any]:
+        """Real-vs-padded waveform record for the opt-in processor minimum."""
+        return {
+            "policy": "processor_input_zero_padding",
+            "processor_min_audio_samples": self.min_audio_samples,
+            "padded_examples": self.padded_examples,
+            "padded_samples_total": self.padded_samples_total,
+            "padded_sample_ids_sample": list(self.padded_sample_ids),
+        }
 
     def __call__(self, batch: list[dict[str, Any]]) -> tuple[dict[str, torch.Tensor], list[dict[str, Any]]]:
         if len(batch) != 1:
             raise ValueError("Primary hidden extraction requires batch size 1.")
         example = batch[0]
         audio = example.get("audio_arrays") or None
+        if audio is not None and self.min_audio_samples > 0:
+            audio, padded_total = pad_audio_arrays(audio, self.min_audio_samples)
+            if padded_total > 0:
+                self.padded_examples += 1
+                self.padded_samples_total += padded_total
+                if len(self.padded_sample_ids) < 100:
+                    self.padded_sample_ids.append(str(example.get("sample_id", "")))
         kwargs: dict[str, Any] = {
             "text": example["prompt_text"],
             "return_tensors": "pt",

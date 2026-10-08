@@ -75,10 +75,18 @@ def declared_treatment_diff(route_id: str, identity: dict) -> dict:
             "data.participant_chunk_samples": (
                 f"{identity.get('participant_chunk_samples')} -> 240000"
             ),
+            "data.processor_min_audio_samples": (
+                "absent -> 201 (opt-in numeric zero padding at the processor input; "
+                "verified Qwen3-Omni minimum, see src/model/audio_padding.py)"
+            ),
         }
     return {
         "recipe_id": f"{identity['recipe_id']} -> single15 window15 marker",
         "data.segment_seconds": f"{identity.get('segment_seconds')} -> 15.0",
+        "data.processor_min_audio_samples": (
+            "absent -> 201 (opt-in numeric zero padding at the processor input; "
+            "verified Qwen3-Omni minimum, see src/model/audio_padding.py)"
+        ),
     }
 
 

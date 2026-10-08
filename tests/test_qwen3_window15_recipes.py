@@ -34,7 +34,13 @@ CONTRACT = LANE / "outputs/qwen3_window15_20261008/contracts/treatment_contract.
 def test_generator_allowlist_and_files() -> None:
     contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
     assert len(contract["routes"]) == 10
-    allowed = {"recipe_id", "manifest_variant", "data.segment_seconds", "data.participant_chunk_samples"}
+    allowed = {
+        "recipe_id",
+        "manifest_variant",
+        "data.segment_seconds",
+        "data.participant_chunk_samples",
+        "data.processor_min_audio_samples",
+    }
     import yaml
 
     for route_id, route in contract["routes"].items():
@@ -154,3 +160,138 @@ def test_androids_discovery_schema_identity_and_references(tmp_path: Path) -> No
         refs.setdefault(int(row["turn_id"]), []).append(int(row["source_reference_index"]))
     assert refs[1] == [0, 0, 1]
     assert refs[2] == [0, 0]
+
+
+class _FakeQwenProcessor:
+    """Minimal stand-in that records the waveform lengths it receives."""
+
+    class _Tokenizer:
+        pad_token_id = 0
+
+    class _FeatureExtractor:
+        sampling_rate = 16000
+
+    tokenizer = _Tokenizer()
+    feature_extractor = _FeatureExtractor()
+
+    def __init__(self) -> None:
+        self.received_audio_lengths: list[int] = []
+
+    def __call__(self, *, text, audio=None, sampling_rate=None, return_tensors=None, padding=False):
+        import numpy as np
+
+        if audio is not None:
+            self.received_audio_lengths.append(int(len(audio[0])))
+            features = np.zeros((1, 128, 2), dtype=np.float32)
+            mask = np.ones((1, 2), dtype=np.int64)
+        else:
+            features = None
+            mask = None
+        return {
+            "input_ids": [1, 2, 3],
+            "attention_mask": [1, 1, 1],
+            "input_features": features,
+            "feature_attention_mask": mask,
+        }
+
+
+def test_audio_padding_helper_and_resolver() -> None:
+    import numpy as np
+
+    from src.model.audio_padding import (
+        MIN_PROCESSOR_SAMPLES,
+        pad_audio_array,
+        pad_audio_arrays,
+        resolve_min_audio_samples,
+    )
+
+    assert MIN_PROCESSOR_SAMPLES == 201
+    padded, missing = pad_audio_array(np.zeros(160, dtype=np.float32), 201)
+    assert padded.shape == (201,)
+    assert missing == 41
+    signal = np.arange(160, dtype=np.float32)
+    padded_signal, _ = pad_audio_array(signal, 201)
+    assert np.array_equal(padded_signal[:160], signal)
+    assert float(np.abs(padded_signal[160:]).sum()) == 0.0
+    same, missing = pad_audio_array(np.zeros(201, dtype=np.float32), 201)
+    assert missing == 0
+    arrays, total = pad_audio_arrays([np.zeros(160), np.zeros(400)], 201)
+    assert total == 41
+    assert [len(array) for array in arrays] == [201, 400]
+    assert resolve_min_audio_samples({}) == 0
+    assert resolve_min_audio_samples({"data": {}}) == 0
+    assert resolve_min_audio_samples({"data": {"processor_min_audio_samples": 201}}) == 201
+    for bad in (200, -1):
+        with pytest.raises(ValueError):
+            resolve_min_audio_samples({"data": {"processor_min_audio_samples": bad}})
+    with pytest.raises(ValueError):
+        resolve_min_audio_samples({"data": {"processor_min_audio_samples": "abc"}})
+
+
+def test_training_collator_pads_short_audio_and_records_audit() -> None:
+    import numpy as np
+
+    from src.model.collator import Qwen2AudioSFTCollator
+
+    example = {
+        "audio_arrays": [np.zeros(160, dtype=np.float32)],
+        "training_text": "t",
+        "prompt_text": "p",
+        "sample_id": "s1",
+        "subject_id": "sub1",
+        "label": 1,
+    }
+    processor = _FakeQwenProcessor()
+    collator = Qwen2AudioSFTCollator(processor, min_audio_samples=201)
+    collator([dict(example)])
+    assert processor.received_audio_lengths == [201, 201]
+    audit = collator.padding_audit()
+    assert audit["padded_examples"] == 1
+    assert audit["padded_samples_total"] == 41
+    assert audit["min_real_samples"] == 160
+    assert audit["padded_sample_ids_sample"] == ["s1"]
+
+    processor2 = _FakeQwenProcessor()
+    collator2 = Qwen2AudioSFTCollator(processor2, min_audio_samples=201)
+    collator2([dict(example, audio_arrays=[np.zeros(201, dtype=np.float32)], sample_id="s2")])
+    assert processor2.received_audio_lengths == [201, 201]
+    assert collator2.padding_audit()["padded_examples"] == 0
+
+    processor3 = _FakeQwenProcessor()
+    collator3 = Qwen2AudioSFTCollator(processor3)
+    collator3([dict(example)])
+    assert processor3.received_audio_lengths == [160, 160]
+    assert collator3.padding_audit()["padded_examples"] == 0
+
+
+def test_extraction_collator_pads_short_audio_and_records_audit() -> None:
+    import numpy as np
+
+    from src.features.qwen_hidden_collator import PromptOnlyExtractionCollator
+
+    example = {
+        "audio_arrays": [np.zeros(160, dtype=np.float32)],
+        "prompt_text": "p",
+        "dataset": "daic",
+        "sample_id": "s1",
+        "subject_id": "sub1",
+        "label": 1,
+        "partition": "test",
+        "fold": 0,
+    }
+    processor = _FakeQwenProcessor()
+    collator = PromptOnlyExtractionCollator(processor, min_audio_samples=201)
+    collator([dict(example)])
+    assert processor.received_audio_lengths == [201]
+    assert collator.padding_audit()["padded_examples"] == 1
+    assert collator.padding_audit()["padded_samples_total"] == 41
+
+
+def test_treatment_configs_declare_processor_minimum() -> None:
+    import yaml
+
+    contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
+    for route_id, route in contract["routes"].items():
+        parsed = yaml.safe_load((LANE / route["treatment_config"]).read_text(encoding="utf-8"))
+        assert int(parsed["data"]["processor_min_audio_samples"]) == 201, route_id
+        assert "data.processor_min_audio_samples" in route["declared_diff"], route_id

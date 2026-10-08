@@ -2550,6 +2550,22 @@ def main() -> None:
             )
         completed_epochs = len(history)
         save_json(history, logs_dir / "training_history.json")
+        if getattr(collator, "min_audio_samples", 0) > 0:
+            save_json(
+                {
+                    "schema_version": "audio_min_samples_padding_audit.v1",
+                    "provenance": (
+                        "Isolated CPU probes 2026-10-08: the Qwen3-Omni processor "
+                        "rejects <=200-sample waveforms and accepts 201 (one mel "
+                        "frame); the audio encoder accepts the one-frame input. "
+                        "Padding is numeric and applied at the processor input "
+                        "only; manifest frame counts, boundaries and coverage "
+                        "are unchanged."
+                    ),
+                    "main_process_shard": collator.padding_audit(),
+                },
+                logs_dir / "audio_min_samples_padding_audit.json",
+            )
         selected_history_row = next(
             (row for row in history if int(row.get("epoch", -1)) == int(best_epoch)),
             None,
