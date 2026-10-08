@@ -100,7 +100,7 @@ def main() -> int:
             if args.expected_folds:
                 command += ["--expected-folds", str(args.expected_folds)]
             for token in tokens:
-                command += ["--override", token]
+                command.append(f"--override={token}")
             proc = subprocess.run(command, cwd=REPO_ROOT, capture_output=True, text=True)
             payload = None
             try:
