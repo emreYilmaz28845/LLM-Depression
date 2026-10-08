@@ -4,6 +4,7 @@ import argparse
 import gc
 import json
 import math
+import hashlib
 import os
 import random
 import shutil
@@ -26,6 +27,7 @@ from transformers import get_linear_schedule_with_warmup
 from src.data.build_manifest import build_for_config, manifest_build_signature
 from src.data.d3tec import build_d3tec_training_schedule
 from src.data.androids import apply_androids_training_weights, apply_hierarchical_training_weights
+from src.data.window_cap import ALGORITHM_VERSION, apply_training_window_cap
 from src.daic_chunking import (
     JOINT_PACKED30_MODE,
     build_independent_epoch_schedule,
@@ -1698,6 +1700,59 @@ def main() -> None:
         save_json(
             packed30_weight_audit,
             logs_dir / "packed30_training_weight_audit.json",
+        )
+    window_cap_cfg = config.get("training", {}).get("window_cap") or {}
+    if bool(window_cap_cfg.get("enabled", False)):
+        if input_modality == "text_only":
+            raise ValueError("training.window_cap is only defined for audio routes.")
+        legacy_policy = str(config["data"].get("train_chunk_policy", "")).strip().lower()
+        legacy_sample_mode = str(config["data"].get("sample_mode", "")).strip().lower()
+        if (
+            (str(config["dataset"]).lower() == "d3tec" and not hierarchical_policy)
+            or legacy_policy == "rotate_one_per_response"
+            or legacy_sample_mode in {"subject_chunks", "subject_mil"}
+        ):
+            raise ValueError(
+                "training.window_cap is not defined for the legacy scheduled training "
+                "policies; only the canonical harmonized paths are supported."
+            )
+        fraction = float(window_cap_cfg.get("fraction"))
+        sampling_seed = int(window_cap_cfg.get("sampling_seed", 1337))
+        baseline_ids = sorted(
+            [str(example["subject_id"]), str(example["sample_id"])]
+            for example in train_examples
+        )
+        baseline_input_sha256 = hashlib.sha256(
+            json.dumps(baseline_ids, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        train_examples, window_cap_audit, window_cap_mask = apply_training_window_cap(
+            train_examples,
+            fraction=fraction,
+            sampling_seed=sampling_seed,
+            baseline_input_sha256=baseline_input_sha256,
+        )
+        window_cap_cfg.update(
+            {
+                "algorithm_version": ALGORITHM_VERSION,
+                "fraction": fraction,
+                "sampling_seed": sampling_seed,
+                "selection_sha256": window_cap_mask["selection_sha256"],
+                "baseline_input_sha256": baseline_input_sha256,
+                "selected_example_count": len(train_examples),
+                "available_example_count": window_cap_audit["available_example_count"],
+            }
+        )
+        config["training"]["window_cap"] = window_cap_cfg
+        if accelerator.is_main_process:
+            save_json(window_cap_mask, run_root / "window_cap_mask.json")
+            save_json(window_cap_audit, logs_dir / "window_cap_audit.json")
+        LOGGER.info(
+            "Window cap | fraction=%s sampling_seed=%s selected=%s available=%s selection=%s",
+            fraction,
+            sampling_seed,
+            len(train_examples),
+            window_cap_audit["available_example_count"],
+            window_cap_mask["selection_sha256"],
         )
     d3tec_epoch_schedule: list[list[dict[str, Any]]] | None = None
     d3tec_schedule_audit: dict[str, Any] | None = None
