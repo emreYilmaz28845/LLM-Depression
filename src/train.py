@@ -2562,7 +2562,12 @@ def main() -> None:
                         "only; manifest frame counts, boundaries and coverage "
                         "are unchanged."
                     ),
-                    "main_process_shard": collator.padding_audit(),
+                    "count_semantics": (
+                        "main-process (rank 0) collator counters over its shard; "
+                        "not corpus totals"
+                    ),
+                    "main_process_shard": True,
+                    "train": collator.padding_audit(),
                 },
                 logs_dir / "audio_min_samples_padding_audit.json",
             )

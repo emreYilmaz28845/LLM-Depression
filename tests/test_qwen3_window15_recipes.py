@@ -249,7 +249,12 @@ def test_training_collator_pads_short_audio_and_records_audit() -> None:
     assert audit["padded_examples"] == 1
     assert audit["padded_samples_total"] == 41
     assert audit["min_real_samples"] == 160
-    assert audit["padded_sample_ids_sample"] == ["s1"]
+    sample = audit["padded_examples_sample"][0]
+    assert sample["sample_id"] == "s1"
+    assert sample["waveforms"] == 1
+    assert sample["min_real_samples"] == 160
+    assert sample["padded_samples_total"] == 41
+    assert "not corpus totals" in audit["count_semantics"]
 
     processor2 = _FakeQwenProcessor()
     collator2 = Qwen2AudioSFTCollator(processor2, min_audio_samples=201)
@@ -283,8 +288,11 @@ def test_extraction_collator_pads_short_audio_and_records_audit() -> None:
     collator = PromptOnlyExtractionCollator(processor, min_audio_samples=201)
     collator([dict(example)])
     assert processor.received_audio_lengths == [201]
-    assert collator.padding_audit()["padded_examples"] == 1
-    assert collator.padding_audit()["padded_samples_total"] == 41
+    audit = collator.padding_audit()
+    assert audit["padded_examples"] == 1
+    assert audit["padded_samples_total"] == 41
+    assert audit["padded_examples_sample"][0]["min_real_samples"] == 160
+    assert "not corpus totals" in audit["count_semantics"]
 
 
 def test_treatment_configs_declare_processor_minimum() -> None:

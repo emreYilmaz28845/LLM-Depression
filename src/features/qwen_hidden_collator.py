@@ -26,16 +26,22 @@ class PromptOnlyExtractionCollator:
         self.min_audio_samples = int(min_audio_samples)
         self.padded_examples = 0
         self.padded_samples_total = 0
-        self.padded_sample_ids: list[str] = []
+        self.padded_examples_sample: list[dict[str, Any]] = []
 
     def padding_audit(self) -> dict[str, Any]:
-        """Real-vs-padded waveform record for the opt-in processor minimum."""
+        """Local real-vs-padded record for the opt-in processor minimum."""
         return {
             "policy": "processor_input_zero_padding",
             "processor_min_audio_samples": self.min_audio_samples,
+            "count_semantics": (
+                "local collator counters over this extraction process; not corpus totals"
+            ),
             "padded_examples": self.padded_examples,
             "padded_samples_total": self.padded_samples_total,
-            "padded_sample_ids_sample": list(self.padded_sample_ids),
+            "padded_examples_sample": list(self.padded_examples_sample),
+            "padded_examples_sample_semantics": (
+                "capped sample (up to 100) with real and padded lengths; not the full set"
+            ),
         }
 
     def __call__(self, batch: list[dict[str, Any]]) -> tuple[dict[str, torch.Tensor], list[dict[str, Any]]]:
@@ -44,12 +50,20 @@ class PromptOnlyExtractionCollator:
         example = batch[0]
         audio = example.get("audio_arrays") or None
         if audio is not None and self.min_audio_samples > 0:
+            real_lengths = [int(np.asarray(array).shape[0]) for array in audio]
             audio, padded_total = pad_audio_arrays(audio, self.min_audio_samples)
             if padded_total > 0:
                 self.padded_examples += 1
                 self.padded_samples_total += padded_total
-                if len(self.padded_sample_ids) < 100:
-                    self.padded_sample_ids.append(str(example.get("sample_id", "")))
+                if len(self.padded_examples_sample) < 100:
+                    self.padded_examples_sample.append(
+                        {
+                            "sample_id": str(example.get("sample_id", "")),
+                            "waveforms": len(real_lengths),
+                            "min_real_samples": min(real_lengths),
+                            "padded_samples_total": padded_total,
+                        }
+                    )
         kwargs: dict[str, Any] = {
             "text": example["prompt_text"],
             "return_tensors": "pt",
