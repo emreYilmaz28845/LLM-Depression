@@ -87,6 +87,7 @@ EXP_TOOL = TOOLS_DIR / "exp.py"
 SCHEDULER_HOST = DEFAULT_SCHEDULER_HOST
 TRANSFER_HOST = DEFAULT_TRANSFER_HOST
 SUBMISSION_LOCK = LANE / "submission.lock"
+CONFOUNDED = LANE / "head_confounded_attempts.jsonl"
 
 
 def configure(
@@ -106,6 +107,8 @@ def configure(
     PROGRESS = LANE / "collection_progress.json"
     RAW = LANE / "effective_fractions_raw"
     SUBMISSION_LOCK = LANE / "submission.lock"
+    global CONFOUNDED
+    CONFOUNDED = LANE / "head_confounded_attempts.jsonl"
     if local_run_root is not None:
         LOCAL_RUN_ROOT = Path(local_run_root)
     if scheduler_host is not None:
@@ -190,6 +193,36 @@ def select_ready_fits(
     return ready, reasons
 
 
+def confounded_attempts() -> dict[str, dict]:
+    """Exact attempts durably recorded as confounded, with full evidence.
+
+    A record only counts with the exact attempt id, the full old deployment
+    identity, the registry key and a non-empty mismatch-evidence object; a
+    bare boolean flag is never accepted.
+    """
+    records: dict[str, dict] = {}
+    if CONFOUNDED.is_file():
+        for line in CONFOUNDED.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            attempt = str(entry.get("attempt_id") or "")
+            deployment = str(entry.get("deployment_id") or "")
+            key = str(entry.get("registry_key") or "")
+            evidence = entry.get("mismatch_evidence")
+            if (
+                entry.get("confounded") is not True
+                or not attempt
+                or not deployment
+                or not key
+                or not isinstance(evidence, dict)
+                or not evidence
+            ):
+                continue
+            records[attempt] = entry
+    return records
+
+
 def head_job_ids(entry: dict) -> dict[str, str]:
     ids: dict[str, str] = {}
     for field in ("extract_job_id", "classifier_job_id"):
@@ -207,6 +240,7 @@ def select_ready_heads(
 ) -> tuple[list[dict], dict[str, int]]:
     """Production chains only, extract+classifier scheduler-confirmed 0:0."""
     entries = list(latest_registry_entries(entries).values())
+    confounded = confounded_attempts()
     ready: list[dict] = []
     reasons: dict[str, int] = {}
 
@@ -217,6 +251,9 @@ def select_ready_heads(
         key = str(entry.get("registry_key") or "")
         if key not in expected_keys:
             note("not a production treatment chain")
+            continue
+        if str(entry.get("attempt_id")) in confounded:
+            note("confounded old attempt (superseded)")
             continue
         record = ledger.get(key) or {}
         if record.get("validated") and str(record.get("attempt_id")) == str(entry.get("attempt_id")):
@@ -934,11 +971,17 @@ def progress(rows: list[dict], entries: list[dict], expected_keys: set[str], led
         1 for row in rows_latest.values() if ledger.get(fit_key(row), {}).get("validated")
     )
     prod = production_entries(list(latest_registry_entries(entries).values()), expected_keys)
+    confounded = confounded_attempts()
     heads_validated = 0
+    heads_confounded = 0
     for entry in prod:
         key = str(entry["registry_key"])
+        attempt = str(entry["attempt_id"])
+        if attempt in confounded:
+            heads_confounded += 1
+            continue
         record = ledger.get(key) or {}
-        if record.get("validated") and str(record.get("attempt_id")) == str(entry["attempt_id"]):
+        if record.get("validated") and str(record.get("attempt_id")) == attempt:
             heads_validated += 1
     return {
         "fits_submitted": len(rows_latest),
@@ -947,6 +990,7 @@ def progress(rows: list[dict], entries: list[dict], expected_keys: set[str], led
         "heads_dispatched": len(prod),
         "heads_expected": EXPECTED_CHAINS,
         "heads_validated": heads_validated,
+        "heads_confounded_old_technical": heads_confounded,
         "at_utc": now(),
     }
 

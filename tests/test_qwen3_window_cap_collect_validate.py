@@ -682,3 +682,31 @@ def test_membership_enforces_split_and_pool_subject_sets():
         pool_rows_sha256="P",
     )
     assert any("cached outer_train subjects do not equal the expected canonical pool" in i for i in issues)
+
+
+def test_confounded_attempt_excluded_from_selection_and_progress(tmp_path):
+    cv.configure(campaign_dir=tmp_path)
+    key = "androids_interview_audio_only_native_cap25|7|0"
+    entry = make_entry(key, attempt="CONF-ATTEMPT")
+    expected = {key}
+    (tmp_path / "head_confounded_attempts.jsonl").write_text(
+        json.dumps(
+            {
+                "attempt_id": "CONF-ATTEMPT",
+                "registry_key": key,
+                "deployment_id": "old-deployment-full-id",
+                "confounded": True,
+                "mismatch_evidence": {"pool_policy": "train+inner-val", "old_semantics": "mask-only"},
+            }
+        )
+        + "\n"
+        + json.dumps({"attempt_id": "NO-EVIDENCE", "confounded": True})
+        + "\n",
+        encoding="utf-8",
+    )
+    ledger = {key: {"validated": True, "attempt_id": "CONF-ATTEMPT"}}
+    ready, reasons = cv.select_ready_heads([entry], expected, {}, ledger)
+    assert not ready and reasons.get("confounded old attempt (superseded)") == 1
+    doc = cv.progress([], [entry], expected, ledger)
+    assert doc["heads_validated"] == 0
+    assert doc["heads_confounded_old_technical"] == 1
