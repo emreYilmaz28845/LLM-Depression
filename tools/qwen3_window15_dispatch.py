@@ -139,6 +139,80 @@ def user_queue(runner: Runner | None = None) -> dict[str, str]:
     return parse_delimited(run_ssh("squeue -u ozu647717 -h -o '%i|%T'", runner))
 
 
+def strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
+def parse_bsc_quota_projects(output: str) -> dict[str, float]:
+    """Parse the ``gpfs_projects`` GRP row of ``bsc_quota projects``.
+
+    The real command is ``bsc_quota projects --unit GB --no-color``. Values are
+    Usage, soft Quota, hard Limit and In doubt in GB. A missing or non-numeric
+    row raises AdmissionError (fail closed); shared-filesystem ``df`` output is
+    never a substitute because it does not reflect the project quota.
+    """
+    cleaned = strip_ansi(output)
+    for line in cleaned.splitlines():
+        fields = line.split()
+        if not fields or fields[0] != "gpfs_projects":
+            continue
+        if len(fields) < 7:
+            raise AdmissionError(f"bsc_quota gpfs_projects row too short: {line.strip()!r}")
+        try:
+            usage = float(fields[2])
+            quota = float(fields[4])
+            limit = float(fields[6])
+            in_doubt = float(fields[8]) if len(fields) > 9 and fields[8] != "|" else 0.0
+        except (ValueError, IndexError) as exc:
+            raise AdmissionError(f"bsc_quota gpfs_projects row unparseable: {line.strip()!r}") from exc
+        return {"usage_gb": usage, "quota_gb": quota, "limit_gb": limit, "in_doubt_gb": in_doubt}
+    raise AdmissionError("bsc_quota output has no gpfs_projects row")
+
+
+def storage_admission(
+    runner: Runner | None = None,
+    *,
+    remaining_min_gb: float = 500.0,
+    local_min_gb: float = 50.0,
+    local_root: Path | None = None,
+    local_available_bytes: int | None = None,
+) -> dict:
+    """Fail-closed storage admission for refills.
+
+    Requires the etur92 ``gpfs_projects`` soft-quota remaining
+    (``quota - usage - in_doubt``) to be at least 500 GB and the local
+    filesystem holding the lane to have at least 50 GB available. Any SSH or
+    parse failure refuses. Shared-filesystem occupancy (``df``) is deliberately
+    not used for the project side.
+    """
+    raw = run_ssh("bsc_quota projects --unit GB --no-color", runner)
+    parsed = parse_bsc_quota_projects(raw)
+    remaining = parsed["quota_gb"] - parsed["usage_gb"] - parsed["in_doubt_gb"]
+    if remaining < remaining_min_gb:
+        raise AdmissionError(
+            f"gpfs_projects remaining {remaining:.2f} GB is below the {remaining_min_gb:.0f} GB reserve"
+        )
+    if local_available_bytes is None:
+        import shutil
+
+        local_available_bytes = shutil.disk_usage(str(local_root or LANE)).free
+    local_available_gb = local_available_bytes / (1024 ** 3)
+    if local_available_gb < local_min_gb:
+        raise AdmissionError(
+            f"local available {local_available_gb:.2f} GB is below the {local_min_gb:.0f} GB reserve"
+        )
+    return {
+        "gpfs_projects_usage_gb": parsed["usage_gb"],
+        "gpfs_projects_quota_gb": parsed["quota_gb"],
+        "gpfs_projects_in_doubt_gb": parsed["in_doubt_gb"],
+        "gpfs_projects_remaining_gb": round(remaining, 2),
+        "remaining_min_gb": remaining_min_gb,
+        "local_available_gb": round(local_available_gb, 2),
+        "local_min_gb": local_min_gb,
+        "admission": "admissible",
+    }
+
+
 def ledger_records(ledger_path: Path = LEDGER) -> list[dict]:
     """Read the lane dispatch ledger.
 
@@ -586,12 +660,25 @@ def run_wave(
     reconcile: Callable[[], tuple[int, int]],
     submit: Callable[[dict], dict],
     on_record: Callable[[dict], None] | None = None,
+    storage_check: Callable[[], dict] | None = None,
+    storage_every: int = 5,
 ) -> int:
-    """Submit up to ``max_fits`` fits; per-fit admission, no capacity double-count."""
+    """Submit up to ``max_fits`` fits; per-fit admission, no capacity double-count.
+
+    When ``storage_check`` is given it is re-run every ``storage_every`` fits
+    (and the caller runs it once before the wave) so a bounded batch cannot
+    outrun the projects soft-quota reserve.
+    """
     processed = 0
     for fit in fits:
         if processed >= max_fits:
             break
+        if storage_check is not None and processed > 0 and processed % max(1, int(storage_every)) == 0:
+            try:
+                storage_check()
+            except AdmissionError as error:
+                print(f"REFUSED before fit {processed + 1} (storage): {error}")
+                break
         own, user = reconcile()
         try:
             per_fit_admission(own, user, int(fit.get("leg_jobs", JOBS_PER_FIT)))
@@ -777,6 +864,13 @@ def main() -> int:
             print(f"REFUSED: {error}")
             return 2
 
+    try:
+        storage_evidence = storage_admission()
+    except AdmissionError as error:
+        print(f"REFUSED (storage): {error}")
+        return 2
+    print("storage admission: " + json.dumps(storage_evidence, sort_keys=True))
+
     def record(entry: dict) -> None:
         append_record(entry, ledger_path)
 
@@ -786,6 +880,8 @@ def main() -> int:
         reconcile=reconcile,
         submit=submit_fit,
         on_record=record,
+        storage_check=storage_admission,
+        storage_every=5,
     )
     print(f"wave complete: {processed} fits processed")
     return 0

@@ -43,9 +43,10 @@ def _completed(returncode: int, stdout: str = "", stderr: str = "") -> subproces
 
 
 class _FakeSsh:
-    def __init__(self, queue: str = "", sacct: str = "", returncode: int = 0, stderr: str = ""):
+    def __init__(self, queue: str = "", sacct: str = "", quota: str = "", returncode: int = 0, stderr: str = ""):
         self.queue = queue
         self.sacct = sacct
+        self.quota = quota
         self.returncode = returncode
         self.stderr = stderr
 
@@ -53,6 +54,8 @@ class _FakeSsh:
         command = argv[-1]
         if "squeue" in command:
             return _completed(self.returncode, self.queue, self.stderr)
+        if "bsc_quota" in command:
+            return _completed(self.returncode, self.quota, self.stderr)
         return _completed(self.returncode, self.sacct, self.stderr)
 
 
@@ -623,3 +626,69 @@ def test_unresolved_delivery_reservations_requires_complete_ids(tmp_path: Path) 
         encoding="utf-8",
     )
     assert unresolved_delivery_reservations(ledger, exec_ledger, exp_submit) == 0
+
+
+_BSC_QUOTA_SAMPLE = (
+    "\x1b[0m\x1b[0m Printing quota for group etur92:\x1b[22m\x1b[0m\n\n"
+    "\x1b[1;30m\x1b[0m    Filesystem   Type          Usage          Quota          Limit     In doubt     Grace  |       Files  In doubt  \x1b[0m\n"
+    "\x1b[0m     gpfs_home    USR       31.88 GB       80.00 GB       84.00 GB\x1b[38;5;252m      0.00 GB      None  |      115940         0  \x1b[0m\n"
+    "\x1b[0m gpfs_projects    GRP     1831.15 GB     4000.00 GB     4200.00 GB\x1b[38;5;252m      4.69 GB      None  |     1723914       469  \x1b[0m\n"
+    "\x1b[0m  gpfs_scratch    GRP     1790.89 GB     2000.00 GB     2100.00 GB\x1b[38;5;252m      0.09 GB      None  |     1665976        39  \x1b[0m\n"
+)
+
+
+def test_parse_bsc_quota_projects_extracts_and_fails_closed() -> None:
+    from tools.qwen3_window15_dispatch import parse_bsc_quota_projects
+
+    parsed = parse_bsc_quota_projects(_BSC_QUOTA_SAMPLE)
+    assert parsed == {"usage_gb": 1831.15, "quota_gb": 4000.0, "limit_gb": 4200.0, "in_doubt_gb": 4.69}
+    with pytest.raises(AdmissionError, match="no gpfs_projects row"):
+        parse_bsc_quota_projects("no rows here")
+    with pytest.raises(AdmissionError, match="unparseable"):
+        parse_bsc_quota_projects(" gpfs_projects    GRP     abc GB     4000.00 GB     4200.00 GB      4.69 GB      None")
+    with pytest.raises(AdmissionError, match="too short"):
+        parse_bsc_quota_projects(" gpfs_projects GRP 1.0 GB")
+
+
+def test_storage_admission_gate_boundaries() -> None:
+    from tools.qwen3_window15_dispatch import storage_admission
+
+    evidence = storage_admission(
+        _FakeSsh(quota=_BSC_QUOTA_SAMPLE), local_available_bytes=int(60 * 1024 ** 3)
+    )
+    assert evidence["admission"] == "admissible"
+    assert evidence["gpfs_projects_remaining_gb"] == pytest.approx(4000.0 - 1831.15 - 4.69, abs=0.01)
+    low = " gpfs_projects    GRP     3600.00 GB     4000.00 GB     4200.00 GB      4.69 GB      None"
+    with pytest.raises(AdmissionError, match="below the 500 GB reserve"):
+        storage_admission(_FakeSsh(quota=low), local_available_bytes=int(60 * 1024 ** 3))
+    with pytest.raises(AdmissionError, match="local available"):
+        storage_admission(_FakeSsh(quota=_BSC_QUOTA_SAMPLE), local_available_bytes=int(10 * 1024 ** 3))
+    with pytest.raises(AdmissionError, match="scheduler query failed"):
+        storage_admission(_FakeSsh(returncode=255, stderr="ssh fail"), local_available_bytes=int(60 * 1024 ** 3))
+
+
+def test_run_wave_storage_check_stops_before_next_batch() -> None:
+    calls: list[str] = []
+
+    def reconcile():
+        return 0, 10
+
+    def submit(fit):
+        calls.append(fit["key"])
+        return {"key": fit["key"], "status": "submitted", "job_ids": {}}
+
+    def storage_check():
+        if len(calls) >= 5:
+            raise AdmissionError("storage reserve reached")
+        return {"admission": "admissible"}
+
+    processed = run_wave(
+        [{"key": str(index)} for index in range(10)],
+        10,
+        reconcile=reconcile,
+        submit=submit,
+        storage_check=storage_check,
+        storage_every=5,
+    )
+    assert processed == 5
+    assert calls == ["0", "1", "2", "3", "4"]
