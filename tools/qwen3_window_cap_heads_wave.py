@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import subprocess
 import sys
@@ -202,6 +203,45 @@ def wave_keys(wave: dict) -> list[str]:
         for job in route.get("jobs") or []:
             keys.append(f"{route['route_id']}|{int(job['seed'])}|{int(job['fold'])}")
     return keys
+
+
+def plan_subset_for_keys(plan: dict, keys: set[str], *, token: str | None = None) -> dict:
+    """A fresh-token plan containing exactly the given arm-explicit keys.
+
+    The dispatcher's ``--resubmit-key`` does not restrict selection by itself:
+    unregistered plan rows are dispatched as well. Passing this subset as the
+    executable plan guarantees the emitted chains equal the admitted keys, so
+    the guard reservation covers every emitted chain.
+    """
+    routes = []
+    for route in plan.get("routes") or []:
+        jobs = [
+            job
+            for job in route.get("jobs") or []
+            if f"{route['route_id']}|{int(job['seed'])}|{int(job['fold'])}" in keys
+        ]
+        if jobs:
+            routes.append({**route, "jobs": jobs})
+    found = {
+        f"{route['route_id']}|{int(job['seed'])}|{int(job['fold'])}"
+        for route in routes
+        for job in route["jobs"]
+    }
+    missing = sorted(keys - found)
+    if missing:
+        raise ValueError(f"keys missing from the plan: {missing[:5]}")
+    digest = hashlib.sha256(
+        json.dumps(routes, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:16]
+    subset = {**plan, "routes": routes}
+    subset["build_token"] = token or f"{now()}-{digest}"
+    subset["created_at_utc"] = now()
+    subset["summary"] = {
+        **plan.get("summary", {}),
+        "resolved": len(found),
+        "intended_keys": sorted(keys),
+    }
+    return subset
 
 
 def guard_command(wave_plan: Path, wave_fits: int) -> list[str]:

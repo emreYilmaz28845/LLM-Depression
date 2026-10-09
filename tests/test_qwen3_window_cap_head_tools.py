@@ -387,3 +387,26 @@ def test_refill_build_command_guarded(tmp_path):
     ]
     assert "tools/exp.py" in command
     assert command[-1] == "prebuilt"
+
+
+def test_plan_subset_contains_only_intended_keys(tmp_path):
+    """--resubmit-key does not restrict dispatcher selection; the executable
+    plan must contain exactly the admitted keys so the reservation covers
+    every emitted chain."""
+    driver.configure(campaign_dir=tmp_path)
+    plan = {
+        "routes": [
+            {"route_id": "r1_cap25", "arm": "cap25", "jobs": [{"seed": 7, "fold": 0}]},
+            {"route_id": "r2_cap25", "arm": "cap25", "jobs": [{"seed": 7, "fold": 0}]},
+            {"route_id": "r3_cap50", "arm": "cap50", "jobs": [{"seed": 7, "fold": 1}]},
+        ],
+        "build_token": "old-token",
+        "summary": {"expected_keys": 378},
+    }
+    subset = driver.plan_subset_for_keys(plan, {"r1_cap25|7|0", "r3_cap50|7|1"})
+    assert driver.wave_keys(subset) == ["r1_cap25|7|0", "r3_cap50|7|1"]
+    assert subset["build_token"] != "old-token"
+    assert subset["summary"]["resolved"] == 2
+    assert subset["summary"]["intended_keys"] == ["r1_cap25|7|0", "r3_cap50|7|1"]
+    with pytest.raises(ValueError, match="missing from the plan"):
+        driver.plan_subset_for_keys(plan, {"r9_cap75|7|0"})
