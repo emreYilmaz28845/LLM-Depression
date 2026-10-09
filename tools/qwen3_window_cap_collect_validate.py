@@ -256,6 +256,7 @@ def membership_issues(
     head_metadata: dict,
     variants: dict[str, dict],
     extraction_sha256: str,
+    expected_head_deployment: str | None = None,
 ) -> list[str]:
     """Fail-closed checks that both variants trained the exact mask membership.
 
@@ -267,6 +268,7 @@ def membership_issues(
 
     issues: list[str] = []
     membership = {item for ids in mask["subjects"].values() for item in ids}
+    mask_subjects = {str(subject) for subject in mask["subjects"]}
     recomputed = compute_selection_sha256(
         mask["algorithm_version"],
         mask["sampling_seed"],
@@ -293,6 +295,10 @@ def membership_issues(
         issues.append("head metadata seed mismatch")
     if head_metadata.get("attempt_id") != head_attempt_id:
         issues.append("head attempt identity mismatch")
+    if expected_head_deployment:
+        source = head_metadata.get("source") or {}
+        if str(source.get("deployment_id") or "") != str(expected_head_deployment):
+            issues.append("head source deployment mismatch")
     for variant in VARIANTS:
         metadata = variants.get(variant)
         if metadata is None:
@@ -300,6 +306,19 @@ def membership_issues(
             continue
         train_mask = metadata.get("train_mask") or {}
         training_rows = list(metadata.get("training_row_ids") or [])
+        weight_audit = metadata.get("fit_weight_audit")
+        if not isinstance(weight_audit, dict) or not weight_audit:
+            issues.append(f"{variant}: fit weight audit missing")
+        else:
+            mean_weight = weight_audit.get("mean_weight")
+            if not isinstance(mean_weight, (int, float)) or abs(float(mean_weight) - 1.0) > 1e-9:
+                issues.append(f"{variant}: weight audit mean_weight is not 1.0")
+            row_count = weight_audit.get("row_count")
+            if row_count is not None and int(row_count) != len(training_rows):
+                issues.append(f"{variant}: weight audit row_count mismatch")
+            subject_count = weight_audit.get("subject_count")
+            if subject_count is not None and int(subject_count) != len(mask_subjects):
+                issues.append(f"{variant}: weight audit subject_count mismatch")
         for field in (
             "selection_sha256",
             "baseline_input_sha256",
@@ -532,6 +551,7 @@ def verify_head_membership(
         head_metadata=head_metadata,
         variants=variants,
         extraction_sha256=sha256_file(extraction_file),
+        expected_head_deployment=str(entry.get("deployment_id") or "") or None,
     )
 
 

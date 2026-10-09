@@ -189,6 +189,7 @@ def membership_fixture():
         "seed": 7,
         "fold": 0,
         "parent": {"parent_attempt_id": "PARENT"},
+        "source": {"deployment_id": "DEPLOY"},
     }
     variant = {
         "train_mask": dict(window_cap),
@@ -197,6 +198,12 @@ def membership_fixture():
         "fold": 0,
         "checkpoint_hashes": {"adapter_config_sha256": "c" * 64, "adapter_sha256": "d" * 64},
         "cache_identity": {"extraction_metadata.json": {"sha256": "E"}},
+        "fit_weight_audit": {
+            "schema_version": "hidden_classifier_weight_audit.v1",
+            "row_count": 3,
+            "mean_weight": 1.0,
+            "subject_count": 2,
+        },
     }
     return mask, window_cap, extraction, head_metadata, variant
 
@@ -213,6 +220,7 @@ def run_membership(mask, window_cap, extraction, head_metadata, variants):
         head_metadata=head_metadata,
         variants=variants,
         extraction_sha256="E",
+        expected_head_deployment="DEPLOY",
     )
 
 
@@ -462,3 +470,27 @@ def test_fetch_remote_file_refuses_existing_mismatch(tmp_path):
     )
     assert not ok and "existing" in reason
     assert local.read_bytes() == b"old"  # preserved, never overwritten
+
+
+def test_membership_flags_head_source_deployment_mismatch():
+    mask, window_cap, extraction, head_metadata, variant = membership_fixture()
+    bad_head = dict(head_metadata)
+    bad_head["source"] = {"deployment_id": "OTHER-DEPLOYMENT"}
+    issues = run_membership(mask, window_cap, extraction, bad_head, {"logreg_raw": variant, "xgb_raw": variant})
+    assert any("head source deployment mismatch" in i for i in issues)
+
+
+def test_membership_flags_missing_or_bad_weight_audit():
+    mask, window_cap, extraction, head_metadata, variant = membership_fixture()
+    no_audit = dict(variant)
+    no_audit.pop("fit_weight_audit")
+    issues = run_membership(mask, window_cap, extraction, head_metadata, {"logreg_raw": no_audit, "xgb_raw": variant})
+    assert any("logreg_raw: fit weight audit missing" in i for i in issues)
+    bad_mean = dict(variant)
+    bad_mean["fit_weight_audit"] = {**variant["fit_weight_audit"], "mean_weight": 1.5}
+    issues = run_membership(mask, window_cap, extraction, head_metadata, {"logreg_raw": bad_mean, "xgb_raw": variant})
+    assert any("mean_weight is not 1.0" in i for i in issues)
+    bad_rows = dict(variant)
+    bad_rows["fit_weight_audit"] = {**variant["fit_weight_audit"], "row_count": 2}
+    issues = run_membership(mask, window_cap, extraction, head_metadata, {"logreg_raw": bad_rows, "xgb_raw": variant})
+    assert any("row_count mismatch" in i for i in issues)
