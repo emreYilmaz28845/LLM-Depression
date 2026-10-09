@@ -148,13 +148,43 @@ def test_missing_sample_id_is_refused() -> None:
         clf._apply_train_mask(x, rows, mask)
 
 
-def test_subject_set_mismatch_is_refused() -> None:
+def test_training_pool_subset_with_extra_val_subjects_binds_restricted_membership() -> None:
+    """The head pool may include extra (val) subjects; the baseline binds the pool subset."""
+    train_plan = {"s1": 3, "s2": 3}
+    val_plan = {"s9": 2}
+    x, rows = _cache_rows({**train_plan, **val_plan})
+    mask = _mask_for(train_plan, fraction=0.5)
+    filtered_x, filtered_rows, metadata = clf._apply_train_mask(x, rows, mask)
+    selected = {sid for ids in mask["subjects"].values() for sid in ids}
+    assert {row["sample_id"] for row in filtered_rows} == selected
+    assert metadata["available_rows"] == 6  # training-pool rows, not the 8-row outer_train
+    assert all(row["subject_id"] != "s9" for row in filtered_rows)
+
+
+def test_mask_subset_of_outer_train_is_allowed() -> None:
     plan = {"s1": 3, "s2": 3}
     x, rows = _cache_rows(plan)
+    # Mask built over the training pool {s1} only; s2 is an extra pool subject.
+    training_examples = _baseline_examples({"s1": 3})
+    mask = build_mask(
+        training_examples,
+        fraction=0.5,
+        sampling_seed=SEED,
+        baseline_input_sha256=_baseline_sha(training_examples),
+    )
+    filtered_x, filtered_rows, metadata = clf._apply_train_mask(x, rows, mask)
+    assert {row["subject_id"] for row in filtered_rows} == {"s1"}
+    assert metadata["available_rows"] == 3
+    assert metadata["selected_subject_count"] == 1
+
+
+def test_mask_subject_missing_from_cache_is_refused() -> None:
+    plan = {"s1": 3}
+    x, rows = _cache_rows(plan)
     mask = _mask_for(plan, fraction=0.25)
-    del mask["subjects"]["s2"]
+    mask["subjects"]["s9"] = [mask["subjects"]["s1"][0]]
     _rehash(mask)
-    with pytest.raises(ValueError, match="subject set does not match"):
+    with pytest.raises(ValueError, match="not contained"):
         clf._apply_train_mask(x, rows, mask)
 
 

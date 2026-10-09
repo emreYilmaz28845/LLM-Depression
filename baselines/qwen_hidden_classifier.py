@@ -179,35 +179,49 @@ def _apply_train_mask(
 ) -> tuple[np.ndarray, list[dict[str, Any]], dict[str, Any]]:
     """Filter outer_train rows to the capped membership; evaluation stays full.
 
-    The mask artifact is the training-time ``window_cap_mask.json``. Before any
-    filtering this verifies, fail-closed: the recorded baseline membership hash
-    matches the exact outer_train subject/sample set, every selected sample id
-    exists in the cache and belongs to its declared subject, ids are unique,
-    and the mask subject set matches the cache training subjects (the cap keeps
-    max(1, ceil(fraction*n)) rows per subject by construction).
+    The mask artifact is the training-time ``window_cap_mask.json`` built over
+    the fit's training pool. The head's ``outer_train`` partition may be a
+    superset of that pool (for example train + inner-val subjects), so before
+    any filtering this verifies, fail-closed: every masked subject exists in
+    the cache, the recorded baseline membership hash matches the exact
+    subject/sample set of the cache rows restricted to the masked subjects
+    (the training pool), every selected sample id exists in the cache and
+    belongs to its declared subject, and ids are unique. Rows outside the
+    masked subjects are not part of the treatment's training membership and
+    are dropped by the filter.
     """
     baseline_sha = str(mask.get("baseline_input_sha256") or "")
     if not baseline_sha:
         raise ValueError(
             "train mask has no baseline_input_sha256; cannot verify the exact "
-            "outer_train subject/sample membership"
+            "training-pool subject/sample membership"
         )
+    subjects = mask.get("subjects")
+    if not isinstance(subjects, dict) or not subjects:
+        raise ValueError("train mask has no subject selections")
+    mask_subjects = {str(subject) for subject in subjects}
+    row_subjects = {str(row["subject_id"]) for row in train_rows}
+    if not mask_subjects <= row_subjects:
+        raise ValueError(
+            "train mask subject set is not contained in the outer_train subjects; "
+            f"only_in_mask={sorted(mask_subjects - row_subjects)[:5]}"
+        )
+    training_rows = [
+        row for row in train_rows if str(row["subject_id"]) in mask_subjects
+    ]
     canonical_membership = sorted(
-        [str(row["subject_id"]), str(row["sample_id"])] for row in train_rows
+        [str(row["subject_id"]), str(row["sample_id"])] for row in training_rows
     )
     recomputed_baseline = hashlib.sha256(
         json.dumps(canonical_membership, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     if recomputed_baseline != baseline_sha:
         raise ValueError(
-            "train mask baseline_input_sha256 does not match the outer_train "
+            "train mask baseline_input_sha256 does not match the training-pool "
             f"subject/sample membership: recorded {baseline_sha!r}, "
             f"recomputed {recomputed_baseline!r}. Diagnose any intentional cache "
             "membership difference before changing policy."
         )
-    subjects = mask.get("subjects")
-    if not isinstance(subjects, dict) or not subjects:
-        raise ValueError("train mask has no subject selections")
     row_ids = [str(row["sample_id"]) for row in train_rows]
     row_owner = {sample_id: str(row["subject_id"]) for sample_id, row in zip(row_ids, train_rows)}
     selected: set[str] = set()
@@ -227,14 +241,6 @@ def _apply_train_mask(
                     f"but the outer_train cache has it under {owner!r}"
                 )
             selected.add(sample_id)
-    mask_subjects = {str(subject) for subject in subjects}
-    row_subjects = {str(row["subject_id"]) for row in train_rows}
-    if mask_subjects != row_subjects:
-        raise ValueError(
-            "train mask subject set does not match outer_train subjects; "
-            f"only_in_mask={sorted(mask_subjects - row_subjects)[:5]} "
-            f"only_in_cache={sorted(row_subjects - mask_subjects)[:5]}"
-        )
     keep = [index for index, sample_id in enumerate(row_ids) if sample_id in selected]
     filtered_rows = [train_rows[index] for index in keep]
     metadata = {
@@ -243,7 +249,7 @@ def _apply_train_mask(
         "fraction": mask.get("fraction"),
         "sampling_seed": mask.get("sampling_seed"),
         "algorithm_version": mask.get("algorithm_version"),
-        "available_rows": len(train_rows),
+        "available_rows": len(training_rows),
         "selected_rows": len(filtered_rows),
         "selected_subject_count": len(mask_subjects),
     }
