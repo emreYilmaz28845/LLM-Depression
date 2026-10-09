@@ -34,7 +34,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CAMPAIGN_DIR = PROJECT_ROOT / "outputs" / "qwen3_train_window_cap_20261008"
 DEFAULT_LOCAL_RUN_ROOT = PROJECT_ROOT / "output_model" / "qwen3_train_window_cap_20261008"
 DEFAULT_DEPLOYMENT = (
-    "feat-qwen3-train-window-cap-20261008-20261008T114534Z-2f104779-db057646"
+    "feat-qwen3-train-window-cap-20261008-20261009T140151Z-98d8a91d-0490fe33"
 )
 DEFAULT_ENV_ACTIVATE = "/gpfs/projects/etur92/ozu647717/venvs/qwen3omni/bin/activate"
 DEFAULT_LANE_ID = "feat-qwen3-train-window-cap-20261008"
