@@ -99,6 +99,37 @@ def _load_partition(cache_dir: Path, name: str) -> tuple[np.ndarray, list[dict[s
     return vectors, rows
 
 
+def _load_authoritative_split(cache_dir: Path, metadata: dict[str, Any]) -> dict[str, Any]:
+    """Load and hash-verify the parent fit's authoritative split for mask binding.
+
+    The extraction metadata records the exact ``saved_split`` path (the fit's
+    ``logs/split_used.json``) and its sha256. A train mask may only be applied
+    when that split is present and unmodified: the masked subjects must equal
+    the split's ``train_subject_ids`` and the head's extra pool subjects must
+    be exactly the split's ``val_inner_subject_ids``.
+    """
+    saved = str(metadata.get("saved_split") or "").strip()
+    recorded_sha = str(metadata.get("saved_split_sha256") or "").strip()
+    if not saved or not recorded_sha:
+        raise ValueError(
+            "train mask requires the authoritative parent split; extraction "
+            "metadata has no saved_split/saved_split_sha256"
+        )
+    path = Path(saved)
+    if not path.is_file():
+        raise ValueError(f"authoritative parent split is missing: {saved}")
+    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual != recorded_sha:
+        raise ValueError(
+            "authoritative parent split hash mismatch: "
+            f"recorded {recorded_sha!r}, actual {actual!r}"
+        )
+    split = read_json(path)
+    if not isinstance(split, dict):
+        raise ValueError(f"authoritative parent split is not an object: {saved}")
+    return split
+
+
 def _validate_train_mask(
     mask: dict[str, Any], expected_selection_sha256: str | None = None
 ) -> dict[str, Any]:
@@ -175,20 +206,30 @@ def _validate_train_mask(
 
 
 def _apply_train_mask(
-    train_x: np.ndarray, train_rows: list[dict[str, Any]], mask: dict[str, Any]
+    train_x: np.ndarray,
+    train_rows: list[dict[str, Any]],
+    mask: dict[str, Any],
+    *,
+    authoritative_split: dict[str, Any],
 ) -> tuple[np.ndarray, list[dict[str, Any]], dict[str, Any]]:
     """Filter outer_train rows to the capped membership; evaluation stays full.
 
     The mask artifact is the training-time ``window_cap_mask.json`` built over
-    the fit's training pool. The head's ``outer_train`` partition may be a
-    superset of that pool (for example train + inner-val subjects), so before
-    any filtering this verifies, fail-closed: every masked subject exists in
-    the cache, the recorded baseline membership hash matches the exact
-    subject/sample set of the cache rows restricted to the masked subjects
-    (the training pool), every selected sample id exists in the cache and
-    belongs to its declared subject, and ids are unique. Rows outside the
-    masked subjects are not part of the treatment's training membership and
-    are dropped by the filter.
+    the fit's authoritative training pool (the parent split's
+    ``train_subject_ids``). The head's ``outer_train`` partition is
+    train + inner-val, so before any filtering this verifies, fail-closed:
+
+    * the outer_train subjects are exactly the authoritative
+      train + ``val_inner_subject_ids`` set;
+    * the masked subjects equal the authoritative training split exactly
+      (a truncated or extended mask is refused, not just hash-checked);
+    * the recorded baseline membership hash matches the cache rows restricted
+      to the masked subjects (the training pool);
+    * every selected sample id exists in the cache, belongs to its declared
+      subject, and ids are unique.
+
+    Rows outside the masked subjects are the authoritative inner-val pool and
+    are dropped by the filter; the final_eval partition is never touched.
     """
     baseline_sha = str(mask.get("baseline_input_sha256") or "")
     if not baseline_sha:
@@ -200,11 +241,27 @@ def _apply_train_mask(
     if not isinstance(subjects, dict) or not subjects:
         raise ValueError("train mask has no subject selections")
     mask_subjects = {str(subject) for subject in subjects}
+    train_split_subjects = {
+        str(subject) for subject in (authoritative_split.get("train_subject_ids") or [])
+    }
+    val_split_subjects = {
+        str(subject) for subject in (authoritative_split.get("val_inner_subject_ids") or [])
+    }
+    if not train_split_subjects:
+        raise ValueError("authoritative parent split has no train_subject_ids")
     row_subjects = {str(row["subject_id"]) for row in train_rows}
-    if not mask_subjects <= row_subjects:
+    expected_pool = train_split_subjects | val_split_subjects
+    if row_subjects != expected_pool:
         raise ValueError(
-            "train mask subject set is not contained in the outer_train subjects; "
-            f"only_in_mask={sorted(mask_subjects - row_subjects)[:5]}"
+            "outer_train subjects are not exactly the authoritative train+inner-val "
+            f"set; only_in_cache={sorted(row_subjects - expected_pool)[:5]} "
+            f"missing_from_cache={sorted(expected_pool - row_subjects)[:5]}"
+        )
+    if mask_subjects != train_split_subjects:
+        raise ValueError(
+            "train mask subjects do not equal the authoritative training split; "
+            f"missing_training_subjects={sorted(train_split_subjects - mask_subjects)[:5]} "
+            f"extra_mask_subjects={sorted(mask_subjects - train_split_subjects)[:5]}"
         )
     training_rows = [
         row for row in train_rows if str(row["subject_id"]) in mask_subjects
@@ -554,8 +611,9 @@ def run_variant(
     train_mask_metadata: dict[str, Any] | None = None
     if train_mask is not None:
         _validate_train_mask(train_mask)
+        authoritative_split = _load_authoritative_split(cache_dir, metadata)
         train_x, train_rows, train_mask_metadata = _apply_train_mask(
-            train_x, train_rows, train_mask
+            train_x, train_rows, train_mask, authoritative_split=authoritative_split
         )
         train_y = np.asarray([int(row["label"]) for row in train_rows], dtype=np.int64)
         train_subjects = {str(row["subject_id"]) for row in train_rows}
