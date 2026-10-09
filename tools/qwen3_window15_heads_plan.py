@@ -263,6 +263,7 @@ def build_matrix_mode(
     contract_path: Path = CONTRACT,
     campaign_root: Path | None = None,
     ledger_path: Path = LEDGER,
+    pre_filtered: bool = False,
 ) -> dict:
     """Run the generic planner with the lane's treatment route source.
 
@@ -270,14 +271,20 @@ def build_matrix_mode(
     the window15 treatment routes so the resolved parents are treatment checkpoints
     only. The parent map is first filtered to audit-eligible keys (validated
     parents) because the generic planner fails closed on an explicit ineligible
-    parent. Everything else (eligibility, prompt/config matching, adapter
-    hashing, fail-closed waiting states) is the generic implementation.
+    parent; when the caller already filtered the map on the planning host
+    (``pre_filtered``, for example from the cycle driver whose local ledger is
+    not available remotely) the input map is used as-is. Everything else
+    (eligibility, prompt/config matching, adapter hashing, fail-closed waiting
+    states) is the generic implementation.
     """
     import tools.qwen3_heads_matrix as heads_matrix  # noqa: PLC0415
 
     parent_map = _read_json(parent_map_path) or {"entries": []}
-    _, audit = build_plan(contract_path, ledger_path)
-    filtered = eligible_parent_map(parent_map, audit)
+    if pre_filtered:
+        filtered = parent_map
+    else:
+        _, audit = build_plan(contract_path, ledger_path)
+        filtered = eligible_parent_map(parent_map, audit)
     filtered_path = out_path.with_suffix(".parent_map.eligible.json")
     filtered_path.parent.mkdir(parents=True, exist_ok=True)
     filtered_path.write_text(json.dumps(filtered, indent=1, sort_keys=True), encoding="utf-8")
@@ -311,6 +318,11 @@ def main() -> int:
     parser.add_argument("--matrix-out", type=Path, default=None)
     parser.add_argument("--cache-root", type=Path, default=None)
     parser.add_argument("--campaign-root", type=Path, default=None)
+    parser.add_argument(
+        "--parent-map-pre-filtered",
+        action="store_true",
+        help="the parent map is already audit-filtered on the planning host",
+    )
     parser.add_argument("--seed", action="append", type=int, default=None)
     args = parser.parse_args()
 
@@ -327,6 +339,7 @@ def main() -> int:
                 seeds,
                 contract_path=args.contract,
                 campaign_root=args.campaign_root,
+                pre_filtered=bool(args.parent_map_pre_filtered),
             )
         except Exception as exc:  # planner errors are fail-closed
             print(f"REFUSED: {exc}", file=sys.stderr)
