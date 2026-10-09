@@ -237,6 +237,24 @@ def _treatment_routes(contract_path: Path = CONTRACT) -> list[dict]:
     ]
 
 
+def eligible_parent_map(parent_map: dict, audit: dict) -> dict:
+    """Keep only entries whose key is audit-eligible (validated and collectable).
+
+    The generic planner raises on an explicit parent that is not yet eligible;
+    in-flight fits are therefore excluded here and appear in the matrix as
+    waiting_for_checkpoint until their evidence is collected and validated.
+    """
+    eligible_keys = {
+        item["key"] for item in audit.get("keys", []) if item.get("status") == "eligible"
+    }
+    entries = [
+        entry
+        for entry in parent_map.get("entries", [])
+        if f"{entry['route_id']}|{entry['parent_training_seed']}|{entry['fold']}" in eligible_keys
+    ]
+    return {**parent_map, "entries": entries}
+
+
 def build_matrix_mode(
     parent_map_path: Path,
     out_path: Path,
@@ -244,15 +262,25 @@ def build_matrix_mode(
     seeds: list[int],
     contract_path: Path = CONTRACT,
     campaign_root: Path | None = None,
+    ledger_path: Path = LEDGER,
 ) -> dict:
     """Run the generic planner with the lane's treatment route source.
 
     The generic planner hardcodes the control selection map; here it is given
     the window15 treatment routes so the resolved parents are treatment checkpoints
-    only. Everything else (eligibility, prompt/config matching, adapter hashing,
-    fail-closed waiting states) is the generic implementation.
+    only. The parent map is first filtered to audit-eligible keys (validated
+    parents) because the generic planner fails closed on an explicit ineligible
+    parent. Everything else (eligibility, prompt/config matching, adapter
+    hashing, fail-closed waiting states) is the generic implementation.
     """
     import tools.qwen3_heads_matrix as heads_matrix  # noqa: PLC0415
+
+    parent_map = _read_json(parent_map_path) or {"entries": []}
+    _, audit = build_plan(contract_path, ledger_path)
+    filtered = eligible_parent_map(parent_map, audit)
+    filtered_path = out_path.with_suffix(".parent_map.eligible.json")
+    filtered_path.parent.mkdir(parents=True, exist_ok=True)
+    filtered_path.write_text(json.dumps(filtered, indent=1, sort_keys=True), encoding="utf-8")
 
     routes = _treatment_routes(contract_path)
     heads_matrix.build_selection_map = lambda: {"routes": routes}
@@ -260,7 +288,7 @@ def build_matrix_mode(
         seeds=seeds,
         scan_roots=[],
         campaign_root=campaign_root or RUN_ROOT,
-        parent_map_path=parent_map_path,
+        parent_map_path=filtered_path,
         cache_root=cache_root,
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)

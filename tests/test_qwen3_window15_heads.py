@@ -444,3 +444,22 @@ class _nullcontext:
 
     def __exit__(self, *exc):
         return False
+
+
+def test_planner_eligible_parent_map_filters_ineligible_keys() -> None:
+    from tools.qwen3_window15_heads_plan import eligible_parent_map
+
+    parent_map = {
+        "entries": [
+            {"route_id": "a", "parent_training_seed": 7, "fold": 0, "config": "c", "fold_dir": "d", "parent_attempt_id": "x"},
+            {"route_id": "b", "parent_training_seed": 7, "fold": 0, "config": "c", "fold_dir": "d", "parent_attempt_id": "y"},
+        ]
+    }
+    audit = {
+        "keys": [
+            {"key": "a|7|0", "status": "eligible"},
+            {"key": "b|7|0", "status": "waiting_training"},
+        ]
+    }
+    filtered = eligible_parent_map(parent_map, audit)
+    assert [entry["route_id"] for entry in filtered["entries"]] == ["a"]
