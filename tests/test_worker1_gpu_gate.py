@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT))
 from tools.check_worker1_gpu_gate import (  # noqa: E402
     Job,
     Tres,
+    TresParseError,
     check_batch_release,
     check_release,
     parse_scontrol_dump,
@@ -67,7 +68,8 @@ def cpu_head(job_id="47077945", state="PENDING", reason="JobHeldUser", time_limi
 
 
 def test_parse_tres_totals_only():
-    t = parse_tres("billing=320,cpu=320,gres/gpu=8,mem=1000000M,node=2")
+    t, present = parse_tres("billing=320,cpu=320,gres/gpu=8,mem=1000000M,node=2")
+    assert present
     assert (t.gpus, t.nodes, t.billing) == (8, 2, 320)
 
 
@@ -259,6 +261,122 @@ def test_parse_scontrol_dump_deny_when_candidate_missing(tmp_path):
     )
     assert out.returncode == 1
     assert not json.loads(out.stdout)["allow"]
+
+
+# ---------------------------------------------------------------------------
+# Focused regression tests for the reviewed gate defects (2026-10-09).
+# ---------------------------------------------------------------------------
+
+
+def test_deny_candidate_pending_unheld():
+    cand = audio_post(reason="None")
+    dec = check_release(cand, [], APPROVAL)
+    assert not dec["allow"]
+    assert any("candidate_must_be_pending_with_exact_JobHeldUser" in r for r in dec["reasons"])
+
+
+def test_deny_candidate_pending_other_reason():
+    cand = audio_post(reason="Resources")
+    dec = check_release(cand, [], APPROVAL)
+    assert not dec["allow"]
+    assert any("candidate_must_be_pending_with_exact_JobHeldUser" in r for r in dec["reasons"])
+
+
+def test_deny_candidate_missing_req_tres():
+    cand = audio_post()
+    cand.req_present = False
+    dec = check_release(cand, [], APPROVAL)
+    assert not dec["allow"]
+    assert any("candidate_req_tres_missing" in r for r in dec["reasons"])
+
+
+def test_deny_candidate_nodes_zero():
+    cand = audio_post()
+    cand.req = Tres(gpus=4, nodes=0, billing=80)
+    dec = check_release(cand, [], APPROVAL)
+    assert not dec["allow"]
+    assert any("candidate_nodes_missing_or_zero" in r for r in dec["reasons"])
+
+
+def test_deny_candidate_billing_zero():
+    cand = audio_post()
+    cand.req = Tres(gpus=4, nodes=1, billing=0)
+    dec = check_release(cand, [], APPROVAL)
+    assert not dec["allow"]
+    assert any("candidate_billing_missing_or_zero" in r for r in dec["reasons"])
+
+
+def test_parse_tres_malformed_raises():
+    with pytest.raises(TresParseError):
+        parse_tres("gres/gpu=abc,node=1,billing=80")
+    with pytest.raises(TresParseError):
+        parse_tres("node=1,billing=,gres/gpu=4")
+    with pytest.raises(TresParseError):
+        parse_tres("not_a_keyvalue")
+
+
+def test_parse_rejects_incomplete_record():
+    incomplete = "JobId=47077999 JobName=x\n   JobState=PENDING Reason=JobHeldUser\n   NumNodes=1\n"
+    with pytest.raises(TresParseError):
+        parse_scontrol_dump(incomplete)
+
+
+def test_parse_rejects_duplicate_job_records():
+    dup = SCONTROL_SAMPLE + "\n" + SCONTROL_SAMPLE
+    with pytest.raises(TresParseError):
+        parse_scontrol_dump(dup)
+
+
+def test_cli_denies_malformed_dump(tmp_path):
+    bad = tmp_path / "bad.txt"
+    bad.write_text(SCONTROL_SAMPLE.replace("gres/gpu=4", "gres/gpu=four"), encoding="utf-8")
+    out = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools" / "check_worker1_gpu_gate.py"),
+            "--scontrol-dump",
+            str(bad),
+            "--candidate-job",
+            "47077944",
+            "--root-approval",
+            APPROVAL,
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert out.returncode == 1
+    assert "snapshot_unusable" in json.loads(out.stdout)["reasons"][0]
+
+
+def test_cli_denies_duplicate_snapshot(tmp_path):
+    dup = tmp_path / "dup.txt"
+    dup.write_text(SCONTROL_SAMPLE + "\n" + SCONTROL_SAMPLE, encoding="utf-8")
+    out = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools" / "check_worker1_gpu_gate.py"),
+            "--scontrol-dump",
+            str(dup),
+            "--candidate-job",
+            "47077944",
+            "--root-approval",
+            APPROVAL,
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert out.returncode == 1
+    assert "duplicate_job_records" in json.loads(out.stdout)["reasons"][0]
+
+
+def test_allow_gpu_candidate_one_node_boundary():
+    cand = audio_post()
+    dec = check_release(cand, [], APPROVAL)
+    assert dec["allow"], dec["reasons"]
 
 
 if __name__ == "__main__":

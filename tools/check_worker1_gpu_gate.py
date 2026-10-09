@@ -1,26 +1,28 @@
 #!/usr/bin/env python3
 """Candidate coordinator-owned global GPU gate (worker1, 2026-10-09 stop).
 
-Context
-- The user imposed a hard global cap: at most 8 GPUs and 2 nodes in total across
-  ALL of this account's jobs (train/eval/postprocess/extraction/smokes together),
-  with strict sequential GPU release: at most ONE released GPU job at a time,
-  even when that leaves the other GPUs idle.
-- Pending GPU jobs stay held; the gate fails closed on any own running job, any
-  own unheld pending (released) GPU job, or any unknown scheduler state.
-- A whole leg (15-job chain) must never be released as a batch; admission is
-  single-job only.
-- CPU head jobs also need a bounded CPU billing rate and a bounded wall time.
-- Root acceptance is required before ANY release. This tool never submits,
-  releases, cancels, or retries anything; it only decides ALLOW/DENY.
+READ-ONLY DECISION AID. This tool never submits, releases, cancels, or retries.
+The real release is coordinator-owned: the coordinator holds an atomic lease
+lock and must build a FRESH full own-queue + all-TRES snapshot before every
+single release, with all other pending jobs held. The worker cannot release
+independently; this tool only answers "would releasing exactly this one held
+job be admissible under the current snapshot?".
 
-The gate counts GPU totals from TOTAL AllocTRES (running) or ReqTRES (pending),
-never per-node values, and enforces <= 8 GPUs and <= 2 nodes across the account.
-
-Usage (read-only decision):
-    python tools/check_worker1_gpu_gate.py --scontrol-dump dump.txt \
-        --candidate-job 47077944 --root-approval <token>
-Exit code 0 = ALLOW, 1 = DENY (reasons printed).
+Rules enforced (user directives, reviewed 2026-10-09):
+- Hard global cap: at most 8 GPUs and 2 nodes TOTAL across ALL own-account
+  jobs (train/eval/postprocess/extraction/smokes together), counted from
+  total AllocTRES (running) or ReqTRES (pending), never per-node values.
+- Strictly sequential: at most ONE released GPU job at a time; every other
+  GPU job stays held (dependents included).
+- Fail closed on: any own active job, any own unheld pending GPU job, any
+  unknown state, duplicate/incomplete job records, malformed TRES.
+- Candidate must be PENDING with reason exactly JobHeldUser; its ReqTRES must
+  be present and valid: node >= 1, billing > 0; a GPU job must declare its
+  GPU count (missing/undecipherable declaration fails, never falls through
+  as CPU).
+- CPU head jobs need bounded CPU billing and bounded wall time.
+- Whole-leg batch admission is forbidden (single-job only).
+- Root approval token required before any release.
 """
 
 from __future__ import annotations
@@ -33,8 +35,8 @@ from dataclasses import dataclass, field
 
 GPU_LIMIT = 8
 NODE_LIMIT = 2
-GPU_BILLING_RATE_CAP = 320  # actual allocation billing per hour (8-GPU audio train)
-CPU_HEAD_BILLING_RATE_CAP = 40  # actual billing per hour for CPU head jobs
+GPU_BILLING_RATE_CAP = 320  # allocated billing per hour (8-GPU audio train)
+CPU_HEAD_BILLING_RATE_CAP = 40  # allocated billing per hour for CPU head jobs
 CPU_HEAD_MAX_WALL_MINUTES = 120
 
 ACTIVE_STATES = {
@@ -61,6 +63,12 @@ KNOWN_TERMINAL = {
 }
 KNOWN_STATES = ACTIVE_STATES | KNOWN_TERMINAL | {"PENDING"}
 
+TRES_KEYS = {"gres/gpu": "gpus", "node": "nodes", "billing": "billing"}
+
+
+class TresParseError(ValueError):
+    """Raised on malformed or undecipherable TRES content (fail closed)."""
+
 
 @dataclass
 class Tres:
@@ -77,6 +85,8 @@ class Job:
     reason: str = ""
     req: Tres = field(default_factory=Tres)
     alloc: Tres | None = None
+    req_present: bool = True
+    alloc_present: bool = False
     time_limit_minutes: int | None = None
 
     @property
@@ -92,8 +102,7 @@ class Job:
         return self.state in ACTIVE_STATES
 
     def effective(self) -> Tres:
-        """Total TRES for this job: AllocTRES when running, ReqTRES otherwise."""
-        if self.alloc is not None and self.is_active:
+        if self.is_active and self.alloc_present and self.alloc is not None:
             return self.alloc
         return self.req
 
@@ -102,44 +111,64 @@ class Job:
         return self.effective().gpus > 0
 
 
-def parse_tres(text: str) -> Tres:
-    """Parse a Slurm TRES string; totals only, never per-node values."""
+def parse_tres(text: str) -> tuple[Tres, bool]:
+    """Strict TRES parse. Returns (tres, present). Raises on malformed tokens.
+
+    A token whose key is one we track (gres/gpu, node, billing) must carry a
+    non-negative integer; anything else is a hard parse failure so that a
+    broken declaration can never silently fall through as a CPU/zero request.
+    """
+    present = bool(text and text.strip() and text.strip() != "(null)")
     t = Tres()
-    m = re.search(r"(?:^|,)gres/gpu=(\d+)", text or "")
-    if m:
-        t.gpus = int(m.group(1))
-    m = re.search(r"(?:^|,)node=(\d+)", text or "")
-    if m:
-        t.nodes = int(m.group(1))
-    m = re.search(r"(?:^|,)billing=(\d+)", text or "")
-    if m:
-        t.billing = int(m.group(1))
-    return t
+    if not present:
+        return t, False
+    for raw in text.split(","):
+        token = raw.strip()
+        if not token:
+            continue
+        if "=" not in token:
+            raise TresParseError(f"token_without_equals:{token}")
+        key, _, value = token.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if key in TRES_KEYS:
+            if not re.fullmatch(r"\d+", value):
+                raise TresParseError(f"malformed_tres_value:{key}={value}")
+            setattr(t, TRES_KEYS[key], int(value))
+    return t, True
 
 
 def parse_scontrol_dump(text: str) -> list[Job]:
-    """Parse `scontrol show job` output into Job records.
-
-    Multiple jobs are separated by blank lines. Missing TRES data stays at zero,
-    which later fails closed via the unknown/incomplete checks.
-    """
+    """Parse `scontrol show job` output. Fails closed on duplicate/incomplete records."""
     jobs: list[Job] = []
+    seen: set[str] = set()
     for block in re.split(r"\n\s*\n", text or ""):
         if "JobId=" not in block:
             continue
-        fields = {}
+        fields: dict[str, str] = {}
         for piece in block.replace("\n", " ").split():
             if "=" in piece:
                 k, _, v = piece.partition("=")
                 fields.setdefault(k, v)
-        job = Job(job_id=fields.get("JobId", ""))
+        job_id = fields.get("JobId", "")
+        if not job_id:
+            raise TresParseError("job_record_without_jobid")
+        if job_id in seen:
+            raise TresParseError(f"duplicate_job_records:{job_id}")
+        seen.add(job_id)
+        job = Job(job_id=job_id)
         job.name = fields.get("JobName", "")
         job.state = fields.get("JobState", "UNKNOWN")
         reason = fields.get("Reason", "")
         job.reason = "" if reason in ("None", "(null)") else reason
-        job.req = parse_tres(fields.get("ReqTRES", ""))
-        alloc = fields.get("AllocTRES", "")
-        job.alloc = parse_tres(alloc) if alloc and alloc != "(null)" else None
+        if "ReqTRES" not in fields:
+            raise TresParseError(f"incomplete_record_missing_reqtres:{job_id}")
+        job.req, job.req_present = parse_tres(fields.get("ReqTRES", ""))
+        if not job.req_present:
+            raise TresParseError(f"empty_reqtres:{job_id}")
+        alloc_raw = fields.get("AllocTRES", "")
+        if alloc_raw and alloc_raw not in ("(null)",):
+            job.alloc, job.alloc_present = parse_tres(alloc_raw)
         tl = fields.get("TimeLimit", "")
         m = re.match(r"^(\d+)-(\d+):(\d+):(\d+)$", tl)
         if m:
@@ -164,7 +193,7 @@ def check_release(
     cpu_head_billing_cap: int = CPU_HEAD_BILLING_RATE_CAP,
     cpu_head_max_wall_minutes: int = CPU_HEAD_MAX_WALL_MINUTES,
 ) -> dict:
-    """Decide whether ONE held candidate job may be released. Never mutates state."""
+    """Decide whether ONE held candidate may be released. Never mutates state."""
     reasons: list[str] = []
     if not root_approval:
         reasons.append("root_acceptance_required: no approval token supplied")
@@ -173,10 +202,38 @@ def check_release(
         reasons.append("candidate_missing_job_id")
     if candidate.state not in KNOWN_STATES:
         reasons.append(f"candidate_unknown_state:{candidate.state}")
-    if candidate.state != "PENDING":
-        reasons.append(f"candidate_not_pending:{candidate.state}")
+    if not (candidate.state == "PENDING" and candidate.reason == HELD_REASON):
+        reasons.append(
+            f"candidate_must_be_pending_with_exact_{HELD_REASON}:"
+            f"state={candidate.state}:reason={candidate.reason or 'None'}"
+        )
+    if not candidate.req_present:
+        reasons.append("candidate_req_tres_missing")
+    else:
+        req = candidate.req
+        if req.nodes < 1:
+            reasons.append(f"candidate_nodes_missing_or_zero:{req.nodes}")
+        if req.billing <= 0:
+            reasons.append(f"candidate_billing_missing_or_zero:{req.billing}")
+        if req.gpus > 0:
+            if req.gpus > gpu_limit:
+                reasons.append(f"candidate_gpus_exceed_limit:{req.gpus}>{gpu_limit}")
+            if req.nodes > node_limit:
+                reasons.append(f"candidate_nodes_exceed_limit:{req.nodes}>{node_limit}")
+            if req.billing > gpu_billing_cap:
+                reasons.append(f"candidate_billing_exceeds_cap:{req.billing}>{gpu_billing_cap}")
+        else:
+            if req.billing > cpu_head_billing_cap:
+                reasons.append(f"cpu_head_billing_exceeds_cap:{req.billing}>{cpu_head_billing_cap}")
+            if (
+                candidate.time_limit_minutes is None
+                or candidate.time_limit_minutes > cpu_head_max_wall_minutes
+            ):
+                reasons.append(
+                    "cpu_head_wall_time_unbounded_or_too_long:"
+                    f"{candidate.time_limit_minutes}>{cpu_head_max_wall_minutes}"
+                )
 
-    # Fail closed over every other own job.
     for job in own_jobs:
         if job.job_id == candidate.job_id:
             continue
@@ -190,32 +247,7 @@ def check_release(
         elif job.state not in KNOWN_STATES:
             reasons.append(f"own_unknown_state:{job.job_id}:{job.state}")
 
-    cand = candidate.effective()
-    if cand.gpus < 0 or cand.nodes < 0 or cand.billing < 0:
-        reasons.append("candidate_negative_tres")
-    if cand.gpus == 0 and candidate.time_limit_minutes is None:
-        reasons.append("cpu_job_requires_bounded_wall_time")
-    if cand.gpus > 0:
-        if cand.gpus > gpu_limit:
-            reasons.append(f"candidate_gpus_exceed_limit:{cand.gpus}>{gpu_limit}")
-        if cand.nodes > node_limit:
-            reasons.append(f"candidate_nodes_exceed_limit:{cand.nodes}>{node_limit}")
-        if cand.billing > gpu_billing_cap:
-            reasons.append(f"candidate_billing_exceeds_cap:{cand.billing}>{gpu_billing_cap}")
-    else:
-        if cand.billing > cpu_head_billing_cap:
-            reasons.append(f"cpu_head_billing_exceeds_cap:{cand.billing}>{cpu_head_billing_cap}")
-        if (
-            candidate.time_limit_minutes is None
-            or candidate.time_limit_minutes > cpu_head_max_wall_minutes
-        ):
-            reasons.append(
-                "cpu_head_wall_time_unbounded_or_too_long:"
-                f"{candidate.time_limit_minutes}>{cpu_head_max_wall_minutes}"
-            )
-
-    # Account-wide totals (defense in depth; with one-at-a-time this is redundant).
-    gpu_total = cand.gpus
+    gpu_total = candidate.req.gpus if candidate.req_present else 0
     for job in own_jobs:
         if job.job_id == candidate.job_id:
             continue
@@ -230,10 +262,7 @@ def check_release(
 def check_batch_release(candidates: list[Job], own_jobs: list[Job], root_approval: str | None) -> dict:
     """Whole-leg releases are forbidden; only single-job admission is allowed."""
     if len(candidates) != 1:
-        return {
-            "allow": False,
-            "reasons": [f"batch_release_forbidden:{len(candidates)}_jobs"],
-        }
+        return {"allow": False, "reasons": [f"batch_release_forbidden:{len(candidates)}_jobs"]}
     return check_release(candidates[0], own_jobs, root_approval)
 
 
@@ -247,10 +276,10 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         text = open(args.scontrol_dump, encoding="utf-8", errors="replace").read()
-    except OSError as exc:
-        print(json.dumps({"allow": False, "reasons": [f"dump_unreadable:{exc}"]}))
+        jobs = parse_scontrol_dump(text)
+    except (OSError, TresParseError) as exc:
+        print(json.dumps({"allow": False, "reasons": [f"snapshot_unusable:{exc}"]}))
         return 1
-    jobs = parse_scontrol_dump(text)
     if not any(j.job_id == args.candidate_job for j in jobs):
         print(json.dumps({"allow": False, "reasons": [f"candidate_not_found:{args.candidate_job}"]}))
         return 1
