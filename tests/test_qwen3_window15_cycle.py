@@ -69,7 +69,7 @@ def _fixture(tmp_path, monkeypatch, fold_state: str | None = None):
     fold_dir = run_root / "audio_only" / "daic" / "q3w15_daic_audio_only_native_s7_f0" / "fold_0"
     if fold_state is not None:
         fold_dir.mkdir(parents=True, exist_ok=True)
-        (fold_dir / "status.json").write_text(json.dumps({"state": fold_state}), encoding="utf-8")
+        (fold_dir / "status.json").write_text(json.dumps({"state": fold_state, "attempt_id": "new-attempt"}), encoding="utf-8")
         (fold_dir / "metadata.json").write_text(json.dumps({"attempt_id": "new-attempt"}), encoding="utf-8")
     monkeypatch.setattr(cycle, "LEDGER", ledger)
     monkeypatch.setattr(cycle, "EXECUTION_LEDGER", exec_ledger)
@@ -98,7 +98,7 @@ def test_cycle_collect_then_status_then_validate_with_exact_state(tmp_path, monk
         recorder.calls.append(list(args))
         if "validate" in args:
             fold_dir.mkdir(parents=True, exist_ok=True)
-            (fold_dir / "status.json").write_text(json.dumps({"state": "LOCALLY_VALIDATED"}), encoding="utf-8")
+            (fold_dir / "status.json").write_text(json.dumps({"state": "LOCALLY_VALIDATED", "attempt_id": "new-attempt"}), encoding="utf-8")
             (fold_dir / "metadata.json").write_text(json.dumps({"attempt_id": "new-attempt"}), encoding="utf-8")
         return subprocess.CompletedProcess(args, 0, "", "")
 
@@ -219,7 +219,8 @@ def test_cycle_head_collect_confirms_exact_state(tmp_path, monkeypatch) -> None:
         recorder.calls.append(list(cmd))
         if "collect" in cmd:
             mirror.mkdir(parents=True, exist_ok=True)
-            (mirror / "status.json").write_text(json.dumps({"state": "LOCALLY_VALIDATED"}), encoding="utf-8")
+            (mirror / "status.json").write_text(json.dumps({"state": "LOCALLY_VALIDATED", "attempt_id": "head-1"}), encoding="utf-8")
+            (mirror / "metadata.json").write_text(json.dumps({"attempt_id": "head-1"}), encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(cycle, "_run", fake_run)
@@ -243,3 +244,61 @@ def test_cycle_run_logs_bounded_record(tmp_path, monkeypatch) -> None:
     assert cycle.run_cycle(args) == 0
     records = [json.loads(line) for line in (tmp_path / "cycle_log.jsonl").read_text().splitlines()]
     assert len(records) == 1 and "at_utc" in records[0]
+
+
+def test_cycle_stale_or_blank_identity_is_not_skipped(tmp_path, monkeypatch) -> None:
+    # LOCALLY_VALIDATED state with a blank status attempt id: stale evidence,
+    # never skipped; the validation confirmation must also refuse it
+    recorder, fold_dir = _fixture(tmp_path, monkeypatch, fold_state="LOCALLY_VALIDATED")
+    (fold_dir / "status.json").write_text(json.dumps({"state": "LOCALLY_VALIDATED", "attempt_id": ""}), encoding="utf-8")
+    result = cycle.phase_collect_fits(max_fits=4, dry_run=False)
+    assert result["skipped_validated"] == 0
+    assert result["completed_fits"] == 1
+    assert result["validated"] == 0
+    assert result["results"][-1]["stage"] == "blocked_validate"
+
+    # metadata missing: status alone is not proof
+    recorder2, fold_dir2 = _fixture(tmp_path, monkeypatch, fold_state="LOCALLY_VALIDATED")
+    (fold_dir2 / "metadata.json").unlink()
+    result = cycle.phase_collect_fits(max_fits=4, dry_run=False)
+    assert result["skipped_validated"] == 0
+    assert result["completed_fits"] == 1
+    assert result["validated"] == 0
+
+    # SYNCED_LOCALLY with broken identity must NOT skip collection
+    recorder3, fold_dir3 = _fixture(tmp_path, monkeypatch, fold_state="SYNCED_LOCALLY")
+    (fold_dir3 / "metadata.json").write_text(json.dumps({"attempt_id": "old-attempt"}), encoding="utf-8")
+    result = cycle.phase_collect_fits(max_fits=4, dry_run=False)
+    assert result["results"][-1]["collect_skipped"] is False
+
+    # SYNCED_LOCALLY with exact identity may skip collection
+    recorder4, _ = _fixture(tmp_path, monkeypatch, fold_state="SYNCED_LOCALLY")
+    result = cycle.phase_collect_fits(max_fits=4, dry_run=False)
+    assert result["results"][-1]["collect_skipped"] is True
+
+
+def test_cycle_head_stale_identity_is_not_confirmed(tmp_path, monkeypatch) -> None:
+    registry = tmp_path / "head_submissions.jsonl"
+    registry.write_text(
+        json.dumps({"registry_key": "a|7|0", "attempt_id": "head-1", "extract_job_id": "1", "classifier_job_id": "2"}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cycle, "head_registry_entries", lambda path=None: [json.loads(line) for line in registry.read_text().splitlines()])
+    monkeypatch.setattr(cycle, "EVIDENCE", tmp_path)
+    monkeypatch.setattr(
+        cycle,
+        "query_top_level_accounting",
+        lambda ids, runner=None: {job_id: {"state": "COMPLETED", "exit": "0:0"} for job_id in ids},
+    )
+    mirror = tmp_path / "head_attempts" / "head-1"
+    mirror.mkdir(parents=True)
+    # DONE state but the metadata belongs to a different/stale attempt
+    (mirror / "status.json").write_text(json.dumps({"state": "LOCALLY_VALIDATED", "attempt_id": "head-1"}), encoding="utf-8")
+    (mirror / "metadata.json").write_text(json.dumps({"attempt_id": "old-head"}), encoding="utf-8")
+    recorder = _Recorder()
+    monkeypatch.setattr(cycle, "_run", recorder)
+    result = cycle.phase_head_collect(max_head_fits=4, dry_run=False)
+    # stale mirror is not skipped; the fake collect/validate never fix identity
+    assert result["pending_head_attempts"] == 1
+    assert result["validated"] == 0
+    assert result["results"][-1]["stage"] == "blocked_validate"

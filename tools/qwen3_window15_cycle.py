@@ -116,13 +116,6 @@ def _fit_job_ids(attempt_id: str, exec_ledger_path: Path | None = None) -> dict[
     return ids
 
 
-def _local_state(fold_dir: Path) -> str | None:
-    path = fold_dir / "status.json"
-    if not path.is_file():
-        return None
-    return str((json.loads(path.read_text(encoding="utf-8")) or {}).get("state") or "") or None
-
-
 def _run(cmd: list[str], timeout: int = 3600) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, cwd=LANE, capture_output=True, text=True, timeout=timeout)
 
@@ -143,6 +136,15 @@ DONE_STATES = {"LOCALLY_VALIDATED", "REPORTABLE"}
 SKIP_COLLECT_STATES = {"SYNCED_LOCALLY", "LOCALLY_VALIDATED", "REPORTABLE"}
 
 
+def _read_json(path: Path):
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+
 def _expected_fold_dir(item: dict) -> Path:
     return (
         RUN_ROOT
@@ -153,12 +155,25 @@ def _expected_fold_dir(item: dict) -> Path:
     )
 
 
-def _confirmed_state(fold_dir: Path, attempt: str) -> tuple[bool, str | None]:
-    """Exact local lifecycle state plus attempt identity for one fold."""
-    state = _local_state(fold_dir)
-    metadata_path = fold_dir / "metadata.json"
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8")) if metadata_path.is_file() else {}
-    confirmed = state in DONE_STATES and str(metadata.get("attempt_id") or "") == attempt
+def _sidecar_identity(base_dir: Path, attempt: str, states: set[str]) -> tuple[bool, str | None]:
+    """Exact evidence: lifecycle state plus BOTH sidecar attempt ids.
+
+    The canonical training fold and head attempt both carry ``status.json`` and
+    ``metadata.json`` with a nonblank ``attempt_id``. A state match alone (or a
+    missing/blank/metadata-mismatched attempt) is never treated as this
+    attempt's evidence: stale folds from earlier attempts must not authorize
+    skips, skip-collection or validation counts.
+    """
+    attempt = str(attempt or "").strip()
+    status = _read_json(base_dir / "status.json") or {}
+    metadata = _read_json(base_dir / "metadata.json") or {}
+    state = str(status.get("state") or "") or None
+    confirmed = bool(
+        attempt
+        and state in states
+        and str(status.get("attempt_id") or "").strip() == attempt
+        and str(metadata.get("attempt_id") or "").strip() == attempt
+    )
     return confirmed, state
 
 
@@ -174,12 +189,16 @@ def phase_collect_fits(max_fits: int, dry_run: bool) -> dict:
         if item is None:
             continue
         fold_dir = _expected_fold_dir(item)
-        state = _local_state(fold_dir) if fold_dir.is_dir() else None
-        if state in DONE_STATES:
+        attempt_id = str(record["attempt_id"])
+        exists = fold_dir.is_dir()
+        done_confirmed, _ = (
+            _sidecar_identity(fold_dir, attempt_id, DONE_STATES) if exists else (False, None)
+        )
+        if done_confirmed:
             skipped_validated += 1
             continue
         try:
-            ids = _fit_job_ids(str(record["attempt_id"]))
+            ids = _fit_job_ids(attempt_id)
             if not ids:
                 continue
             accounting = query_top_level_accounting(sorted(ids.values()))
@@ -191,12 +210,15 @@ def phase_collect_fits(max_fits: int, dry_run: bool) -> dict:
             and accounting.get(job_id, {}).get("exit") == "0:0"
             for job_id in ids.values()
         ):
+            skip_confirmed, _ = (
+                _sidecar_identity(fold_dir, attempt_id, SKIP_COLLECT_STATES) if exists else (False, None)
+            )
             units.append(
                 {
                     "key": key,
-                    "attempt_id": str(record["attempt_id"]),
+                    "attempt_id": attempt_id,
                     "ids": ids,
-                    "needs_collect": state not in SKIP_COLLECT_STATES,
+                    "needs_collect": not skip_confirmed,
                 }
             )
     if dry_run:
@@ -227,7 +249,7 @@ def phase_collect_fits(max_fits: int, dry_run: bool) -> dict:
             result["validate_rc"] = validate.returncode
             item = audit_by_key.get(unit["key"])
             fold_dir = _expected_fold_dir(item) if item else Path("/nonexistent")
-            confirmed, state = _confirmed_state(fold_dir, unit["attempt_id"])
+            confirmed, state = _sidecar_identity(fold_dir, unit["attempt_id"], DONE_STATES)
             result["final_state"] = state
             if validate.returncode == 0 and confirmed:
                 validated += 1
@@ -321,16 +343,6 @@ def phase_head_submit(max_head_fits: int, dry_run: bool, matrix_ok: bool = True)
     return {"status": "ok" if result.returncode == 0 else f"rc={result.returncode}", "tail": result.stdout.strip()[-200:]}
 
 
-def _head_confirmed(mirror: Path, attempt: str) -> tuple[bool, str | None]:
-    state = _local_state(mirror)
-    metadata_path = mirror / "metadata.json"
-    if metadata_path.is_file():
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        if str(metadata.get("attempt_id") or "") not in ("", attempt):
-            return False, state
-    return state in DONE_STATES, state
-
-
 def phase_head_collect(max_head_fits: int, dry_run: bool) -> dict:
     units: list[dict] = []
     errors: list[dict] = []
@@ -341,8 +353,11 @@ def phase_head_collect(max_head_fits: int, dry_run: bool) -> dict:
         if not attempt_id or not extract.isdigit() or not classifier.isdigit():
             continue
         mirror = EVIDENCE / "head_attempts" / attempt_id
-        state = _local_state(mirror) if mirror.is_dir() else None
-        if state in DONE_STATES:
+        exists = mirror.is_dir()
+        done_confirmed, _ = (
+            _sidecar_identity(mirror, attempt_id, DONE_STATES) if exists else (False, None)
+        )
+        if done_confirmed:
             continue
         try:
             accounting = query_top_level_accounting([extract, classifier])
@@ -354,7 +369,10 @@ def phase_head_collect(max_head_fits: int, dry_run: bool) -> dict:
             and accounting.get(job_id, {}).get("exit") == "0:0"
             for job_id in (extract, classifier)
         ):
-            units.append({"attempt_id": attempt_id, "needs_collect": state not in SKIP_COLLECT_STATES})
+            skip_confirmed, _ = (
+                _sidecar_identity(mirror, attempt_id, SKIP_COLLECT_STATES) if exists else (False, None)
+            )
+            units.append({"attempt_id": attempt_id, "needs_collect": not skip_confirmed})
     if dry_run:
         return {"status": "dry-run", "pending_head_attempts": len(units), "errors": errors}
     collected = validated = 0
@@ -383,7 +401,7 @@ def phase_head_collect(max_head_fits: int, dry_run: bool) -> dict:
             )
             result["validate_rc"] = validate.returncode
             mirror = EVIDENCE / "head_attempts" / unit["attempt_id"]
-            confirmed, state = _head_confirmed(mirror, unit["attempt_id"])
+            confirmed, state = _sidecar_identity(mirror, unit["attempt_id"], DONE_STATES)
             result["final_state"] = state
             if validate.returncode == 0 and confirmed:
                 validated += 1
