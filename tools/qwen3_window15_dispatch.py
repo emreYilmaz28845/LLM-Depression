@@ -143,30 +143,83 @@ def strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
-def parse_bsc_quota_projects(output: str) -> dict[str, float]:
+def parse_bsc_quota_projects(output: str, *, expected_group: str = "etur92") -> dict[str, float]:
     """Parse the ``gpfs_projects`` GRP row of ``bsc_quota projects``.
 
-    The real command is ``bsc_quota projects --unit GB --no-color``. Values are
-    Usage, soft Quota, hard Limit and In doubt in GB. A missing or non-numeric
-    row raises AdmissionError (fail closed); shared-filesystem ``df`` output is
-    never a substitute because it does not reflect the project quota.
+    Fail-closed contract (same as the peer lane gates):
+
+    - the section header must name exactly the expected group, exactly once;
+    - exactly one ``gpfs_projects`` row of type ``GRP`` inside that section,
+      with GB unit tokens on all four size fields (Usage, soft Quota, hard
+      Limit, In doubt);
+    - every value finite and non-negative; soft quota positive and hard limit
+      at least the soft quota.
+
+    Ambiguous output, a missing field, a unit mismatch, NaN/Inf or a negative
+    value raises AdmissionError. There is deliberately no default for a missing
+    in-doubt value. Shared-filesystem ``df`` output is never a substitute
+    because it does not reflect the project quota.
     """
+    import math
+
     cleaned = strip_ansi(output)
-    for line in cleaned.splitlines():
-        fields = line.split()
-        if not fields or fields[0] != "gpfs_projects":
-            continue
-        if len(fields) < 7:
-            raise AdmissionError(f"bsc_quota gpfs_projects row too short: {line.strip()!r}")
+    sections = re.split(r"Printing quota for group\s+(\S+?):", cleaned)
+    target_sections = [
+        sections[index + 1]
+        for index in range(1, len(sections) - 1, 2)
+        if sections[index] == expected_group
+    ]
+    if not target_sections:
+        raise AdmissionError(
+            f"bsc_quota output does not declare group {expected_group!r}"
+        )
+    if len(target_sections) != 1:
+        raise AdmissionError(
+            f"bsc_quota output declares group {expected_group!r} {len(target_sections)} times"
+        )
+    rows = [
+        line.split()
+        for line in target_sections[0].splitlines()
+        if line.split() and line.split()[0] == "gpfs_projects"
+    ]
+    if not rows:
+        raise AdmissionError("bsc_quota output has no gpfs_projects row")
+    if len(rows) != 1:
+        raise AdmissionError(
+            f"bsc_quota output has {len(rows)} gpfs_projects rows; expected exactly one"
+        )
+    fields = rows[0]
+    if len(fields) < 10:
+        raise AdmissionError(f"bsc_quota gpfs_projects row too short: {' '.join(fields)!r}")
+    if fields[1] != "GRP":
+        raise AdmissionError(
+            f"bsc_quota gpfs_projects type is {fields[1]!r}, expected 'GRP'"
+        )
+    values: dict[str, float] = {}
+    for name, value_index in (("usage", 2), ("quota", 4), ("limit", 6), ("in_doubt", 8)):
+        token = fields[value_index]
+        unit = fields[value_index + 1]
+        if unit != "GB":
+            raise AdmissionError(f"bsc_quota {name} unit is {unit!r}, expected 'GB'")
         try:
-            usage = float(fields[2])
-            quota = float(fields[4])
-            limit = float(fields[6])
-            in_doubt = float(fields[8]) if len(fields) > 9 and fields[8] != "|" else 0.0
-        except (ValueError, IndexError) as exc:
-            raise AdmissionError(f"bsc_quota gpfs_projects row unparseable: {line.strip()!r}") from exc
-        return {"usage_gb": usage, "quota_gb": quota, "limit_gb": limit, "in_doubt_gb": in_doubt}
-    raise AdmissionError("bsc_quota output has no gpfs_projects row")
+            number = float(token)
+        except ValueError as exc:
+            raise AdmissionError(f"bsc_quota {name} value unparseable: {token!r}") from exc
+        if not math.isfinite(number):
+            raise AdmissionError(f"bsc_quota {name} value is not finite: {token!r}")
+        if number < 0:
+            raise AdmissionError(f"bsc_quota {name} value is negative: {token!r}")
+        values[name] = number
+    if values["quota"] <= 0:
+        raise AdmissionError("bsc_quota soft quota must be positive")
+    if values["limit"] < values["quota"]:
+        raise AdmissionError("bsc_quota hard limit is below the soft quota")
+    return {
+        "usage_gb": values["usage"],
+        "quota_gb": values["quota"],
+        "limit_gb": values["limit"],
+        "in_doubt_gb": values["in_doubt"],
+    }
 
 
 def storage_admission(
@@ -185,9 +238,17 @@ def storage_admission(
     parse failure refuses. Shared-filesystem occupancy (``df``) is deliberately
     not used for the project side.
     """
+    import math
+
+    for label, value in (("remaining_min_gb", remaining_min_gb), ("local_min_gb", local_min_gb)):
+        number = float(value)
+        if not math.isfinite(number) or number < 0:
+            raise AdmissionError(f"{label} must be finite and non-negative")
     raw = run_ssh("bsc_quota projects --unit GB --no-color", runner)
     parsed = parse_bsc_quota_projects(raw)
     remaining = parsed["quota_gb"] - parsed["usage_gb"] - parsed["in_doubt_gb"]
+    if not math.isfinite(remaining):
+        raise AdmissionError("bsc_quota remaining is not finite")
     if remaining < remaining_min_gb:
         raise AdmissionError(
             f"gpfs_projects remaining {remaining:.2f} GB is below the {remaining_min_gb:.0f} GB reserve"
@@ -196,7 +257,10 @@ def storage_admission(
         import shutil
 
         local_available_bytes = shutil.disk_usage(str(local_root or LANE)).free
-    local_available_gb = local_available_bytes / (1024 ** 3)
+    local_bytes = float(local_available_bytes)
+    if not math.isfinite(local_bytes) or local_bytes < 0:
+        raise AdmissionError("local available bytes must be finite and non-negative")
+    local_available_gb = local_bytes / (1024 ** 3)
     if local_available_gb < local_min_gb:
         raise AdmissionError(
             f"local available {local_available_gb:.2f} GB is below the {local_min_gb:.0f} GB reserve"

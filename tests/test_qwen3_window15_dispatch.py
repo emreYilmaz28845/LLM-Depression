@@ -637,17 +637,67 @@ _BSC_QUOTA_SAMPLE = (
 )
 
 
+def _quota_output(rows: list[str], group: str = "etur92") -> str:
+    header = f"\x1b[0m Printing quota for group {group}:\x1b[22m\x1b[0m\n\n"
+    table = "    Filesystem   Type          Usage          Quota          Limit     In doubt     Grace  |       Files  In doubt\n"
+    return header + table + "\n".join(rows) + "\n"
+
+
+_GOOD_ROW = (
+    " gpfs_projects    GRP     1831.15 GB     4000.00 GB     4200.00 GB      4.69 GB      None  |     1723914       469"
+)
+
+
 def test_parse_bsc_quota_projects_extracts_and_fails_closed() -> None:
     from tools.qwen3_window15_dispatch import parse_bsc_quota_projects
 
     parsed = parse_bsc_quota_projects(_BSC_QUOTA_SAMPLE)
     assert parsed == {"usage_gb": 1831.15, "quota_gb": 4000.0, "limit_gb": 4200.0, "in_doubt_gb": 4.69}
-    with pytest.raises(AdmissionError, match="no gpfs_projects row"):
-        parse_bsc_quota_projects("no rows here")
-    with pytest.raises(AdmissionError, match="unparseable"):
-        parse_bsc_quota_projects(" gpfs_projects    GRP     abc GB     4000.00 GB     4200.00 GB      4.69 GB      None")
-    with pytest.raises(AdmissionError, match="too short"):
-        parse_bsc_quota_projects(" gpfs_projects GRP 1.0 GB")
+
+    refusals = (
+        ("no rows here", "does not declare group"),
+        (_quota_output([_GOOD_ROW], group="other"), "does not declare group"),
+        (
+            _quota_output([_GOOD_ROW.replace("GRP", "USR", 1)]),
+            "type is 'USR'",
+        ),
+        (_quota_output([_GOOD_ROW, _GOOD_ROW]), "2 gpfs_projects rows"),
+        (
+            " Printing quota for group etur92:\n gpfs_projects    GRP     1.0 GB     2.0 GB     2.1 GB\n",
+            "too short",
+        ),
+        (
+            _quota_output([_GOOD_ROW.replace("1831.15 GB", "1831.15 KB", 1)]),
+            "unit is 'KB'",
+        ),
+        (
+            _quota_output([_GOOD_ROW.replace("1831.15", "abc", 1)]),
+            "unparseable",
+        ),
+        (
+            _quota_output([_GOOD_ROW.replace("1831.15", "nan", 1)]),
+            "not finite",
+        ),
+        (
+            _quota_output([_GOOD_ROW.replace("1831.15", "inf", 1)]),
+            "not finite",
+        ),
+        (
+            _quota_output([_GOOD_ROW.replace("1831.15", "-1.0", 1)]),
+            "negative",
+        ),
+        (
+            _quota_output([_GOOD_ROW.replace("4000.00", "0.00", 1)]),
+            "soft quota must be positive",
+        ),
+        (
+            _quota_output([_GOOD_ROW.replace("4200.00", "3999.00", 1)]),
+            "hard limit is below the soft quota",
+        ),
+    )
+    for output, message in refusals:
+        with pytest.raises(AdmissionError, match=message):
+            parse_bsc_quota_projects(output)
 
 
 def test_storage_admission_gate_boundaries() -> None:
@@ -660,11 +710,30 @@ def test_storage_admission_gate_boundaries() -> None:
     assert evidence["gpfs_projects_remaining_gb"] == pytest.approx(4000.0 - 1831.15 - 4.69, abs=0.01)
     low = " gpfs_projects    GRP     3600.00 GB     4000.00 GB     4200.00 GB      4.69 GB      None"
     with pytest.raises(AdmissionError, match="below the 500 GB reserve"):
-        storage_admission(_FakeSsh(quota=low), local_available_bytes=int(60 * 1024 ** 3))
+        storage_admission(_FakeSsh(quota=_quota_output([low])), local_available_bytes=int(60 * 1024 ** 3))
     with pytest.raises(AdmissionError, match="local available"):
         storage_admission(_FakeSsh(quota=_BSC_QUOTA_SAMPLE), local_available_bytes=int(10 * 1024 ** 3))
     with pytest.raises(AdmissionError, match="scheduler query failed"):
         storage_admission(_FakeSsh(returncode=255, stderr="ssh fail"), local_available_bytes=int(60 * 1024 ** 3))
+
+
+def test_storage_admission_rejects_non_finite_inputs() -> None:
+    from tools.qwen3_window15_dispatch import storage_admission
+
+    with pytest.raises(AdmissionError, match="remaining_min_gb must be finite and non-negative"):
+        storage_admission(
+            _FakeSsh(quota=_BSC_QUOTA_SAMPLE),
+            remaining_min_gb=float("nan"),
+            local_available_bytes=int(60 * 1024 ** 3),
+        )
+    with pytest.raises(AdmissionError, match="local_min_gb must be finite and non-negative"):
+        storage_admission(
+            _FakeSsh(quota=_BSC_QUOTA_SAMPLE),
+            local_min_gb=-1.0,
+            local_available_bytes=int(60 * 1024 ** 3),
+        )
+    with pytest.raises(AdmissionError, match="local available bytes must be finite and non-negative"):
+        storage_admission(_FakeSsh(quota=_BSC_QUOTA_SAMPLE), local_available_bytes=-5)
 
 
 def test_run_wave_storage_check_stops_before_next_batch() -> None:
