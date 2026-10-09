@@ -15,16 +15,17 @@ this wrapper owns the lane's resource and evidence guards:
   canonical sidecar ``SUBMITTED`` events (numeric, attempt-bound) and must show
   **live scheduler accounting** ``COMPLETED`` with exit ``0:0``; step rows
   (``.batch``/``.extern``) and missing or contradictory accounting are refused;
-- any prior ``head:<key>`` delivery or reservation record blocks the key until
-  an explicit ``--reconcile-key`` record; nothing is blindly resubmitted;
+- any prior ``head:<key>`` delivery or reservation record blocks the key
+  permanently; there is no CLI bypass, and clearing a key requires separate
+  evidence-derived reconciliation outside this tool;
 - a durable two-job reservation per selected key is written before any submit;
-  the submit call is exception-safe and reconciliation (fresh registry or fresh
-  content-changed submit log) always finalizes every batch key, preserving
-  partial known ids and unresolved reservations;
+  the submit call is exception-safe and reconciliation always finalizes every
+  batch key, preserving partial known ids and unresolved reservations;
 - promotion to ``submitted`` requires the changed registry row to bind a
   nonblank head attempt, the exact parent attempt, the deployment id and the
-  registry key; ids alone are never sufficient, and the CLI stdout is never
-  used as delivery evidence.
+  registry key; a content-changed raw submit log may preserve known ids but
+  never promotes, and when no submit was attempted (for example a failed plan
+  step) every key keeps its full reservation with no log consulted.
 
 Read-only subcommands (status/collect/validate/finish/coverage) delegate to the
 generic tool with the lane's registry.
@@ -314,36 +315,67 @@ def _reconcile_batch(
     deployment_id: str,
     seen: set[str],
     final_reason: str | None,
+    submit_attempted: bool,
 ) -> int:
-    """Finalize every batch key from authoritative sources; return delivered count."""
-    post_registry = _registry_snapshot(REGISTRY)
-    fresh = _fresh_log_ids(
-        [REGISTRY.parent / "head_submit_output.log", REGISTRY.parent / "submit_output.log"],
-        pre_log_digests,
+    """Finalize every batch key from authoritative sources; return delivered count.
+
+    Submitted promotion happens ONLY from a fresh registry row that binds the
+    exact head attempt, parent attempt, deployment id and registry key. A
+    content-changed submit log may preserve known ids but never promotes. When
+    no submit was attempted (for example a plan failure) every key keeps its
+    full reservation and no log is ever consulted.
+    """
+    post_registry = _registry_snapshot(REGISTRY) if submit_attempted else pre_registry
+    fresh = (
+        _fresh_log_ids(
+            [REGISTRY.parent / "head_submit_output.log", REGISTRY.parent / "submit_output.log"],
+            pre_log_digests,
+        )
+        if submit_attempted
+        else {}
     )
     delivered = 0
     for item in batch:
         key = item["key"]
-        ids: dict[str, str] = {}
-        entry = post_registry.get(key)
-        changed = entry is not None and pre_registry.get(key) != entry
-        bound = (
-            changed
-            and str(entry.get("registry_key") or "") == key
-            and str(entry.get("attempt_id") or "").strip() != ""
-            and str(entry.get("parent_attempt_id") or "") == verified[key]["attempt"]
-            and str(entry.get("deployment_id") or "") == str(deployment_id)
-        )
-        if bound:
-            ids = {
-                "extract": str(entry.get("extract_job_id") or ""),
-                "classifier": str(entry.get("classifier_job_id") or ""),
-            }
-        if not ids and key in fresh:
-            ids = fresh[key]
-        valid = _valid_ids(ids, seen) if ids else None
-        if valid is not None:
-            extract, classifier = valid
+        known: dict[str, str] = {}
+        promoted: tuple[str, str] | None = None
+        if submit_attempted:
+            entry = post_registry.get(key)
+            changed = entry is not None and pre_registry.get(key) != entry
+            bound = (
+                changed
+                and str(entry.get("registry_key") or "") == key
+                and str(entry.get("attempt_id") or "").strip() != ""
+                and str(entry.get("parent_attempt_id") or "") == verified[key]["attempt"]
+                and str(entry.get("deployment_id") or "") == str(deployment_id)
+            )
+            if bound:
+                promoted = _valid_ids(
+                    {
+                        "extract": str(entry.get("extract_job_id") or ""),
+                        "classifier": str(entry.get("classifier_job_id") or ""),
+                    },
+                    seen,
+                )
+            if promoted is None:
+                # unbound rows and changed logs may only preserve known ids
+                candidates: list[dict[str, str]] = []
+                if changed:
+                    candidates.append(
+                        {
+                            "extract": str(entry.get("extract_job_id") or ""),
+                            "classifier": str(entry.get("classifier_job_id") or ""),
+                        }
+                    )
+                if key in fresh:
+                    candidates.append(fresh[key])
+                for candidate in candidates:
+                    for role in ("extract", "classifier"):
+                        value = str(candidate.get(role) or "")
+                        if re.fullmatch(r"\d+", value) and value not in known.values():
+                            known[role] = value
+        if promoted is not None:
+            extract, classifier = promoted
             seen.update({extract, classifier})
             append_record(
                 {
@@ -354,12 +386,11 @@ def _reconcile_batch(
                     "attempt_id": None,
                     "job_ids": {"extract": extract, "classifier": classifier},
                     "parent_attempt_id": verified[key]["attempt"],
-                    "note": "authoritative fresh delivery (bound registry row or changed submit log)",
+                    "note": "bound fresh registry row (head attempt, parent attempt, deployment, key)",
                 }
             )
             delivered += 1
         else:
-            known = {k: v for k, v in ids.items() if v}
             append_record(
                 {
                     "key": f"head:{key}",
@@ -370,7 +401,7 @@ def _reconcile_batch(
                     "job_ids": known,
                     "parent_attempt_id": verified[key]["attempt"],
                     "reason": final_reason
-                    or ("partial delivery" if known else "no authoritative delivery"),
+                    or ("partial or unbound delivery" if known else "no authoritative bound delivery"),
                     "reservation": JOBS_PER_KEY,
                 }
             )
@@ -385,20 +416,6 @@ def _submit_locked(args: argparse.Namespace) -> int:
     if audit.get("keys_total") != 126:
         raise GuardError("fresh plan audit does not cover 126 keys")
     eligible = [item for item in audit["keys"] if item["status"] == "eligible"]
-
-    if getattr(args, "reconcile_key", None):
-        for key in args.reconcile_key:
-            append_record(
-                {
-                    "key": f"head:{key}",
-                    "run_name": "",
-                    "ts": int(time.time()),
-                    "status": "reconciled",
-                    "attempt_id": None,
-                    "job_ids": {},
-                    "reason": str(getattr(args, "reason", "") or "explicit reconciliation"),
-                }
-            )
 
     ledger_latest = _ledger_latest()
     verified: dict[str, dict] = {}
@@ -465,6 +482,9 @@ def _submit_locked(args: argparse.Namespace) -> int:
             }
         )
 
+    pre_log_paths = [REGISTRY.parent / "head_submit_output.log", REGISTRY.parent / "submit_output.log"]
+    pre_log_digests = {str(path): _log_digest(path) for path in pre_log_paths}
+
     plan_cmd = [
         sys.executable, str(HEADS_TOOL), "plan",
         "--matrix", str(args.matrix),
@@ -477,10 +497,11 @@ def _submit_locked(args: argparse.Namespace) -> int:
             batch,
             verified=verified,
             pre_registry=registry,
-            pre_log_digests={},
+            pre_log_digests=pre_log_digests,
             deployment_id=args.deployment_id,
             seen=_seen_ids(registry, ledger_latest),
             final_reason=f"generic plan failed rc={plan_result.returncode}",
+            submit_attempted=False,
         )
         print(f"REFUSED: generic plan failed rc={plan_result.returncode}")
         return 2
@@ -489,40 +510,38 @@ def _submit_locked(args: argparse.Namespace) -> int:
         found = index.get(item["key"])
         if not found or found["job"].get("parent_status") != "resolved":
             _reconcile_batch(
-                batch, verified=verified, pre_registry=registry, pre_log_digests={},
+                batch, verified=verified, pre_registry=registry, pre_log_digests=pre_log_digests,
                 deployment_id=args.deployment_id, seen=_seen_ids(registry, ledger_latest),
-                final_reason="plan entry not resolved",
+                final_reason="plan entry not resolved", submit_attempted=False,
             )
             print(f"REFUSED: {item['key']} not resolved in the generic plan")
             return 2
         parent = found["job"].get("parent") or {}
         if str(parent.get("attempt_id") or "") != verified[item["key"]]["attempt"]:
             _reconcile_batch(
-                batch, verified=verified, pre_registry=registry, pre_log_digests={},
+                batch, verified=verified, pre_registry=registry, pre_log_digests=pre_log_digests,
                 deployment_id=args.deployment_id, seen=_seen_ids(registry, ledger_latest),
-                final_reason="plan parent attempt mismatch",
+                final_reason="plan parent attempt mismatch", submit_attempted=False,
             )
             print(f"REFUSED: {item['key']} plan parent attempt mismatch")
             return 2
         if not parent.get("adapter_sha256") or not parent.get("adapter_config_sha256"):
             _reconcile_batch(
-                batch, verified=verified, pre_registry=registry, pre_log_digests={},
+                batch, verified=verified, pre_registry=registry, pre_log_digests=pre_log_digests,
                 deployment_id=args.deployment_id, seen=_seen_ids(registry, ledger_latest),
-                final_reason="plan parent adapter hashes missing",
+                final_reason="plan parent adapter hashes missing", submit_attempted=False,
             )
             print(f"REFUSED: {item['key']} plan parent adapter hashes missing")
             return 2
         if not parent.get("manifest_hash") or not (parent.get("split_fingerprint") or {}).get("sha256"):
             _reconcile_batch(
-                batch, verified=verified, pre_registry=registry, pre_log_digests={},
+                batch, verified=verified, pre_registry=registry, pre_log_digests=pre_log_digests,
                 deployment_id=args.deployment_id, seen=_seen_ids(registry, ledger_latest),
-                final_reason="plan parent manifest/split hashes missing",
+                final_reason="plan parent manifest/split hashes missing", submit_attempted=False,
             )
             print(f"REFUSED: {item['key']} plan parent manifest/split hashes missing")
             return 2
 
-    pre_log_paths = [REGISTRY.parent / "head_submit_output.log", REGISTRY.parent / "submit_output.log"]
-    pre_log_digests = {str(path): _log_digest(path) for path in pre_log_paths}
     cmd = [
         sys.executable, str(HEADS_TOOL), "submit",
         "--plan", str(args.plan),
@@ -548,6 +567,7 @@ def _submit_locked(args: argparse.Namespace) -> int:
         deployment_id=args.deployment_id,
         seen=_seen_ids(registry, ledger_latest),
         final_reason=final_reason,
+        submit_attempted=True,
     )
     print(json.dumps({"status": "ok", "delivered": delivered, "attempted": len(batch)}, sort_keys=True))
     return 0 if delivered == len(batch) else 1
@@ -579,8 +599,6 @@ def main() -> int:
     submit.add_argument("--deployment-id", required=True)
     submit.add_argument("--limit", type=int, default=None)
     submit.add_argument("--only", action="append", default=None)
-    submit.add_argument("--reconcile-key", action="append", default=None)
-    submit.add_argument("--reason", default=None)
     submit.add_argument("--dry-run", action="store_true")
     submit.set_defaults(func=command_submit)
 

@@ -393,8 +393,6 @@ def _flow_fixture(tmp_path, monkeypatch):
         deployment_id="feat-qwen3-window15-20261008-xyz",
         limit=None,
         only=None,
-        reconcile_key=None,
-        reason=None,
         dry_run=False,
     )
     return args, registry, recorded, latest
@@ -448,6 +446,48 @@ def test_guard_unbound_registry_row_is_not_promoted(tmp_path, monkeypatch) -> No
     assert rc == 1
     finals = [rec for rec in recorded if rec["key"] == "head:daic_audio_only_native|7|0"]
     assert finals[-1]["status"] == "uncertain"
+    assert finals[-1]["reservation"] == 2
+    # unbound ids may be preserved as known but never promote
+    assert finals[-1]["job_ids"] == {"extract": "920001", "classifier": "920002"}
+
+
+def test_guard_plan_failure_never_promotes_from_old_log(tmp_path, monkeypatch) -> None:
+    args, registry, recorded, latest = _flow_fixture(tmp_path, monkeypatch)
+    old_log = registry.parent / "submit_output.log"
+    old_log.write_text("=== JOB daic_audio_only_native|7|0 ===\nEXTRACT_ID=930001\nCLASSIFIER_ID=930002\n", encoding="utf-8")
+
+    def fake_run(cmd):
+        if "plan" in cmd and "submit" not in cmd:
+            return subprocess.CompletedProcess(cmd, 1, "", "plan refused")
+        raise AssertionError("no submit may run after a failed plan")
+
+    monkeypatch.setattr(guard, "_run", fake_run)
+    rc = guard._submit_locked(args)
+    assert rc == 2
+    finals = [rec for rec in recorded if rec["key"] == "head:daic_audio_only_native|7|0"]
+    assert all(rec["status"] != "submitted" for rec in finals)
+    assert finals[-1]["status"] == "uncertain"
+    assert finals[-1]["job_ids"] == {}
+    assert finals[-1]["reservation"] == 2
+
+
+def test_guard_unbound_raw_full_pair_is_refused(tmp_path, monkeypatch) -> None:
+    args, registry, recorded, latest = _flow_fixture(tmp_path, monkeypatch)
+    log = registry.parent / "submit_output.log"
+
+    def fake_run(cmd):
+        if "submit" in cmd and "plan" not in cmd:
+            # fresh content-changed log with a full pair, but no bound registry row
+            log.write_text("=== JOB daic_audio_only_native|7|0 ===\nEXTRACT_ID=940001\nCLASSIFIER_ID=940002\n", encoding="utf-8")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(guard, "_run", fake_run)
+    rc = guard._submit_locked(args)
+    assert rc == 1
+    finals = [rec for rec in recorded if rec["key"] == "head:daic_audio_only_native|7|0"]
+    assert finals[-1]["status"] == "uncertain"  # never promoted without the binding
+    assert finals[-1]["job_ids"] == {"extract": "940001", "classifier": "940002"}
     assert finals[-1]["reservation"] == 2
 
 
@@ -507,3 +547,34 @@ def test_guard_shared_lock_refuses_second_submitter_across_processes(tmp_path, m
     finally:
         proc.terminate()
         proc.wait(timeout=10)
+
+
+def test_own_accounting_counts_head_registry_reservations_and_history(tmp_path) -> None:
+    from tools.qwen3_window15_dispatch import own_job_ids, own_nonterminal_count
+
+    ledger = tmp_path / "submissions.jsonl"
+    exec_ledger = tmp_path / "exec.json"
+    exec_ledger.write_text(json.dumps({"jobs": []}), encoding="utf-8")
+    registry = tmp_path / "head_submissions.jsonl"
+    registry.write_text(
+        json.dumps({"registry_key": "x|7|0", "extract_job_id": "888001", "classifier_job_id": "888002"}) + "\n",
+        encoding="utf-8",
+    )
+    ledger.write_text(
+        json.dumps({"key": "head:x|7|0", "status": "uncertain", "job_ids": {"extract": "888003"}}) + "\n",
+        encoding="utf-8",
+    )
+    ids, uncertain = own_job_ids(ledger, tmp_path / "no-run", exec_ledger, tmp_path / "no-logs", registry)
+    assert {"888001", "888002", "888003"} <= set(ids)
+    assert uncertain == 1  # head reservation counted for both paths
+    assert own_nonterminal_count(["888003"], {"888003": "RUNNING"}, uncertain) == 3
+
+    # a final authoritative delivery for the same key supersedes its reservation
+    with ledger.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps({"key": "head:x|7|0", "status": "submitted", "job_ids": {"extract": "888003", "classifier": "888004"}})
+            + "\n"
+        )
+    ids, uncertain = own_job_ids(ledger, tmp_path / "no-run", exec_ledger, tmp_path / "no-logs", registry)
+    assert {"888001", "888002", "888003", "888004"} <= set(ids)
+    assert uncertain == 0
