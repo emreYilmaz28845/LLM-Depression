@@ -33,6 +33,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import time
@@ -246,6 +248,81 @@ def leg_admission(own_nonterminal: int, user_total: int, leg_size: int) -> None:
         raise AdmissionError(
             f"no lane headroom: own nonterminal {own_nonterminal} + leg {leg_size} of 80"
         )
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_UNIT_GIB = {"KB": 1 / (1024 * 1024), "MB": 1 / 1024, "GB": 1.0, "TB": 1024.0}
+
+
+def parse_bsc_quota_projects(text: str, group: str = "etur92") -> dict:
+    """Parse the ``gpfs_projects`` group row from ``bsc_quota`` output.
+
+    Fail closed on any missing, malformed or non-numeric field.  Units are
+    converted to GiB (TB->1024, GB->1, MB->1/1024, KB->1/1048576).
+    """
+
+    clean = _ANSI_RE.sub("", text)
+    if f"group {group}:" not in clean:
+        raise AdmissionError(f"bsc_quota output does not mention group {group}")
+    row = None
+    for line in clean.splitlines():
+        tokens = line.split()
+        if tokens and tokens[0] == "gpfs_projects":
+            row = tokens
+            break
+    if row is None:
+        raise AdmissionError("bsc_quota output has no gpfs_projects row")
+    try:
+        usage_value, usage_unit = float(row[2]), row[3]
+        quota_value, quota_unit = float(row[4]), row[5]
+        limit_value, limit_unit = float(row[6]), row[7]
+        doubt_value, doubt_unit = float(row[8]), row[9]
+    except (IndexError, ValueError) as exc:
+        raise AdmissionError(f"unparseable gpfs_projects row: {row!r}") from exc
+    for unit in (usage_unit, quota_unit, limit_unit, doubt_unit):
+        if unit not in _UNIT_GIB:
+            raise AdmissionError(f"unknown quota unit {unit!r} in row {row!r}")
+    for value in (usage_value, quota_value, limit_value, doubt_value):
+        if value < 0:
+            raise AdmissionError(f"negative quota value in row {row!r}")
+    if quota_value <= 0:
+        raise AdmissionError(f"non-positive soft quota in row {row!r}")
+    return {
+        "usage_gib": usage_value * _UNIT_GIB[usage_unit],
+        "soft_quota_gib": quota_value * _UNIT_GIB[quota_unit],
+        "hard_limit_gib": limit_value * _UNIT_GIB[limit_unit],
+        "in_doubt_gib": doubt_value * _UNIT_GIB[doubt_unit],
+    }
+
+
+def storage_admission(
+    quota_text: str,
+    local_free_gib: float,
+    *,
+    project_reserve_gib: float = 500.0,
+    local_reserve_gib: float = 50.0,
+) -> dict:
+    """Require the project soft-quota reserve and the local reserve before refill."""
+
+    parsed = parse_bsc_quota_projects(quota_text)
+    remaining = (
+        parsed["soft_quota_gib"] - parsed["usage_gib"] - parsed["in_doubt_gib"]
+    )
+    if remaining < project_reserve_gib:
+        raise AdmissionError(
+            f"projects reserve breached: remaining {remaining:.2f} GiB < {project_reserve_gib} GiB"
+        )
+    if local_free_gib < local_reserve_gib:
+        raise AdmissionError(
+            f"local reserve breached: free {local_free_gib:.2f} GiB < {local_reserve_gib} GiB"
+        )
+    return {
+        "project_remaining_gib": remaining,
+        "project_usage_gib": parsed["usage_gib"],
+        "project_soft_quota_gib": parsed["soft_quota_gib"],
+        "project_in_doubt_gib": parsed["in_doubt_gib"],
+        "local_free_gib": local_free_gib,
+    }
 
 
 def _extract_delivery(stdout: str) -> dict | None:
@@ -560,10 +637,20 @@ def main() -> int:
             states, user_total = query_job_states(ids, args.scheduler)
             own = own_nonterminal_count(ids, states, reservation)
             leg_admission(own, user_total, leg_size)
+            quota_text = run_ssh("bsc_quota", args.scheduler)
+            try:
+                local_free = shutil.disk_usage(REPO_ROOT).free / (1024 ** 3)
+            except OSError as exc:
+                raise AdmissionError(f"local disk query failed: {exc}") from exc
+            storage = storage_admission(quota_text, local_free)
         except AdmissionError as error:
             print(f"REFUSED before {route} s{seed}: {error}")
             return 2
-        line = f"{route} s{seed}: admission ok (own_nonterminal={own}, user_queue={user_total}, leg={leg_size})"
+        line = (
+            f"{route} s{seed}: admission ok (own_nonterminal={own}, user_queue={user_total}, "
+            f"leg={leg_size}, project_remaining={storage['project_remaining_gib']:.0f}GiB, "
+            f"local_free={storage['local_free_gib']:.0f}GiB)"
+        )
         if not args.execute:
             print(line)
             processed += 1

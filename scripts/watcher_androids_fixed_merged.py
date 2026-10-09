@@ -16,12 +16,21 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import shutil
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 LANE = Path(__file__).resolve().parents[1]
+if str(LANE) not in sys.path:
+    sys.path.insert(0, str(LANE))
+
+from scripts.dispatch_androids_fixed_merged import (  # noqa: E402
+    AdmissionError,
+    parse_bsc_quota_projects,
+)
 EVIDENCE = LANE / "outputs/qwen3_androids_official_folds_20261008"
 RUNTIME = "/gpfs/projects/etur92/ozu647717/AudioLLM/experiment_runtime/feat-qwen3-androids-official-folds-20261008"
 DEPLOYMENT_CODE = "/gpfs/projects/etur92/ozu647717/AudioLLM/deployments/feat-qwen3-androids-official-folds-20261008-20261008T135256Z-0893c683-01b3e92d/code"
@@ -152,6 +161,29 @@ def main() -> int:
         failures = sorted(
             job_id for job_id, value in states.items() if value in FAILURE_STATES
         )
+        storage: dict = {}
+        quota_result = ssh(SCHEDULER, "bsc_quota")
+        if quota_result.returncode != 0:
+            errors.append(
+                f"bsc_quota query failed rc={quota_result.returncode}: "
+                f"{quota_result.stderr.strip()[:200]}"
+            )
+        else:
+            try:
+                parsed = parse_bsc_quota_projects(quota_result.stdout)
+                try:
+                    local_free = shutil.disk_usage(LANE).free / (1024 ** 3)
+                except OSError as exc:
+                    raise AdmissionError(f"local disk query failed: {exc}") from exc
+                storage = {
+                    **parsed,
+                    "project_remaining_gib": parsed["soft_quota_gib"]
+                    - parsed["usage_gib"]
+                    - parsed["in_doubt_gib"],
+                    "local_free_gib": local_free,
+                }
+            except AdmissionError as exc:
+                errors.append(f"storage parse failed: {exc}")
         status = {
             "schema_version": "audiollm.androids_fixed_merged.watcher_status.v1",
             "utc": utc_now(),
@@ -164,6 +196,7 @@ def main() -> int:
             "nonterminal": nonterminal,
             "counts": counts,
             "failures": failures,
+            "storage": storage,
             "errors": errors,
             "next_check_after_utc": datetime.fromtimestamp(
                 time.time() + INTERVAL_SECONDS, timezone.utc
