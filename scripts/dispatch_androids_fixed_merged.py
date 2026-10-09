@@ -34,7 +34,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -590,6 +589,12 @@ def main() -> int:
     parser.add_argument("--seeds", nargs="*", type=int, default=[7, 1337, 2024])
     parser.add_argument("--only", default="")
     parser.add_argument("--legs", default="", help="comma-separated route:seed selection for precise waves")
+    parser.add_argument(
+        "--local-free-gib",
+        type=float,
+        default=None,
+        help="free GiB on the lane host (measured locally); required before any refill",
+    )
     parser.add_argument("--max-legs", type=int, default=5, help="hard cap on legs per invocation")
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()
@@ -638,11 +643,12 @@ def main() -> int:
             own = own_nonterminal_count(ids, states, reservation)
             leg_admission(own, user_total, leg_size)
             quota_text = run_ssh("bsc_quota", args.scheduler)
-            try:
-                local_free = shutil.disk_usage(REPO_ROOT).free / (1024 ** 3)
-            except OSError as exc:
-                raise AdmissionError(f"local disk query failed: {exc}") from exc
-            storage = storage_admission(quota_text, local_free)
+            if args.local_free_gib is None:
+                raise AdmissionError(
+                    "local free space not provided; measure it on the lane host and pass "
+                    "--local-free-gib"
+                )
+            storage = storage_admission(quota_text, float(args.local_free_gib))
         except AdmissionError as error:
             print(f"REFUSED before {route} s{seed}: {error}")
             return 2
