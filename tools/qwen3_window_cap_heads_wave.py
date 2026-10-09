@@ -205,6 +205,30 @@ def wave_keys(wave: dict) -> list[str]:
     return keys
 
 
+def normalize_scheduler_state(state: str) -> str:
+    token = (state or "").strip()
+    return token.split()[0].upper() if token else "UNKNOWN"
+
+
+def replacement_gate(extract_state: str, classifier_state: str) -> tuple[bool, str]:
+    """Authorize a new attempt only when the old classifier is terminal failed/cancelled.
+
+    * classifier FAILED/CANCELLED -> replacement authorized;
+    * classifier COMPLETED/RUNNING/PENDING/UNKNOWN/CONTRADICTION -> refused
+      (no duplication of healthy, running or pending old classifiers);
+    * extract COMPLETED -> the completed cache is reusable;
+    * extract FAILED/CANCELLED -> a new extraction is required (allowed);
+    * extract RUNNING/PENDING/UNKNOWN -> hold (avoid racing the live extractor).
+    """
+    classifier = normalize_scheduler_state(classifier_state)
+    extract = normalize_scheduler_state(extract_state)
+    if classifier not in {"FAILED", "CANCELLED"}:
+        return False, f"old classifier state {classifier} is not terminal failed/cancelled"
+    if extract in {"COMPLETED", "FAILED", "CANCELLED"}:
+        return True, f"classifier {classifier}, extraction {extract}"
+    return False, f"old extraction state {extract} is not terminal"
+
+
 def plan_subset_for_keys(plan: dict, keys: set[str], *, token: str | None = None) -> dict:
     """A fresh-token plan containing exactly the given arm-explicit keys.
 

@@ -410,3 +410,20 @@ def test_plan_subset_contains_only_intended_keys(tmp_path):
     assert subset["summary"]["intended_keys"] == ["r1_cap25|7|0", "r3_cap50|7|1"]
     with pytest.raises(ValueError, match="missing from the plan"):
         driver.plan_subset_for_keys(plan, {"r9_cap75|7|0"})
+
+
+def test_replacement_gate_requires_terminal_failed_classifier():
+    """A new attempt is authorized only when the old classifier is demonstrably
+    terminal failed/cancelled and the old extraction is not live."""
+    assert driver.replacement_gate("COMPLETED", "FAILED")[0] is True
+    assert driver.replacement_gate("CANCELLED by 53836", "CANCELLED")[0] is True
+    assert driver.replacement_gate("COMPLETED", "CANCELLED by 53836")[0] is True
+    assert driver.replacement_gate("FAILED", "FAILED")[0] is True
+    assert driver.replacement_gate("COMPLETED", "PENDING")[0] is False
+    assert driver.replacement_gate("COMPLETED", "RUNNING")[0] is False
+    assert driver.replacement_gate("COMPLETED", "COMPLETED")[0] is False
+    assert driver.replacement_gate("COMPLETED", "UNKNOWN")[0] is False
+    assert driver.replacement_gate("COMPLETED", "CONTRADICTION")[0] is False
+    assert driver.replacement_gate("PENDING", "FAILED")[0] is False
+    assert driver.replacement_gate("RUNNING", "CANCELLED")[0] is False
+    assert driver.replacement_gate("UNKNOWN", "FAILED")[0] is False
