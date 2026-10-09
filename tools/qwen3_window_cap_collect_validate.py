@@ -48,6 +48,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -244,6 +245,33 @@ def select_ready_heads(
 # ---------------------------------------------------------------------------
 
 
+WEIGHT_POLICY_D3TEC = "inverse_segments_per_response_rescaled_to_mean_one"
+WEIGHT_POLICY_TEXT = "one_vector_per_subject_unweighted"
+WEIGHT_POLICY_UNIFORM = "uniform_rows"
+WEIGHT_POLICY_DAIC = "inverse_chunks_per_subject_rescaled_to_mean_one"
+
+
+def expected_weight_policy(extraction: dict) -> str:
+    """Canonical route weight policy from the extraction/parent metadata.
+
+    Mirrors ``src.features.hidden_classifier_policy.response_normalized_sample_weights``
+    branch order exactly (D3TEC audio, DAIC, pooled Turkish / D3TEC text,
+    otherwise uniform rows).
+    """
+    dataset = str(extraction.get("dataset", "")).lower()
+    modality = str(extraction.get("input_modality", "")).strip()
+    variant = str(extraction.get("dataset_variant", "")).strip()
+    if dataset == "d3tec" and modality in {"audio_only", "audio_text"}:
+        return WEIGHT_POLICY_D3TEC
+    if dataset == "daic":
+        return WEIGHT_POLICY_DAIC
+    if (
+        dataset == "turkish" and variant == "pooled_t17" and modality == "text_only"
+    ) or (dataset == "d3tec" and modality == "text_only"):
+        return WEIGHT_POLICY_TEXT
+    return WEIGHT_POLICY_UNIFORM
+
+
 def membership_issues(
     *,
     parent_attempt_id: str,
@@ -311,14 +339,32 @@ def membership_issues(
             issues.append(f"{variant}: fit weight audit missing")
         else:
             mean_weight = weight_audit.get("mean_weight")
-            if not isinstance(mean_weight, (int, float)) or abs(float(mean_weight) - 1.0) > 1e-9:
-                issues.append(f"{variant}: weight audit mean_weight is not 1.0")
+            if (
+                not isinstance(mean_weight, (int, float))
+                or isinstance(mean_weight, bool)
+                or not math.isfinite(float(mean_weight))
+                or abs(float(mean_weight) - 1.0) > 1e-9
+            ):
+                issues.append(f"{variant}: weight audit mean_weight is not finite 1.0")
             row_count = weight_audit.get("row_count")
-            if row_count is not None and int(row_count) != len(training_rows):
-                issues.append(f"{variant}: weight audit row_count mismatch")
+            if (
+                not isinstance(row_count, int)
+                or isinstance(row_count, bool)
+                or row_count < 0
+                or row_count != len(training_rows)
+            ):
+                issues.append(f"{variant}: weight audit row_count is not the exact selected row count")
             subject_count = weight_audit.get("subject_count")
-            if subject_count is not None and int(subject_count) != len(mask_subjects):
-                issues.append(f"{variant}: weight audit subject_count mismatch")
+            if (
+                not isinstance(subject_count, int)
+                or isinstance(subject_count, bool)
+                or subject_count < 0
+                or subject_count != len(mask_subjects)
+            ):
+                issues.append(f"{variant}: weight audit subject_count is not the exact masked subject count")
+            policy = weight_audit.get("policy")
+            if str(policy or "") != expected_weight_policy(extraction):
+                issues.append(f"{variant}: weight audit policy {policy!r} != canonical {expected_weight_policy(extraction)!r}")
         for field in (
             "selection_sha256",
             "baseline_input_sha256",

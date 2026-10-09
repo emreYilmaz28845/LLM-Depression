@@ -200,6 +200,7 @@ def membership_fixture():
         "cache_identity": {"extraction_metadata.json": {"sha256": "E"}},
         "fit_weight_audit": {
             "schema_version": "hidden_classifier_weight_audit.v1",
+            "policy": "uniform_rows",
             "row_count": 3,
             "mean_weight": 1.0,
             "subject_count": 2,
@@ -489,8 +490,64 @@ def test_membership_flags_missing_or_bad_weight_audit():
     bad_mean = dict(variant)
     bad_mean["fit_weight_audit"] = {**variant["fit_weight_audit"], "mean_weight": 1.5}
     issues = run_membership(mask, window_cap, extraction, head_metadata, {"logreg_raw": bad_mean, "xgb_raw": variant})
-    assert any("mean_weight is not 1.0" in i for i in issues)
+    assert any("mean_weight is not finite 1.0" in i for i in issues)
     bad_rows = dict(variant)
     bad_rows["fit_weight_audit"] = {**variant["fit_weight_audit"], "row_count": 2}
     issues = run_membership(mask, window_cap, extraction, head_metadata, {"logreg_raw": bad_rows, "xgb_raw": variant})
-    assert any("row_count mismatch" in i for i in issues)
+    assert any("row_count is not the exact selected row count" in i for i in issues)
+
+
+def test_weight_policy_canonical_mapping():
+    assert cv.expected_weight_policy({"dataset": "daic"}) == "inverse_chunks_per_subject_rescaled_to_mean_one"
+    assert (
+        cv.expected_weight_policy({"dataset": "d3tec", "input_modality": "audio_text"})
+        == "inverse_segments_per_response_rescaled_to_mean_one"
+    )
+    assert (
+        cv.expected_weight_policy({"dataset": "d3tec", "input_modality": "text_only"})
+        == "one_vector_per_subject_unweighted"
+    )
+    assert (
+        cv.expected_weight_policy(
+            {"dataset": "turkish", "dataset_variant": "pooled_t17", "input_modality": "text_only"}
+        )
+        == "one_vector_per_subject_unweighted"
+    )
+    assert (
+        cv.expected_weight_policy({"dataset": "androids_interview", "input_modality": "audio_only"})
+        == "uniform_rows"
+    )
+
+
+def _audit_variant(base: dict, **overrides):
+    variant = dict(base)
+    variant["fit_weight_audit"] = {**base["fit_weight_audit"], **overrides}
+    return variant
+
+
+def test_weight_audit_invalid_cases_are_refused():
+    import math as _math
+
+    mask, window_cap, extraction, head_metadata, variant = membership_fixture()
+    cases = [
+        {"mean_weight": float("nan")},
+        {"mean_weight": True},
+        {"mean_weight": None},
+        {"row_count": None},
+        {"row_count": True},
+        {"row_count": -1},
+        {"row_count": 3.0},
+        {"subject_count": None},
+        {"subject_count": -1},
+        {"policy": "legacy_uniform_rows"},
+        {"policy": None},
+    ]
+    for overrides in cases:
+        issues = run_membership(
+            mask,
+            window_cap,
+            extraction,
+            head_metadata,
+            {"logreg_raw": _audit_variant(variant, **overrides), "xgb_raw": variant},
+        )
+        assert issues, f"expected an issue for {overrides}"
