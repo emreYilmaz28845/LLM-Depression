@@ -2,31 +2,29 @@
 """Guarded window15 head dispatch: lane admission around tools/qwen3_heads_dispatch.py.
 
 The generic dispatcher owns the head plan/submit/collect/validate machinery;
-this wrapper owns the lane's resource and evidence guards so a head wave obeys
-exactly the same rules as training refills:
+this wrapper owns the lane's resource and evidence guards:
 
-- the **shared lane submission lock** (``outputs/<campaign>/submission.lock``)
-  is held across a fresh plan rebuild, eligibility, admission and delivery, so
-  training and head entrypoints can never submit concurrently;
-- eligibility is rebuilt from the treatment contract, the dispatch ledger, the
-  submission contracts and the collected fold evidence **inside the lock**; an
-  eligible key must bind to the exact ledger attempt (metadata and run_config
-  ``tracking.attempt_id``), the expected dataset/modality/seed/fold, a
-  window15 15-second config with ``processor_min_audio_samples: 201``, present
-  manifest/split hashes, and clean **top-level** train + best_eval TERMINAL
-  COMPLETED ``0:0`` events (step-only success is refused);
-- a durable reservation of two jobs per selected key is written **before** any
-  submit; reconciliation covers every batch entry including partial, timeout
-  and non-zero outcomes, preserving known IDs and keeping the unresolved
-  remainder counted;
-- deliveries are proven only from the authoritative fresh sources: the generic
-  head registry entries created by this run or the fresh ``submit_output.log``;
-  exactly two distinct new numeric IDs per key are required, and the human CLI
-  stdout is never used as delivery evidence; IDs already known anywhere are
-  rejected as stale;
-- the shared 80/350 admission and the real ``bsc_quota`` storage gate are
-  enforced with the dispatch driver's functions, and the generic head registry
-  plus all reservations count into the owned nonterminal budget.
+- the shared lane submission lock (``outputs/<campaign>/submission.lock``) is
+  held across fresh plan rebuild, eligibility, admission and delivery;
+- eligibility is rebuilt inside the lock and binds every key to the exact
+  ledger attempt, the collected fold's ``metadata.json`` and
+  ``run_config.yaml`` tracking attempt, the expected dataset/modality/seed/fold,
+  the 15-second treatment identity with ``processor_min_audio_samples: 201`` and
+  present manifest/split hashes;
+- the top-level ``train`` and ``best_eval`` job ids are taken from the
+  canonical sidecar ``SUBMITTED`` events (numeric, attempt-bound) and must show
+  **live scheduler accounting** ``COMPLETED`` with exit ``0:0``; step rows
+  (``.batch``/``.extern``) and missing or contradictory accounting are refused;
+- any prior ``head:<key>`` delivery or reservation record blocks the key until
+  an explicit ``--reconcile-key`` record; nothing is blindly resubmitted;
+- a durable two-job reservation per selected key is written before any submit;
+  the submit call is exception-safe and reconciliation (fresh registry or fresh
+  content-changed submit log) always finalizes every batch key, preserving
+  partial known ids and unresolved reservations;
+- promotion to ``submitted`` requires the changed registry row to bind a
+  nonblank head attempt, the exact parent attempt, the deployment id and the
+  registry key; ids alone are never sufficient, and the CLI stdout is never
+  used as delivery evidence.
 
 Read-only subcommands (status/collect/validate/finish/coverage) delegate to the
 generic tool with the lane's registry.
@@ -35,6 +33,7 @@ generic tool with the lane's registry.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -56,6 +55,7 @@ from tools.qwen3_window15_dispatch import (  # noqa: E402
     own_job_ids,
     own_nonterminal_count,
     query_job_states,
+    run_ssh,
     storage_admission,
 )
 from tools.qwen3_window15_heads_plan import (  # noqa: E402
@@ -67,10 +67,10 @@ from tools.qwen3_window15_heads_plan import (  # noqa: E402
 
 HEADS_TOOL = LANE / "tools/qwen3_heads_dispatch.py"
 REGISTRY = HEADS_REGISTRY
-AUDIT_PATH = LANE / "outputs/qwen3_window15_20261008/heads/heads_plan_audit.json"
 JOBS_PER_KEY = 2
 MAX_LANE_NONTERMINAL = 80
 USER_QUEUE_STOP = 350
+BLOCKING_HEAD_STATUSES = {"held", "uncertain", "failed", "submitted", "partial"}
 
 
 class GuardError(RuntimeError):
@@ -111,6 +111,21 @@ def _ledger_latest(ledger_path: Path = LEDGER) -> dict[str, dict]:
     return latest
 
 
+def _head_blocked_keys(ledger_latest: dict[str, dict]) -> set[str]:
+    """Keys with any prior head delivery/reservation; reconciled clears them."""
+    blocked: set[str] = set()
+    for key, record in ledger_latest.items():
+        if not key.startswith("head:"):
+            continue
+        status = str(record.get("status") or "")
+        target = key[len("head:") :]
+        if status == "reconciled":
+            blocked.discard(target)
+        elif status in BLOCKING_HEAD_STATUSES:
+            blocked.add(target)
+    return blocked
+
+
 def _seen_ids(registry: dict[str, dict], ledger_latest: dict[str, dict]) -> set[str]:
     seen: set[str] = set()
     for entry in registry.values():
@@ -124,8 +139,13 @@ def _seen_ids(registry: dict[str, dict], ledger_latest: dict[str, dict]) -> set[
     return seen
 
 
-def verify_eligible_parent(item: dict, ledger_latest: dict[str, dict]) -> str:
-    """Bind one eligible key to its exact attempt and clean evidence; fail closed."""
+def bind_parent_identity(item: dict, ledger_latest: dict[str, dict]) -> dict:
+    """Bind one eligible key to its exact attempt, fold evidence and job ids.
+
+    Returns ``{"attempt": str, "ids": {"train": str, "best_eval": str}}`` and
+    fails closed on any missing, stale or mismatched identity. The strict
+    COMPLETED 0:0 check happens later against live scheduler accounting.
+    """
     key = f"{item['route_id']}|{item['seed']}|{item['fold']}"
     record = ledger_latest.get(str(item["key"]))
     if record is None or str(record.get("status")) != "submitted":
@@ -159,24 +179,67 @@ def verify_eligible_parent(item: dict, ledger_latest: dict[str, dict]) -> str:
         raise GuardError(f"{key}: run_config lacks processor_min_audio_samples=201")
     if not run_config.get("manifest_hash") or not run_config.get("split_metadata_hash"):
         raise GuardError(f"{key}: run_config lacks manifest/split hashes")
+
     events = [
         json.loads(line)
         for line in (fold_dir / "jobs.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-
-    def clean(job_key: str) -> bool:
-        return any(
-            str(event.get("job_key") or "") == job_key
-            and str(event.get("event_type")) == "TERMINAL"
-            and str(event.get("status") or "") == "COMPLETED"
-            and str(event.get("exit_code") or "") == "0:0"
+    ids: dict[str, str] = {}
+    for job_key in ("train", "best_eval"):
+        candidates = [
+            str(event.get("slurm_job_id"))
             for event in events
-        )
+            if str(event.get("job_key") or "") == job_key
+            and str(event.get("event_type")) in {"SUBMITTED", "TERMINAL"}
+            and str(event.get("attempt_id") or "") == attempt
+            and re.fullmatch(r"\d+", str(event.get("slurm_job_id") or ""))
+        ]
+        if not candidates:
+            raise GuardError(f"{key}: canonical sidecar has no numeric {job_key} submission id")
+        ids[job_key] = candidates[-1]
+    return {"attempt": attempt, "ids": ids}
 
-    if not clean("train") or not clean("best_eval"):
-        raise GuardError(f"{key}: top-level train/best_eval TERMINAL COMPLETED 0:0 evidence missing")
-    return attempt
+
+def query_top_level_accounting(job_ids: list[str], runner=None) -> dict[str, dict[str, str]]:
+    """Live ``sacct`` accounting for exact top-level job ids only.
+
+    Step rows (``.batch``/``.extern``/``.N``) and foreign ids are ignored; a
+    repeated id with contradictory states raises.
+    """
+    wanted = {str(job_id) for job_id in job_ids}
+    if not wanted:
+        return {}
+    raw = run_ssh(
+        f"sacct -j {','.join(sorted(wanted))} -n -P -o JobIDRaw,State,ExitCode",
+        runner,
+    )
+    states: dict[str, dict[str, str]] = {}
+    for line in raw.splitlines():
+        parts = line.strip().split("|")
+        if len(parts) < 3:
+            continue
+        job_id = parts[0].strip()
+        if job_id not in wanted:
+            continue
+        state = parts[1].strip()
+        exit_code = parts[2].strip()
+        if job_id in states and states[job_id] != {"state": state, "exit": exit_code}:
+            raise GuardError(f"contradictory accounting rows for job {job_id}")
+        states[job_id] = {"state": state, "exit": exit_code}
+    return states
+
+
+def assert_completed(key: str, ids: dict[str, str], accounting: dict[str, dict[str, str]]) -> None:
+    for job_key, job_id in ids.items():
+        entry = accounting.get(job_id)
+        if entry is None:
+            raise GuardError(f"{key}: {job_key} job {job_id} missing from live accounting")
+        if entry["state"] != "COMPLETED" or entry["exit"] != "0:0":
+            raise GuardError(
+                f"{key}: {job_key} job {job_id} accounting is {entry['state']} {entry['exit']}, "
+                "expected COMPLETED 0:0"
+            )
 
 
 def parse_submit_output(output: str) -> dict[str, dict[str, str]]:
@@ -227,8 +290,94 @@ def _plan_key_index(plan_path: Path) -> dict[str, dict]:
     return index
 
 
+def _log_digest(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _fresh_log_ids(paths: list[Path], pre_digests: dict[str, str | None]) -> dict[str, dict[str, str]]:
+    """Fresh submit-output ids require changed content, never just mtime."""
+    for path in paths:
+        digest = _log_digest(path)
+        if digest is not None and pre_digests.get(str(path)) != digest:
+            return parse_submit_output(path.read_text(encoding="utf-8"))
+    return {}
+
+
+def _reconcile_batch(
+    batch: list[dict],
+    *,
+    verified: dict[str, dict],
+    pre_registry: dict[str, dict],
+    pre_log_digests: dict[str, str | None],
+    deployment_id: str,
+    seen: set[str],
+    final_reason: str | None,
+) -> int:
+    """Finalize every batch key from authoritative sources; return delivered count."""
+    post_registry = _registry_snapshot(REGISTRY)
+    fresh = _fresh_log_ids(
+        [REGISTRY.parent / "head_submit_output.log", REGISTRY.parent / "submit_output.log"],
+        pre_log_digests,
+    )
+    delivered = 0
+    for item in batch:
+        key = item["key"]
+        ids: dict[str, str] = {}
+        entry = post_registry.get(key)
+        changed = entry is not None and pre_registry.get(key) != entry
+        bound = (
+            changed
+            and str(entry.get("registry_key") or "") == key
+            and str(entry.get("attempt_id") or "").strip() != ""
+            and str(entry.get("parent_attempt_id") or "") == verified[key]["attempt"]
+            and str(entry.get("deployment_id") or "") == str(deployment_id)
+        )
+        if bound:
+            ids = {
+                "extract": str(entry.get("extract_job_id") or ""),
+                "classifier": str(entry.get("classifier_job_id") or ""),
+            }
+        if not ids and key in fresh:
+            ids = fresh[key]
+        valid = _valid_ids(ids, seen) if ids else None
+        if valid is not None:
+            extract, classifier = valid
+            seen.update({extract, classifier})
+            append_record(
+                {
+                    "key": f"head:{key}",
+                    "run_name": str(item.get("run_name", "")),
+                    "ts": int(time.time()),
+                    "status": "submitted",
+                    "attempt_id": None,
+                    "job_ids": {"extract": extract, "classifier": classifier},
+                    "parent_attempt_id": verified[key]["attempt"],
+                    "note": "authoritative fresh delivery (bound registry row or changed submit log)",
+                }
+            )
+            delivered += 1
+        else:
+            known = {k: v for k, v in ids.items() if v}
+            append_record(
+                {
+                    "key": f"head:{key}",
+                    "run_name": str(item.get("run_name", "")),
+                    "ts": int(time.time()),
+                    "status": "uncertain",
+                    "attempt_id": None,
+                    "job_ids": known,
+                    "parent_attempt_id": verified[key]["attempt"],
+                    "reason": final_reason
+                    or ("partial delivery" if known else "no authoritative delivery"),
+                    "reservation": JOBS_PER_KEY,
+                }
+            )
+    return delivered
+
+
 def _submit_locked(args: argparse.Namespace) -> int:
-    # 1. fresh rebuild inside the lock; on-disk audit is never trusted alone
     try:
         _, audit = build_plan(CONTRACT, LEDGER)
     except PlanError as exc:
@@ -237,16 +386,37 @@ def _submit_locked(args: argparse.Namespace) -> int:
         raise GuardError("fresh plan audit does not cover 126 keys")
     eligible = [item for item in audit["keys"] if item["status"] == "eligible"]
 
+    if getattr(args, "reconcile_key", None):
+        for key in args.reconcile_key:
+            append_record(
+                {
+                    "key": f"head:{key}",
+                    "run_name": "",
+                    "ts": int(time.time()),
+                    "status": "reconciled",
+                    "attempt_id": None,
+                    "job_ids": {},
+                    "reason": str(getattr(args, "reason", "") or "explicit reconciliation"),
+                }
+            )
+
     ledger_latest = _ledger_latest()
-    verified = {item["key"]: verify_eligible_parent(item, ledger_latest) for item in eligible}
+    verified: dict[str, dict] = {}
+    for item in eligible:
+        verified[item["key"]] = bind_parent_identity(item, ledger_latest)
+    all_ids = sorted({jid for info in verified.values() for jid in info["ids"].values()})
+    accounting = query_top_level_accounting(all_ids)
+    for item in eligible:
+        assert_completed(item["key"], verified[item["key"]]["ids"], accounting)
+
     registry = _registry_snapshot(REGISTRY)
-    settled = set(registry)
+    settled = set(registry) | _head_blocked_keys(ledger_latest)
     pending = [item for item in eligible if item["key"] not in settled]
     if args.only:
         wanted = set(args.only)
         pending = [item for item in pending if item["key"] in wanted]
     if not pending:
-        print(json.dumps({"status": "ok", "eligible": len(eligible), "pending": 0, "note": "no eligible unsubmitted keys"}))
+        print(json.dumps({"status": "ok", "eligible": len(eligible), "pending": 0, "note": "no eligible unblocked unsubmitted keys"}))
         return 0
 
     job_ids, uncertain = own_job_ids()
@@ -281,7 +451,6 @@ def _submit_locked(args: argparse.Namespace) -> int:
         print(json.dumps({"status": "dry-run", "keys": [item["key"] for item in batch]}, sort_keys=True))
         return 0
 
-    # 2. durable full reservation BEFORE any submit
     for item in batch:
         append_record(
             {
@@ -291,12 +460,11 @@ def _submit_locked(args: argparse.Namespace) -> int:
                 "status": "held",
                 "attempt_id": None,
                 "job_ids": {},
-                "parent_attempt_id": item.get("attempt_id"),
+                "parent_attempt_id": verified[item["key"]]["attempt"],
                 "note": "full 2-job reservation written before submit",
             }
         )
 
-    # 3. generic plan step, then verify adapter/manifest/split bindings per key
     plan_cmd = [
         sys.executable, str(HEADS_TOOL), "plan",
         "--matrix", str(args.matrix),
@@ -305,33 +473,56 @@ def _submit_locked(args: argparse.Namespace) -> int:
     ]
     plan_result = _run(plan_cmd)
     if plan_result.returncode != 0:
-        _finalize_batch(batch, {}, set(), f"generic plan failed rc={plan_result.returncode}", verified)
+        _reconcile_batch(
+            batch,
+            verified=verified,
+            pre_registry=registry,
+            pre_log_digests={},
+            deployment_id=args.deployment_id,
+            seen=_seen_ids(registry, ledger_latest),
+            final_reason=f"generic plan failed rc={plan_result.returncode}",
+        )
         print(f"REFUSED: generic plan failed rc={plan_result.returncode}")
         return 2
     index = _plan_key_index(args.plan)
     for item in batch:
         found = index.get(item["key"])
         if not found or found["job"].get("parent_status") != "resolved":
-            _finalize_batch(batch, {}, set(), "plan entry not resolved", verified)
+            _reconcile_batch(
+                batch, verified=verified, pre_registry=registry, pre_log_digests={},
+                deployment_id=args.deployment_id, seen=_seen_ids(registry, ledger_latest),
+                final_reason="plan entry not resolved",
+            )
             print(f"REFUSED: {item['key']} not resolved in the generic plan")
             return 2
         parent = found["job"].get("parent") or {}
-        if str(parent.get("attempt_id") or "") != verified[item["key"]]:
-            _finalize_batch(batch, {}, set(), "plan parent attempt mismatch", verified)
+        if str(parent.get("attempt_id") or "") != verified[item["key"]]["attempt"]:
+            _reconcile_batch(
+                batch, verified=verified, pre_registry=registry, pre_log_digests={},
+                deployment_id=args.deployment_id, seen=_seen_ids(registry, ledger_latest),
+                final_reason="plan parent attempt mismatch",
+            )
             print(f"REFUSED: {item['key']} plan parent attempt mismatch")
             return 2
         if not parent.get("adapter_sha256") or not parent.get("adapter_config_sha256"):
-            _finalize_batch(batch, {}, set(), "plan parent adapter hashes missing", verified)
+            _reconcile_batch(
+                batch, verified=verified, pre_registry=registry, pre_log_digests={},
+                deployment_id=args.deployment_id, seen=_seen_ids(registry, ledger_latest),
+                final_reason="plan parent adapter hashes missing",
+            )
             print(f"REFUSED: {item['key']} plan parent adapter hashes missing")
             return 2
         if not parent.get("manifest_hash") or not (parent.get("split_fingerprint") or {}).get("sha256"):
-            _finalize_batch(batch, {}, set(), "plan parent manifest/split hashes missing", verified)
+            _reconcile_batch(
+                batch, verified=verified, pre_registry=registry, pre_log_digests={},
+                deployment_id=args.deployment_id, seen=_seen_ids(registry, ledger_latest),
+                final_reason="plan parent manifest/split hashes missing",
+            )
             print(f"REFUSED: {item['key']} plan parent manifest/split hashes missing")
             return 2
 
-    # 4. authoritative submit
-    pre_registry = registry
-    submit_started = time.time()
+    pre_log_paths = [REGISTRY.parent / "head_submit_output.log", REGISTRY.parent / "submit_output.log"]
+    pre_log_digests = {str(path): _log_digest(path) for path in pre_log_paths}
     cmd = [
         sys.executable, str(HEADS_TOOL), "submit",
         "--plan", str(args.plan),
@@ -342,86 +533,24 @@ def _submit_locked(args: argparse.Namespace) -> int:
     ]
     for item in batch:
         cmd += ["--key", item["key"]]
-    result = _run(cmd)
-    raw_tail = ((result.stdout or "") + "\n" + (result.stderr or ""))[-800:]
-
-    # 5. reconcile from authoritative fresh sources only (never CLI stdout)
-    post_registry = _registry_snapshot(REGISTRY)
-    fresh_ids: dict[str, dict[str, str]] = {}
-    output_log = Path(str(REGISTRY.parent / "head_submit_output.log"))
-    log_candidates = [output_log, REGISTRY.parent / "submit_output.log"]
-    for candidate in log_candidates:
-        if candidate.is_file() and candidate.stat().st_mtime >= submit_started - 5:
-            fresh_ids = parse_submit_output(candidate.read_text(encoding="utf-8"))
-            break
-    seen = _seen_ids(pre_registry, ledger_latest)
-    delivered = 0
-    for item in batch:
-        key = item["key"]
-        entry = post_registry.get(key)
-        ids: dict[str, str] = {}
-        changed = entry is not None and pre_registry.get(key) != entry
-        if changed:
-            ids = {
-                "extract": str(entry.get("extract_job_id") or ""),
-                "classifier": str(entry.get("classifier_job_id") or ""),
-            }
-        if not ids and key in fresh_ids:
-            ids = fresh_ids[key]
-        valid = _valid_ids(ids, seen) if ids else None
-        if valid is not None:
-            extract, classifier = valid
-            seen.update({extract, classifier})
-            append_record(
-                {
-                    "key": f"head:{key}",
-                    "run_name": str(item.get("run_name", "")),
-                    "ts": int(time.time()),
-                    "status": "submitted",
-                    "attempt_id": None,
-                    "job_ids": {"extract": extract, "classifier": classifier},
-                    "parent_attempt_id": item.get("attempt_id"),
-                    "note": "authoritative fresh delivery (registry or fresh submit output)",
-                }
-            )
-            delivered += 1
-        else:
-            known = {k: v for k, v in ids.items() if v}
-            append_record(
-                {
-                    "key": f"head:{key}",
-                    "run_name": str(item.get("run_name", "")),
-                    "ts": int(time.time()),
-                    "status": "uncertain",
-                    "attempt_id": None,
-                    "job_ids": known,
-                    "parent_attempt_id": item.get("attempt_id"),
-                    "reason": (
-                        "partial delivery" if known else f"no authoritative ids (submit rc={result.returncode})"
-                    ),
-                    "reservation": JOBS_PER_KEY,
-                    "tail": raw_tail,
-                }
-            )
+    final_reason: str | None = None
+    try:
+        result = _run(cmd)
+        if result.returncode != 0:
+            final_reason = f"submit rc={result.returncode}"
+    except Exception as exc:  # timeouts and runner failures still reconcile
+        final_reason = f"submit exception {type(exc).__name__}: {exc}"
+    delivered = _reconcile_batch(
+        batch,
+        verified=verified,
+        pre_registry=registry,
+        pre_log_digests=pre_log_digests,
+        deployment_id=args.deployment_id,
+        seen=_seen_ids(registry, ledger_latest),
+        final_reason=final_reason,
+    )
     print(json.dumps({"status": "ok", "delivered": delivered, "attempted": len(batch)}, sort_keys=True))
     return 0 if delivered == len(batch) else 1
-
-
-def _finalize_batch(batch: list[dict], ids: dict, seen: set[str], reason: str, verified: dict) -> None:
-    for item in batch:
-        append_record(
-            {
-                "key": f"head:{item['key']}",
-                "run_name": str(item.get("run_name", "")),
-                "ts": int(time.time()),
-                "status": "uncertain",
-                "attempt_id": None,
-                "job_ids": {},
-                "parent_attempt_id": verified.get(item["key"]),
-                "reason": reason,
-                "reservation": JOBS_PER_KEY,
-            }
-        )
 
 
 def command_submit(args: argparse.Namespace) -> int:
@@ -450,6 +579,8 @@ def main() -> int:
     submit.add_argument("--deployment-id", required=True)
     submit.add_argument("--limit", type=int, default=None)
     submit.add_argument("--only", action="append", default=None)
+    submit.add_argument("--reconcile-key", action="append", default=None)
+    submit.add_argument("--reason", default=None)
     submit.add_argument("--dry-run", action="store_true")
     submit.set_defaults(func=command_submit)
 
