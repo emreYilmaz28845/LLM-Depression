@@ -1042,7 +1042,7 @@ def main() -> int:
     if args.self_test:
         return self_test()
 
-    root = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[2]
+    root = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[1]
     out_path = Path(args.out) if args.out else root / EVIDENCE_REL / "coverage_audit.json"
     report = build_report(root)
     snapshot = snapshot_previous(out_path)
