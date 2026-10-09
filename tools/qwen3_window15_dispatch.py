@@ -833,9 +833,10 @@ def reconcile_evidence(
     exec_ledger_path: Path = EXECUTION_LEDGER,
     exp_submit_root: Path = EXP_SUBMIT_ROOT,
     run_root: Path = RUN_ROOT,
+    heads_registry_path: Path = HEADS_REGISTRY,
 ) -> dict:
     job_ids, uncertain_records = own_job_ids(
-        ledger_path, run_root, exec_ledger_path, exp_submit_root
+        ledger_path, run_root, exec_ledger_path, exp_submit_root, heads_registry_path
     )
     partial_reservations = unresolved_delivery_reservations(
         ledger_path, exec_ledger_path, exp_submit_root

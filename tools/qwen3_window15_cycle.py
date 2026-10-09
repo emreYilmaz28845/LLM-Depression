@@ -30,6 +30,7 @@ One bounded cycle, idempotent and safe to run from the durable watcher:
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import re
 import subprocess
@@ -59,6 +60,7 @@ from tools.qwen3_window15_heads_plan import (  # noqa: E402
 
 EVIDENCE = LANE / "outputs/qwen3_window15_20261008"
 CYCLE_LOG = EVIDENCE / "cycle_log.jsonl"
+CYCLE_LOCK = EVIDENCE / "cycle.lock"
 RUN_ROOT = LANE / "output_model/qwen3_window15_20261008"
 REMOTE_RUNTIME = "/gpfs/projects/etur92/ozu647717/AudioLLM/experiment_runtime/feat-qwen3-window15-20261008"
 CAMPAIGN_REMOTE = "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/qwen3_window15_20261008"
@@ -435,6 +437,29 @@ def phase_coverage(dry_run: bool) -> dict:
 
 
 def run_cycle(args: argparse.Namespace) -> int:
+    """Run one bounded cycle under an exclusive nonblocking cycle lock.
+
+    The lock is a dedicated file, never the shared submission lock, and is
+    acquired before any phase: a manual cycle cannot overlap the next watcher
+    tick's reconcile, collection or matrix writes. When the lock is held the
+    cycle reports an explicit skip and performs no mutation at all.
+    """
+    lock_handle = CYCLE_LOCK.open("w")
+    try:
+        try:
+            fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print(json.dumps({"status": "skipped: cycle lock held by another cycle"}))
+            return 0
+        return _run_cycle_locked(args)
+    finally:
+        try:
+            fcntl.flock(lock_handle, fcntl.LOCK_UN)
+        finally:
+            lock_handle.close()
+
+
+def _run_cycle_locked(args: argparse.Namespace) -> int:
     record: dict = {"at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
 
     def bounded(name: str, func) -> None:

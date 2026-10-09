@@ -123,7 +123,7 @@ def test_own_job_ids_union_and_uncertain(tmp_path: Path) -> None:
     (sidecar_dir / "jobs.jsonl").write_text(
         json.dumps({"slurm_job_id": "108", "event_type": "SUBMITTED"}) + "\n", encoding="utf-8"
     )
-    ids, uncertain = own_job_ids(ledger, run_root, exec_ledger, exp_submit)
+    ids, uncertain = own_job_ids(ledger, run_root, exec_ledger, exp_submit, tmp_path / "no_heads.jsonl")
     # Lane prefix and the q3w15 attempt marker both select own jobs; the
     # unrelated deployment and the unrelated attempt stay out.
     assert ids == ["100", "101", "102", "104", "105", "106", "107", "108"]
@@ -311,6 +311,7 @@ def test_reconcile_evidence_payload(tmp_path: Path) -> None:
         exec_ledger,
         tmp_path / "exp_submit",
         tmp_path / "output_model",
+        tmp_path / "no_heads.jsonl",
     )
     assert evidence["own_job_count"] == 2
     assert evidence["own_nonterminal"] == 1  # job 2 RUNNING; job 1 terminal
@@ -359,7 +360,7 @@ def test_exec_ledger_missing_or_malformed_fails_closed(tmp_path: Path) -> None:
         exec_ledger_lane_jobs(no_jobs)
     # own_job_ids must propagate the failure, never report zero ownership.
     with pytest.raises(AdmissionError):
-        own_job_ids(tmp_path / "ledger.jsonl", tmp_path / "run_root", missing, tmp_path / "exp")
+        own_job_ids(tmp_path / "ledger.jsonl", tmp_path / "run_root", missing, tmp_path / "exp", tmp_path / "no_heads.jsonl")
 
 
 def test_lane_ledger_permitted_only_before_first_delivery(tmp_path: Path) -> None:
@@ -368,7 +369,7 @@ def test_lane_ledger_permitted_only_before_first_delivery(tmp_path: Path) -> Non
     exec_ledger.write_text(json.dumps({"jobs": []}), encoding="utf-8")
     exp_submit = tmp_path / "exp_submit"
     # No deliveries anywhere: a missing lane ledger is genuinely not-yet-created.
-    ids, uncertain = own_job_ids(ledger, tmp_path / "run_root", exec_ledger, exp_submit)
+    ids, uncertain = own_job_ids(ledger, tmp_path / "run_root", exec_ledger, exp_submit, tmp_path / "no_heads.jsonl")
     assert ids == [] and uncertain == 0
     # A delivery exists in the authoritative ledger: the missing lane ledger is
     # now an ownership gap and must fail closed.
@@ -379,11 +380,11 @@ def test_lane_ledger_permitted_only_before_first_delivery(tmp_path: Path) -> Non
         encoding="utf-8",
     )
     with pytest.raises(AdmissionError, match="missing after deliveries exist"):
-        own_job_ids(ledger, tmp_path / "run_root", exec_ledger, exp_submit)
+        own_job_ids(ledger, tmp_path / "run_root", exec_ledger, exp_submit, tmp_path / "no_heads.jsonl")
     # Malformed lane ledger also fails closed.
     ledger.write_text("{broken\n", encoding="utf-8")
     with pytest.raises(AdmissionError, match="malformed"):
-        own_job_ids(ledger, tmp_path / "run_root", exec_ledger, exp_submit)
+        own_job_ids(ledger, tmp_path / "run_root", exec_ledger, exp_submit, tmp_path / "no_heads.jsonl")
 
 
 def test_partial_delivery_record_append_reconcile_round_trip(tmp_path: Path) -> None:
@@ -417,6 +418,7 @@ def test_partial_delivery_record_append_reconcile_round_trip(tmp_path: Path) -> 
         exec_ledger,
         tmp_path / "exp_submit",
         tmp_path / "run_root",
+        tmp_path / "no_heads.jsonl",
     )
     # One uncertain record -> a two-job reservation on top of the FAILED job.
     assert evidence["uncertain_records"] == 1
@@ -450,6 +452,7 @@ def test_partial_delivery_record_append_reconcile_round_trip(tmp_path: Path) -> 
         exec_ledger,
         tmp_path / "exp_submit",
         tmp_path / "run_root",
+        tmp_path / "no_heads.jsonl",
     )
     assert evidence["uncertain_records"] == 0
     assert evidence["own_nonterminal"] == 0
@@ -480,7 +483,7 @@ def test_seed_ledger_from_evidence_round_trip(tmp_path: Path) -> None:
     assert by_attempt["attempt-1"]["status"] == "submitted"
     assert by_attempt["attempt-2"]["status"] == "uncertain"  # incomplete graph
     assert all(record["source"] == "seed_from_execution_ledger" for record in records)
-    ids, uncertain = own_job_ids(ledger, tmp_path / "run_root", exec_ledger, exp_submit)
+    ids, uncertain = own_job_ids(ledger, tmp_path / "run_root", exec_ledger, exp_submit, tmp_path / "no_heads.jsonl")
     assert ids == ["11", "12", "13"]
     assert uncertain == 1  # attempt-2 keeps its reservation
     with pytest.raises(AdmissionError, match="already has records"):
@@ -557,7 +560,7 @@ def test_uncertain_reservation_requires_complete_distinct_ids(tmp_path: Path) ->
         ),
         encoding="utf-8",
     )
-    _, uncertain = own_job_ids(ledger, tmp_path / "run_root", exec_ledger, tmp_path / "exp_submit")
+    _, uncertain = own_job_ids(ledger, tmp_path / "run_root", exec_ledger, tmp_path / "exp_submit", tmp_path / "no_heads.jsonl")
     assert uncertain == 1
     # Duplicate delivered IDs never clear it.
     exec_ledger.write_text(
@@ -571,7 +574,7 @@ def test_uncertain_reservation_requires_complete_distinct_ids(tmp_path: Path) ->
         ),
         encoding="utf-8",
     )
-    _, uncertain = own_job_ids(ledger, tmp_path / "run_root", exec_ledger, tmp_path / "exp_submit")
+    _, uncertain = own_job_ids(ledger, tmp_path / "run_root", exec_ledger, tmp_path / "exp_submit", tmp_path / "no_heads.jsonl")
     assert uncertain == 1
     # Complete distinct IDs clear it.
     exec_ledger.write_text(
@@ -585,7 +588,7 @@ def test_uncertain_reservation_requires_complete_distinct_ids(tmp_path: Path) ->
         ),
         encoding="utf-8",
     )
-    _, uncertain = own_job_ids(ledger, tmp_path / "run_root", exec_ledger, tmp_path / "exp_submit")
+    _, uncertain = own_job_ids(ledger, tmp_path / "run_root", exec_ledger, tmp_path / "exp_submit", tmp_path / "no_heads.jsonl")
     assert uncertain == 0
 
 

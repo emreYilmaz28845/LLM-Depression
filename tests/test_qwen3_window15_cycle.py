@@ -302,3 +302,36 @@ def test_cycle_head_stale_identity_is_not_confirmed(tmp_path, monkeypatch) -> No
     assert result["pending_head_attempts"] == 1
     assert result["validated"] == 0
     assert result["results"][-1]["stage"] == "blocked_validate"
+
+
+def test_cycle_lock_prevents_overlap_without_mutation(tmp_path, monkeypatch) -> None:
+    import fcntl
+
+    lock_path = tmp_path / "cycle.lock"
+    monkeypatch.setattr(cycle, "CYCLE_LOCK", lock_path)
+    monkeypatch.setattr(cycle, "CYCLE_LOG", tmp_path / "cycle_log.jsonl")
+    called: list[str] = []
+    for name in (
+        "phase_reconcile",
+        "phase_collect_fits",
+        "phase_matrix",
+        "phase_head_submit",
+        "phase_head_collect",
+        "phase_coverage",
+    ):
+        monkeypatch.setattr(cycle, name, lambda *a, _n=name, **k: called.append(_n) or {"status": "ok"})
+    args = types.SimpleNamespace(max_fits=2, max_head_fits=2, dry_run=False)
+
+    hold = lock_path.open("w")
+    fcntl.flock(hold, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        assert cycle.run_cycle(args) == 0
+        assert called == []  # busy cycle performs no phase and no mutation
+        assert not (tmp_path / "cycle_log.jsonl").exists()
+    finally:
+        fcntl.flock(hold, fcntl.LOCK_UN)
+        hold.close()
+
+    # the released lock lets the next bounded cycle run normally
+    assert cycle.run_cycle(args) == 0
+    assert called  # phases ran
