@@ -210,19 +210,29 @@ def normalize_scheduler_state(state: str) -> str:
     return token.split()[0].upper() if token else "UNKNOWN"
 
 
-def replacement_gate(extract_state: str, classifier_state: str) -> tuple[bool, str]:
-    """Authorize a new attempt only when the old classifier is terminal failed/cancelled.
+def replacement_gate(
+    extract_state: str, classifier_state: str, *, confounded: bool = False
+) -> tuple[bool, str]:
+    """Authorize a new attempt only on terminal or durably-confounded evidence.
 
     * classifier FAILED/CANCELLED -> replacement authorized;
-    * classifier COMPLETED/RUNNING/PENDING/UNKNOWN/CONTRADICTION -> refused
-      (no duplication of healthy, running or pending old classifiers);
+    * classifier COMPLETED -> authorized ONLY when the exact attempt is durably
+      recorded as confounded (e.g. wrong-pool semantics + old source), never
+      blanket-allowed; otherwise refused;
+    * classifier RUNNING/PENDING/UNKNOWN/CONTRADICTION -> refused;
     * extract COMPLETED -> the completed cache is reusable;
     * extract FAILED/CANCELLED -> a new extraction is required (allowed);
     * extract RUNNING/PENDING/UNKNOWN -> hold (avoid racing the live extractor).
     """
     classifier = normalize_scheduler_state(classifier_state)
     extract = normalize_scheduler_state(extract_state)
-    if classifier not in {"FAILED", "CANCELLED"}:
+    if classifier in {"FAILED", "CANCELLED"}:
+        pass
+    elif classifier == "COMPLETED" and confounded:
+        pass
+    elif classifier == "COMPLETED":
+        return False, "old classifier COMPLETED without durable confound evidence"
+    else:
         return False, f"old classifier state {classifier} is not terminal failed/cancelled"
     if extract in {"COMPLETED", "FAILED", "CANCELLED"}:
         return True, f"classifier {classifier}, extraction {extract}"

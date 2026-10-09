@@ -102,9 +102,12 @@ def test_select_ready_fits_requires_confirmed_0_0(tmp_path):
 def test_select_ready_fits_skips_validated(tmp_path):
     row = make_row()
     make_fold(tmp_path, row)
-    ledger = {cv.fit_key(row): {"validated": True}}
+    ledger = {cv.fit_key(row): {"validated": True, "attempt_id": row["attempt_id"]}}
     ready, reasons = cv.select_ready_fits([row], GOOD_SCHED, ledger, raw_root=tmp_path)
     assert not ready and reasons.get("already validated") == 1
+    old_ledger = {cv.fit_key(row): {"validated": True, "attempt_id": "OLD-ATTEMPT"}}
+    ready, reasons = cv.select_ready_fits([row], GOOD_SCHED, old_ledger, raw_root=tmp_path)
+    assert ready and not reasons.get("already validated")
 
 
 # --- head selection ----------------------------------------------------------
@@ -147,9 +150,12 @@ def test_select_ready_heads_production_only_and_confirmed(tmp_path):
 def test_select_ready_heads_skips_validated_and_missing_ids():
     expected = {planner.head_key(make_row("cap25"))}
     prod = make_entry(f"{planner.head_route_id(make_row('cap25'))}|7|0")
-    ledger = {prod["registry_key"]: {"validated": True}}
+    ledger = {prod["registry_key"]: {"validated": True, "attempt_id": prod["attempt_id"]}}
     ready, reasons = cv.select_ready_heads([prod], expected, {}, ledger)
     assert not ready and reasons.get("already validated") == 1
+    old_ledger = {prod["registry_key"]: {"validated": True, "attempt_id": "OLD-ATTEMPT"}}
+    ready, reasons = cv.select_ready_heads([prod], expected, {}, old_ledger)
+    assert not ready and reasons.get("already validated") is None
     broken = make_entry(prod["registry_key"], extract="", classifier="")
     ready, reasons = cv.select_ready_heads([broken], expected, {}, {})
     assert not ready and reasons.get("missing numeric job ids") == 1
@@ -230,6 +236,7 @@ def run_membership(mask, window_cap, extraction, head_metadata, variants):
         variants=variants,
         extraction_sha256="E",
         expected_head_deployment="DEPLOY",
+        train_subjects={"s1", "s2"},
         val_subjects=set(),
         pool_rows=[
             {"subject_id": "s1", "sample_id": "a"},
@@ -598,6 +605,7 @@ def test_membership_retains_full_inner_val_rows():
         variants={"logreg_raw": variant, "xgb_raw": variant},
         extraction_sha256="E",
         expected_head_deployment="DEPLOY",
+        train_subjects={"s1", "s2"},
         val_subjects={"s9"},
         pool_rows=pool_rows,
         pool_rows_sha256="P",
@@ -616,8 +624,61 @@ def test_membership_retains_full_inner_val_rows():
         variants={"logreg_raw": dropped, "xgb_raw": variant},
         extraction_sha256="E",
         expected_head_deployment="DEPLOY",
+        train_subjects={"s1", "s2"},
         val_subjects={"s9"},
         pool_rows=pool_rows,
         pool_rows_sha256="P",
     )
     assert any("capped+retained union" in i for i in issues)
+
+
+def test_membership_enforces_split_and_pool_subject_sets():
+    mask, window_cap, extraction, head_metadata, variant = membership_fixture()
+    # missing training subject: mask covers only s1 while the split train is s1+s2
+    short_mask = {**mask, "subjects": {"s1": list(mask["subjects"]["s1"])}}
+    issues = cv.membership_issues(
+        parent_attempt_id="PARENT",
+        head_attempt_id="HEAD",
+        fold=0,
+        parent_training_seed=7,
+        mask=short_mask,
+        window_cap=window_cap,
+        extraction=extraction,
+        head_metadata=head_metadata,
+        variants={"logreg_raw": variant, "xgb_raw": variant},
+        extraction_sha256="E",
+        expected_head_deployment="DEPLOY",
+        train_subjects={"s1", "s2"},
+        val_subjects=set(),
+        pool_rows=[
+            {"subject_id": "s1", "sample_id": "a"},
+            {"subject_id": "s1", "sample_id": "b"},
+            {"subject_id": "s2", "sample_id": "c"},
+        ],
+        pool_rows_sha256="P",
+    )
+    assert any("mask subjects do not equal the authoritative train subjects" in i for i in issues)
+    # extra cache subject: the pool contains s9 which is not in train or val
+    issues = cv.membership_issues(
+        parent_attempt_id="PARENT",
+        head_attempt_id="HEAD",
+        fold=0,
+        parent_training_seed=7,
+        mask=mask,
+        window_cap=window_cap,
+        extraction=extraction,
+        head_metadata=head_metadata,
+        variants={"logreg_raw": variant, "xgb_raw": variant},
+        extraction_sha256="E",
+        expected_head_deployment="DEPLOY",
+        train_subjects={"s1", "s2"},
+        val_subjects=set(),
+        pool_rows=[
+            {"subject_id": "s1", "sample_id": "a"},
+            {"subject_id": "s1", "sample_id": "b"},
+            {"subject_id": "s2", "sample_id": "c"},
+            {"subject_id": "s9", "sample_id": "v1"},
+        ],
+        pool_rows_sha256="P",
+    )
+    assert any("cached outer_train subjects do not equal the expected canonical pool" in i for i in issues)

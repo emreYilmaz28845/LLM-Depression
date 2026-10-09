@@ -174,7 +174,8 @@ def select_ready_fits(
 
     for row in rows:
         key = fit_key(row)
-        if ledger.get(key, {}).get("validated"):
+        record = ledger.get(key) or {}
+        if record.get("validated") and str(record.get("attempt_id")) == str(row.get("attempt_id")):
             note("already validated")
             continue
         ok, reason = planner.readiness_local(row, raw_root=raw_root)
@@ -217,7 +218,8 @@ def select_ready_heads(
         if key not in expected_keys:
             note("not a production treatment chain")
             continue
-        if ledger.get(key, {}).get("validated"):
+        record = ledger.get(key) or {}
+        if record.get("validated") and str(record.get("attempt_id")) == str(entry.get("attempt_id")):
             note("already validated")
             continue
         ids = head_job_ids(entry)
@@ -285,6 +287,7 @@ def membership_issues(
     variants: dict[str, dict],
     extraction_sha256: str,
     expected_head_deployment: str | None = None,
+    train_subjects: set[str] | None = None,
     val_subjects: set[str] | None = None,
     pool_rows: list[dict] | None = None,
     pool_rows_sha256: str | None = None,
@@ -310,6 +313,12 @@ def membership_issues(
         issues.append("mask selection hash chain mismatch")
     if len(membership) != int(mask.get("total_selected", -1)):
         issues.append("mask membership is not unique at total_selected")
+    if train_subjects is not None and mask_subjects != train_subjects:
+        issues.append("mask subjects do not equal the authoritative train subjects")
+    if pool_rows is not None and train_subjects is not None and val_subjects is not None:
+        pool_subjects = {str(row["subject_id"]) for row in pool_rows}
+        if pool_subjects != train_subjects | val_subjects:
+            issues.append("cached outer_train subjects do not equal the expected canonical pool")
     if extraction.get("parent_attempt_id") != parent_attempt_id:
         issues.append("extraction parent attempt mismatch")
     if (head_metadata.get("parent") or {}).get("parent_attempt_id") != parent_attempt_id:
@@ -683,6 +692,7 @@ def verify_head_membership(
         variants=variants,
         extraction_sha256=sha256_file(extraction_file),
         expected_head_deployment=str(entry.get("deployment_id") or "") or None,
+        train_subjects=train_subjects,
         val_subjects=val_subjects,
         pool_rows=pool_rows,
         pool_rows_sha256=sha256_file(pool_rows_file),

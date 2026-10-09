@@ -422,6 +422,9 @@ def test_replacement_gate_requires_terminal_failed_classifier():
     assert driver.replacement_gate("COMPLETED", "PENDING")[0] is False
     assert driver.replacement_gate("COMPLETED", "RUNNING")[0] is False
     assert driver.replacement_gate("COMPLETED", "COMPLETED")[0] is False
+    assert driver.replacement_gate("COMPLETED", "COMPLETED", confounded=True)[0] is True
+    assert driver.replacement_gate("PENDING", "COMPLETED", confounded=True)[0] is False
+    assert driver.replacement_gate("RUNNING", "COMPLETED", confounded=True)[0] is False
     assert driver.replacement_gate("COMPLETED", "UNKNOWN")[0] is False
     assert driver.replacement_gate("COMPLETED", "CONTRADICTION")[0] is False
     assert driver.replacement_gate("PENDING", "FAILED")[0] is False
