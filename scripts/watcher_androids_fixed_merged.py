@@ -29,6 +29,7 @@ if str(LANE) not in sys.path:
 
 from scripts.dispatch_androids_fixed_merged import (  # noqa: E402
     AdmissionError,
+    BSC_QUOTA_COMMAND,
     parse_bsc_quota_projects,
 )
 EVIDENCE = LANE / "outputs/qwen3_androids_official_folds_20261008"
@@ -162,7 +163,7 @@ def main() -> int:
             job_id for job_id, value in states.items() if value in FAILURE_STATES
         )
         storage: dict = {}
-        quota_result = ssh(SCHEDULER, "bsc_quota")
+        quota_result = ssh(SCHEDULER, BSC_QUOTA_COMMAND)
         if quota_result.returncode != 0:
             errors.append(
                 f"bsc_quota query failed rc={quota_result.returncode}: "

@@ -250,47 +250,78 @@ def leg_admission(own_nonterminal: int, user_total: int, leg_size: int) -> None:
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-_UNIT_GIB = {"KB": 1 / (1024 * 1024), "MB": 1 / 1024, "GB": 1.0, "TB": 1024.0}
+_UNIT_GIB = {
+    "KB": 1 / (1024 * 1024),
+    "MB": 1 / 1024,
+    "GB": 1.0,
+    "TB": 1024.0,
+    "PB": 1024.0 * 1024.0,
+}
+BSC_QUOTA_COMMAND = "bsc_quota projects --unit GB --no-color"
 
 
 def parse_bsc_quota_projects(text: str, group: str = "etur92") -> dict:
-    """Parse the ``gpfs_projects`` group row from ``bsc_quota`` output.
+    """Parse the unique ``gpfs_projects`` GRP row from ``bsc_quota`` output.
 
-    Fail closed on any missing, malformed or non-numeric field.  Units are
-    converted to GiB (TB->1024, GB->1, MB->1/1024, KB->1/1048576).
+    Requires exactly one group header naming ``group`` and exactly one
+    ``gpfs_projects`` row of type ``GRP``; every size must be finite,
+    nonnegative and carry a known unit, and the hard limit may not sit below
+    the soft quota.  Any ambiguity, missing field or non-finite value refuses.
+    Units are converted to GiB.
     """
 
+    import math
+
     clean = _ANSI_RE.sub("", text)
-    if f"group {group}:" not in clean:
-        raise AdmissionError(f"bsc_quota output does not mention group {group}")
-    row = None
-    for line in clean.splitlines():
-        tokens = line.split()
-        if tokens and tokens[0] == "gpfs_projects":
-            row = tokens
-            break
-    if row is None:
-        raise AdmissionError("bsc_quota output has no gpfs_projects row")
-    try:
-        usage_value, usage_unit = float(row[2]), row[3]
-        quota_value, quota_unit = float(row[4]), row[5]
-        limit_value, limit_unit = float(row[6]), row[7]
-        doubt_value, doubt_unit = float(row[8]), row[9]
-    except (IndexError, ValueError) as exc:
-        raise AdmissionError(f"unparseable gpfs_projects row: {row!r}") from exc
-    for unit in (usage_unit, quota_unit, limit_unit, doubt_unit):
+    headers = [
+        line
+        for line in clean.splitlines()
+        if line.strip().startswith("Printing quota for group ")
+    ]
+    if len(headers) != 1:
+        raise AdmissionError(f"expected exactly one quota header, found {len(headers)}")
+    if f"group {group}:" not in headers[0]:
+        raise AdmissionError(
+            f"quota header does not name group {group}: {headers[0].strip()!r}"
+        )
+    rows = [
+        line.split()
+        for line in clean.splitlines()
+        if line.split()[:1] == ["gpfs_projects"]
+    ]
+    if len(rows) != 1:
+        raise AdmissionError(f"expected exactly one gpfs_projects row, found {len(rows)}")
+    row = rows[0]
+    if len(row) < 10 or row[1] != "GRP":
+        raise AdmissionError(f"gpfs_projects row is not a GRP row: {row!r}")
+
+    def _size(index: int) -> float:
+        try:
+            value = float(row[index])
+            unit = row[index + 1]
+        except (IndexError, ValueError) as exc:
+            raise AdmissionError(f"unparseable gpfs_projects field in row {row!r}") from exc
         if unit not in _UNIT_GIB:
             raise AdmissionError(f"unknown quota unit {unit!r} in row {row!r}")
-    for value in (usage_value, quota_value, limit_value, doubt_value):
+        if not math.isfinite(value):
+            raise AdmissionError(f"non-finite quota value {row[index]!r} in row {row!r}")
         if value < 0:
-            raise AdmissionError(f"negative quota value in row {row!r}")
-    if quota_value <= 0:
+            raise AdmissionError(f"negative quota value {row[index]!r} in row {row!r}")
+        return value * _UNIT_GIB[unit]
+
+    usage = _size(2)
+    quota = _size(4)
+    limit = _size(6)
+    doubt = _size(8)
+    if quota <= 0:
         raise AdmissionError(f"non-positive soft quota in row {row!r}")
+    if limit < quota:
+        raise AdmissionError(f"hard limit below soft quota in row {row!r}")
     return {
-        "usage_gib": usage_value * _UNIT_GIB[usage_unit],
-        "soft_quota_gib": quota_value * _UNIT_GIB[quota_unit],
-        "hard_limit_gib": limit_value * _UNIT_GIB[limit_unit],
-        "in_doubt_gib": doubt_value * _UNIT_GIB[doubt_unit],
+        "usage_gib": usage,
+        "soft_quota_gib": quota,
+        "hard_limit_gib": limit,
+        "in_doubt_gib": doubt,
     }
 
 
@@ -303,6 +334,14 @@ def storage_admission(
 ) -> dict:
     """Require the project soft-quota reserve and the local reserve before refill."""
 
+    import math
+
+    if (
+        local_free_gib is None
+        or not math.isfinite(float(local_free_gib))
+        or float(local_free_gib) < 0
+    ):
+        raise AdmissionError(f"invalid local free space: {local_free_gib!r}")
     parsed = parse_bsc_quota_projects(quota_text)
     remaining = (
         parsed["soft_quota_gib"] - parsed["usage_gib"] - parsed["in_doubt_gib"]
@@ -320,7 +359,7 @@ def storage_admission(
         "project_usage_gib": parsed["usage_gib"],
         "project_soft_quota_gib": parsed["soft_quota_gib"],
         "project_in_doubt_gib": parsed["in_doubt_gib"],
-        "local_free_gib": local_free_gib,
+        "local_free_gib": float(local_free_gib),
     }
 
 
@@ -642,7 +681,7 @@ def main() -> int:
             states, user_total = query_job_states(ids, args.scheduler)
             own = own_nonterminal_count(ids, states, reservation)
             leg_admission(own, user_total, leg_size)
-            quota_text = run_ssh("bsc_quota", args.scheduler)
+            quota_text = run_ssh(BSC_QUOTA_COMMAND, args.scheduler)
             if args.local_free_gib is None:
                 raise AdmissionError(
                     "local free space not provided; measure it on the lane host and pass "
