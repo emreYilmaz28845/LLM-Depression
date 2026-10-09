@@ -709,4 +709,19 @@ def test_confounded_attempt_excluded_from_selection_and_progress(tmp_path):
     assert not ready and reasons.get("confounded old attempt (superseded)") == 1
     doc = cv.progress([], [entry], expected, ledger)
     assert doc["heads_validated"] == 0
-    assert doc["heads_confounded_old_technical"] == 1
+    assert doc["confounded_latest_attempts"] == 1
+    assert doc["heads_old_technical_validated"] == 1
+
+
+def test_progress_fit_validated_requires_attempt_identity():
+    from tools import qwen3_window_cap_head_plan as planner
+
+    key = planner.head_key(make_row("cap25"))
+    old_row = make_row("cap25", attempt="OLD")
+    new_row = make_row("cap25", attempt="NEW")
+    ledger = {cv.fit_key(new_row): {"validated": True, "attempt_id": "OLD"}}
+    doc = cv.progress([old_row, new_row], [], {key}, ledger)
+    assert doc["fits_validated"] == 0
+    ledger = {cv.fit_key(new_row): {"validated": True, "attempt_id": "NEW"}}
+    doc = cv.progress([old_row, new_row], [], {key}, ledger)
+    assert doc["fits_validated"] == 1

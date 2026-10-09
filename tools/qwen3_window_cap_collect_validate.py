@@ -967,20 +967,25 @@ def production_entries(entries: list[dict], expected_keys: set[str]) -> list[dic
 
 def progress(rows: list[dict], entries: list[dict], expected_keys: set[str], ledger: dict[str, dict]) -> dict:
     rows_latest = latest_rows(rows)
-    fits_validated = sum(
-        1 for row in rows_latest.values() if ledger.get(fit_key(row), {}).get("validated")
-    )
+    fits_validated = 0
+    for row in rows_latest.values():
+        record = ledger.get(fit_key(row)) or {}
+        if record.get("validated") and str(record.get("attempt_id")) == str(row.get("attempt_id")):
+            fits_validated += 1
     prod = production_entries(list(latest_registry_entries(entries).values()), expected_keys)
     confounded = confounded_attempts()
     heads_validated = 0
-    heads_confounded = 0
+    confounded_latest = 0
+    old_technical_validated = 0
     for entry in prod:
         key = str(entry["registry_key"])
         attempt = str(entry["attempt_id"])
-        if attempt in confounded:
-            heads_confounded += 1
-            continue
         record = ledger.get(key) or {}
+        if attempt in confounded:
+            confounded_latest += 1
+            if record.get("validated") and str(record.get("attempt_id")) == attempt:
+                old_technical_validated += 1
+            continue
         if record.get("validated") and str(record.get("attempt_id")) == attempt:
             heads_validated += 1
     return {
@@ -990,7 +995,8 @@ def progress(rows: list[dict], entries: list[dict], expected_keys: set[str], led
         "heads_dispatched": len(prod),
         "heads_expected": EXPECTED_CHAINS,
         "heads_validated": heads_validated,
-        "heads_confounded_old_technical": heads_confounded,
+        "confounded_latest_attempts": confounded_latest,
+        "heads_old_technical_validated": old_technical_validated,
         "at_utc": now(),
     }
 
