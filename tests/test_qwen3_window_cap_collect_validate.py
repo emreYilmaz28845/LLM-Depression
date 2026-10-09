@@ -110,13 +110,23 @@ def test_select_ready_fits_skips_validated(tmp_path):
 # --- head selection ----------------------------------------------------------
 
 
-def make_entry(key: str, *, extract: str = "2001", classifier: str = "2002", attempt: str = "HEADATT") -> dict:
-    return {
+def make_entry(
+    key: str,
+    *,
+    extract: str = "2001",
+    classifier: str = "2002",
+    attempt: str = "HEADATT",
+    local_mirror=None,
+) -> dict:
+    entry = {
         "registry_key": key,
         "attempt_id": attempt,
         "extract_job_id": extract,
         "classifier_job_id": classifier,
     }
+    if local_mirror is not None:
+        entry["local_mirror"] = str(local_mirror)
+    return entry
 
 
 def test_select_ready_heads_production_only_and_confirmed(tmp_path):
@@ -312,11 +322,18 @@ def test_process_fits_batch_collect_failure_skips_validate(tmp_path, monkeypatch
 
 def test_process_head_passes_registry_and_gates_on_membership(tmp_path):
     cv.configure(campaign_dir=tmp_path)
-    entry = make_entry("androids_interview_audio_only_native_cap25|7|0")
+    mirror = tmp_path / "mirror"
+    mirror.mkdir()
+    entry = make_entry("androids_interview_audio_only_native_cap25|7|0", local_mirror=mirror)
     calls = []
 
     def runner(argv):
         calls.append(argv)
+        if len(argv) > 2 and argv[2] == "validate":
+            (mirror / "status.json").write_text(
+                json.dumps({"state": "LOCALLY_VALIDATED", "attempt_id": entry["attempt_id"]}),
+                encoding="utf-8",
+            )
         return 0, "ok", ""
 
     ok = cv.process_head(entry, runner=runner, membership_checker=lambda e: [])
@@ -327,6 +344,29 @@ def test_process_head_passes_registry_and_gates_on_membership(tmp_path):
     bad = cv.process_head(entry, runner=runner, membership_checker=lambda e: ["rows mismatch"])
     assert bad["validated"] is False and bad["membership_ok"] is False
     assert len(calls) == 1  # validate never ran
+
+
+def test_process_head_no_fake_rc0_acceptance(tmp_path):
+    cv.configure(campaign_dir=tmp_path)
+    mirror = tmp_path / "mirror"
+    mirror.mkdir()
+    entry = make_entry("androids_interview_audio_only_native_cap25|7|0", local_mirror=mirror)
+
+    def runner(argv):
+        return 0, "ok", ""
+
+    record = cv.process_head(entry, runner=runner, membership_checker=lambda e: [])
+    assert record["validated"] is False and "status.json missing" in record["note"]
+    (mirror / "status.json").write_text(
+        json.dumps({"state": "SYNCED_LOCALLY", "attempt_id": entry["attempt_id"]}), encoding="utf-8"
+    )
+    record = cv.process_head(entry, runner=runner, membership_checker=lambda e: [])
+    assert record["validated"] is False and "not advanced" in record["note"]
+    (mirror / "status.json").write_text(
+        json.dumps({"state": "LOCALLY_VALIDATED", "attempt_id": "OTHER"}), encoding="utf-8"
+    )
+    record = cv.process_head(entry, runner=runner, membership_checker=lambda e: [])
+    assert record["validated"] is False and "attempt mismatch" in record["note"]
 
 
 # --- ledger and watcher gate -------------------------------------------------
@@ -341,7 +381,84 @@ def test_ledger_last_wins(tmp_path):
 
 
 def test_watcher_done_requires_all_chains_validated():
-    partial = {"fits_submitted": 378, "heads_dispatched": 378, "heads_validated": 377}
-    assert cv.watcher_done(partial) is False
-    assert cv.watcher_done({"fits_submitted": 378, "heads_dispatched": 378, "heads_validated": 378}) is True
-    assert cv.watcher_done({"fits_submitted": 40, "heads_dispatched": 0, "heads_validated": 0}) is False
+    assert (
+        cv.watcher_done(
+            {"fits_submitted": 378, "fits_validated": 377, "heads_dispatched": 378, "heads_validated": 378}
+        )
+        is False
+    )
+    assert (
+        cv.watcher_done(
+            {"fits_submitted": 378, "fits_validated": 378, "heads_dispatched": 378, "heads_validated": 377}
+        )
+        is False
+    )
+    assert (
+        cv.watcher_done(
+            {"fits_submitted": 378, "fits_validated": 378, "heads_dispatched": 378, "heads_validated": 378}
+        )
+        is True
+    )
+    assert (
+        cv.watcher_done(
+            {"fits_submitted": 40, "fits_validated": 4, "heads_dispatched": 0, "heads_validated": 0}
+        )
+        is False
+    )
+
+
+def test_heads_old_attempt_validation_ignored(tmp_path):
+    cv.configure(campaign_dir=tmp_path)
+    key = "androids_interview_audio_only_native_cap25|7|0"
+    entry_old = make_entry(key, attempt="OLD")
+    entry_new = make_entry(key, attempt="NEW")
+    expected = {key}
+    ledger = {key: {"validated": True, "attempt_id": "OLD"}}
+    doc = cv.progress([], [entry_old, entry_new], expected, ledger)
+    assert doc["heads_dispatched"] == 1 and doc["heads_validated"] == 0
+    ledger[key] = {"validated": True, "attempt_id": "NEW"}
+    doc = cv.progress([], [entry_old, entry_new], expected, ledger)
+    assert doc["heads_validated"] == 1
+
+
+def test_fetch_remote_file_publishes_only_on_hash_match(tmp_path):
+    import hashlib
+
+    def downloader(remote, dest):
+        dest.write_bytes(b"hello")
+        return True
+
+    ok, reason = cv.fetch_remote_file(
+        "remote/f.json",
+        tmp_path / "f.json",
+        remote_hasher=lambda remote: "a" * 64,
+        downloader=downloader,
+    )
+    assert not ok and "mismatch" in reason
+    assert not (tmp_path / "f.json").exists()
+    assert not (tmp_path / "f.json.part").exists()
+    expected = hashlib.sha256(b"hello").hexdigest()
+    ok, reason = cv.fetch_remote_file(
+        "remote/f.json",
+        tmp_path / "f.json",
+        remote_hasher=lambda remote: expected,
+        downloader=downloader,
+    )
+    assert ok and (tmp_path / "f.json").read_bytes() == b"hello"
+    assert not (tmp_path / "f.json.part").exists()
+
+
+def test_fetch_remote_file_refuses_existing_mismatch(tmp_path):
+    import hashlib
+
+    local = tmp_path / "f.json"
+    local.write_bytes(b"old")
+    expected = hashlib.sha256(b"new").hexdigest()
+    ok, reason = cv.fetch_remote_file(
+        "remote/f.json",
+        local,
+        remote_hasher=lambda remote: expected,
+        downloader=lambda remote, dest: True,
+    )
+    assert not ok and "existing" in reason
+    assert local.read_bytes() == b"old"  # preserved, never overwritten

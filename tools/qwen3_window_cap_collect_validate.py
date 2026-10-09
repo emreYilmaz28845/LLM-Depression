@@ -48,6 +48,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -203,6 +204,7 @@ def select_ready_heads(
     ledger: dict[str, dict],
 ) -> tuple[list[dict], dict[str, int]]:
     """Production chains only, extract+classifier scheduler-confirmed 0:0."""
+    entries = list(latest_registry_entries(entries).values())
     ready: list[dict] = []
     reasons: dict[str, int] = {}
 
@@ -337,7 +339,7 @@ def parent_fold_remote(entry: dict) -> str | None:
 
 
 def parent_fold_local(entry: dict) -> Path | None:
-    """Collected parent fold evidence (local run root first, planner RAW second)."""
+    """Collected parent fold evidence from the official local run root."""
     remote = parent_fold_remote(entry)
     if remote is None:
         return None
@@ -350,57 +352,111 @@ def parent_fold_local(entry: dict) -> Path | None:
     fold = parts[fold_index]
     dataset = str(entry.get("dataset"))
     modality = str(entry.get("modality"))
-    for root in (LOCAL_RUN_ROOT, RAW):
-        candidate = root / modality / dataset / run_name / fold
-        if (candidate / "window_cap_mask.json").is_file():
-            return candidate
+    candidate = LOCAL_RUN_ROOT / modality / dataset / run_name / fold
+    if (candidate / "window_cap_mask.json").is_file() and (candidate / "run_config.yaml").is_file():
+        return candidate
     return None
 
 
-def fetch_remote_file(remote: str, local: Path) -> bool:
-    local.parent.mkdir(parents=True, exist_ok=True)
+def remote_sha256(remote_path: str, *, host: str | None = None) -> str | None:
+    """Exact remote sha256 for one compact file, or None when unavailable."""
     proc = subprocess.run(
         [
-            "rsync",
-            "-a",
-            "--no-motd",
-            f"{TRANSFER_HOST}:{remote}",
-            str(local),
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=20",
+            host or TRANSFER_HOST,
+            f"sha256sum {remote_path}",
         ],
         capture_output=True,
         text=True,
+        timeout=300,
     )
-    return proc.returncode == 0 and local.is_file()
+    if proc.returncode != 0:
+        return None
+    token = (proc.stdout or "").strip().split()
+    if not token or len(token[0]) != 64:
+        return None
+    return token[0]
 
 
-def resolve_parent_evidence(entry: dict, *, remote_fetcher=fetch_remote_file):
-    """Return (run_config_path, mask_path) for the parent fit, or (None, None)."""
+def rsync_download(remote: str, dest: Path) -> bool:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(
+        ["rsync", "-a", "--no-motd", f"{TRANSFER_HOST}:{remote}", str(dest)],
+        capture_output=True,
+        text=True,
+    )
+    return proc.returncode == 0 and dest.is_file()
+
+
+def fetch_remote_file(
+    remote: str,
+    local: Path,
+    *,
+    remote_hasher=remote_sha256,
+    downloader=rsync_download,
+) -> tuple[bool, str]:
+    """Hash-verified single-file fetch with atomic publish and no overwrite.
+
+    The exact remote SHA-256 must match the local bytes before the file is
+    used: an existing mismatch or a partial previous fetch is refused and
+    preserved, never overwritten; a fresh download goes to a ``.part`` target
+    and is published atomically only after the hash matches.
+    """
+    expected = remote_hasher(remote)
+    if not expected:
+        return False, "remote hash unavailable"
+    if local.is_file():
+        local_sha = sha256_file(local)
+        if local_sha == expected:
+            return True, local_sha
+        return False, f"existing evidence hash mismatch ({local_sha[:12]} != {expected[:12]})"
+    temp = local.with_suffix(local.suffix + ".part")
+    if temp.exists():
+        temp.unlink()
+    if not downloader(remote, temp) or not temp.is_file():
+        return False, "download failed"
+    local_sha = sha256_file(temp)
+    if local_sha != expected:
+        temp.unlink(missing_ok=True)
+        return False, f"downloaded hash mismatch ({local_sha[:12]} != {expected[:12]})"
+    os.replace(temp, local)
+    return True, local_sha
+
+
+def resolve_parent_evidence(
+    entry: dict, *, fetcher=fetch_remote_file
+) -> tuple[Path | None, Path | None, str]:
+    """(run_config, mask, reason) for the parent fit from official evidence."""
     local = parent_fold_local(entry)
     if local is not None:
-        return local / "run_config.yaml", local / "window_cap_mask.json"
+        return local / "run_config.yaml", local / "window_cap_mask.json", "collected fold"
     remote = parent_fold_remote(entry)
     if remote is None:
-        return None, None
+        return None, None, "parent fold path unavailable"
     cache = LANE / "head_parent_evidence" / str(entry["attempt_id"])
     run_config = cache / "run_config.yaml"
     mask = cache / "window_cap_mask.json"
     for name, path in (("run_config.yaml", run_config), ("window_cap_mask.json", mask)):
-        if not path.is_file() and not remote_fetcher(f"{remote}/{name}", path):
-            return None, None
-    return run_config, mask
+        ok, reason = fetcher(f"{remote}/{name}", path)
+        if not ok:
+            return None, None, f"{name}: {reason}"
+    return run_config, mask, "verified remote fetch"
 
 
-def resolve_extraction(entry: dict, *, remote_fetcher=fetch_remote_file) -> Path | None:
-    """Exact compact cache metadata from entry.cache_dir (fetched with hash)."""
-    local = LANE / "head_cache_evidence" / str(entry["attempt_id"]) / "extraction_metadata.json"
-    if local.is_file():
-        return local
+def resolve_extraction(entry: dict, *, fetcher=fetch_remote_file) -> tuple[Path | None, str]:
+    """(path, reason) for the exact compact cache metadata from entry.cache_dir."""
     cache_dir = str(entry.get("cache_dir") or "")
     if not cache_dir:
-        return None
-    if remote_fetcher(f"{cache_dir}/extraction_metadata.json", local):
-        return local
-    return None
+        return None, "cache_dir missing"
+    local = LANE / "head_cache_evidence" / str(entry["attempt_id"]) / "extraction_metadata.json"
+    ok, reason = fetcher(f"{cache_dir}/extraction_metadata.json", local)
+    if not ok:
+        return None, reason
+    return local, "verified remote fetch"
 
 
 def head_local_paths(entry: dict) -> dict[str, Path]:
@@ -427,19 +483,28 @@ def verify_head_membership(
     *,
     parent_evidence: tuple[Path, Path] | None = None,
     extraction_file: Path | None = None,
-    remote_fetcher=fetch_remote_file,
+    fetcher=fetch_remote_file,
 ) -> list[str]:
     paths = head_local_paths(entry)
     if not paths["metadata"].is_file():
         return ["missing collected head metadata"]
     if parent_evidence is None:
-        parent_evidence = resolve_parent_evidence(entry, remote_fetcher=remote_fetcher)
-    run_config_path, mask_path = parent_evidence
-    if run_config_path is None or mask_path is None or not run_config_path.is_file() or not mask_path.is_file():
-        return ["parent run_config/mask evidence not found"]
+        run_config_path, mask_path, reason = resolve_parent_evidence(entry, fetcher=fetcher)
+    else:
+        run_config_path, mask_path = parent_evidence
+        reason = "injected"
+    if (
+        run_config_path is None
+        or mask_path is None
+        or not run_config_path.is_file()
+        or not mask_path.is_file()
+    ):
+        return [f"parent run_config/mask evidence not found ({reason})"]
     if extraction_file is None:
-        extraction_file = resolve_extraction(entry, remote_fetcher=remote_fetcher)
-    if extraction_file is None or not extraction_file.is_file():
+        extraction_file, extraction_reason = resolve_extraction(entry, fetcher=fetcher)
+        if extraction_file is None:
+            return [f"extraction cache metadata not found ({extraction_reason})"]
+    if not extraction_file.is_file():
         return ["extraction cache metadata not found"]
     import yaml
 
@@ -629,6 +694,20 @@ def process_head(entry: dict, *, runner=run_command, membership_checker=verify_h
     if rc != 0:
         record["note"] = "head validate failed"
         return record
+    status_path = head_local_paths(entry)["mirror"] / "status.json"
+    if not status_path.is_file():
+        record["note"] = "head status.json missing after validate"
+        return record
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    state = str(status.get("state"))
+    status_attempt = str(status.get("attempt_id"))
+    record["final_state"] = state
+    if state != "LOCALLY_VALIDATED":
+        record["note"] = f"authoritative lifecycle not advanced (state={state})"
+        return record
+    if status_attempt != attempt:
+        record["note"] = f"head status attempt mismatch ({status_attempt})"
+        return record
     record["validated"] = True
     return record
 
@@ -663,16 +742,42 @@ def scheduler_map_for_ids(ids: list[str], *, host: str | None = None) -> dict[st
     return planner.parse_sacct(proc.stdout, set(wanted))
 
 
+def latest_registry_entries(entries: list[dict]) -> dict[str, dict]:
+    """Latest (last) registry entry per canonical key; old attempts are not current."""
+    latest: dict[str, dict] = {}
+    for entry in entries:
+        key = str(entry.get("registry_key") or "")
+        if key:
+            latest[key] = entry
+    return latest
+
+
+def latest_rows(rows: list[dict]) -> dict[str, dict]:
+    """Latest submission row per run name; superseded attempts are not current."""
+    latest: dict[str, dict] = {}
+    for row in rows:
+        latest[str(row["run_name"])] = row
+    return latest
+
+
 def production_entries(entries: list[dict], expected_keys: set[str]) -> list[dict]:
     return [entry for entry in entries if str(entry.get("registry_key") or "") in expected_keys]
 
 
 def progress(rows: list[dict], entries: list[dict], expected_keys: set[str], ledger: dict[str, dict]) -> dict:
-    fits_validated = sum(1 for row in rows if ledger.get(fit_key(row), {}).get("validated"))
-    prod = production_entries(entries, expected_keys)
-    heads_validated = sum(1 for entry in prod if ledger.get(str(entry["registry_key"]), {}).get("validated"))
+    rows_latest = latest_rows(rows)
+    fits_validated = sum(
+        1 for row in rows_latest.values() if ledger.get(fit_key(row), {}).get("validated")
+    )
+    prod = production_entries(list(latest_registry_entries(entries).values()), expected_keys)
+    heads_validated = 0
+    for entry in prod:
+        key = str(entry["registry_key"])
+        record = ledger.get(key) or {}
+        if record.get("validated") and str(record.get("attempt_id")) == str(entry["attempt_id"]):
+            heads_validated += 1
     return {
-        "fits_submitted": len(rows),
+        "fits_submitted": len(rows_latest),
         "fits_expected": EXPECTED_CHAINS,
         "fits_validated": fits_validated,
         "heads_dispatched": len(prod),
@@ -683,9 +788,10 @@ def progress(rows: list[dict], entries: list[dict], expected_keys: set[str], led
 
 
 def watcher_done(progress_doc: dict) -> bool:
-    """The watcher may exit only when every required chain is validated."""
+    """The watcher may exit only when every required chain and fit is validated."""
     return (
         int(progress_doc.get("fits_submitted", 0)) >= EXPECTED_CHAINS
+        and int(progress_doc.get("fits_validated", 0)) >= EXPECTED_CHAINS
         and int(progress_doc.get("heads_dispatched", 0)) >= EXPECTED_CHAINS
         and int(progress_doc.get("heads_validated", 0)) >= EXPECTED_CHAINS
     )
@@ -734,7 +840,7 @@ def main(argv: list[str] | None = None) -> int:
             return rc
     matrix = json.loads(MATRIX.read_text(encoding="utf-8"))
     expected = planner.assert_matrix_keys(matrix)
-    rows = planner.load_rows()
+    rows = list(latest_rows(planner.load_rows()).values())
     entries = load_registry()
     ledger = load_ledger()
 
