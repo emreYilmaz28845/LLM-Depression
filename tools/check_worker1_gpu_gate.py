@@ -14,8 +14,13 @@ Rules enforced (user directives, reviewed 2026-10-09):
   total AllocTRES (running) or ReqTRES (pending), never per-node values.
 - Strictly sequential: at most ONE released GPU job at a time; every other
   GPU job stays held (dependents included).
+- Peer admin holds (PENDING, reason JobHeldAdmin, explicit Priority=0) count
+  as held and do not block the one user-held release; they are NEVER released
+  or cleared by this gate, and an admin-held job can never be the candidate.
+  An admin hold without explicit Priority=0 fails closed.
 - Fail closed on: any own active job, any own unheld pending GPU job, any
-  unknown state, duplicate/incomplete job records, malformed TRES.
+  unknown/empty reason, unknown state, duplicate/incomplete job records,
+  malformed TRES, and missing node/billing/TRES on ANY nonterminal record.
 - Candidate must be PENDING with reason exactly JobHeldUser; its ReqTRES must
   be present and valid: node >= 1, billing > 0; a GPU job must declare its
   GPU count (missing/undecipherable declaration fails, never falls through
@@ -23,6 +28,10 @@ Rules enforced (user directives, reviewed 2026-10-09):
 - CPU head jobs need bounded CPU billing and bounded wall time.
 - Whole-leg batch admission is forbidden (single-job only).
 - Root approval token required before any release.
+
+Executor boundary: the root wrapper supplies the complete, fresh own-queue
+cardinality and the atomic lease lock before every single release. This
+read-only gate is NOT the executor; it only validates the release decision.
 """
 
 from __future__ import annotations
@@ -83,6 +92,7 @@ class Job:
     name: str = ""
     state: str = "UNKNOWN"
     reason: str = ""
+    priority: int | None = None
     req: Tres = field(default_factory=Tres)
     alloc: Tres | None = None
     req_present: bool = True
@@ -92,6 +102,16 @@ class Job:
     @property
     def held(self) -> bool:
         return self.state == "PENDING" and self.reason == HELD_REASON
+
+    @property
+    def admin_held_priority_zero(self) -> bool:
+        """Peer admin holds count as held ONLY with an explicit Priority=0.
+
+        Admin holds are never released or cleared by this gate, and they can
+        never be a candidate; this property only prevents them from wrongly
+        blocking the one authorized user-held release.
+        """
+        return self.state == "PENDING" and self.reason == "JobHeldAdmin" and self.priority == 0
 
     @property
     def is_pending(self) -> bool:
@@ -122,6 +142,7 @@ def parse_tres(text: str) -> tuple[Tres, bool]:
     t = Tres()
     if not present:
         return t, False
+    seen_keys: set[str] = set()
     for raw in text.split(","):
         token = raw.strip()
         if not token:
@@ -132,6 +153,9 @@ def parse_tres(text: str) -> tuple[Tres, bool]:
         key = key.strip()
         value = value.strip()
         if key in TRES_KEYS:
+            if key in seen_keys:
+                raise TresParseError(f"duplicate_tres_key:{key}")
+            seen_keys.add(key)
             if not re.fullmatch(r"\d+", value):
                 raise TresParseError(f"malformed_tres_value:{key}={value}")
             setattr(t, TRES_KEYS[key], int(value))
@@ -149,7 +173,9 @@ def parse_scontrol_dump(text: str) -> list[Job]:
         for piece in block.replace("\n", " ").split():
             if "=" in piece:
                 k, _, v = piece.partition("=")
-                fields.setdefault(k, v)
+                if k in fields:
+                    raise TresParseError(f"duplicate_field_in_block:{k}:{fields.get('JobId', '?')}")
+                fields[k] = v
         job_id = fields.get("JobId", "")
         if not job_id:
             raise TresParseError("job_record_without_jobid")
@@ -161,6 +187,9 @@ def parse_scontrol_dump(text: str) -> list[Job]:
         job.state = fields.get("JobState", "UNKNOWN")
         reason = fields.get("Reason", "")
         job.reason = "" if reason in ("None", "(null)") else reason
+        prio = fields.get("Priority", "")
+        if re.fullmatch(r"\d+", prio or ""):
+            job.priority = int(prio)
         if "ReqTRES" not in fields:
             raise TresParseError(f"incomplete_record_missing_reqtres:{job_id}")
         job.req, job.req_present = parse_tres(fields.get("ReqTRES", ""))
@@ -238,12 +267,27 @@ def check_release(
         if job.job_id == candidate.job_id:
             continue
         eff = job.effective()
+        if job.is_active or job.is_pending:
+            # Nonterminal records must carry a complete, valid TRES declaration.
+            if not job.req_present or job.req.nodes < 1 or job.req.billing <= 0:
+                reasons.append(f"other_nonterminal_invalid_tres:{job.job_id}")
+            if job.alloc_present and job.alloc is not None and (
+                job.alloc.nodes < 1 or job.alloc.billing <= 0
+            ):
+                reasons.append(f"other_nonterminal_invalid_alloc_tres:{job.job_id}")
         if job.is_active:
             reasons.append(f"own_active_job:{job.job_id}:{job.state}:gpus={eff.gpus}")
-        elif job.is_pending and not job.held and job.is_gpu:
-            reasons.append(f"own_unheld_pending_gpu_job:{job.job_id}:{RELEASED_PENDING_MARKER}")
-        elif job.is_pending and job.reason and job.reason != HELD_REASON:
-            reasons.append(f"own_pending_unknown_reason:{job.job_id}:{job.reason}")
+        elif job.is_pending:
+            if job.held:
+                pass  # exact user-held peer: does not block
+            elif job.admin_held_priority_zero:
+                pass  # admin-held peer with explicit Priority=0: never released here
+            elif job.reason == "JobHeldAdmin":
+                reasons.append(f"own_admin_hold_without_priority_zero:{job.job_id}")
+            elif job.is_gpu:
+                reasons.append(f"own_unheld_pending_gpu_job:{job.job_id}:{RELEASED_PENDING_MARKER}")
+            else:
+                reasons.append(f"own_pending_unknown_reason:{job.job_id}:{job.reason or 'empty'}")
         elif job.state not in KNOWN_STATES:
             reasons.append(f"own_unknown_state:{job.job_id}:{job.state}")
 
@@ -251,7 +295,9 @@ def check_release(
     for job in own_jobs:
         if job.job_id == candidate.job_id:
             continue
-        if job.is_active or (job.is_pending and not job.held):
+        if job.is_active or (
+            job.is_pending and not job.held and not job.admin_held_priority_zero
+        ):
             gpu_total += job.effective().gpus
     if gpu_total > gpu_limit:
         reasons.append(f"account_gpu_total_exceeds_limit:{gpu_total}>{gpu_limit}")

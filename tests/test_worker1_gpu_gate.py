@@ -379,5 +379,142 @@ def test_allow_gpu_candidate_one_node_boundary():
     assert dec["allow"], dec["reasons"]
 
 
+# ---------------------------------------------------------------------------
+# JobHeldAdmin peer handling + stricter nonterminal/duplicate checks (2026-10-09
+# root review round 2).
+# ---------------------------------------------------------------------------
+
+
+def admin_held_peer(job_id="47100001", priority=0, gpus=8):
+    return Job(
+        job_id=job_id,
+        name="peer-train",
+        state="PENDING",
+        reason="JobHeldAdmin",
+        priority=priority,
+        req=Tres(gpus=gpus, nodes=2, billing=160),
+        time_limit_minutes=4320,
+    )
+
+
+def test_heldadmin_peer_with_priority_zero_accepted():
+    dec = check_release(audio_post(), [admin_held_peer()], APPROVAL)
+    assert dec["allow"], dec["reasons"]
+
+
+def test_heldadmin_candidate_refused():
+    cand = admin_held_peer(job_id="47077944")
+    dec = check_release(cand, [], APPROVAL)
+    assert not dec["allow"]
+    assert any("candidate_must_be_pending_with_exact_JobHeldUser" in r for r in dec["reasons"])
+
+
+def test_heldadmin_peer_without_priority_zero_refused():
+    dec = check_release(audio_post(), [admin_held_peer(priority=None)], APPROVAL)
+    assert not dec["allow"]
+    assert any("own_admin_hold_without_priority_zero" in r for r in dec["reasons"])
+    dec2 = check_release(audio_post(), [admin_held_peer(priority=5)], APPROVAL)
+    assert not dec2["allow"]
+    assert any("own_admin_hold_without_priority_zero" in r for r in dec2["reasons"])
+
+
+def test_unknown_reason_peer_refused():
+    peer = audio_train(job_id="47100002", state="PENDING", reason="Resources")
+    dec = check_release(audio_post(), [peer], APPROVAL)
+    assert not dec["allow"]
+    assert any(
+        ("own_unheld_pending_gpu_job" in r) or ("own_pending_unknown_reason" in r)
+        for r in dec["reasons"]
+    )
+    cpu_peer = Job(
+        job_id="47100003",
+        state="PENDING",
+        reason="Resources",
+        req=Tres(gpus=0, nodes=1, billing=20),
+        time_limit_minutes=30,
+    )
+    dec2 = check_release(audio_post(), [cpu_peer], APPROVAL)
+    assert not dec2["allow"]
+    assert any("own_pending_unknown_reason" in r for r in dec2["reasons"])
+
+
+def test_other_nonterminal_missing_nodes_refused():
+    peer = audio_train()
+    peer.req = Tres(gpus=8, nodes=0, billing=160)
+    dec = check_release(audio_post(), [peer], APPROVAL)
+    assert not dec["allow"]
+    assert any("other_nonterminal_invalid_tres" in r for r in dec["reasons"])
+
+
+def test_other_nonterminal_missing_billing_refused():
+    peer = audio_train()
+    peer.req = Tres(gpus=8, nodes=2, billing=0)
+    dec = check_release(audio_post(), [peer], APPROVAL)
+    assert not dec["allow"]
+    assert any("other_nonterminal_invalid_tres" in r for r in dec["reasons"])
+
+
+def test_duplicate_tres_keys_fail():
+    with pytest.raises(TresParseError):
+        parse_tres("node=1,node=2,billing=80,gres/gpu=4")
+    with pytest.raises(TresParseError):
+        parse_tres("billing=80,billing=160,node=1,gres/gpu=4")
+
+
+def test_duplicate_field_in_block_fail():
+    block = (
+        "JobId=47077944 JobName=x\n"
+        "   JobState=PENDING Reason=JobHeldUser Priority=0 Priority=5\n"
+        "   ReqTRES=cpu=80,node=1,billing=80,gres/gpu=4\n"
+        "   TimeLimit=1-00:00:00\n"
+    )
+    with pytest.raises(TresParseError):
+        parse_scontrol_dump(block)
+
+
+HELDADMIN_SAMPLE = """
+JobId=47100001 JobName=peer-train
+   UserId=ozu647717(53836) GroupId=ozu(52230) MCS_label=N/A
+   JobState=PENDING Reason=JobHeldAdmin Priority=0 Dependency=(null)
+   Partition=acc AllocNode:Sid=alogin2:3056621
+   NumNodes=2 NumCPUs=160
+   ReqTRES=cpu=160,mem=1000000M,node=2,billing=160,gres/gpu=8
+   AllocTRES=(null)
+   TimeLimit=3-00:00:00
+   
+JobId=47077944 JobName=sym-audi-cv-0-post
+   UserId=ozu647717(53836) GroupId=ozu(52230) MCS_label=N/A
+   JobState=PENDING Reason=JobHeldUser Priority=0 Dependency=(null)
+   Partition=acc AllocNode:Sid=alogin2:3056621
+   NumNodes=1 NumCPUs=80
+   ReqTRES=cpu=80,mem=500000M,node=1,billing=80,gres/gpu=4
+   AllocTRES=(null)
+   TimeLimit=1-00:00:00
+"""
+
+
+def test_cli_accepts_with_heldadmin_peer(tmp_path):
+    dump = tmp_path / "queue.txt"
+    dump.write_text(HELDADMIN_SAMPLE, encoding="utf-8")
+    out = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools" / "check_worker1_gpu_gate.py"),
+            "--scontrol-dump",
+            str(dump),
+            "--candidate-job",
+            "47077944",
+            "--root-approval",
+            APPROVAL,
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert json.loads(out.stdout)["allow"] is True
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
