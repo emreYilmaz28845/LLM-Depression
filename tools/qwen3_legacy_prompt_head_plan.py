@@ -62,6 +62,7 @@ if str(LANE) not in sys.path:
 from src.data.prompt_context import resolve_system_prompt  # noqa: E402
 from src.experiment_tracking.deployment import DEFAULT_TRANSFER_HOST  # noqa: E402
 from tools import collect_legacy_prompt_cells as collector  # noqa: E402
+from tools import qwen3_legacy_prompt_dispatch as dispatch  # noqa: E402
 from tools import qwen3_legacy_prompt_heads_guard as guard  # noqa: E402
 
 SCHEMA_VERSION = "audiollm.qwen3_heads_matrix.v1"
@@ -146,13 +147,17 @@ def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def fold_dir_for(fit: dict[str, Any], permanent_root: Path = PERMANENT_OUTPUT_ROOT) -> Path:
+def fold_dir_for(
+    fit: dict[str, Any],
+    permanent_root: Path = PERMANENT_OUTPUT_ROOT,
+    run_name: str | None = None,
+) -> Path:
     return (
         permanent_root
         / CAMPAIGN
         / str(fit["modality"])
         / str(fit["dataset_dir"])
-        / str(fit["run_name"])
+        / str(run_name or fit["run_name"])
         / f"fold_{int(fit['fold'])}"
     )
 
@@ -306,6 +311,7 @@ def resolve_cell(
     evidence: RemoteCellEvidence | None,
     dataset_contract: dict[str, Any],
     prompt_sha_expected: str,
+    run_name: str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Assemble the exact parent entry or an explicit waiting reason.
 
@@ -408,10 +414,11 @@ def resolve_cell(
 
     key = str(fit["key"])
     qualifier = ZERO_DELTA_EPOCH1_QUALIFIERS.get(key)
-    fold_dir = fold_dir_for(fit)
+    attempt_run_name = str(run_name or fit["run_name"])
+    fold_dir = fold_dir_for(fit, run_name=attempt_run_name)
     parent: dict[str, Any] = {
         "attempt_id": attempt,
-        "run_name": str(fit["run_name"]),
+        "run_name": attempt_run_name,
         "fold_dir": str(fold_dir),
         "checkpoint_dir": str(fold_dir / "best_model"),
         "checkpoint_adapter_config_sha256": evidence.adapter_config_sha256,
@@ -481,6 +488,22 @@ def build_matrix(
         lifecycle=collector.lifecycle_validated(run_root),
         ledger_path=ledger_path,
     )
+    # A bounded retry of a transient failure gets a new run name (documented
+    # retry flow) while keeping the same cell key. The ledger is authoritative
+    # for the validated attempt's run name; the frozen matrix name is only the
+    # first-attempt default.
+    ledger_run_names: dict[tuple[str, str], str] = {}
+    for record in dispatch.ledger_records(ledger_path):
+        if record.get("status") != "submitted" or not record.get("attempt_id"):
+            continue
+        key = str(record.get("key") or "")
+        if not key or key.startswith("head::"):
+            continue
+        ledger_run_names[(key, str(record["attempt_id"]))] = str(record.get("run_name") or "")
+
+    def attempt_run_name(fit: dict[str, Any], attempt: str) -> str:
+        return ledger_run_names.get((str(fit["key"]), attempt)) or str(fit["run_name"])
+
     cells = []
     for fit in fits:
         cell = (str(fit["route_id"]), int(fit["seed"]), int(fit["fold"]))
@@ -491,7 +514,10 @@ def build_matrix(
     evidence: dict[str, RemoteCellEvidence] = {}
     if cells:
         script = build_remote_script(
-            [(fit["key"], fold_dir_for(fit, permanent_root)) for _, _, fit in cells]
+            [
+                (fit["key"], fold_dir_for(fit, permanent_root, attempt_run_name(fit, attempt)))
+                for _, attempt, fit in cells
+            ]
         )
         evidence = parse_remote_output(remote_reader(script))
 
@@ -521,6 +547,7 @@ def build_matrix(
                     evidence.get(str(fit["key"])),
                     dataset_contract,
                     prompt_sha[route_id],
+                    run_name=attempt_run_name(fit, attempt),
                 )
             if parent is None:
                 job = {

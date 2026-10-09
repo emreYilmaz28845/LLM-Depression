@@ -426,3 +426,30 @@ def test_validate_matrix_rejects_duplicate_keys(tmp_path: Path) -> None:
     failures = planner.validate_matrix(payload, approved, str(planner.RUNTIME_ROOT))
     assert any("duplicate job keys" in failure for failure in failures)
     assert any("key set drift" in failure for failure in failures)
+
+
+def test_ledger_run_name_overrides_matrix_for_a_retried_attempt(tmp_path: Path) -> None:
+    """A bounded retry uses a new run name; the ledger is authoritative for it."""
+    suite = _suite(tmp_path)
+    _validate(suite)  # ledger record with run_name "fixture_run_s7_f1"
+    ledger = suite["ledger"]
+    lines = ledger.read_text(encoding="utf-8").splitlines()
+    record = json.loads(lines[0])
+    record["run_name"] = "fixture_run_s7_f1_r1"  # retry run name
+    ledger.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    scripts: list[str] = []
+
+    def reader(script: str) -> str:
+        scripts.append(script)
+        return _remote_block(
+            KEY,
+            run_config=_run_config(ATTEMPT, suite["prompt_sha"]),
+        )
+
+    payload = _plan(suite, reader)
+    job = _job(payload)
+    assert job["parent_status"] == "resolved"
+    assert job["parent"]["run_name"] == "fixture_run_s7_f1_r1"
+    assert job["parent"]["fold_dir"].endswith("fixture_run_s7_f1_r1/fold_1")
+    assert "fixture_run_s7_f1_r1/fold_1" in scripts[0]
+    assert "fixture_run_s7_f1/fold_1'" not in scripts[0]
