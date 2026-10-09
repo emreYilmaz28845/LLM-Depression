@@ -420,14 +420,19 @@ def _fresh_registry_delivery(
         entry
         for entry in _registry_records(registry_path)
         if entry.get("registry_key") == key
-        and str(entry.get("attempt_id") or "") not in before_attempts
+        and str(entry.get("attempt_id") or "").strip() not in before_attempts
     ]
     if len(fresh) != 1:
         return None
     entry = fresh[0]
+    attempt = str(entry.get("attempt_id") or "").strip()
+    if not attempt:
+        return None  # a blank attempt is never a fresh delivery proof
     if str(entry.get("deployment_id") or "") != str(deployment_id):
         return None
-    if str(entry.get("parent_attempt_id") or "") != str(job.get("parent_attempt_id") or ""):
+    expected_parent = str(job.get("parent_attempt_id") or "").strip()
+    entry_parent = str(entry.get("parent_attempt_id") or "").strip()
+    if not expected_parent or not entry_parent or entry_parent != expected_parent:
         return None
     if entry.get("error"):
         return None
@@ -466,7 +471,7 @@ def submit_head_via_shared(
     delivery is uncertain and the key stays reserved.
     """
     before = {
-        str(entry.get("attempt_id") or "")
+        str(entry.get("attempt_id") or "").strip()
         for entry in _registry_records(registry_path)
         if entry.get("registry_key") == job["key"]
     }
@@ -573,16 +578,20 @@ def reconcile_delivered_heads(
             summary["already_submitted"] += 1
             continue
         cell_key = key[len("head::") :]
-        attempt = str(record.get("attempt_id") or "")
-        parent_attempt = str(record.get("parent_attempt_id") or "")
+        attempt = str(record.get("attempt_id") or "").strip()
+        parent_attempt = str(record.get("parent_attempt_id") or "").strip()
+        if not attempt or not parent_attempt:
+            # Missing identity can never be reconciled by matching empty strings.
+            summary["unresolved"] += 1
+            continue
         requested_deployment = record.get("requested_deployment_id")
         candidates = []
         for entry in registry:
             if str(entry.get("registry_key") or "") != cell_key or entry.get("error"):
                 continue
-            if str(entry.get("attempt_id") or "") != attempt:
+            if str(entry.get("attempt_id") or "").strip() != attempt:
                 continue
-            if str(entry.get("parent_attempt_id") or "") != parent_attempt:
+            if str(entry.get("parent_attempt_id") or "").strip() != parent_attempt:
                 continue
             if requested_deployment is not None and str(
                 entry.get("deployment_id") or ""

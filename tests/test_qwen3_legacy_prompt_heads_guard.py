@@ -643,3 +643,44 @@ def test_reconcile_requires_unique_consistent_registry_proof(tmp_path: Path) -> 
     assert guard.reconcile_delivered_heads(ledger, registry)["unresolved"] == 1
     _write_registry(registry, [_registry_entry(deployment_id="dep-1")])
     assert guard.reconcile_delivered_heads(ledger, registry)["reconciled"] == 1
+
+
+def test_fresh_registry_proof_requires_nonblank_attempt_and_parent(tmp_path: Path) -> None:
+    job = {"key": "daic_text_only|7|0", "parent_attempt_id": "parent-att-1"}
+    registry = tmp_path / "head_submissions.jsonl"
+
+    def fresh(entries, job_=job):
+        _write_registry(registry, entries)
+        return guard._fresh_registry_delivery(job_["key"], set(), job_, "dep-1", registry)
+
+    assert fresh([_registry_entry(attempt_id="")]) is None
+    assert fresh([_registry_entry(attempt_id=None)]) is None
+    assert fresh([_registry_entry(parent_attempt_id="")]) is None
+    assert fresh([_registry_entry(parent_attempt_id=None)]) is None
+    # A blank expected parent can never match a blank entry parent either.
+    blank_job = {"key": "daic_text_only|7|0", "parent_attempt_id": ""}
+    assert fresh([_registry_entry(parent_attempt_id="")], job_=blank_job) is None
+
+
+def test_reconcile_refuses_missing_identity_instead_of_matching_empty(tmp_path: Path) -> None:
+    ledger = tmp_path / "submissions.jsonl"
+    registry = tmp_path / "head_submissions.jsonl"
+    # Record and registry entry both lack attempt/parent: empty strings must not
+    # reconcile a delivery.
+    ledger.write_text(
+        json.dumps(_head_uncertain_record(attempt_id="", parent_attempt_id="")) + "\n",
+        encoding="utf-8",
+    )
+    _write_registry(registry, [_registry_entry(attempt_id="", parent_attempt_id="")])
+    assert guard.reconcile_delivered_heads(ledger, registry) == {
+        "reconciled": 0,
+        "already_submitted": 0,
+        "unresolved": 1,
+    }
+    assert len(ledger.read_text(encoding="utf-8").splitlines()) == 1
+    # Missing parent on the record: refused even when the entry also lacks it.
+    ledger.write_text(
+        json.dumps(_head_uncertain_record(parent_attempt_id="")) + "\n", encoding="utf-8"
+    )
+    _write_registry(registry, [_registry_entry(parent_attempt_id="")])
+    assert guard.reconcile_delivered_heads(ledger, registry)["unresolved"] == 1
