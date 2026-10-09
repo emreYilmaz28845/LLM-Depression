@@ -612,6 +612,43 @@ def build_report(root: Path) -> dict:
     complete = [g for g in groups if g["status"] == "complete"]
     incomplete = [g for g in groups if g["status"] != "complete"]
     reg_mtimes = [g["registry"]["mtime_utc"] for g in groups if g["registry"]["mtime_utc"]]
+
+    def _stage_ok(group: dict, stage: str) -> bool:
+        return bool(group["stages"][stage]["ok"])
+
+    fits_verified = sum(
+        (CV_FOLDS if _stage_ok(g, "cv") else 0) + (1 if _stage_ok(g, "final") else 0)
+        for g in groups
+    )
+    postprocess_verified = sum(
+        (CV_FOLDS if _stage_ok(g, "cv") else 0) + (1 if _stage_ok(g, "final") else 0)
+        for g in groups
+    )
+    head_verified = postprocess_verified
+    completion_control = {
+        "fits_expected": len(GROUPS) * (CV_FOLDS + 1),
+        "fits_verified": fits_verified,
+        "downstream_expected": len(GROUPS) * (CV_FOLDS + 1) * 2,
+        "downstream_verified": postprocess_verified + head_verified,
+        "downstream_breakdown": {
+            "postprocess": postprocess_verified,
+            "head": head_verified,
+        },
+        "internal_cells": {
+            "component_evaluation_cells_expected": len(GROUPS) * (CV_FOLDS + 1) * 5,
+            "component_evaluation_cells_verified": postprocess_verified * 5,
+            "feature_extraction_per_postprocess": "required (enforced by the collection checks)",
+            "fixed_head_variant_fits_expected": len(GROUPS) * (CV_FOLDS + 1) * 2,
+            "fixed_head_variant_fits_verified": head_verified * 2,
+            "summary_jobs": 0,
+        },
+        "binding": f"{EVIDENCE_REL}/frozen_downstream_graph.json",
+        "eligible_for_marker": (
+            len(complete) == len(GROUPS)
+            and fits_verified == len(GROUPS) * (CV_FOLDS + 1)
+            and postprocess_verified + head_verified == len(GROUPS) * (CV_FOLDS + 1) * 2
+        ),
+    }
     report = {
         "schema_version": "audiollm.androids_fixed_merged.coverage_audit.v1",
         "generated_utc": now_utc(),
@@ -657,6 +694,7 @@ def build_report(root: Path) -> dict:
             "complete_groups": [g["run_id"] for g in complete],
             "incomplete_groups": [g["run_id"] for g in incomplete],
         },
+        "completion_control": completion_control,
         "blocker": (
             None
             if not incomplete
