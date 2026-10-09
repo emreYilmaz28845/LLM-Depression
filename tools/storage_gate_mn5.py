@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """MN5 storage admission gate: real project quota plus local reserve.
 
-The project quota must be read from ``bsc_quota`` for the owning group
-(``gpfs_projects GRP`` row: Usage, soft Quota, hard Limit, In doubt). Shared
+The project quota must be read from ``bsc_quota projects --unit GB --no-color``
+for the owning group (``gpfs_projects GRP`` row: Usage, soft Quota, hard Limit,
+In doubt). Automatic unit display rounds (``3.91 TB`` reconstructs as
+4003.84 GB while the soft quota is 4000 GB), which could wrongly admit at the
+500 GB boundary, so live admission always requests exact GB. Shared
 filesystem occupancy (``df``) does not enforce the granted project soft-quota
 reserve and must never be used as the admission signal. The gate fails closed
-when the SSH read fails, when the group header is absent, or when the
-``gpfs_projects`` row cannot be parsed.
+when the SSH read fails, when the exact group header is absent, when the
+``gpfs_projects`` row is missing or ambiguous (more than one), or when any
+size is not finite and nonnegative.
 
 Admission requires ``soft - usage - in_doubt >= min_project_free_gb`` (the
 500 GB project reserve) and local free space ``>= min_local_free_gb`` (the
@@ -18,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -32,8 +37,8 @@ DEFAULT_MIN_LOCAL_FREE_GB = 50.0
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 _PROJECT_ROW = re.compile(
-    r"^gpfs_projects\s+GRP\s+([\d.]+)\s*(KB|MB|GB|TB)\s+([\d.]+)\s*(KB|MB|GB|TB)\s+"
-    r"([\d.]+)\s*(KB|MB|GB|TB)\s+([\d.]+)\s*(KB|MB|GB|TB)"
+    r"^gpfs_projects\s+GRP\s+(-?[\d.]+)\s*(KB|MB|GB|TB)\s+(-?[\d.]+)\s*(KB|MB|GB|TB)\s+"
+    r"(-?[\d.]+)\s*(KB|MB|GB|TB)\s+(-?[\d.]+)\s*(KB|MB|GB|TB)"
 )
 _UNIT_GB = {"KB": 1.0 / (1024**2), "MB": 1.0 / 1024, "GB": 1.0, "TB": 1024.0}
 
@@ -47,26 +52,32 @@ class StorageGateError(RuntimeError):
 
 
 def parse_bsc_quota_projects(text: str, group: str = DEFAULT_GROUP) -> dict[str, float]:
-    """Parse the ``gpfs_projects GRP`` quota row for the owning group."""
+    """Parse the single ``gpfs_projects GRP`` quota row for the owning group.
+
+    Requires the exact group header, exactly one project row, and finite
+    nonnegative sizes; anything else fails closed as ambiguous.
+    """
     cleaned = "\n".join(_ANSI.sub("", line) for line in text.splitlines())
-    if f"group {group}" not in cleaned:
-        raise StorageGateError(f"bsc_quota output does not mention group {group}")
-    for line in cleaned.splitlines():
-        match = _PROJECT_ROW.match(line.strip())
-        if not match:
-            continue
-        usage = float(match.group(1)) * _UNIT_GB[match.group(2)]
-        soft = float(match.group(3)) * _UNIT_GB[match.group(4)]
-        hard = float(match.group(5)) * _UNIT_GB[match.group(6)]
-        in_doubt = float(match.group(7)) * _UNIT_GB[match.group(8)]
-        return {
-            "usage_gb": usage,
-            "soft_quota_gb": soft,
-            "hard_limit_gb": hard,
-            "in_doubt_gb": in_doubt,
-            "remaining_gb": soft - usage - in_doubt,
-        }
-    raise StorageGateError("no gpfs_projects GRP row found in bsc_quota output")
+    header = f"Printing quota for group {group}:"
+    if not any(line.strip() == header for line in cleaned.splitlines()):
+        raise StorageGateError(f"bsc_quota output does not carry the exact header {header!r}")
+    rows = [match for match in (_PROJECT_ROW.match(line.strip()) for line in cleaned.splitlines()) if match]
+    if len(rows) != 1:
+        raise StorageGateError(f"expected exactly one gpfs_projects GRP row, found {len(rows)}")
+    match = rows[0]
+    values = {
+        "usage_gb": float(match.group(1)) * _UNIT_GB[match.group(2)],
+        "soft_quota_gb": float(match.group(3)) * _UNIT_GB[match.group(4)],
+        "hard_limit_gb": float(match.group(5)) * _UNIT_GB[match.group(6)],
+        "in_doubt_gb": float(match.group(7)) * _UNIT_GB[match.group(8)],
+    }
+    for name, value in values.items():
+        if not math.isfinite(value) or value < 0:
+            raise StorageGateError(f"ambiguous {name}: {value!r} (must be finite and nonnegative)")
+    if values["soft_quota_gb"] <= 0:
+        raise StorageGateError("soft quota is zero; the project quota cannot be verified")
+    values["remaining_gb"] = values["soft_quota_gb"] - values["usage_gb"] - values["in_doubt_gb"]
+    return values
 
 
 def read_bsc_quota(
@@ -76,7 +87,7 @@ def read_bsc_quota(
     runner = runner or subprocess.run
     try:
         result = runner(
-            ["ssh", "-o", "BatchMode=yes", host, "bsc_quota"],
+            ["ssh", "-o", "BatchMode=yes", host, "bsc_quota projects --unit GB --no-color"],
             capture_output=True,
             text=True,
             timeout=120,

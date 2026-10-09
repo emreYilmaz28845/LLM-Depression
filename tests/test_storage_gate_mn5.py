@@ -25,10 +25,12 @@ REAL_OUTPUT = """
 """
 
 GB_OUTPUT = """
- Printing quota for group etur92:
+\u001b[0m\u001b[0m Printing quota for group etur92:\u001b[22m\u001b[0m
 
-    Filesystem   Type          Usage          Quota          Limit     In doubt     Grace
- gpfs_projects    GRP     1758.18 GB     4000.00 GB     4200.00 GB      12.86 GB      None
+\u001b[1;30m\u001b[0m    Filesystem   Type          Usage          Quota          Limit     In doubt     Grace  |       Files  In doubt  \u001b[0m
+\u001b[0m     gpfs_home    USR       31.88 GB       80.00 GB       84.00 GB\u001b[38;5;252m      0.00 GB      None  |      115940         0  \u001b[0m
+\u001b[0m gpfs_projects    GRP     1839.56 GB     4000.00 GB     4200.00 GB\u001b[38;5;252m     12.28 GB      None  |     1725487      1430  \u001b[0m
+\u001b[0m  gpfs_scratch    GRP     1790.89 GB     2000.00 GB     2100.00 GB\u001b[38;5;252m      0.00 GB      None  |     1665977         0  \u001b[0m
 """
 
 
@@ -43,10 +45,10 @@ def test_parse_real_grouped_output_with_ansi() -> None:
 
 def test_parse_gb_output() -> None:
     quota = gate.parse_bsc_quota_projects(GB_OUTPUT)
-    assert quota["usage_gb"] == pytest.approx(1758.18)
-    assert quota["soft_quota_gb"] == pytest.approx(4000.0)
-    assert quota["in_doubt_gb"] == pytest.approx(12.86)
-    assert quota["remaining_gb"] == pytest.approx(4000.0 - 1758.18 - 12.86)
+    assert quota["usage_gb"] == pytest.approx(1839.56)
+    assert quota["soft_quota_gb"] == pytest.approx(4000.0)  # exact GB, not rounded TB
+    assert quota["in_doubt_gb"] == pytest.approx(12.28)
+    assert quota["remaining_gb"] == pytest.approx(4000.0 - 1839.56 - 12.28)
 
 
 def test_parse_missing_project_row_fails_closed() -> None:
@@ -94,8 +96,41 @@ def test_check_passes_and_reports_evidence(tmp_path: Path, monkeypatch) -> None:
     )
     evidence = gate.check(runner=runner, local_path=tmp_path)
     assert evidence["ok"] is True
-    assert evidence["remaining_gb"] == pytest.approx(2228.96, abs=0.01)
+    assert evidence["remaining_gb"] == pytest.approx(2148.16, abs=0.01)
     assert evidence["local_free_gb"] == pytest.approx(60.0)
+
+
+def test_read_bsc_quota_uses_exact_gb_unit_command() -> None:
+    commands: list[list[str]] = []
+
+    def runner(command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(returncode=0, stdout=GB_OUTPUT, stderr="")
+
+    gate.read_bsc_quota(runner=runner)
+    assert commands[0][-1] == "bsc_quota projects --unit GB --no-color"
+
+
+def test_parse_requires_exact_group_header() -> None:
+    altered = GB_OUTPUT.replace(
+        "Printing quota for group etur92:", "Printing quota for group etur92 (projects):"
+    )
+    with pytest.raises(gate.StorageGateError):
+        gate.parse_bsc_quota_projects(altered)
+
+
+def test_parse_multiple_project_rows_fails_closed() -> None:
+    row = (
+        " gpfs_projects    GRP     1839.56 GB     4000.00 GB     4200.00 GB     12.28 GB      None\n"
+    )
+    with pytest.raises(gate.StorageGateError):
+        gate.parse_bsc_quota_projects(GB_OUTPUT + row)
+
+
+def test_parse_negative_size_fails_closed() -> None:
+    altered = GB_OUTPUT.replace("1839.56 GB", "-5.00 GB")
+    with pytest.raises(gate.StorageGateError):
+        gate.parse_bsc_quota_projects(altered)
 
 
 def test_check_refuses_on_low_project_reserve(monkeypatch) -> None:
