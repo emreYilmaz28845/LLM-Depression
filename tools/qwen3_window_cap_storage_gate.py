@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -25,11 +26,13 @@ from pathlib import Path
 
 DEFAULT_HOST = "ozu647717@transfer1.bsc.es"
 DEFAULT_FILESYSTEM = "gpfs_projects"
+DEFAULT_GROUP = "etur92"
 DEFAULT_MIN_REMAINING_GB = 500.0
 DEFAULT_MIN_LOCAL_GB = 50.0
 DEFAULT_LOCAL_PATH = "/home/emre/Projects"
 BYTES_PER_GB = 1024 ** 3
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_GROUP_HEADER = re.compile(r"group\s+([A-Za-z0-9_]+)\b")
 _SIZE_UNITS = {
     "B": 1.0 / BYTES_PER_GB,
     "KB": 1024.0 / BYTES_PER_GB,
@@ -53,17 +56,40 @@ def _to_gb(value: str, unit: str) -> float:
         number = float(value)
     except ValueError as exc:
         raise StorageGateError(f"unparseable size {value!r} with unit {unit!r}") from exc
+    if not math.isfinite(number):
+        raise StorageGateError(f"non-finite size {value!r} with unit {unit!r}")
+    if number < 0:
+        raise StorageGateError(f"negative size {value!r} with unit {unit!r}")
     unit = unit.strip().upper()
     if unit not in _SIZE_UNITS:
         raise StorageGateError(f"unknown size unit {unit!r}")
     return number * _SIZE_UNITS[unit]
 
 
-def parse_bsc_quota(output: str, filesystem: str = DEFAULT_FILESYSTEM) -> dict:
-    """Parse the group row for one filesystem from `bsc_quota projects`."""
+def parse_bsc_quota(
+    output: str,
+    filesystem: str = DEFAULT_FILESYSTEM,
+    *,
+    expected_group: str | None = DEFAULT_GROUP,
+    require_gb: bool = True,
+) -> dict:
+    """Parse the group row for one filesystem from `bsc_quota projects`.
+
+    The live query uses ``--unit GB --no-color`` so the soft quota is exact
+    (4000.00 GB, not the rounded 3.91 TB that reconstructs 4003.84 GB and can
+    wrongly admit at the reserve boundary). The group header must name the
+    expected group and, in live mode, every size must carry the GB unit.
+    """
     if not output.strip():
         raise StorageGateError("bsc_quota output is empty")
     text = strip_ansi(output)
+    header = _GROUP_HEADER.search(text)
+    if header is None:
+        raise StorageGateError("bsc_quota output has no 'group <name>' header")
+    if expected_group is not None and header.group(1) != expected_group:
+        raise StorageGateError(
+            f"bsc_quota group header is {header.group(1)!r}, expected {expected_group!r}"
+        )
     for line in text.splitlines():
         tokens = line.split()
         if not tokens or tokens[0] != filesystem:
@@ -72,6 +98,12 @@ def parse_bsc_quota(output: str, filesystem: str = DEFAULT_FILESYSTEM) -> dict:
             raise StorageGateError(f"{filesystem} row is too short: {line!r}")
         if tokens[1] != "GRP":
             raise StorageGateError(f"{filesystem} row is not a group row: {line!r}")
+        if require_gb and any(
+            tokens[index].upper() != "GB" for index in (3, 5, 7, 9)
+        ):
+            raise StorageGateError(
+                f"{filesystem} row is not in GB units: {line!r}"
+            )
         return {
             "filesystem": filesystem,
             "usage_gb": _to_gb(tokens[2], tokens[3]),
@@ -120,7 +152,7 @@ def query_quota(host: str) -> str:
             "-o",
             "ConnectTimeout=20",
             host,
-            "bsc_quota projects",
+            "bsc_quota projects --unit GB --no-color",
         ],
         capture_output=True,
         text=True,
