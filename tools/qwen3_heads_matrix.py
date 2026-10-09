@@ -217,6 +217,29 @@ def _declaration_only_shape_difference(
     )
 
 
+def _normalize_window_cap_for_diff(
+    expected: dict[str, Any], recorded: dict[str, Any]
+) -> None:
+    """Drop hook-resolved window_cap fields before the scientific config diff.
+
+    The training hook adds resolved hashes and counts to
+    ``training.window_cap`` in the recorded run_config. Those are validated
+    explicitly against the mask artifact below, so the config diff compares
+    only the cap block that the treatment config declares.
+    """
+    resolved_only = {
+        "selection_sha256",
+        "baseline_input_sha256",
+        "selected_example_count",
+        "available_example_count",
+    }
+    for config in (expected, recorded):
+        window_cap = (config.get("training") or {}).get("window_cap")
+        if isinstance(window_cap, dict):
+            for key in resolved_only:
+                window_cap.pop(key, None)
+
+
 def _evaluate_fold_as_parent(
     fold_dir: Path,
     *,
@@ -264,7 +287,9 @@ def _evaluate_fold_as_parent(
     # separately below and the split seed stays fixed at SPLIT_SEED.
     expected = copy.deepcopy(cell_config)
     expected["seed"] = int(seed)
-    differences = diff_paths(reduce_config(expected) or {}, reduce_config(recorded) or {})
+    recorded_for_diff = copy.deepcopy(recorded)
+    _normalize_window_cap_for_diff(expected, recorded_for_diff)
+    differences = diff_paths(reduce_config(expected) or {}, reduce_config(recorded_for_diff) or {})
     scientific = [path for path in differences if not is_shape_path(path)]
     if scientific:
         return {
@@ -367,43 +392,98 @@ def _evaluate_fold_as_parent(
             "reason": "run_config tracking attempt id disagrees with metadata.json",
             "record": None,
         }
-    return {
-        "ok": True,
-        "reason": None,
-        "record": {
-            "status": "resolved",
-            "fold_dir": str(fold_dir),
-            "run_name": fold_dir.parent.name,
-            "attempt_id": str(attempt_id),
-            "parent_training_seed": int(seed),
-            "head_seed": HEAD_SEED,
-            "checkpoint_dir": str(checkpoint),
-            "checkpoint_adapter_config_sha256": sha256_file(checkpoint / "adapter_config.json"),
-            "checkpoint_adapter_model_sha256": sha256_file(
-                checkpoint / "adapter_model.safetensors"
-            ),
-            "model_backend": recorded.get("model_backend"),
-            "model_revision": recorded.get("model_revision"),
-            "prompt_sha256": prompt_recorded,
-            "translation_notice_version": notice_recorded,
-            "split_seed": split_seed,
-            "split_fingerprint": split_fingerprint(fold_dir / "logs" / "split_used.json"),
-            "manifest_hash_recorded": payload.get("manifest_hash"),
-            "world_size_recorded": (payload.get("training_strategy") or {}).get("world_size"),
-            "declaration_only_shape_difference": declaration_only,
-            "state": eligibility["state"],
-            "state_lagging": eligibility["state_lagging"],
-            "jobs_clean": bool(
-                eligibility["completed_events"] and not eligibility["failed_events"]
-            ),
-            "supersedes_attempt_id": eligibility["supersedes_attempt_id"],
-            "extract_gpus": int(
-                (recorded.get("resources") or {}).get("eval_gpus_per_node", 1) or 1
-            ),
-            "seed": int(seed),
-            "fold": int(fold_dir.name.split("_", 1)[1]),
-        },
+    window_cap = (recorded.get("training") or {}).get("window_cap") or {}
+    train_mask = None
+    if bool(window_cap.get("enabled", False)):
+        selection_sha = str(window_cap.get("selection_sha256") or "")
+        baseline_sha = str(window_cap.get("baseline_input_sha256") or "")
+        if not selection_sha or not baseline_sha:
+            return {
+                "ok": False,
+                "classification": "invalid",
+                "reason": (
+                    "capped training run has no recorded window_cap selection_sha256 "
+                    "or baseline_input_sha256"
+                ),
+                "record": None,
+            }
+        mask_path = fold_dir / "window_cap_mask.json"
+        if not mask_path.is_file():
+            return {
+                "ok": False,
+                "classification": "invalid",
+                "reason": f"capped training run is missing {mask_path}",
+                "record": None,
+            }
+        mask = _load_json(mask_path)
+        if not isinstance(mask, dict):
+            return {
+                "ok": False,
+                "classification": "invalid",
+                "reason": f"{mask_path} is not a JSON object",
+                "record": None,
+            }
+        mismatches = [
+            key
+            for key, expected in (
+                ("selection_sha256", selection_sha),
+                ("baseline_input_sha256", baseline_sha),
+                ("fraction", float(window_cap.get("fraction"))),
+                ("sampling_seed", int(window_cap.get("sampling_seed"))),
+            )
+            if mask.get(key) != expected
+        ]
+        if mismatches:
+            return {
+                "ok": False,
+                "classification": "invalid",
+                "reason": "window cap mask disagrees with run_config on " + ", ".join(mismatches),
+                "record": None,
+            }
+        train_mask = {
+            "mask_path": str(mask_path),
+            "expected_selection_sha256": selection_sha,
+            "baseline_input_sha256": baseline_sha,
+            "fraction": mask.get("fraction"),
+            "sampling_seed": mask.get("sampling_seed"),
+            "algorithm_version": mask.get("algorithm_version"),
+        }
+    record = {
+        "status": "resolved",
+        "fold_dir": str(fold_dir),
+        "run_name": fold_dir.parent.name,
+        "attempt_id": str(attempt_id),
+        "parent_training_seed": int(seed),
+        "head_seed": HEAD_SEED,
+        "checkpoint_dir": str(checkpoint),
+        "checkpoint_adapter_config_sha256": sha256_file(checkpoint / "adapter_config.json"),
+        "checkpoint_adapter_model_sha256": sha256_file(
+            checkpoint / "adapter_model.safetensors"
+        ),
+        "model_backend": recorded.get("model_backend"),
+        "model_revision": recorded.get("model_revision"),
+        "prompt_sha256": prompt_recorded,
+        "translation_notice_version": notice_recorded,
+        "split_seed": split_seed,
+        "split_fingerprint": split_fingerprint(fold_dir / "logs" / "split_used.json"),
+        "manifest_hash_recorded": payload.get("manifest_hash"),
+        "world_size_recorded": (payload.get("training_strategy") or {}).get("world_size"),
+        "declaration_only_shape_difference": declaration_only,
+        "state": eligibility["state"],
+        "state_lagging": eligibility["state_lagging"],
+        "jobs_clean": bool(
+            eligibility["completed_events"] and not eligibility["failed_events"]
+        ),
+        "supersedes_attempt_id": eligibility["supersedes_attempt_id"],
+        "extract_gpus": int(
+            (recorded.get("resources") or {}).get("eval_gpus_per_node", 1) or 1
+        ),
+        "seed": int(seed),
+        "fold": int(fold_dir.name.split("_", 1)[1]),
     }
+    if train_mask is not None:
+        record["train_mask"] = train_mask
+    return {"ok": True, "reason": None, "record": record}
 
 
 def _candidate_run_roots(

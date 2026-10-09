@@ -57,6 +57,19 @@ if [ -n "$CLASSIFIER_VARIANTS" ]; then
   IFS=':' read -r -a classifier_variant_args <<< "$CLASSIFIER_VARIANTS"
   CMD+=(--variants "${classifier_variant_args[@]}")
 fi
+# Optional window-cap mask: when the parent training run used a capped
+# training-window membership, the fixed heads must fit on exactly the same
+# rows. Both variables are required together; the classifier recomputes and
+# validates the mask membership hash fail-closed.
+TRAIN_MASK="${TRAIN_MASK:-}"
+TRAIN_MASK_SHA256="${TRAIN_MASK_SHA256:-}"
+if [ -n "$TRAIN_MASK" ] || [ -n "$TRAIN_MASK_SHA256" ]; then
+  if [ -z "$TRAIN_MASK" ] || [ -z "$TRAIN_MASK_SHA256" ]; then
+    echo "TRAIN_MASK and TRAIN_MASK_SHA256 must be set together" >&2
+    exit 1
+  fi
+  CMD+=(--train-mask "$TRAIN_MASK" --train-mask-sha256 "$TRAIN_MASK_SHA256")
+fi
 printf 'Classifier command: '; printf '%q ' "${CMD[@]}"; printf '\n'
 "${CMD[@]}"
 

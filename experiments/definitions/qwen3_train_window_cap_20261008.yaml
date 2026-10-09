@@ -1,0 +1,92 @@
+schema_version: audiollm.experiment_group.v1
+group_id: qwen3-train-window-cap-20261008
+title: Native standalone training-window coverage curve (25/50/75 percent)
+research_question: >-
+  How do strict subject-level depression-classification results change when the
+  training partition uses one reproducible random nested 25/50/75 percent
+  subset of the baseline 30-second training windows per subject, while the
+  validation/test view, prompts, frozen encoder, likelihood decision rule and
+  fixed-head recipes stay identical?
+dataset: >-
+  DAIC-WOZ participant-only packed30 windows (fold 0 only) and D3TEC, Androids
+  interview, CMDC and Turkish pooled t17 positive+negative question set in
+  audio_only and audio_text modes (folds 0-4), three training seeds 7, 1337,
+  2024 with split seed 1337. Native transcripts; external labels stay
+  Depressed / Non-depressed.
+baseline: >-
+  The 126 audited 30-second all-window control fits (10 routes x 3 seeds;
+  DAIC fold 0) and their frozen logreg_raw/xgb_raw heads, reused after a
+  read-only control audit that verified run_config identity, metadata hashes,
+  selected best_model evidence and head settings. Controls are never chosen or
+  replaced by metric outcomes.
+treatment: >-
+  One reproducible per-subject pseudorandom permutation (sampling seed 1337,
+  documented SHA256 derivation over stable runtime sample ids, no labels or
+  model seeds) yields nested prefix subsets of 25, 50 and 75 percent, keeping
+  max(1, ceil(fraction * available)) windows per subject. The cap applies only
+  to the training partition after splitting and baseline example generation;
+  validation and test examples keep full coverage. Baseline per-window weights
+  are retained on selected rows, multiplied within each subject by baseline
+  subject total / selected subject total, then the usual global mean-one loss
+  rescale. Hidden features use all validation/test rows; heads are refit on the
+  capped training membership with identical frozen estimator settings, and the
+  mask artifact and hash travel through run_config and head provenance.
+expected_seeds:
+  - 7
+  - 1337
+  - 2024
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+comparison_rule: >-
+  Within each training seed, fold-mean strict subject-level Macro-F1,
+  Positive-F1 and UAR (INVALID counts as wrong) for the 100 percent control and
+  each cap arm on identical folds; then mean and sample SD across the three
+  seed means. DAIC stays a single-fold result; CMDC and Turkish stay
+  selection-linked train_val validation (the outer fold selects the checkpoint
+  and is not an independent held-out test).
+scope:
+  campaign: qwen3_train_window_cap_20261008
+  language: native
+  evidence_dir: outputs/qwen3_train_window_cap_20261008
+  lane: feat-qwen3-train-window-cap-20261008
+  checkpoint_role: best_model
+  head_variants:
+    - logreg_raw
+    - xgb_raw
+  sampling_seed: 1337
+  algorithm_version: sha256-subject-permutation-v1
+  cap_fractions:
+    - 0.25
+    - 0.5
+    - 0.75
+  control_contract: outputs/qwen3_train_window_cap_20261008/control_audit/control_contract.json
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
+exclusions:
+  - pr_merge
+  - extra_seeds_or_folds_or_routes
+  - extra_fractions_or_sampling_seeds
+  - optuna_or_hpo
+  - teacher_forced_evaluation
+  - outcome_based_control_or_seed_selection
+  - new_translations_or_transcripts
+  - duration_or_prompt_arm_combination
+  - merged_or_english_route_ownership
+  - shared_workbook_or_tables_writes
+  - package_install
+  - shared_environment_or_dataset_change
+  - evidence_overwrite_or_deletion
+github_issue: null
+github_pr: null

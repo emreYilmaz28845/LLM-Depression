@@ -793,3 +793,91 @@ def test_tracking_schema_override_and_uar_metric(tmp_path: Path) -> None:
         ]
     )
     assert metrics["uar"] == metrics["macro_recall"]
+
+
+def _masked_job() -> dict:
+    return {
+        "registry_key": "d3tec_text_only_native|1337|0",
+        "attempt_id": "attempt-1",
+        "logical_run_name": "q3ms_head_d3tec_text_only_native_s1337_f0",
+        "remote_attempt_dir": "/gpfs/runtime/heads/d3tec_text_only_native/attempt-1",
+        "classifier_dir": "/gpfs/runtime/heads/d3tec_text_only_native/attempt-1/classifier",
+        "log_root": "/gpfs/runtime/logs/heads/d3tec_text_only_native/attempt-1",
+        "cache_dir": "/gpfs/runtime/heads_cache/d3tec/text_only/run_parent_fold_0_pseed1337_hseed1337",
+        "parent": _parent(),
+        "condition": "text_only",
+        "extract_gpus": 1,
+        "train_mask": {
+            "mask_path": "/gpfs/parent/fold_0/window_cap_mask.json",
+            "expected_selection_sha256": "e" * 64,
+            "baseline_input_sha256": "f" * 64,
+            "fraction": 0.25,
+            "sampling_seed": 1337,
+            "algorithm_version": "sha256-subject-permutation-v1",
+        },
+        "payload": {"attempt_dir": "/gpfs/runtime/heads/d3tec_text_only_native/attempt-1"},
+    }
+
+
+def test_submit_script_forwards_window_cap_mask_when_present() -> None:
+    script = dispatch._build_submit_script(
+        code_root="/gpfs/deploy/code",
+        jobs=[_masked_job()],
+        scheduler_env={"attempt-1": {"ENV_ACTIVATE": "/gpfs/venvs/qwen38/bin/activate"}},
+        qwen_hidden_deps="/gpfs/deps/qwen_hidden",
+        log_root="/gpfs/runtime/logs/heads",
+    )
+    assert "TRAIN_MASK=/gpfs/parent/fold_0/window_cap_mask.json" in script
+    assert f"TRAIN_MASK_SHA256={'e' * 64}" in script
+
+
+def test_submit_script_without_mask_has_no_train_mask_env() -> None:
+    job = _masked_job()
+    job.pop("train_mask")
+    script = dispatch._build_submit_script(
+        code_root="/gpfs/deploy/code",
+        jobs=[job],
+        scheduler_env={"attempt-1": {"ENV_ACTIVATE": "/gpfs/venvs/qwen38/bin/activate"}},
+        qwen_hidden_deps="/gpfs/deps/qwen_hidden",
+        log_root="/gpfs/runtime/logs/heads",
+    )
+    assert "TRAIN_MASK" not in script
+
+
+def test_train_mask_block_validation_is_fail_closed() -> None:
+    with pytest.raises(dispatch.DispatchError, match="train_mask"):
+        dispatch._validated_train_mask_block({"mask_path": "x"}, context="r s1 f0")
+    with pytest.raises(dispatch.DispatchError, match="64-hex"):
+        dispatch._validated_train_mask_block(
+            {
+                "mask_path": "x",
+                "expected_selection_sha256": "not-a-hash",
+                "baseline_input_sha256": "0" * 64,
+            },
+            context="r s1 f0",
+        )
+    with pytest.raises(dispatch.DispatchError, match="must be an object"):
+        dispatch._validated_train_mask_block(["x"], context="r s1 f0")
+
+
+def test_train_mask_block_validation_normalizes_hashes() -> None:
+    block = dispatch._validated_train_mask_block(
+        {
+            "mask_path": " /gpfs/parent/fold_0/window_cap_mask.json ",
+            "expected_selection_sha256": "E" * 64,
+            "baseline_input_sha256": "F" * 64,
+            "fraction": 0.5,
+            "sampling_seed": 1337,
+            "algorithm_version": "sha256-subject-permutation-v1",
+        },
+        context="r s1 f0",
+    )
+    assert block["expected_selection_sha256"] == "e" * 64
+    assert block["baseline_input_sha256"] == "f" * 64
+    assert block["mask_path"] == "/gpfs/parent/fold_0/window_cap_mask.json"
+
+
+def test_classifier_worker_forwards_train_mask_pair() -> None:
+    text = (Path(__file__).resolve().parents[1] / "scripts" / "run_qwen_hidden_classifier_slurm.sh").read_text()
+    assert 'CMD+=(--train-mask "$TRAIN_MASK" --train-mask-sha256 "$TRAIN_MASK_SHA256")' in text
+    assert "TRAIN_MASK and TRAIN_MASK_SHA256 must be set together" in text
