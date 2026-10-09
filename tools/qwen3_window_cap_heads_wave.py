@@ -43,7 +43,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TOOLS_DIR = Path(__file__).resolve().parent
 DEFAULT_CAMPAIGN_DIR = PROJECT_ROOT / "outputs" / "qwen3_train_window_cap_20261008"
 DEFAULT_DEPLOYMENT = (
-    "feat-qwen3-train-window-cap-20261008-20261009T140151Z-98d8a91d-0490fe33"
+    "feat-qwen3-train-window-cap-20261008-20261009T153940Z-b9441bc7-a8a44727"
 )
 DEFAULT_CAMPAIGN = "qwen3_train_window_cap_20261008"
 PLAN_MAX_AGE_SECONDS = 900
