@@ -96,7 +96,7 @@ def test_valid_mask_passes_validation_and_filters_rows() -> None:
     mask = _mask_for(plan)
     clf._validate_train_mask(mask, expected_selection_sha256=mask["selection_sha256"])
     filtered_x, filtered_rows, metadata = clf._apply_train_mask(
-        x, rows, mask, authoritative_split=_split(plan)
+        x, rows, mask, authoritative_split=_split(plan), dataset="androids_interview"
     )
     selected = {sid for ids in mask["subjects"].values() for sid in ids}
     assert [row["sample_id"] for row in filtered_rows] == [
@@ -131,7 +131,7 @@ def test_swapped_subject_association_is_refused() -> None:
     _rehash(mask)  # membership hash is consistent; only the association is wrong
     clf._validate_train_mask(mask)
     with pytest.raises(ValueError, match="assigns sample"):
-        clf._apply_train_mask(x, rows, mask, authoritative_split=_split(plan))
+        clf._apply_train_mask(x, rows, mask, authoritative_split=_split(plan), dataset="androids_interview")
 
 
 def test_wrong_baseline_membership_is_refused() -> None:
@@ -140,7 +140,7 @@ def test_wrong_baseline_membership_is_refused() -> None:
     mask = _mask_for(plan)
     mask["baseline_input_sha256"] = "0" * 64
     with pytest.raises(ValueError, match="baseline_input_sha256"):
-        clf._apply_train_mask(x, rows, mask, authoritative_split=_split(plan))
+        clf._apply_train_mask(x, rows, mask, authoritative_split=_split(plan), dataset="androids_interview")
 
 
 def test_missing_baseline_hash_is_refused() -> None:
@@ -149,7 +149,7 @@ def test_missing_baseline_hash_is_refused() -> None:
     mask = _mask_for(plan)
     mask["baseline_input_sha256"] = None
     with pytest.raises(ValueError, match="baseline_input_sha256"):
-        clf._apply_train_mask(x, rows, mask, authoritative_split=_split(plan))
+        clf._apply_train_mask(x, rows, mask, authoritative_split=_split(plan), dataset="androids_interview")
 
 
 def test_missing_sample_id_is_refused() -> None:
@@ -159,22 +159,27 @@ def test_missing_sample_id_is_refused() -> None:
     mask["subjects"]["s1"] = ["s1_w999"]
     _rehash(mask)
     with pytest.raises(ValueError, match="missing from outer_train"):
-        clf._apply_train_mask(x, rows, mask, authoritative_split=_split(plan))
+        clf._apply_train_mask(x, rows, mask, authoritative_split=_split(plan), dataset="androids_interview")
 
 
 def test_training_pool_subset_with_extra_val_subjects_binds_restricted_membership() -> None:
-    """The head pool may include extra (val) subjects; the baseline binds the pool subset."""
+    """Only train rows are capped; the inner-val rows are retained in full."""
     train_plan = {"s1": 3, "s2": 3}
     val_plan = {"s9": 2}
     x, rows = _cache_rows({**train_plan, **val_plan})
     mask = _mask_for(train_plan, fraction=0.5)
     filtered_x, filtered_rows, metadata = clf._apply_train_mask(
-        x, rows, mask, authoritative_split=_split(train_plan, val_plan)
+        x, rows, mask, authoritative_split=_split(train_plan, val_plan), dataset="androids_interview",
     )
     selected = {sid for ids in mask["subjects"].values() for sid in ids}
-    assert {row["sample_id"] for row in filtered_rows} == selected
-    assert metadata["available_rows"] == 6  # training-pool rows, not the 8-row outer_train
-    assert all(row["subject_id"] != "s9" for row in filtered_rows)
+    val_ids = {"s9_w000", "s9_w001"}
+    assert {row["sample_id"] for row in filtered_rows} == selected | val_ids
+    assert metadata["available_rows"] == 6  # train-pool rows, not the 8-row outer_train
+    assert metadata["selected_rows"] == len(selected)
+    assert metadata["retained_val_rows"] == 2
+    assert metadata["retained_val_subject_count"] == 1
+    assert set(metadata["capped_train_row_ids"]) == selected
+    assert set(metadata["retained_val_row_ids"]) == val_ids
 
 
 def test_mask_train_subject_with_val_pool_is_allowed() -> None:
@@ -183,11 +188,14 @@ def test_mask_train_subject_with_val_pool_is_allowed() -> None:
     x, rows = _cache_rows({**train_plan, **val_plan})
     mask = _mask_for(train_plan, fraction=0.5)
     filtered_x, filtered_rows, metadata = clf._apply_train_mask(
-        x, rows, mask, authoritative_split=_split(train_plan, val_plan)
+        x, rows, mask, authoritative_split=_split(train_plan, val_plan), dataset="androids_interview",
     )
-    assert {row["subject_id"] for row in filtered_rows} == {"s1"}
+    selected = {sid for ids in mask["subjects"].values() for sid in ids}
+    assert {row["sample_id"] for row in filtered_rows} == selected | {"s2_w000", "s2_w001", "s2_w002"}
     assert metadata["available_rows"] == 3
     assert metadata["selected_subject_count"] == 1
+    assert metadata["retained_val_rows"] == 3
+    assert metadata["retained_val_subject_count"] == 1
 
 
 def test_missing_mask_training_subject_is_refused() -> None:
@@ -201,7 +209,7 @@ def test_missing_mask_training_subject_is_refused() -> None:
         baseline_input_sha256=_baseline_sha(training_examples),
     )
     with pytest.raises(ValueError, match="missing_training_subjects"):
-        clf._apply_train_mask(x, rows, mask, authoritative_split=_split(plan))
+        clf._apply_train_mask(x, rows, mask, authoritative_split=_split(plan), dataset="androids_interview")
 
 
 def test_mask_subject_not_in_split_is_refused() -> None:
@@ -211,7 +219,7 @@ def test_mask_subject_not_in_split_is_refused() -> None:
     mask["subjects"]["s9"] = [mask["subjects"]["s1"][0]]
     _rehash(mask)
     with pytest.raises(ValueError, match="do not equal the authoritative training split"):
-        clf._apply_train_mask(x, rows, mask, authoritative_split=_split(plan))
+        clf._apply_train_mask(x, rows, mask, authoritative_split=_split(plan), dataset="androids_interview")
 
 
 def test_authoritative_split_requires_hash_match(tmp_path) -> None:
@@ -259,7 +267,7 @@ def test_final_eval_partition_is_untouched_by_mask_application(tmp_path) -> None
     )
     x, rows = clf._load_partition(cache, "outer_train")
     mask = _mask_for(train_plan, fraction=0.5)
-    clf._apply_train_mask(x, rows, mask, authoritative_split=_split(train_plan))
+    clf._apply_train_mask(x, rows, mask, authoritative_split=_split(train_plan), dataset="androids_interview")
     eval_x, eval_loaded = clf._load_partition(cache, "final_eval")
     assert [row["sample_id"] for row in eval_loaded] == [
         row["sample_id"] for row in eval_rows
@@ -273,7 +281,7 @@ def test_empty_subject_selections_are_refused() -> None:
     mask = _mask_for(plan)
     mask["subjects"] = {}
     with pytest.raises(ValueError, match="no subject selections"):
-        clf._apply_train_mask(x, rows, mask, authoritative_split=_split(plan))
+        clf._apply_train_mask(x, rows, mask, authoritative_split=_split(plan), dataset="androids_interview")
 
 
 def test_duplicate_sample_id_is_refused() -> None:
@@ -297,3 +305,43 @@ def test_expected_hash_mismatch_is_refused() -> None:
     mask = _mask_for(plan)
     with pytest.raises(ValueError, match="!= expected"):
         clf._validate_train_mask(mask, expected_selection_sha256="0" * 64)
+
+
+def test_daic_style_train_only_pool_is_capped_without_retained_val() -> None:
+    """DAIC/CMDC/Turkish frozen protocol: outer_train is train only."""
+    train_plan = {"s1": 3, "s2": 3}
+    x, rows = _cache_rows(train_plan)  # pool excludes the split's inner-val subject
+    mask = _mask_for(train_plan, fraction=0.5)
+    split = _split(train_plan, {"s9": 3})
+    filtered_x, filtered_rows, metadata = clf._apply_train_mask(
+        x, rows, mask, authoritative_split=split, dataset="daic"
+    )
+    selected = {sid for ids in mask["subjects"].values() for sid in ids}
+    assert {row["sample_id"] for row in filtered_rows} == selected
+    assert metadata["retained_val_rows"] == 0
+    assert metadata["retained_val_subject_count"] == 0
+    assert set(metadata["capped_train_row_ids"]) == selected
+
+
+def test_identity_mask_reproduces_the_baseline_pool_rows() -> None:
+    """A 100% mask must reproduce the exact baseline head training rows."""
+    train_plan = {"s1": 3, "s2": 3}
+    val_plan = {"s9": 2}
+    x, rows = _cache_rows({**train_plan, **val_plan})
+    mask = _mask_for(train_plan, fraction=1.0)
+    filtered_x, filtered_rows, metadata = clf._apply_train_mask(
+        x, rows, mask, authoritative_split=_split(train_plan, val_plan), dataset="androids_interview"
+    )
+    assert [row["sample_id"] for row in filtered_rows] == [row["sample_id"] for row in rows]
+    assert metadata["selected_rows"] == 6
+    assert metadata["retained_val_rows"] == 2
+
+
+def test_unknown_dataset_with_mask_fails_closed() -> None:
+    plan = {"s1": 3}
+    x, rows = _cache_rows(plan)
+    mask = _mask_for(plan, fraction=0.5)
+    with pytest.raises(ValueError, match="no frozen outer_train pool policy"):
+        clf._apply_train_mask(
+            x, rows, mask, authoritative_split=_split(plan), dataset="unknown_dataset"
+        )

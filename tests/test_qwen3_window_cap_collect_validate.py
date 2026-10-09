@@ -192,12 +192,20 @@ def membership_fixture():
         "source": {"deployment_id": "DEPLOY"},
     }
     variant = {
-        "train_mask": dict(window_cap),
+        "train_mask": {
+            **window_cap,
+            "capped_train_row_ids": ["a", "b", "c"],
+            "retained_val_row_ids": [],
+            "retained_val_subject_count": 0,
+        },
         "training_row_ids": ["a", "b", "c"],
         "parent_attempt_id": "PARENT",
         "fold": 0,
         "checkpoint_hashes": {"adapter_config_sha256": "c" * 64, "adapter_sha256": "d" * 64},
-        "cache_identity": {"extraction_metadata.json": {"sha256": "E"}},
+        "cache_identity": {
+            "extraction_metadata.json": {"sha256": "E"},
+            "outer_train_rows.jsonl": {"sha256": "P"},
+        },
         "fit_weight_audit": {
             "schema_version": "hidden_classifier_weight_audit.v1",
             "policy": "uniform_rows",
@@ -222,6 +230,13 @@ def run_membership(mask, window_cap, extraction, head_metadata, variants):
         variants=variants,
         extraction_sha256="E",
         expected_head_deployment="DEPLOY",
+        val_subjects=set(),
+        pool_rows=[
+            {"subject_id": "s1", "sample_id": "a"},
+            {"subject_id": "s1", "sample_id": "b"},
+            {"subject_id": "s2", "sample_id": "c"},
+        ],
+        pool_rows_sha256="P",
     )
 
 
@@ -232,10 +247,10 @@ def test_membership_passes_for_both_variants():
 
 def test_membership_flags_wrong_rows_and_missing_variant():
     mask, window_cap, extraction, head_metadata, variant = membership_fixture()
-    bad = dict(variant)
-    bad["training_row_ids"] = ["a", "b"]
+    bad = {**variant, "train_mask": dict(variant["train_mask"])}
+    bad["train_mask"]["capped_train_row_ids"] = ["a", "b"]
     issues = run_membership(mask, window_cap, extraction, head_metadata, {"logreg_raw": bad, "xgb_raw": variant})
-    assert any("logreg_raw: training rows do not equal mask membership" in i for i in issues)
+    assert any("capped train rows do not equal mask membership" in i for i in issues)
     issues = run_membership(mask, window_cap, extraction, head_metadata, {"logreg_raw": variant})
     assert any("xgb_raw: classifier metadata missing" in i for i in issues)
     bad_hash = dict(variant)
@@ -520,7 +535,7 @@ def test_weight_policy_canonical_mapping():
 
 
 def _audit_variant(base: dict, **overrides):
-    variant = dict(base)
+    variant = {**base, "train_mask": dict(base["train_mask"])}
     variant["fit_weight_audit"] = {**base["fit_weight_audit"], **overrides}
     return variant
 
@@ -551,3 +566,58 @@ def test_weight_audit_invalid_cases_are_refused():
             {"logreg_raw": _audit_variant(variant, **overrides), "xgb_raw": variant},
         )
         assert issues, f"expected an issue for {overrides}"
+
+
+def _val_fixture():
+    mask, window_cap, extraction, head_metadata, variant = membership_fixture()
+    variant = {**variant, "train_mask": dict(variant["train_mask"])}
+    variant["train_mask"]["retained_val_row_ids"] = ["v1"]
+    variant["train_mask"]["retained_val_subject_count"] = 1
+    variant["training_row_ids"] = ["a", "b", "c", "v1"]
+    variant["fit_weight_audit"] = {**variant["fit_weight_audit"], "row_count": 4, "subject_count": 3}
+    pool_rows = [
+        {"subject_id": "s1", "sample_id": "a"},
+        {"subject_id": "s1", "sample_id": "b"},
+        {"subject_id": "s2", "sample_id": "c"},
+        {"subject_id": "s9", "sample_id": "v1"},
+    ]
+    return mask, window_cap, extraction, head_metadata, variant, pool_rows
+
+
+def test_membership_retains_full_inner_val_rows():
+    mask, window_cap, extraction, head_metadata, variant, pool_rows = _val_fixture()
+    issues = cv.membership_issues(
+        parent_attempt_id="PARENT",
+        head_attempt_id="HEAD",
+        fold=0,
+        parent_training_seed=7,
+        mask=mask,
+        window_cap=window_cap,
+        extraction=extraction,
+        head_metadata=head_metadata,
+        variants={"logreg_raw": variant, "xgb_raw": variant},
+        extraction_sha256="E",
+        expected_head_deployment="DEPLOY",
+        val_subjects={"s9"},
+        pool_rows=pool_rows,
+        pool_rows_sha256="P",
+    )
+    assert issues == [], issues
+    dropped = {**variant, "train_mask": dict(variant["train_mask"]), "training_row_ids": ["a", "b", "c"]}
+    issues = cv.membership_issues(
+        parent_attempt_id="PARENT",
+        head_attempt_id="HEAD",
+        fold=0,
+        parent_training_seed=7,
+        mask=mask,
+        window_cap=window_cap,
+        extraction=extraction,
+        head_metadata=head_metadata,
+        variants={"logreg_raw": dropped, "xgb_raw": variant},
+        extraction_sha256="E",
+        expected_head_deployment="DEPLOY",
+        val_subjects={"s9"},
+        pool_rows=pool_rows,
+        pool_rows_sha256="P",
+    )
+    assert any("capped+retained union" in i for i in issues)

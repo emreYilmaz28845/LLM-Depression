@@ -285,6 +285,9 @@ def membership_issues(
     variants: dict[str, dict],
     extraction_sha256: str,
     expected_head_deployment: str | None = None,
+    val_subjects: set[str] | None = None,
+    pool_rows: list[dict] | None = None,
+    pool_rows_sha256: str | None = None,
 ) -> list[str]:
     """Fail-closed checks that both variants trained the exact mask membership.
 
@@ -334,6 +337,8 @@ def membership_issues(
             continue
         train_mask = metadata.get("train_mask") or {}
         training_rows = list(metadata.get("training_row_ids") or [])
+        capped = list(train_mask.get("capped_train_row_ids") or [])
+        retained = list(train_mask.get("retained_val_row_ids") or [])
         weight_audit = metadata.get("fit_weight_audit")
         if not isinstance(weight_audit, dict) or not weight_audit:
             issues.append(f"{variant}: fit weight audit missing")
@@ -359,9 +364,9 @@ def membership_issues(
                 not isinstance(subject_count, int)
                 or isinstance(subject_count, bool)
                 or subject_count < 0
-                or subject_count != len(mask_subjects)
+                or subject_count != len(mask_subjects) + len(val_subjects or ())
             ):
-                issues.append(f"{variant}: weight audit subject_count is not the exact masked subject count")
+                issues.append(f"{variant}: weight audit subject_count is not the exact fit subject count")
             policy = weight_audit.get("policy")
             if str(policy or "") != expected_weight_policy(extraction):
                 issues.append(f"{variant}: weight audit policy {policy!r} != canonical {expected_weight_policy(extraction)!r}")
@@ -374,12 +379,36 @@ def membership_issues(
         ):
             if train_mask.get(field) != window_cap.get(field):
                 issues.append(f"{variant}: train_mask {field} mismatch")
-        if set(training_rows) != membership:
-            issues.append(f"{variant}: training rows do not equal mask membership")
-        if len(training_rows) != int(mask.get("total_selected", -1)):
-            issues.append(f"{variant}: training row count mismatch")
+        if not capped:
+            issues.append(f"{variant}: capped_train_row_ids missing")
+        elif set(capped) != membership:
+            issues.append(f"{variant}: capped train rows do not equal mask membership")
+        if len(capped) != int(mask.get("total_selected", -1)):
+            issues.append(f"{variant}: capped train row count mismatch")
+        if val_subjects is None:
+            issues.append(f"{variant}: authoritative inner-val subjects unavailable")
+        else:
+            if int(train_mask.get("retained_val_subject_count", -1)) != len(val_subjects):
+                issues.append(f"{variant}: retained val subject count mismatch")
+            if val_subjects and not retained:
+                issues.append(f"{variant}: retained_val_row_ids missing")
+            if pool_rows is None:
+                issues.append(f"{variant}: cache pool rows unavailable for acceptance")
+            else:
+                expected_val_ids = {
+                    str(row["sample_id"])
+                    for row in pool_rows
+                    if str(row["subject_id"]) in val_subjects
+                }
+                if set(retained) != expected_val_ids:
+                    issues.append(f"{variant}: retained val rows do not equal the full inner-val rows")
+        if set(training_rows) != set(capped) | set(retained):
+            issues.append(f"{variant}: training rows are not the capped+retained union")
         if len(training_rows) != len(set(training_rows)):
             issues.append(f"{variant}: training rows not unique")
+        pool_link = (metadata.get("cache_identity") or {}).get("outer_train_rows.jsonl") or {}
+        if pool_rows_sha256 and pool_link.get("sha256") != pool_rows_sha256:
+            issues.append(f"{variant}: outer_train rows link mismatch")
         if metadata.get("parent_attempt_id") != parent_attempt_id:
             issues.append(f"{variant}: parent attempt mismatch")
         if metadata.get("fold") is not None and int(metadata["fold"]) != int(fold):
@@ -524,6 +553,35 @@ def resolve_extraction(entry: dict, *, fetcher=fetch_remote_file) -> tuple[Path 
     return local, "verified remote fetch"
 
 
+def resolve_authoritative_split(entry: dict, *, fetcher=fetch_remote_file) -> tuple[Path | None, str]:
+    """The parent fit's logs/split_used.json (local fold first, verified fetch second)."""
+    local_fold = parent_fold_local(entry)
+    if local_fold is not None:
+        candidate = local_fold / "logs" / "split_used.json"
+        if candidate.is_file():
+            return candidate, "collected fold"
+    remote = parent_fold_remote(entry)
+    if remote is None:
+        return None, "parent fold path unavailable"
+    local = LANE / "head_parent_evidence" / str(entry["attempt_id"]) / "split_used.json"
+    ok, reason = fetcher(f"{remote}/logs/split_used.json", local)
+    if not ok:
+        return None, reason
+    return local, "verified remote fetch"
+
+
+def resolve_outer_train_rows(entry: dict, *, fetcher=fetch_remote_file) -> tuple[Path | None, str]:
+    """The extraction cache's outer_train rows (hash-verified fetch)."""
+    cache_dir = str(entry.get("cache_dir") or "")
+    if not cache_dir:
+        return None, "cache_dir missing"
+    local = LANE / "head_cache_evidence" / str(entry["attempt_id"]) / "outer_train_rows.jsonl"
+    ok, reason = fetcher(f"{cache_dir}/outer_train_rows.jsonl", local)
+    if not ok:
+        return None, reason
+    return local, "verified remote fetch"
+
+
 def head_local_paths(entry: dict) -> dict[str, Path]:
     mirror = Path(str(entry["local_mirror"]))
     return {
@@ -548,6 +606,8 @@ def verify_head_membership(
     *,
     parent_evidence: tuple[Path, Path] | None = None,
     extraction_file: Path | None = None,
+    split_file: Path | None = None,
+    pool_rows_file: Path | None = None,
     fetcher=fetch_remote_file,
 ) -> list[str]:
     paths = head_local_paths(entry)
@@ -571,6 +631,14 @@ def verify_head_membership(
             return [f"extraction cache metadata not found ({extraction_reason})"]
     if not extraction_file.is_file():
         return ["extraction cache metadata not found"]
+    if split_file is None:
+        split_file, split_reason = resolve_authoritative_split(entry, fetcher=fetcher)
+        if split_file is None:
+            return [f"authoritative parent split not found ({split_reason})"]
+    if pool_rows_file is None:
+        pool_rows_file, pool_reason = resolve_outer_train_rows(entry, fetcher=fetcher)
+        if pool_rows_file is None:
+            return [f"cache outer_train rows not found ({pool_reason})"]
     import yaml
 
     parent_config = yaml.safe_load(run_config_path.read_text(encoding="utf-8"))
@@ -586,6 +654,23 @@ def verify_head_membership(
         variant: json.loads(path.read_text(encoding="utf-8"))
         for variant, path in variant_metadata_paths(paths["mirror"]).items()
     }
+    split = json.loads(split_file.read_text(encoding="utf-8"))
+    if sha256_file(split_file) != str(extraction.get("saved_split_sha256") or ""):
+        return ["authoritative parent split hash does not match the extraction record"]
+    from src.features.hidden_classifier_policy import expected_outer_train_subjects
+
+    dataset = str(extraction.get("dataset") or entry.get("dataset") or "")
+    try:
+        expected_pool = expected_outer_train_subjects(split, dataset)
+    except ValueError as exc:
+        return [str(exc)]
+    train_subjects = {str(subject) for subject in (split.get("train_subject_ids") or [])}
+    val_subjects = expected_pool - train_subjects
+    pool_rows = [
+        json.loads(line)
+        for line in pool_rows_file.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     return membership_issues(
         parent_attempt_id=str(entry["parent_attempt_id"]),
         head_attempt_id=str(entry["attempt_id"]),
@@ -598,6 +683,9 @@ def verify_head_membership(
         variants=variants,
         extraction_sha256=sha256_file(extraction_file),
         expected_head_deployment=str(entry.get("deployment_id") or "") or None,
+        val_subjects=val_subjects,
+        pool_rows=pool_rows,
+        pool_rows_sha256=sha256_file(pool_rows_file),
     )
 
 

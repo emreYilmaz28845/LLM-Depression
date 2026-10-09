@@ -211,6 +211,7 @@ def _apply_train_mask(
     mask: dict[str, Any],
     *,
     authoritative_split: dict[str, Any],
+    dataset: str,
 ) -> tuple[np.ndarray, list[dict[str, Any]], dict[str, Any]]:
     """Filter outer_train rows to the capped membership; evaluation stays full.
 
@@ -228,8 +229,11 @@ def _apply_train_mask(
     * every selected sample id exists in the cache, belongs to its declared
       subject, and ids are unique.
 
-    Rows outside the masked subjects are the authoritative inner-val pool and
-    are dropped by the filter; the final_eval partition is never touched.
+    Only the authoritative parent train rows are capped by the mask; the
+    inner-val rows are retained in full, exactly as the baseline head pipeline
+    trains on the full outer_train pool. The capped train membership and the
+    retained validation membership are recorded separately, and the final_eval
+    partition is never touched.
     """
     baseline_sha = str(mask.get("baseline_input_sha256") or "")
     if not baseline_sha:
@@ -249,8 +253,10 @@ def _apply_train_mask(
     }
     if not train_split_subjects:
         raise ValueError("authoritative parent split has no train_subject_ids")
+    from src.features.hidden_classifier_policy import expected_outer_train_subjects
+
     row_subjects = {str(row["subject_id"]) for row in train_rows}
-    expected_pool = train_split_subjects | val_split_subjects
+    expected_pool = expected_outer_train_subjects(authoritative_split, dataset)
     if row_subjects != expected_pool:
         raise ValueError(
             "outer_train subjects are not exactly the authoritative train+inner-val "
@@ -298,7 +304,19 @@ def _apply_train_mask(
                     f"but the outer_train cache has it under {owner!r}"
                 )
             selected.add(sample_id)
-    keep = [index for index, sample_id in enumerate(row_ids) if sample_id in selected]
+    # Cap only the authoritative train rows; keep the inner-val rows in full.
+    capped_train = [row for row in training_rows if str(row["sample_id"]) in selected]
+    retain_subjects = expected_pool - train_split_subjects
+    retained_val = [
+        row for row in train_rows if str(row["subject_id"]) in retain_subjects
+    ]
+    capped_ids = {str(row["sample_id"]) for row in capped_train}
+    retained_ids = {str(row["sample_id"]) for row in retained_val}
+    keep = [
+        index
+        for index, row in enumerate(train_rows)
+        if str(row["sample_id"]) in capped_ids or str(row["sample_id"]) in retained_ids
+    ]
     filtered_rows = [train_rows[index] for index in keep]
     metadata = {
         "selection_sha256": mask.get("selection_sha256"),
@@ -307,8 +325,12 @@ def _apply_train_mask(
         "sampling_seed": mask.get("sampling_seed"),
         "algorithm_version": mask.get("algorithm_version"),
         "available_rows": len(training_rows),
-        "selected_rows": len(filtered_rows),
+        "selected_rows": len(capped_train),
         "selected_subject_count": len(mask_subjects),
+        "retained_val_rows": len(retained_val),
+        "retained_val_subject_count": len(retain_subjects),
+        "capped_train_row_ids": sorted(capped_ids),
+        "retained_val_row_ids": sorted(retained_ids),
     }
     return train_x[keep], filtered_rows, metadata
 
@@ -613,7 +635,11 @@ def run_variant(
         _validate_train_mask(train_mask)
         authoritative_split = _load_authoritative_split(cache_dir, metadata)
         train_x, train_rows, train_mask_metadata = _apply_train_mask(
-            train_x, train_rows, train_mask, authoritative_split=authoritative_split
+            train_x,
+            train_rows,
+            train_mask,
+            authoritative_split=authoritative_split,
+            dataset=str(metadata.get("dataset", "")),
         )
         train_y = np.asarray([int(row["label"]) for row in train_rows], dtype=np.int64)
         train_subjects = {str(row["subject_id"]) for row in train_rows}
