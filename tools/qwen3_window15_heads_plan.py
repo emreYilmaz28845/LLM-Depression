@@ -242,6 +242,8 @@ def build_matrix_mode(
     out_path: Path,
     cache_root: Path,
     seeds: list[int],
+    contract_path: Path = CONTRACT,
+    campaign_root: Path | None = None,
 ) -> dict:
     """Run the generic planner with the lane's treatment route source.
 
@@ -252,12 +254,12 @@ def build_matrix_mode(
     """
     import tools.qwen3_heads_matrix as heads_matrix  # noqa: PLC0415
 
-    routes = _treatment_routes()
+    routes = _treatment_routes(contract_path)
     heads_matrix.build_selection_map = lambda: {"routes": routes}
     matrix = heads_matrix.build_matrix(
         seeds=seeds,
         scan_roots=[],
-        campaign_root=RUN_ROOT,
+        campaign_root=campaign_root or RUN_ROOT,
         parent_map_path=parent_map_path,
         cache_root=cache_root,
     )
@@ -280,6 +282,7 @@ def main() -> int:
     parser.add_argument("--parent-map", type=Path, default=None)
     parser.add_argument("--matrix-out", type=Path, default=None)
     parser.add_argument("--cache-root", type=Path, default=None)
+    parser.add_argument("--campaign-root", type=Path, default=None)
     parser.add_argument("--seed", action="append", type=int, default=None)
     args = parser.parse_args()
 
@@ -289,7 +292,14 @@ def main() -> int:
         cache_root = args.cache_root or (LANE / "head_cache")
         seeds = args.seed or [7, 1337, 2024]
         try:
-            matrix = build_matrix_mode(parent_map_path, matrix_out, cache_root, seeds)
+            matrix = build_matrix_mode(
+                parent_map_path,
+                matrix_out,
+                cache_root,
+                seeds,
+                contract_path=args.contract,
+                campaign_root=args.campaign_root,
+            )
         except Exception as exc:  # planner errors are fail-closed
             print(f"REFUSED: {exc}", file=sys.stderr)
             return 2

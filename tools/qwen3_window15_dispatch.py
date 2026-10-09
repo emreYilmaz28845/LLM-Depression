@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -52,6 +54,8 @@ LEDGER = EVIDENCE / "submissions.jsonl"
 CONTRACT = EVIDENCE / "contracts/treatment_contract.json"
 RUN_ROOT = LANE / "output_model/qwen3_window15_20261008"
 EXP_SUBMIT_ROOT = LANE / "outputs/exp_submit"
+HEADS_REGISTRY = EVIDENCE / "head_submissions.jsonl"
+LANE_SUBMISSION_LOCK = EVIDENCE / "submission.lock"
 SLUG = "feat-qwen3-window15-20261008"
 CAMPAIGN = "qwen3_window15_20261008"
 DEPLOYMENT_PREFIX = "feat-qwen3-window15-20261008-"
@@ -92,6 +96,29 @@ Runner = Callable[..., subprocess.CompletedProcess]
 
 class AdmissionError(RuntimeError):
     """Raised when admission cannot be verified or the budget is exceeded."""
+
+
+@contextlib.contextmanager
+def lane_submission_lock(path: Path = LANE_SUBMISSION_LOCK, blocking: bool = False):
+    """One exclusive lane submission lock shared by training and head entrypoints.
+
+    Both entrypoints hold this lock across fresh plan rebuild, eligibility,
+    admission and delivery so two processes can never submit for the lane at
+    the same time.
+    """
+    handle = Path(path).open("w")
+    try:
+        flags = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
+        try:
+            fcntl.flock(handle, flags)
+        except BlockingIOError as exc:
+            raise AdmissionError("another lane submitter holds the submission lock") from exc
+        yield
+    finally:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        finally:
+            handle.close()
 
 
 def run_ssh(command: str, runner: Runner | None = None) -> str:
@@ -370,6 +397,7 @@ def own_job_ids(
     run_root: Path = RUN_ROOT,
     exec_ledger_path: Path = EXECUTION_LEDGER,
     exp_submit_root: Path = EXP_SUBMIT_ROOT,
+    heads_registry_path: Path = HEADS_REGISTRY,
 ) -> tuple[list[str], int]:
     """Authoritative delivered IDs for this lane plus conservative uncertain count."""
     ids: set[str] = set()
@@ -389,14 +417,25 @@ def own_job_ids(
         job_id = str(job.get("slurm_job_id") or "").strip()
         if attempt and job_id:
             exec_attempt_graphs.setdefault(attempt, {})[str(job.get("job_key") or "job")] = job_id
+    # Last record per key wins: a finalized delivery supersedes its reservation.
+    latest_by_key: dict[str, dict] = {}
     for record in ledger_records(ledger_path):
+        key = str(record.get("key") or "")
+        if key:
+            latest_by_key[key] = record
+        else:
+            for value in (record.get("job_ids") or {}).values():
+                if value:
+                    ids.add(str(value))
+            if record.get("status") in {"uncertain", "failed", "held"}:
+                uncertain += 1
+    for record in latest_by_key.values():
         for value in (record.get("job_ids") or {}).values():
             if value:
                 ids.add(str(value))
-        if record.get("status") in {"uncertain", "failed"}:
+        if record.get("status") in {"uncertain", "failed", "held"}:
             # The reservation clears only when the authoritative execution
-            # ledger proves the attempt's complete distinct delivered-ID graph
-            # (job_key names alone, or missing/duplicate IDs, never clear it).
+            # ledger proves the attempt's complete distinct delivered-ID graph.
             attempt = str(record.get("attempt_id") or "")
             if not _complete_job_graph(exec_attempt_graphs.get(attempt, {})):
                 uncertain += 1
@@ -409,6 +448,14 @@ def own_job_ids(
         for value in job_ids.values():
             if value:
                 ids.add(str(value))
+    # Historic and current head-chain deliveries from the generic head registry.
+    for entry in head_registry_entries(heads_registry_path):
+        for value in (entry.get("extract_job_id"), entry.get("classifier_job_id")):
+            if value:
+                ids.add(str(value))
+        for value in (entry.get("job_ids") or {}).values():
+            if value:
+                ids.add(str(value))
     if run_root.exists():
         for sidecar in sorted(run_root.glob("*/*/*/fold_*/jobs.jsonl")):
             for line in sidecar.read_text(encoding="utf-8").splitlines():
@@ -419,6 +466,23 @@ def own_job_ids(
                 if job_id:
                     ids.add(str(job_id))
     return sorted(ids), uncertain
+
+
+def head_registry_entries(registry_path: Path = HEADS_REGISTRY) -> list[dict]:
+    """Read the generic head registry; malformed content fails closed."""
+    if not registry_path.exists():
+        return []
+    entries = []
+    for line_number, line in enumerate(registry_path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            raise AdmissionError(
+                f"head registry malformed at line {line_number}: {exc}"
+            ) from exc
+    return entries
 
 
 def unresolved_delivery_reservations(
@@ -921,32 +985,29 @@ def main() -> int:
         print("no unsubmitted fits remain")
         return 0
 
-    for fit in remaining:
-        try:
-            validate_fit(fit)
-        except AdmissionError as error:
-            print(f"REFUSED: {error}")
-            return 2
-
     try:
-        storage_evidence = storage_admission()
+        with lane_submission_lock():
+            for fit in remaining:
+                validate_fit(fit)
+
+            storage_evidence = storage_admission()
+            print("storage admission: " + json.dumps(storage_evidence, sort_keys=True))
+
+            def record(entry: dict) -> None:
+                append_record(entry, ledger_path)
+
+            processed = run_wave(
+                remaining,
+                args.max_fits,
+                reconcile=reconcile,
+                submit=submit_fit,
+                on_record=record,
+                storage_check=storage_admission,
+                storage_every=5,
+            )
     except AdmissionError as error:
-        print(f"REFUSED (storage): {error}")
+        print(f"REFUSED: {error}")
         return 2
-    print("storage admission: " + json.dumps(storage_evidence, sort_keys=True))
-
-    def record(entry: dict) -> None:
-        append_record(entry, ledger_path)
-
-    processed = run_wave(
-        remaining,
-        args.max_fits,
-        reconcile=reconcile,
-        submit=submit_fit,
-        on_record=record,
-        storage_check=storage_admission,
-        storage_every=5,
-    )
     print(f"wave complete: {processed} fits processed")
     return 0
 
