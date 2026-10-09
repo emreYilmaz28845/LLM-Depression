@@ -38,6 +38,7 @@ from src.features.qwen_hidden_collator import (
     Qwen3OmniPromptOnlyExtractionCollator,
     load_prompt_audio,
 )
+from src.model.audio_padding import resolve_min_audio_samples
 from src.model.runtime import (
     load_model_for_inference,
     load_processor,
@@ -778,9 +779,13 @@ def _extract_partition(
             require_unit_range=str(config.get("dataset", "")).lower() == "daic",
         )
     elif backend == MODEL_BACKEND_QWEN3OMNI:
-        collator = Qwen3OmniPromptOnlyExtractionCollator(processor)
+        collator = Qwen3OmniPromptOnlyExtractionCollator(
+            processor, min_audio_samples=resolve_min_audio_samples(config)
+        )
     else:
-        collator = PromptOnlyExtractionCollator(processor)
+        collator = PromptOnlyExtractionCollator(
+            processor, min_audio_samples=resolve_min_audio_samples(config)
+        )
     vectors: list[np.ndarray] = []
     rows: list[dict[str, Any]] = []
     mask_sources: dict[str, int] = {}

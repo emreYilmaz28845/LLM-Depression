@@ -1,0 +1,390 @@
+#!/usr/bin/env python
+"""Audit window15 response-dataset inputs (D3TEC, Androids, CMDC, Turkish).
+
+Builds the 15-second treatment manifest and the 30-second control manifest into
+a dedicated audit directory with the current code, then verifies:
+
+- label/cohort/split identity between the arms (subject labels and fold
+  assignments);
+- rendered subject prompt-text byte equality between the arms (the
+  full_subject text scope must not change; only the audio windows change);
+- D3TEC/Androids: the 15s child windows partition each unit contiguously and
+  cover exactly the same unit interval as the canonical 30s windows; every
+  child window is at most ``segment_seconds`` long; child rows carry the
+  canonical full response/turn transcript byte-for-byte with an empty
+  ``segment_transcript`` and a reference-only marker; canonical rows keep the
+  unchanged schema (no reference fields);
+- CMDC/Turkish: manifest rows are byte-identical between the arms (the 15s
+  windowing happens at example build time from the same unit rows).
+
+The report is deterministic; any issue exits non-zero.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+LANE = Path(__file__).resolve().parents[1]
+if str(LANE) not in sys.path:
+    sys.path.insert(0, str(LANE))
+
+from src.data.build_manifest import build_for_config  # noqa: E402
+from src.data.runtime import _base_example_from_row, _harmonized_subject_transcripts  # noqa: E402
+from src.utils import load_yaml_with_overrides, read_jsonl  # noqa: E402
+
+FULL_FIELD = {"d3tec": "full_response_transcript", "androids_interview": "full_turn_transcript"}
+UNIT_KEY = {"d3tec": "response_id", "androids_interview": "turn_key"}
+SEGMENTED_DATASETS = {"d3tec", "androids_interview"}
+REFERENCE_FIELDS = (
+    "source_segment_ref",
+    "source_window_ref",
+    "canonical_segment_transcript_ref",
+    "canonical_window_transcript_ref",
+    "segment_transcript_scope",
+)
+
+
+def build_arm(config_path: str, arm_root: Path, dataset: str) -> dict:
+    manifest_dir = arm_root / "manifests" / dataset
+    split_dir = arm_root / "splits" / dataset
+    build_for_config(
+        config_path,
+        [
+            f"output_dirs.manifest_dir={manifest_dir}",
+            f"output_dirs.split_dir={split_dir}",
+        ],
+    )
+    return load_arm(manifest_dir, split_dir, dataset)
+
+
+def load_arm(manifest_dir: Path, split_dir: Path, dataset: str) -> dict:
+    rows = read_jsonl(manifest_dir / f"{dataset}_manifest.jsonl")
+    folds_path = split_dir / f"{dataset}_folds.json"
+    folds = json.loads(folds_path.read_text(encoding="utf-8")) if folds_path.is_file() else None
+    return {"rows": rows, "manifest_dir": str(manifest_dir), "folds": folds}
+
+
+def rendered_texts(rows: list[dict], config_path: str, dataset: str) -> dict[str, str]:
+    config = load_yaml_with_overrides(config_path, [])
+    subject_transcripts = _harmonized_subject_transcripts(rows, dataset)
+    transcript_max_chars = int(config["data"].get("transcript_max_chars", 0) or 0)
+    texts: dict[str, str] = {}
+    for row in rows:
+        subject_id = str(row["subject_id"])
+        if subject_id in texts:
+            continue
+        probe = dict(row)
+        probe["transcript"] = subject_transcripts.get(subject_id, "")
+        probe["full_subject_transcript"] = subject_transcripts.get(subject_id, "")
+        example, _ = _base_example_from_row(probe, config, transcript_max_chars)
+        texts[subject_id] = str(example["prompt_text"])
+    return texts
+
+
+def unit_intervals(rows: list[dict], dataset: str) -> dict[tuple[str, str], list[dict]]:
+    unit_key = UNIT_KEY[dataset]
+    units: dict[tuple[str, str], list[dict]] = {}
+    for row in rows:
+        key = (str(row["subject_id"]), str(row[unit_key]))
+        units.setdefault(key, []).append(row)
+    for key in units:
+        units[key].sort(key=lambda row: int(row.get("segment_index", 0)))
+    return units
+
+
+def audit_segmented(dataset: str, treatment: dict, control: dict, segment_seconds: float) -> tuple[dict, list[str]]:
+    issues: list[str] = []
+    full_field = FULL_FIELD[dataset]
+    units_15 = unit_intervals(treatment["rows"], dataset)
+    units_30 = unit_intervals(control["rows"], dataset)
+    if set(units_15) != set(units_30):
+        issues.append(f"unit sets differ: 15s {len(units_15)} vs 30s {len(units_30)}")
+    child_rows = 0
+    canonical_rows = 0
+    for key in sorted(set(units_15) & set(units_30)):
+        children = units_15[key]
+        canonical = units_30[key]
+        child_rows += len(children)
+        canonical_rows += len(canonical)
+        if len(children) != int(children[0].get("num_segments", 0)):
+            issues.append(f"{key}: num_segments {children[0].get('num_segments')} != {len(children)}")
+        for left, right in zip(children, children[1:]):
+            if abs(float(left["end_time"]) - float(right["start_time"])) > 1e-6:
+                issues.append(f"{key}: child windows are not contiguous")
+                break
+        for child in children:
+            duration = float(child["end_time"]) - float(child["start_time"])
+            if duration <= 0 or duration > float(segment_seconds) + 1e-6:
+                issues.append(f"{key}: child duration {duration} outside (0, {segment_seconds}]")
+                break
+        union_15 = (min(float(row["start_time"]) for row in children), max(float(row["end_time"]) for row in children))
+        union_30 = (min(float(row["start_time"]) for row in canonical), max(float(row["end_time"]) for row in canonical))
+        if abs(union_15[0] - union_30[0]) > 1e-6 or abs(union_15[1] - union_30[1]) > 1e-6:
+            issues.append(f"{key}: 15s union {union_15} != 30s union {union_30}")
+        for child in children:
+            if "source_reference_index" not in child:
+                issues.append(f"{key}: 15s child row lacks source_reference_index")
+                break
+            if str(child.get("transcript", "")) != str(child.get(full_field, "")):
+                issues.append(f"{key}: child transcript != {full_field}")
+                break
+            if str(child.get("segment_transcript", "")) != "":
+                issues.append(f"{key}: child segment_transcript is not empty")
+                break
+            if not any(field in child for field in REFERENCE_FIELDS):
+                issues.append(f"{key}: child row lacks reference-only fields")
+                break
+        for row in canonical:
+            if any(field in row for field in REFERENCE_FIELDS) or "source_reference_index" in row:
+                issues.append(f"{key}: canonical 30s row gained reference fields")
+                break
+    return {
+        "units": len(units_15),
+        "child_rows": child_rows,
+        "canonical_rows": canonical_rows,
+        "max_child_duration": max(
+            (float(row["end_time"]) - float(row["start_time"]) for row in treatment["rows"]), default=0.0
+        ),
+    }, issues
+
+
+def runtime_window_audit(
+    dataset: str, rows: list[dict], config_path: str, segment_seconds: float
+) -> tuple[dict, list[str], dict[tuple[str, str], str]]:
+    """Run the actual harmonized response-window builder on the real config.
+
+    Coverage is anchored to the source audio durations (sf.info frames /
+    samplerate) and to the manifest's natural-unit set, so truncated coverage
+    or an entirely omitted unit is detected. Returns (details, issues,
+    prompt_text_by_unit). Audio paths are read but never written into the report.
+    """
+    import math
+
+    import soundfile as sf
+
+    from src.data.runtime import (  # noqa: PLC0415
+        _build_harmonized_response_window_examples,
+        _harmonized_natural_unit_id,
+    )
+
+    config = load_yaml_with_overrides(config_path, [])
+    examples = _build_harmonized_response_window_examples(rows, config, "audit")
+    issues: list[str] = []
+    expected_units: dict[tuple[str, str], float] = {}
+    expected_subjects: dict[str, int] = {}
+    for row in rows:
+        subject = str(row["subject_id"])
+        expected_subjects[subject] = int(row["label"])
+        unit_id = _harmonized_natural_unit_id(row, dataset)
+        response_id = f"{subject}::{unit_id}"
+        paths = row.get("audio_paths") or [row.get("audio_path")]
+        path = next((item for item in paths if item), None)
+        if not path:
+            issues.append(f"{subject}: source row lacks an audio path")
+            continue
+        info = sf.info(str(path))
+        expected_units[(subject, response_id)] = float(info.frames / info.samplerate)
+    emitted_units: dict[tuple[str, str], list[tuple[float, float]]] = {}
+    emitted_subjects: dict[str, int] = {}
+    unit_texts: dict[tuple[str, str], set[str]] = {}
+    sample_ids: list[str] = []
+    for example in examples:
+        subject = str(example["subject_id"])
+        emitted_subjects[subject] = int(example["label"])
+        sample_ids.append(str(example["sample_id"]))
+        starts = list(example.get("audio_start_times") or [])
+        ends = list(example.get("audio_end_times") or [])
+        if len(starts) != 1 or len(ends) != 1 or starts[0] is None or ends[0] is None:
+            issues.append(f"{subject}: emitted window lacks explicit start/end times")
+            continue
+        unit = (subject, str(example.get("response_id", "")))
+        emitted_units.setdefault(unit, []).append((float(starts[0]), float(ends[0])))
+        unit_texts.setdefault(unit, set()).add(str(example["prompt_text"]))
+    if len(sample_ids) != len(set(sample_ids)):
+        issues.append("emitted sample IDs are not unique")
+    if set(emitted_units) != set(expected_units):
+        missing = sorted(set(expected_units) - set(emitted_units))
+        extra = sorted(set(emitted_units) - set(expected_units))
+        issues.append(
+            f"emitted unit set differs from the manifest natural-unit set: "
+            f"missing {len(missing)}, extra {len(extra)}"
+        )
+    if emitted_subjects != expected_subjects:
+        issues.append("emitted subject/label set differs from the manifest")
+    max_window = 0.0
+    anchored = 0
+    for (subject, _response_id), windows in sorted(emitted_units.items()):
+        windows.sort()
+        if abs(windows[0][0]) > 1e-6:
+            issues.append(f"{subject}: first emitted window starts at {windows[0][0]}")
+        for left, right in zip(windows, windows[1:]):
+            if abs(left[1] - right[0]) > 1e-6:
+                issues.append(f"{subject}: emitted windows are not contiguous")
+                break
+        source_duration = expected_units.get((subject, _response_id))
+        last_end = windows[-1][1]
+        if source_duration is None:
+            continue
+        if abs(last_end - source_duration) > 1e-3:
+            issues.append(
+                f"{subject}: emitted coverage {last_end} != source duration {source_duration}"
+            )
+        else:
+            anchored += 1
+        expected_count = max(1, int(math.ceil(source_duration / float(segment_seconds))))
+        if len(windows) != expected_count:
+            issues.append(
+                f"{subject}: emitted {len(windows)} windows != "
+                f"ceil(source duration/{segment_seconds})={expected_count}"
+            )
+        for start, end in windows:
+            length = end - start
+            max_window = max(max_window, length)
+            if length <= 0 or length > float(segment_seconds) + 1e-6:
+                issues.append(f"{subject}: emitted window length {length} outside (0, {segment_seconds}]")
+                break
+    for (subject, _response_id), texts in sorted(unit_texts.items()):
+        if len(texts) != 1:
+            issues.append(f"{subject}: unit examples disagree on the rendered prompt text")
+    return (
+        {
+            "examples": len(examples),
+            "units": len(emitted_units),
+            "expected_units": len(expected_units),
+            "coverage_anchored_units": anchored,
+            "subjects": len(emitted_subjects),
+            "unique_sample_ids": len(sample_ids) == len(set(sample_ids)),
+            "max_window_seconds": round(max_window, 6),
+        },
+        issues,
+        {unit: next(iter(texts)) for unit, texts in unit_texts.items()},
+    )
+
+
+def audit_flat(
+    dataset: str,
+    treatment: dict,
+    control: dict,
+    treatment_config: str,
+    control_config: str,
+    segment_seconds: float,
+    control_segment_seconds: float,
+) -> tuple[dict, list[str]]:
+    issues: list[str] = []
+    rows_15 = {str(row["sample_id"]): row for row in treatment["rows"]}
+    rows_30 = {str(row["sample_id"]): row for row in control["rows"]}
+    if set(rows_15) != set(rows_30):
+        issues.append(f"sample_id sets differ: 15s {len(rows_15)} vs 30s {len(rows_30)}")
+    differing = 0
+    for sample_id in sorted(set(rows_15) & set(rows_30)):
+        left = json.dumps(rows_15[sample_id], sort_keys=True, ensure_ascii=False)
+        right = json.dumps(rows_30[sample_id], sort_keys=True, ensure_ascii=False)
+        if left != right:
+            differing += 1
+    if differing:
+        issues.append(f"{differing} manifest rows differ between the arms for {dataset}")
+    details_15, issues_15, texts_15 = runtime_window_audit(
+        dataset, treatment["rows"], treatment_config, segment_seconds
+    )
+    details_30, issues_30, texts_30 = runtime_window_audit(
+        dataset, control["rows"], control_config, control_segment_seconds
+    )
+    issues.extend(issues_15)
+    issues.extend(issues_30)
+    if texts_15 != texts_30:
+        differing_units = sorted(
+            unit
+            for unit in set(texts_15) | set(texts_30)
+            if texts_15.get(unit) != texts_30.get(unit)
+        )
+        issues.append(f"runtime prompt text differs for {len(differing_units)} units")
+    return {
+        "rows": len(rows_15),
+        "identical_rows": len(rows_15) - differing,
+        "runtime_treatment": details_15,
+        "runtime_control": details_30,
+        "runtime_texts_equal": texts_15 == texts_30,
+    }, issues
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dataset", required=True, choices=sorted(FULL_FIELD) + ["cmdc", "turkish"])
+    parser.add_argument("--control-config", required=True)
+    parser.add_argument("--treatment-config", required=True)
+    parser.add_argument("--runtime-root", required=True, type=Path)
+    parser.add_argument(
+        "--manifest-dir",
+        type=Path,
+        default=None,
+        help="shared prebuilt manifest dir (skips building; used for pooled Turkish)",
+    )
+    parser.add_argument("--split-dir", type=Path, default=None, help="shared prebuilt split dir")
+    parser.add_argument("--output", required=True, type=Path)
+    args = parser.parse_args()
+
+    dataset = args.dataset
+    if args.manifest_dir:
+        split_dir = args.split_dir or args.manifest_dir
+        treatment = load_arm(args.manifest_dir, split_dir, dataset)
+        control = treatment
+    else:
+        treatment = build_arm(args.treatment_config, args.runtime_root / "treatment15", dataset)
+        control = build_arm(args.control_config, args.runtime_root / "control30", dataset)
+
+    issues: list[str] = []
+    labels_15 = {str(row["subject_id"]): int(row["label"]) for row in treatment["rows"]}
+    labels_30 = {str(row["subject_id"]): int(row["label"]) for row in control["rows"]}
+    if labels_15 != labels_30:
+        issues.append("subject label maps differ between arms")
+    if treatment["folds"] != control["folds"]:
+        issues.append("fold assignments differ between arms")
+
+    texts_15 = rendered_texts(treatment["rows"], args.treatment_config, dataset)
+    texts_30 = rendered_texts(control["rows"], args.control_config, dataset)
+    if texts_15 != texts_30:
+        differing = sorted(set(texts_15) ^ set(texts_30)) or [
+            subject for subject in texts_15 if texts_15.get(subject) != texts_30.get(subject)
+        ]
+        issues.append(f"rendered subject prompt text differs: {differing[:10]}")
+
+    treatment_parsed = load_yaml_with_overrides(args.treatment_config, [])
+    control_parsed = load_yaml_with_overrides(args.control_config, [])
+    segment_seconds = float((treatment_parsed.get("data") or {}).get("segment_seconds", 15.0))
+    control_segment_seconds = float((control_parsed.get("data") or {}).get("segment_seconds", 30.0))
+    if dataset in SEGMENTED_DATASETS:
+        details, detail_issues = audit_segmented(dataset, treatment, control, segment_seconds)
+    else:
+        details, detail_issues = audit_flat(
+            dataset,
+            treatment,
+            control,
+            args.treatment_config,
+            args.control_config,
+            segment_seconds,
+            control_segment_seconds,
+        )
+    issues.extend(detail_issues)
+
+    report = {
+        "schema_version": "audiollm.qwen3_window15_response_input_audit.v1",
+        "dataset": dataset,
+        "control_config": args.control_config,
+        "treatment_config": args.treatment_config,
+        "subjects": len(labels_15),
+        "rendered_texts_equal": texts_15 == texts_30,
+        "details": details,
+        "issues": issues,
+        "status": "passed" if not issues else "failed",
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(report, indent=1, sort_keys=True), encoding="utf-8")
+    print(json.dumps({"status": report["status"], "issues": issues, "output": str(args.output)}))
+    return 0 if not issues else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

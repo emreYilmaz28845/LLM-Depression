@@ -12,6 +12,7 @@ from typing import Any
 import soundfile as sf
 
 from src.data.split_utils import deterministic_inner_split
+from src.data.window_mapping import reference_fields
 from src.utils import label_text_from_int
 
 
@@ -20,7 +21,25 @@ ANDROIDS_INTERVIEW_PATIENT_COUNT = 64
 ANDROIDS_INTERVIEW_CONTROL_COUNT = 52
 ANDROIDS_INTERVIEW_TURN_COUNT = 874
 ANDROIDS_INTERVIEW_WINDOW_COUNT = 1302
+# Opt-in 15-second segmentation: window count locked from the real corpus
+# audit (2026-10-08, 1970 = sum over turns of ceil(turn duration / 15)). The
+# canonical 30-second expectation above is unchanged.
+ANDROIDS_INTERVIEW_WINDOW_COUNT_15S = 1970
 ANDROIDS_DEFAULT_SEGMENT_SECONDS = 30.0
+# Versioned opt-in for the window15 comparison arm: the canonical recipe stays
+# 30 seconds, and the only additional accepted duration is 15 seconds.
+ANDROIDS_ALLOWED_SEGMENT_SECONDS = (ANDROIDS_DEFAULT_SEGMENT_SECONDS, 15.0)
+
+
+def expected_androids_window_count(segment_seconds: float) -> int:
+    """Corpus-contract window expectation for the active segmentation.
+
+    The canonical 30-second expectation is the historical lock; the 15-second
+    opt-in expectation is locked from the real corpus audit (2026-10-08).
+    """
+    if math.isclose(float(segment_seconds), 15.0, rel_tol=0.0, abs_tol=1e-9):
+        return ANDROIDS_INTERVIEW_WINDOW_COUNT_15S
+    return ANDROIDS_INTERVIEW_WINDOW_COUNT
 
 _RECORDING_RE = re.compile(
     r"^(?P<numeric_id>\d+)_(?P<condition>[CP])(?P<gender>[FM])"
@@ -140,31 +159,38 @@ def discover_androids_interview_windows(
         duration = float(info.frames / info.samplerate)
         windows = equal_duration_windows(duration, segment_seconds)
         for window_index, (start_time, end_time) in enumerate(windows):
-            rows.append(
-                {
-                    "dataset": "androids_interview",
-                    "task": "interview",
-                    **identity,
-                    "sample_id": androids_window_id(identity["turn_key"], window_index),
-                    "window_id": androids_window_id(identity["turn_key"], window_index),
-                    "window_index": window_index,
-                    "segment_index": window_index,
-                    "num_windows": len(windows),
-                    "num_segments": len(windows),
-                    "audio_path": str(audio_path),
-                    "start_time": start_time,
-                    "end_time": end_time,
-                    "segment_duration": end_time - start_time,
-                    "turn_duration": duration,
-                }
+            row = {
+                "dataset": "androids_interview",
+                "task": "interview",
+                **identity,
+                "sample_id": androids_window_id(identity["turn_key"], window_index),
+                "window_id": androids_window_id(identity["turn_key"], window_index),
+                "window_index": window_index,
+                "segment_index": window_index,
+                "num_windows": len(windows),
+                "num_segments": len(windows),
+                "audio_path": str(audio_path),
+                "start_time": start_time,
+                "end_time": end_time,
+                "segment_duration": end_time - start_time,
+                "turn_duration": duration,
+            }
+            # Only the subdivided path records the canonical reference; the
+            # canonical 30-second manifest schema stays byte-identical.
+            row.update(
+                reference_fields(
+                    segment_seconds, ANDROIDS_DEFAULT_SEGMENT_SECONDS, start_time, duration
+                )
             )
+            rows.append(row)
     if enforce_corpus_contract:
         expected_classes = Counter({0: ANDROIDS_INTERVIEW_CONTROL_COUNT, 1: ANDROIDS_INTERVIEW_PATIENT_COUNT})
+        expected_windows = expected_androids_window_count(segment_seconds)
         if (
             len(subject_ids) != ANDROIDS_INTERVIEW_SUBJECT_COUNT
             or len(seen_recordings) != ANDROIDS_INTERVIEW_SUBJECT_COUNT
             or len(audio_files) != ANDROIDS_INTERVIEW_TURN_COUNT
-            or len(rows) != ANDROIDS_INTERVIEW_WINDOW_COUNT
+            or len(rows) != expected_windows
             or class_counts != expected_classes
         ):
             raise ValueError(
@@ -172,7 +198,7 @@ def discover_androids_interview_windows(
                 f"subjects={len(subject_ids)} classes={dict(class_counts)} "
                 f"turns={len(audio_files)} windows={len(rows)}; expected "
                 f"{ANDROIDS_INTERVIEW_SUBJECT_COUNT}, {dict(expected_classes)}, "
-                f"{ANDROIDS_INTERVIEW_TURN_COUNT}, {ANDROIDS_INTERVIEW_WINDOW_COUNT}."
+                f"{ANDROIDS_INTERVIEW_TURN_COUNT}, {expected_windows}."
             )
     return rows
 
@@ -294,6 +320,19 @@ def _fold_report(
     return report
 
 
+def child_window_transcript_fields(full_turn_transcript: str) -> tuple[str, str]:
+    """Transcript fields for a subdivided child window.
+
+    No aligned ASR exists for a child window. The manifest's generic
+    ``transcript`` field carries the canonical full turn transcript -- the
+    byte-for-byte subject-level text the ``full_subject`` audio_text scope
+    consumes -- so the manifest validation invariant (non-empty transcript)
+    holds without inventing aligned text; ``segment_transcript`` stays empty and
+    the canonical window metadata remains a reference only.
+    """
+    return str(full_turn_transcript), ""
+
+
 def build_androids_interview_manifest(
     config: dict[str, Any],
     quarantine: dict[str, Any],
@@ -302,13 +341,14 @@ def build_androids_interview_manifest(
     root = Path(config["dataset_root"])
     data_cfg = config.get("data", {})
     segment_seconds = float(data_cfg.get("segment_seconds", ANDROIDS_DEFAULT_SEGMENT_SECONDS))
-    if not math.isclose(
-        segment_seconds,
-        ANDROIDS_DEFAULT_SEGMENT_SECONDS,
-        rel_tol=0.0,
-        abs_tol=1e-9,
+    if not any(
+        math.isclose(segment_seconds, allowed, rel_tol=0.0, abs_tol=1e-9)
+        for allowed in ANDROIDS_ALLOWED_SEGMENT_SECONDS
     ):
-        raise ValueError("ANDROIDS Interview requires data.segment_seconds=30.")
+        raise ValueError(
+            "ANDROIDS Interview requires data.segment_seconds in "
+            f"{sorted(ANDROIDS_ALLOWED_SEGMENT_SECONDS)}."
+        )
     if str(data_cfg.get("segment_partition", "equal_duration")) != "equal_duration":
         raise ValueError("ANDROIDS Interview supports only equal_duration segmentation.")
     if int(config.get("split", {}).get("outer_folds", 5)) != 5:
@@ -332,34 +372,101 @@ def build_androids_interview_manifest(
     join_audit_rows: list[dict[str, Any]] = []
     used_full: set[str] = set()
     used_segments: set[str] = set()
+    use_text = bool((config.get("data") or {}).get("use_text", False))
+    declared_scope = (
+        str((config.get("data") or {}).get("audio_text_transcript_scope", "segment_aligned"))
+        .strip()
+        .lower()
+    )
+    if (
+        segment_seconds != ANDROIDS_DEFAULT_SEGMENT_SECONDS
+        and use_text
+        and declared_scope == "segment_aligned"
+    ):
+        raise ValueError(
+            "ANDROIDS segment_aligned transcript scope is unsupported for subdivided "
+            f"windows ({segment_seconds}s): aligned ASR exists only for the canonical "
+            "30-second segmentation. Declare full_turn or full_subject scope for the "
+            "window15 arm."
+        )
     for window in windows:
         turn_key = str(window["turn_key"])
         window_id = str(window["window_id"])
         full = full_transcripts.get(turn_key)
-        segment = segment_transcripts.get(window_id)
-        if full is None or segment is None:
-            raise ValueError(
-                f"ANDROIDS transcript coverage failure for {window_id}: "
-                f"full={full is not None} segment={segment is not None}"
-            )
-        if androids_audio_identity(full.get("audio_path", "")) != androids_audio_identity(
-            window["audio_path"]
-        ):
-            raise ValueError(f"ANDROIDS full-turn audio path mismatch for {turn_key}.")
-        for field in ("start_time", "end_time"):
-            if field not in segment or not math.isclose(
-                float(segment[field]), float(window[field]), rel_tol=0.0, abs_tol=1e-6
+        source_ref = window.get("source_reference_index")
+        if source_ref is None:
+            # Canonical 30-second path: unchanged behavior and schema.
+            segment = segment_transcripts.get(window_id)
+            if full is None or segment is None:
+                raise ValueError(
+                    f"ANDROIDS transcript coverage failure for {window_id}: "
+                    f"full={full is not None} segment={segment is not None}"
+                )
+            if androids_audio_identity(full.get("audio_path", "")) != androids_audio_identity(
+                window["audio_path"]
+            ):
+                raise ValueError(f"ANDROIDS full-turn audio path mismatch for {turn_key}.")
+            for field in ("start_time", "end_time"):
+                if field not in segment or not math.isclose(
+                    float(segment[field]), float(window[field]), rel_tol=0.0, abs_tol=1e-6
+                ):
+                    raise ValueError(
+                        f"ANDROIDS interval mismatch for {window_id} field={field}: "
+                        f"cache={segment.get(field)!r} canonical={window[field]!r}"
+                    )
+            if androids_audio_identity(
+                segment.get("audio_path", "")
+            ) != androids_audio_identity(window["audio_path"]):
+                raise ValueError(f"ANDROIDS audio path mismatch for {window_id}.")
+            used_full.add(turn_key)
+            used_segments.add(window_id)
+            transcript_text = segment["transcript"]
+            segment_text = transcript_text
+            reference_row: dict[str, Any] = {}
+        else:
+            source_window_id = androids_window_id(turn_key, int(source_ref))
+            segment = segment_transcripts.get(source_window_id)
+            if full is None or segment is None:
+                raise ValueError(
+                    f"ANDROIDS canonical window reference missing for {window_id}: "
+                    f"full={full is not None} segment={segment is not None} "
+                    f"(reference {source_window_id})"
+                )
+            if androids_audio_identity(full.get("audio_path", "")) != androids_audio_identity(
+                window["audio_path"]
+            ):
+                raise ValueError(f"ANDROIDS full-turn audio path mismatch for {turn_key}.")
+            # The reference index is start-based; a child window may extend past
+            # the referenced canonical window. Only require that the child start
+            # lies inside the referenced interval.
+            if not (
+                float(segment["start_time"]) - 1e-6
+                <= float(window["start_time"])
+                <= float(segment["end_time"]) + 1e-6
             ):
                 raise ValueError(
-                    f"ANDROIDS interval mismatch for {window_id} field={field}: "
-                    f"cache={segment.get(field)!r} canonical={window[field]!r}"
+                    f"ANDROIDS reference mismatch for {window_id} "
+                    f"(reference {source_window_id}): child start {window['start_time']} "
+                    f"outside [{segment['start_time']}, {segment['end_time']}]."
                 )
-        if androids_audio_identity(
-            segment.get("audio_path", "")
-        ) != androids_audio_identity(window["audio_path"]):
-            raise ValueError(f"ANDROIDS audio path mismatch for {window_id}.")
-        used_full.add(turn_key)
-        used_segments.add(window_id)
+            if androids_audio_identity(
+                segment.get("audio_path", "")
+            ) != androids_audio_identity(window["audio_path"]):
+                raise ValueError(f"ANDROIDS audio path mismatch for {window_id}.")
+            used_full.add(turn_key)
+            used_segments.add(source_window_id)
+            # No aligned ASR exists for the child window: the generic
+            # transcript field carries the canonical full turn transcript
+            # (byte-for-byte subject-level text) and segment_transcript stays
+            # empty; the canonical window metadata is a reference only.
+            transcript_text, segment_text = child_window_transcript_fields(
+                full["transcript"]
+            )
+            reference_row = {
+                "source_window_ref": source_window_id,
+                "canonical_window_transcript_ref": segment["transcript"],
+                "segment_transcript_scope": "canonical_reference_only",
+            }
         subject_id = str(window["subject_id"])
         subject_meta.setdefault(
             subject_id,
@@ -385,8 +492,9 @@ def build_androids_interview_manifest(
             {
                 **window,
                 "audio_paths": [window["audio_path"]],
-                "transcript": segment["transcript"],
-                "segment_transcript": segment["transcript"],
+                "transcript": transcript_text,
+                "segment_transcript": segment_text,
+                **reference_row,
                 "full_turn_transcript": full["transcript"],
                 "transcript_path": str(segment_path),
                 "full_transcript_path": str(full_path),
