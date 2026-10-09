@@ -38,6 +38,7 @@ if str(LANE) not in sys.path:
 
 from tools import collect_legacy_prompt_cells as collector  # noqa: E402
 from tools import qwen3_legacy_prompt_dispatch as dispatch  # noqa: E402
+from tools import storage_gate_mn5 as storage_gate  # noqa: E402
 
 EVIDENCE = LANE / "outputs/qwen3_legacy_prompt_20261008"
 PLAN = EVIDENCE / "head_dispatch_plan_v1.json"
@@ -680,6 +681,19 @@ def main() -> int:
         if not args.execute:
             print(json.dumps({"planned_heads": len(heads), "planned_fits": len(fits)}, sort_keys=True))
             return 0
+        # Storage admission: real bsc_quota project reserve plus local reserve.
+        # Shared-filesystem df occupancy is never used; any verification failure
+        # (SSH, group, parser) refuses the whole pass before any submission.
+        try:
+            storage_evidence = storage_gate.check(
+                local_path=LANE,
+                min_project_free_gb=500.0,
+                min_local_free_gb=50.0,
+            )
+        except storage_gate.StorageGateError as error:
+            print(f"storage gate refused (fail-closed, {error.kind}): {error}")
+            return 3
+        print("storage gate:", json.dumps(storage_evidence, sort_keys=True))
         summary = run_campaign_pass(
             head_jobs=heads,
             fit_jobs=fits,
