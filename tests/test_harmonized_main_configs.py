@@ -19,6 +19,8 @@ def harmonized_configs():
         and "_qwen3omni_30b_a3b" not in path.name
         and "_officialdev" not in path.name
         and "turkish_negative_only" not in path.name
+        # The Worker 4 legacy-prompt treatment family is a separate locked recipe.
+        and "_legacyprompt_v1" not in path.name
         # The pooled question-conditioned family is a separate locked recipe.
         and "turkish_pooled" not in path.name
         # Pre-rename canonical Turkish files stay as legacy history.
