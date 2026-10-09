@@ -429,3 +429,217 @@ def test_shared_plan_without_registry_key_is_eligible() -> None:
         {"d3tec_text_only|7|1"},
     )
     assert [job["key"] for job in jobs] == ["d3tec_text_only|7|1"]
+
+
+def _write_registry(path: Path, entries: list[dict]) -> None:
+    path.write_text("".join(json.dumps(entry) + "\n" for entry in entries), encoding="utf-8")
+
+
+def _registry_entry(**overrides) -> dict:
+    entry = {
+        "registry_key": "daic_text_only|7|0",
+        "attempt_id": "head-att-1",
+        "deployment_id": "dep-1",
+        "parent_attempt_id": "parent-att-1",
+        "extract_job_id": "47080284",
+        "classifier_job_id": "47080285",
+        "error": None,
+    }
+    entry.update(overrides)
+    return entry
+
+
+def test_submit_head_consumes_fresh_registry_proof_not_stdout(tmp_path: Path) -> None:
+    """The real shared CLI prints a summary; the registry entry is the proof."""
+    registry = tmp_path / "head_submissions.jsonl"
+    registry.write_text("", encoding="utf-8")
+    job = {"key": "daic_text_only|7|0", "parent_attempt_id": "parent-att-1"}
+
+    def runner(command, **kwargs):
+        with registry.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(_registry_entry()) + "\n")
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="  daic_text_only|7|0: submitted\nregistry updated: 1 entries\n",
+            stderr="",
+        )
+
+    record = guard.submit_head_via_shared(job, "dep-1", runner, registry_path=registry)
+    assert record["status"] == "submitted"
+    assert record["attempt_id"] == "head-att-1"
+    assert record["job_ids"] == {"extract": "47080284", "classifier": "47080285"}
+
+
+def test_submit_head_stale_registry_entry_is_not_consumed(tmp_path: Path) -> None:
+    registry = tmp_path / "head_submissions.jsonl"
+    _write_registry(registry, [_registry_entry(attempt_id="stale-att")])
+    job = {"key": "daic_text_only|7|0", "parent_attempt_id": "parent-att-1"}
+
+    def runner(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, stdout="  daic_text_only|7|0: submitted\n", stderr="")
+
+    record = guard.submit_head_via_shared(job, "dep-1", runner, registry_path=registry)
+    assert record["status"] == "uncertain"
+    assert record["attempt_id"] == "stale-att"  # preserved for ownership
+
+
+def test_submit_head_timeout_with_fresh_registry_proof_is_submitted(tmp_path: Path) -> None:
+    registry = tmp_path / "head_submissions.jsonl"
+    registry.write_text("", encoding="utf-8")
+    job = {"key": "daic_text_only|7|0", "parent_attempt_id": "parent-att-1"}
+
+    def runner(command, **kwargs):
+        with registry.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(_registry_entry(attempt_id="delivered-att")) + "\n")
+        raise subprocess.TimeoutExpired(command, 1800, output="", stderr="ssh stalled")
+
+    record = guard.submit_head_via_shared(job, "dep-1", runner, registry_path=registry)
+    assert record["status"] == "submitted"
+    assert record["attempt_id"] == "delivered-att"
+
+
+def test_fresh_registry_proof_rejects_mismatches(tmp_path: Path) -> None:
+    job = {"key": "daic_text_only|7|0", "parent_attempt_id": "parent-att-1"}
+    registry = tmp_path / "head_submissions.jsonl"
+
+    def fresh(entries, job_=job, deployment="dep-1"):
+        _write_registry(registry, entries)
+        return guard._fresh_registry_delivery(job_["key"], set(), job_, deployment, registry)
+
+    assert fresh([_registry_entry()]) is not None
+    assert fresh([_registry_entry(deployment_id="other")]) is None
+    assert fresh([_registry_entry(parent_attempt_id="other")]) is None
+    assert fresh([_registry_entry(classifier_job_id="47080284")]) is None
+    assert fresh([_registry_entry(extract_job_id="abc")]) is None
+    assert fresh([_registry_entry(error="boom")]) is None
+    assert fresh([_registry_entry(), _registry_entry(attempt_id="second")]) is None
+
+
+def test_reconcile_delivered_heads_appends_exact_proof_and_is_idempotent(tmp_path: Path) -> None:
+    ledger = tmp_path / "submissions.jsonl"
+    ledger.write_text(
+        json.dumps(
+            {
+                "key": "head::daic_text_only|7|0",
+                "stage": "head",
+                "status": "uncertain",
+                "attempt_id": "head-att-1",
+                "parent_attempt_id": "parent-att-1",
+                "job_ids": {},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    registry = tmp_path / "head_submissions.jsonl"
+    _write_registry(registry, [_registry_entry()])
+    summary = guard.reconcile_delivered_heads(ledger, registry)
+    assert summary == {"reconciled": 1, "already_submitted": 0, "unresolved": 0}
+    lines = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
+    assert lines[-1]["status"] == "submitted"
+    assert lines[-1]["attempt_id"] == "head-att-1"
+    assert lines[-1]["job_ids"] == {"extract": "47080284", "classifier": "47080285"}
+    assert lines[-1]["reconciled"] is True
+    assert guard.head_recorded_keys(ledger) == {"daic_text_only|7|0"}
+    again = guard.reconcile_delivered_heads(ledger, registry)
+    assert again == {"reconciled": 0, "already_submitted": 1, "unresolved": 0}
+    assert len(ledger.read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_reconcile_leaves_unproven_head_reserved(tmp_path: Path) -> None:
+    ledger = tmp_path / "submissions.jsonl"
+    ledger.write_text(
+        json.dumps(
+            {
+                "key": "head::daic_text_only|7|0",
+                "stage": "head",
+                "status": "uncertain",
+                "attempt_id": "head-att-1",
+                "parent_attempt_id": "parent-att-1",
+                "job_ids": {},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    registry = tmp_path / "head_submissions.jsonl"
+    _write_registry(registry, [_registry_entry(attempt_id="different-attempt")])
+    summary = guard.reconcile_delivered_heads(ledger, registry)
+    assert summary == {"reconciled": 0, "already_submitted": 0, "unresolved": 1}
+    assert len(ledger.read_text(encoding="utf-8").splitlines()) == 1
+    assert guard.head_recorded_keys(ledger) == {"daic_text_only|7|0"}  # reservation kept
+
+
+def test_submit_head_stdout_blocks_cannot_bypass_registry_rejection(tmp_path: Path) -> None:
+    """Structured stdout without an exact fresh registry proof stays uncertain."""
+    registry = tmp_path / "head_submissions.jsonl"
+    job = {"key": "daic_text_only|7|0", "parent_attempt_id": "parent-att-1"}
+    stdout = "=== JOB daic_text_only|7|0 ===\nEXTRACT_ID=4701\nCLASSIFIER_ID=4702\n"
+
+    def runner(command, **kwargs):
+        _write_registry(registry, [_registry_entry(parent_attempt_id="other-parent")])
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    record = guard.submit_head_via_shared(job, "dep-1", runner, registry_path=registry)
+    assert record["status"] == "uncertain"  # wrong parent: no identity bypass
+    assert record["job_ids"] == {"extract": "4701", "classifier": "4702"}  # IDs kept
+
+    def runner_wrong_deployment(command, **kwargs):
+        _write_registry(registry, [_registry_entry(deployment_id="other-dep")])
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    record2 = guard.submit_head_via_shared(job, "dep-1", runner_wrong_deployment, registry_path=registry)
+    assert record2["status"] == "uncertain"
+
+    def runner_conflicting(command, **kwargs):
+        _write_registry(
+            registry,
+            [_registry_entry(), _registry_entry(extract_job_id="999", classifier_job_id="998")],
+        )
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    record3 = guard.submit_head_via_shared(job, "dep-1", runner_conflicting, registry_path=registry)
+    assert record3["status"] == "uncertain"  # conflicting registry fail-closed
+
+
+def _head_uncertain_record(**overrides) -> dict:
+    record = {
+        "key": "head::daic_text_only|7|0",
+        "stage": "head",
+        "status": "uncertain",
+        "attempt_id": "head-att-1",
+        "parent_attempt_id": "parent-att-1",
+        "job_ids": {},
+    }
+    record.update(overrides)
+    return record
+
+
+def test_reconcile_requires_unique_consistent_registry_proof(tmp_path: Path) -> None:
+    ledger = tmp_path / "submissions.jsonl"
+    registry = tmp_path / "head_submissions.jsonl"
+    ledger.write_text(json.dumps(_head_uncertain_record()) + "\n", encoding="utf-8")
+
+    # Wrong parent attempt: unresolved, nothing appended.
+    _write_registry(registry, [_registry_entry(parent_attempt_id="other-parent")])
+    assert guard.reconcile_delivered_heads(ledger, registry) == {
+        "reconciled": 0,
+        "already_submitted": 0,
+        "unresolved": 1,
+    }
+    assert len(ledger.read_text(encoding="utf-8").splitlines()) == 1
+
+    # Two candidates for the same key+attempt: ambiguous, unresolved.
+    _write_registry(registry, [_registry_entry(), _registry_entry(attempt_id="head-att-1")])
+    assert guard.reconcile_delivered_heads(ledger, registry)["unresolved"] == 1
+
+    # Recorded requested deployment must match the registry entry.
+    ledger.write_text(
+        json.dumps(_head_uncertain_record(requested_deployment_id="dep-1")) + "\n",
+        encoding="utf-8",
+    )
+    _write_registry(registry, [_registry_entry(deployment_id="dep-2")])
+    assert guard.reconcile_delivered_heads(ledger, registry)["unresolved"] == 1
+    _write_registry(registry, [_registry_entry(deployment_id="dep-1")])
+    assert guard.reconcile_delivered_heads(ledger, registry)["reconciled"] == 1

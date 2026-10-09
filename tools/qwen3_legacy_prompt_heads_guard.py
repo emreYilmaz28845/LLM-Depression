@@ -315,7 +315,12 @@ def registry_submitted_keys(registry_path: Path = REGISTRY) -> set[str]:
 
 
 def head_ledger_record(
-    job: dict, entry: dict[str, str], attempt_id: str | None, status: str, tail: str = ""
+    job: dict,
+    entry: dict[str, str],
+    attempt_id: str | None,
+    status: str,
+    tail: str = "",
+    deployment_id: str | None = None,
 ) -> dict:
     parsed_ids = {}
     for source_key, target_key in (
@@ -336,6 +341,8 @@ def head_ledger_record(
         # potentially delivered head job can never escape the own accounting.
         "job_ids": parsed_ids,
     }
+    if deployment_id is not None:
+        record["requested_deployment_id"] = deployment_id
     if status != "submitted":
         record["reason"] = "invalid or missing head delivery"
         record["tail"] = tail[-800:]
@@ -383,11 +390,92 @@ def run_campaign_pass(
     return summary
 
 
+def _registry_records(registry_path: Path = REGISTRY) -> list[dict]:
+    """All shared head-registry entries, newest last; missing file yields none."""
+    if not registry_path.exists():
+        return []
+    records: list[dict] = []
+    for line in registry_path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            records.append(json.loads(line))
+    return records
+
+
+def _fresh_registry_delivery(
+    key: str,
+    before_attempts: set[str],
+    job: dict,
+    deployment_id: str,
+    registry_path: Path = REGISTRY,
+) -> dict | None:
+    """The single fresh exact registry proof for one head key, or None.
+
+    Freshness is the attempt-id set difference since this call started: the
+    shared submit tool mints a new attempt per submission and writes the
+    registry entry only after it parsed exact remote job ids. The entry must
+    also match the head key, the parent attempt, the requested deployment, and
+    carry two distinct numeric job ids.
+    """
+    fresh = [
+        entry
+        for entry in _registry_records(registry_path)
+        if entry.get("registry_key") == key
+        and str(entry.get("attempt_id") or "") not in before_attempts
+    ]
+    if len(fresh) != 1:
+        return None
+    entry = fresh[0]
+    if str(entry.get("deployment_id") or "") != str(deployment_id):
+        return None
+    if str(entry.get("parent_attempt_id") or "") != str(job.get("parent_attempt_id") or ""):
+        return None
+    if entry.get("error"):
+        return None
+    extract = str(entry.get("extract_job_id") or "")
+    classifier = str(entry.get("classifier_job_id") or "")
+    if not extract.isdigit() or not classifier.isdigit() or extract == classifier:
+        return None
+    return entry
+
+
+def _submitted_from_registry(job: dict, entry: dict, deployment_id: str) -> dict:
+    return head_ledger_record(
+        job,
+        {
+            "extract_job_id": str(entry["extract_job_id"]),
+            "classifier_job_id": str(entry["classifier_job_id"]),
+        },
+        str(entry["attempt_id"]),
+        "submitted",
+        deployment_id=deployment_id,
+    )
+
+
 def submit_head_via_shared(
     job: dict,
     deployment_id: str,
     runner: Callable[..., subprocess.CompletedProcess] | None = None,
+    registry_path: Path = REGISTRY,
 ) -> dict:
+    """Submit one head chain and prove delivery from the shared registry.
+
+    The shared CLI prints a human summary; its exact delivery proof is the
+    registry entry (key, fresh attempt, parent attempt, deployment, two
+    distinct numeric job ids). A fresh registry entry is authoritative even
+    when stdout parsing or the return code say otherwise; without it the
+    delivery is uncertain and the key stays reserved.
+    """
+    before = {
+        str(entry.get("attempt_id") or "")
+        for entry in _registry_records(registry_path)
+        if entry.get("registry_key") == job["key"]
+    }
+
+    def proof() -> dict | None:
+        return _fresh_registry_delivery(
+            job["key"], before, job, deployment_id, registry_path
+        )
+
     command = [
         sys.executable,
         "tools/qwen3_heads_dispatch.py",
@@ -399,36 +487,41 @@ def submit_head_via_shared(
         "--execute",
     ]
     runner = runner or subprocess.run
+    partial = ""
+    result: subprocess.CompletedProcess | None = None
     try:
         result = runner(command, cwd=LANE, capture_output=True, text=True, timeout=1800)
     except subprocess.TimeoutExpired as exc:
         partial = _text(getattr(exc, "output", None) or getattr(exc, "stdout", ""))
-        parsed = parse_head_submit_output(partial)
+        partial += "\n" + _text(getattr(exc, "stderr", ""))
+    except Exception as exc:  # fail closed, but still consume a fresh proof
+        partial = f"{type(exc).__name__}: {exc}"
+
+    fresh = proof()
+    if fresh is not None:
+        return _submitted_from_registry(job, fresh, deployment_id)
+    # No exact fresh registry proof: the delivery stays uncertain even when the
+    # stdout happens to look structured. Known IDs from stdout are preserved
+    # for ownership, never promoted to submitted without the registry proof.
+    if result is not None:
+        stdout = result.stdout or ""
+        entry = parse_head_submit_output(stdout).get(job["key"]) or {}
         return head_ledger_record(
             job,
-            parsed.get(job["key"]) or {},
-            _latest_attempt(job["key"]),
+            entry,
+            _latest_attempt(job["key"], registry_path),
             "uncertain",
-            tail=partial + "\n" + _text(getattr(exc, "stderr", "")),
+            tail=stdout + (result.stderr or ""),
+            deployment_id=deployment_id,
         )
-    except OSError as exc:
-        return head_ledger_record(job, {}, _latest_attempt(job["key"]), "uncertain", tail=str(exc))
-    except Exception as exc:  # fail closed on any unexpected runner failure
-        return head_ledger_record(
-            job, {}, _latest_attempt(job["key"]), "uncertain", tail=f"{type(exc).__name__}: {exc}"
-        )
-    stdout = result.stdout or ""
-    parsed = parse_head_submit_output(stdout)
-    entry = parsed.get(job["key"]) or {}
-    attempt_id = _latest_attempt(job["key"])
-    if result.returncode == 0 and valid_head_delivery(entry) and attempt_id:
-        return head_ledger_record(job, entry, attempt_id, "submitted")
+    entry = parse_head_submit_output(partial).get(job["key"]) or {}
     return head_ledger_record(
         job,
         entry,
-        attempt_id,
+        _latest_attempt(job["key"], registry_path),
         "uncertain",
-        tail=stdout + (result.stderr or ""),
+        tail=partial,
+        deployment_id=deployment_id,
     )
 
 
@@ -440,26 +533,111 @@ def _text(value: object) -> str:
     return str(value)
 
 
-def _latest_attempt(key: str) -> str | None:
-    if not REGISTRY.exists():
-        return None
+def _latest_attempt(key: str, registry_path: Path = REGISTRY) -> str | None:
     latest = None
-    for line in REGISTRY.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            entry = json.loads(line)
-            if entry.get("registry_key") == key:
-                latest = entry.get("attempt_id")
+    for entry in _registry_records(registry_path):
+        if entry.get("registry_key") == key:
+            latest = entry.get("attempt_id")
     return latest
+
+
+def reconcile_delivered_heads(
+    ledger_path: Path = LEDGER,
+    registry_path: Path = REGISTRY,
+) -> dict[str, int]:
+    """Record already-delivered head chains proven by the shared registry.
+
+    One-shot recovery for uncertain records whose delivery actually succeeded
+    (the shared CLI wrote exact ids to ``head_submissions.jsonl`` while the
+    guard parser only saw a summary). It never reissues a job: it appends a
+    ``submitted`` record with the exact stored attempt/id pair for the same
+    key and attempt. History stays append-only and the key stays reserved.
+    """
+    records = dispatch.ledger_records(ledger_path)
+    latest: dict[str, dict] = {}
+    order: list[str] = []
+    for record in records:
+        if record.get("stage") != "head":
+            continue
+        key = str(record.get("key") or "")
+        if not key.startswith("head::"):
+            continue
+        if key not in latest:
+            order.append(key)
+        latest[key] = record
+    registry = _registry_records(registry_path)
+    summary = {"reconciled": 0, "already_submitted": 0, "unresolved": 0}
+    for key in order:
+        record = latest[key]
+        if record.get("status") == "submitted":
+            summary["already_submitted"] += 1
+            continue
+        cell_key = key[len("head::") :]
+        attempt = str(record.get("attempt_id") or "")
+        parent_attempt = str(record.get("parent_attempt_id") or "")
+        requested_deployment = record.get("requested_deployment_id")
+        candidates = []
+        for entry in registry:
+            if str(entry.get("registry_key") or "") != cell_key or entry.get("error"):
+                continue
+            if str(entry.get("attempt_id") or "") != attempt:
+                continue
+            if str(entry.get("parent_attempt_id") or "") != parent_attempt:
+                continue
+            if requested_deployment is not None and str(
+                entry.get("deployment_id") or ""
+            ) != str(requested_deployment):
+                continue
+            extract = str(entry.get("extract_job_id") or "")
+            classifier = str(entry.get("classifier_job_id") or "")
+            if extract.isdigit() and classifier.isdigit() and extract != classifier:
+                candidates.append(entry)
+        # Exactly one consistent proof: same key, same attempt, same parent,
+        # matching requested deployment when the record carries one.
+        if len(candidates) != 1:
+            summary["unresolved"] += 1
+            continue
+        candidate = candidates[0]
+        job = {"key": cell_key, "parent_attempt_id": record.get("parent_attempt_id")}
+        delivered = head_ledger_record(
+            job,
+            {
+                "extract_job_id": str(candidate["extract_job_id"]),
+                "classifier_job_id": str(candidate["classifier_job_id"]),
+            },
+            attempt,
+            "submitted",
+            deployment_id=(
+                str(candidate.get("deployment_id"))
+                if candidate.get("deployment_id")
+                else None
+            ),
+        )
+        delivered["reconciled"] = True
+        delivered["reconciliation_source"] = "head_submissions.jsonl exact registry proof"
+        with ledger_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(delivered) + "\n")
+        summary["reconciled"] += 1
+    return summary
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--max-fits", type=int, default=40)
-    parser.add_argument("--deployment-id", required=True)
+    parser.add_argument("--deployment-id", default=None)
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--reconcile-heads", action="store_true")
     args = parser.parse_args()
 
     EVIDENCE.mkdir(parents=True, exist_ok=True)
+    if args.reconcile_heads:
+        with dispatch.acquire_submit_lock():
+            summary = reconcile_delivered_heads()
+        print("head reconciliation:", json.dumps(summary, sort_keys=True))
+        return 0
+    if not args.deployment_id:
+        parser.error("--deployment-id is required for submission passes")
+
     with dispatch.acquire_submit_lock():
         validated = validated_cells()
         maybe_refresh_plan(

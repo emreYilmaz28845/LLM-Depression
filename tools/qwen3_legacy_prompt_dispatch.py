@@ -189,11 +189,22 @@ def own_job_ids(
     contributes its full two-job reservation, so a partial delivery can
     overcount but never disappears. Non-numeric or blank preserved values are
     returned separately and must stop admission until reconciled.
+
+    An uncertain/failed reservation is released only when the same key *and*
+    the same attempt id also has an explicit ``submitted`` record (append-only
+    reconciliation of a proven delivery). A different or newer attempt never
+    releases an older uncertain reservation.
     """
+    records = ledger_records(ledger_path)
+    proven = {
+        (str(record.get("key")), str(record.get("attempt_id")))
+        for record in records
+        if record.get("status") == "submitted" and record.get("attempt_id")
+    }
     ids: set[str] = set()
     unknown: list[str] = []
     uncertain = 0
-    for record in ledger_records(ledger_path):
+    for record in records:
         status = record.get("status")
         if status not in {"submitted", "uncertain", "failed"}:
             continue
@@ -206,7 +217,9 @@ def own_job_ids(
             else:
                 unknown.append(text)
         if status in {"uncertain", "failed"}:
-            uncertain += 1
+            pair = (str(record.get("key")), str(record.get("attempt_id") or ""))
+            if pair not in proven:
+                uncertain += 1
     for sidecar in sorted(run_root.glob("*/*/*/fold_*/jobs.jsonl")):
         for line in sidecar.read_text(encoding="utf-8").splitlines():
             if not line.strip():

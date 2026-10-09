@@ -150,7 +150,7 @@ def test_own_ids_from_ledger_and_fold_sidecars(tmp_path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    ids, uncertain, unknown = dispatch.own_job_ids(ledger, run_root)
+    ids, uncertain, unknown = dispatch.own_job_ids(ledger, run_root, tmp_path / "evidence")
     assert "47073846" in ids and "47073847" in ids and "47071730" in ids
     assert uncertain == 1 and unknown == []
 
@@ -176,7 +176,7 @@ def test_unknown_non_numeric_id_stops_admission(tmp_path: Path) -> None:
     assert ids == ["4702"] and uncertain == 1 and own == 3
     ledger = tmp_path / "submissions.jsonl"
     run_root = tmp_path / "empty"
-    job_ids, uncertain2, unknown = dispatch.own_job_ids(ledger, run_root)
+    job_ids, uncertain2, unknown = dispatch.own_job_ids(ledger, run_root, tmp_path / "evidence")
     with pytest.raises(dispatch.AdmissionError):
         dispatch.require_reconciled(job_ids, {job_id: "RUNNING" for job_id in job_ids}, unknown)
 
@@ -384,7 +384,9 @@ def _roundtrip(tmp_path: Path, stdout: str, stderr: str = "", rc: int = 0):
     record = dispatch.submit_fit(fits(1)[0], runner)
     with ledger.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record) + "\n")
-    ids, uncertain, _unknown = dispatch.own_job_ids(ledger, run_root)
+    evidence = tmp_path / "evidence"
+    evidence.mkdir(exist_ok=True)
+    ids, uncertain, _unknown = dispatch.own_job_ids(ledger, run_root, evidence)
     states = {job_id: "RUNNING" for job_id in ids}
     own = dispatch.own_nonterminal_count(ids, states, uncertain)
     return record, ids, uncertain, own, dispatch.settled_keys(ledger)
@@ -463,3 +465,62 @@ def test_wave_stops_on_uncertain_without_retry() -> None:
 
     processed = dispatch.run_wave(fits(10), 40, reconcile=reconcile, submit=submit)
     assert processed == 1 and calls["count"] == 1
+
+
+def test_own_job_ids_releases_reservation_for_exact_reconciled_delivery(tmp_path: Path) -> None:
+    """Uncertain + same key/attempt submitted record releases the reservation."""
+    ledger = tmp_path / "submissions.jsonl"
+    lines = [
+        {
+            "key": "head::daic_text_only|7|0",
+            "stage": "head",
+            "status": "uncertain",
+            "attempt_id": "head-att-1",
+            "job_ids": {},
+        },
+        {
+            "key": "head::daic_text_only|7|0",
+            "stage": "head",
+            "status": "submitted",
+            "attempt_id": "head-att-1",
+            "job_ids": {"extract": "47080284", "classifier": "47080285"},
+        },
+    ]
+    ledger.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+    ids, uncertain, unknown = dispatch.own_job_ids(
+        ledger, tmp_path / "empty", tmp_path / "evidence"
+    )
+    assert ids == ["47080284", "47080285"]
+    assert uncertain == 0 and unknown == []
+    states = {job_id: "COMPLETED" for job_id in ids}
+    assert dispatch.own_nonterminal_count(ids, states, uncertain) == 0
+
+
+def test_own_job_ids_keeps_uncertainty_for_different_or_partial_attempts(tmp_path: Path) -> None:
+    ledger = tmp_path / "submissions.jsonl"
+    lines = [
+        {
+            "key": "head::daic_text_only|7|0",
+            "stage": "head",
+            "status": "uncertain",
+            "attempt_id": "head-att-1",
+            "job_ids": {"extract": "4701"},
+        },
+        {
+            "key": "head::daic_text_only|7|0",
+            "stage": "head",
+            "status": "submitted",
+            "attempt_id": "head-att-2",  # a different/new attempt never releases the old one
+            "job_ids": {"extract": "4702", "classifier": "4703"},
+        },
+    ]
+    ledger.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+    ids, uncertain, unknown = dispatch.own_job_ids(
+        ledger, tmp_path / "empty", tmp_path / "evidence"
+    )
+    assert set(ids) == {"4701", "4702", "4703"}  # historic known IDs preserved
+    assert uncertain == 1 and unknown == []
+    states = {job_id: "COMPLETED" for job_id in ids}
+    # All known ids are terminal, but the unreleased uncertain attempt keeps its
+    # exact two-job reservation.
+    assert dispatch.own_nonterminal_count(ids, states, uncertain) == 2
