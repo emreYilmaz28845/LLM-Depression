@@ -36,13 +36,15 @@ def test_init_and_show(tmp_path):
     assert data["execution_id"] == "20260820T205735Z-parallel-workflow-2d995f4c"
 
 def test_init_defaults_grant_journal_to_the_current_year_file(tmp_path):
-    from tools.journal_append import istanbul_now, journal_file
+    from datetime import datetime, timezone
+
+    from tools.journal_append import journal_file
 
     state_path = init_state(tmp_path)
     data = json.loads(state_path.read_text())
-    today = istanbul_now().date()
+    today = datetime.now(timezone.utc).date()
     assert data["grant_journal_path"] == str(journal_file(today))
-    assert data["grant_journal_path"].endswith(f"agent-journal-{today.year}.md")
+    assert data["grant_journal_path"].endswith(f"LLM-Depression-{today:%Y-%m}.md")
     assert "docs/agent-journal" not in data["grant_journal_path"]
 
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import pathlib
@@ -17,6 +16,7 @@ from tools.journal_append import (
     derive_identity,
     journal_file,
     journal_root,
+    legacy_journal_file,
 )
 
 TOOL = pathlib.Path(__file__).resolve().parents[1] / "tools" / "journal_append.py"
@@ -116,199 +116,111 @@ def test_broken_pin_fails_closed(tmp_path):
         derive_identity(lane)
 
 
-def test_year_rotation_uses_istanbul_date(tmp_path):
-    root = make_journal_root(tmp_path)
-    assert journal_file(date(2027, 1, 1), root).name == "agent-journal-2027.md"
-    env = make_env(tmp_path, root)
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    init_git_repo(repo)
-
-    before = run_tool(
-        ["--title", "late", "--body-file", "-", "--no-git", "--now", "2026-12-31T20:30:00Z"],
-        env,
-        cwd=repo,
-        stdin="body\n",
+def make_fake_sb(tmp_path):
+    """A stand-in `sb` that records its argv, stdin, cwd and env."""
+    record = tmp_path / "sb-calls.jsonl"
+    script = tmp_path / "fake_sb.py"
+    script.write_text(
+        "import json, os, sys\n"
+        f"rec = {str(record)!r}\n"
+        "data = {'argv': sys.argv[1:], 'stdin': sys.stdin.read() if '-' in sys.argv else '',\n"
+        "        'cwd': os.getcwd(), 'agent': os.environ.get('SECONDBRAIN_AGENT'),\n"
+        "        'root': os.environ.get('SECONDBRAIN_ROOT')}\n"
+        "open(rec, 'a').write(json.dumps(data) + '\\n')\n"
+        "print('logged j-test')\n",
+        encoding="utf-8",
     )
-    assert before.returncode == 0, before.stderr
-    after = run_tool(
-        ["--title", "rollover", "--body-file", "-", "--no-git", "--now", "2026-12-31T21:30:00Z"],
-        env,
-        cwd=repo,
-        stdin="body\n",
+    return f"{sys.executable} {script}", record
+
+
+def calls(record):
+    return [json.loads(line) for line in record.read_text().splitlines()] if record.exists() else []
+
+
+def sb_env(tmp_path, agent="codex"):
+    root = tmp_path / "SecondBrain"
+    env = make_env(tmp_path, root)
+    command, record = make_fake_sb(tmp_path)
+    env["SECONDBRAIN_SB"] = command
+    if agent:
+        env["SECONDBRAIN_AGENT"] = agent
+    else:
+        env.pop("SECONDBRAIN_AGENT", None)
+    return env, record, root
+
+
+def test_journal_file_is_monthly_in_secondbrain(tmp_path):
+    root = tmp_path / "SecondBrain"
+    assert journal_file(date(2026, 10, 12), root) == (
+        root / "20-Projects" / "LLM-Depression" / "journal" / "LLM-Depression-2026-10.md"
     )
-    assert after.returncode == 0, after.stderr
-    assert (root / "LLM-Depression" / "agent-journal-2026.md").is_file()
-    assert (root / "LLM-Depression" / "agent-journal-2027.md").is_file()
+    assert legacy_journal_file(date(2026, 1, 1), tmp_path).name == "agent-journal-2026.md"
 
 
-def test_concurrent_appends_keep_every_entry(tmp_path):
-    root = make_journal_root(tmp_path)
-    env = make_env(tmp_path, root)
+def test_entry_is_forwarded_to_sb_log(tmp_path):
+    env, record, root = sb_env(tmp_path)
     repo = tmp_path / "repo"
     repo.mkdir()
     init_git_repo(repo)
-
-    count = 8
-    processes = [
-        subprocess.Popen(
-            [
-                sys.executable,
-                str(TOOL),
-                "--title",
-                f"entry-{index}",
-                "--body-file",
-                "-",
-                "--no-git",
-            ],
-            cwd=str(repo),
-            env=env,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        for index in range(count)
-    ]
-    for process, index in zip(processes, range(count)):
-        process.communicate(f"body {index}\n")
-    for process in processes:
-        assert process.returncode == 0
-
-    text = (root / "LLM-Depression" / "agent-journal-2026.md").read_text(encoding="utf-8")
-    headings = [line for line in text.splitlines() if line.startswith("## ")]
-    assert len(headings) == count
-    for index in range(count):
-        assert text.count(f"— entry-{index}\n") == 1
+    result = run_tool(["--title", "  A title ", "--body-file", "-"], env, repo, "Body text.\n")
+    assert result.returncode == 0, result.stderr
+    assert "logged j-test" in result.stdout
+    (call,) = calls(record)
+    assert call["argv"] == ["log", "--project", "LLM-Depression", "--title", "A title", "--body-file", "-"]
+    assert call["stdin"] == "Body text.\n"
+    assert call["agent"] == "codex"
+    assert call["root"] == str(root.resolve())
+    assert pathlib.Path(call["cwd"]).resolve() == repo.resolve()
 
 
-def test_lock_timeout_refuses_to_write(tmp_path):
-    root = make_journal_root(tmp_path)
-    env = make_env(tmp_path, root)
+def test_missing_writer_identity_is_refused(tmp_path):
+    env, record, _ = sb_env(tmp_path, agent=None)
     repo = tmp_path / "repo"
     repo.mkdir()
     init_git_repo(repo)
-    target = root / "LLM-Depression" / "agent-journal-2026.md"
-    target.write_text("# Agent journal — 2026\n\n", encoding="utf-8")
-
-    fd = os.open(target, os.O_WRONLY | os.O_APPEND)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        result = run_tool(
-            [
-                "--title",
-                "blocked",
-                "--body-file",
-                "-",
-                "--no-git",
-                "--lock-timeout",
-                "0.2",
-            ],
-            env,
-            cwd=repo,
-            stdin="body\n",
-        )
-    finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
-
+    result = run_tool(["--title", "x", "--body-file", "-"], env, repo, "body\n")
     assert result.returncode == 1
-    assert "could not lock" in result.stderr
-    assert "blocked" not in target.read_text(encoding="utf-8")
+    assert "SECONDBRAIN_AGENT" in result.stderr
+    assert calls(record) == []
 
 
 def test_empty_title_or_body_refused(tmp_path):
-    root = make_journal_root(tmp_path)
-    env = make_env(tmp_path, root)
+    env, record, _ = sb_env(tmp_path)
     repo = tmp_path / "repo"
     repo.mkdir()
     init_git_repo(repo)
-
     assert run_tool(["--title", "  ", "--body-file", "-"], env, repo, "body\n").returncode == 1
     assert run_tool(["--title", "ok", "--body-file", "-"], env, repo, "\n").returncode == 1
-    assert not (root / "LLM-Depression" / "agent-journal-2026.md").exists()
-
-
-def test_missing_journal_dir_fails_closed(tmp_path):
-    root = tmp_path / "Agent-Journal"
-    root.mkdir()
-    env = make_env(tmp_path, root)
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    init_git_repo(repo)
-    result = run_tool(["--title", "x", "--body-file", "-", "--no-git"], env, repo, "body\n")
-    assert result.returncode == 1
-    assert "does not exist" in result.stderr
+    assert calls(record) == []
 
 
 def test_dry_run_touches_nothing(tmp_path):
-    root = make_journal_root(tmp_path)
-    env = make_env(tmp_path, root)
+    env, record, _ = sb_env(tmp_path)
     repo = tmp_path / "repo"
     repo.mkdir()
     init_git_repo(repo)
-    result = run_tool(
-        ["--title", "planned", "--body-file", "-", "--dry-run"], env, repo, "body\n"
-    )
+    result = run_tool(["--title", "planned", "--body-file", "-", "--dry-run"], env, repo, "body\n")
     assert result.returncode == 0
-    assert "planned" in result.stdout
-    assert not (root / "LLM-Depression" / "agent-journal-2026.md").exists()
-    log = subprocess.run(
-        ["git", "-C", str(root), "log", "--oneline"], capture_output=True, text=True
-    ).stdout
-    assert "journal:" not in log
+    assert "planned" in result.stdout and "LLM-Depression-" in result.stdout
+    assert calls(record) == []
 
 
-def test_commit_created_and_missing_remote_is_not_fatal(tmp_path):
-    root = make_journal_root(tmp_path)
-    init_git_repo(root)
-    env = make_env(tmp_path, root)
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    init_git_repo(repo)
-    result = run_tool(["--title", "committed", "--body-file", "-"], env, repo, "body\n")
-    assert result.returncode == 0
-    assert "push skipped" in result.stderr
-    log = subprocess.run(
-        ["git", "-C", str(root), "log", "--oneline"], capture_output=True, text=True
-    ).stdout
-    assert "journal:" in log
-    assert "committed" in log
-
-
-def test_sync_without_remote_exits_nonzero(tmp_path):
-    root = make_journal_root(tmp_path)
-    init_git_repo(root)
-    env = make_env(tmp_path, root)
+def test_sync_forwards_to_sb_sync(tmp_path):
+    env, record, _ = sb_env(tmp_path)
     result = run_tool(["--sync"], env)
-    assert result.returncode == 1
-    assert "no remote" in result.stderr
+    assert result.returncode == 0
+    assert calls(record)[0]["argv"] == ["sync"]
 
 
-def test_sync_pushes_to_local_bare_remote(tmp_path):
-    root = make_journal_root(tmp_path)
-    init_git_repo(root)
-    bare = tmp_path / "bare.git"
-    subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(root), "remote", "add", "origin", str(bare)], check=True)
-    env = make_env(tmp_path, root)
+def test_missing_sb_command_fails_clearly(tmp_path):
+    env, _, _ = sb_env(tmp_path)
+    env["SECONDBRAIN_SB"] = str(tmp_path / "does-not-exist")
     repo = tmp_path / "repo"
     repo.mkdir()
     init_git_repo(repo)
-    result = run_tool(["--title", "backed up", "--body-file", "-"], env, repo, "body\n")
-    assert result.returncode == 0
-    assert "push: pushed" in result.stdout
-    branch = subprocess.run(
-        ["git", "-C", str(root), "branch", "--show-current"],
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    log = subprocess.run(
-        ["git", "-C", str(bare), "log", "--oneline", branch],
-        capture_output=True,
-        text=True,
-    ).stdout
-    assert "backed up" in log
+    result = run_tool(["--title", "x", "--body-file", "-"], env, repo, "body\n")
+    assert result.returncode == 1
+    assert "`sb` command" in result.stderr
 
 
 def test_build_entry_contains_identity_and_stamp():
