@@ -21,7 +21,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from tools.journal_append import journal_dir, journal_file  # noqa: E402
+from tools.journal_append import legacy_journal_dir as journal_dir  # noqa: E402,F401
+from tools.journal_append import legacy_journal_file as journal_file  # noqa: E402
 
 DEFAULT_SOURCE = PROJECT_ROOT / "docs" / "agent-journal"
 SOURCE_NAME_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})\.md$")

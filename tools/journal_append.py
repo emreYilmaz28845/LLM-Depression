@@ -1,13 +1,21 @@
-"""Append one entry to the agent journal.
+"""Append one entry to the agent journal, which now lives in SecondBrain.
 
 The journal is the append-only narrative index of agent work for this
-repository. It lives outside the repository so that every checkout, lane
-worktree, and agent sees the same file. Several agents can append at the same
-time, so this tool is the only supported writer: it takes an exclusive lock,
-writes the whole entry with a single write call, and then commits the result.
+repository. Since 2026-10-12 it lives in the shared SecondBrain vault
+(``~/SecondBrain/20-Projects/LLM-Depression/journal/``, one file per UTC month)
+and the only writer is ``sb log``. This tool keeps its old command line and
+forwards each entry to ``sb log --project LLM-Depression``, which takes the
+vault lock, writes the entry in one call, commits, and pushes to the backup
+remote.
 
-Never edit the journal file directly. A direct edit bypasses the lock and can
-silently drop another agent's entry.
+The writer must be declared with ``SECONDBRAIN_AGENT`` (for example ``codex``
+or ``claude-code``); the tool refuses to guess. The lane/branch context is still
+derived from the pin or Git and recorded by ``sb`` in the entry.
+
+The yearly-file helpers below (``legacy_*``, ``build_entry``, ``append_entry``)
+describe the pre-SecondBrain journal and are kept for
+``tools/migrate_agent_journal.py`` and its tests. The 2026 legacy file was copied
+byte-for-byte into the vault as ``LLM-Depression-legacy-2026.md``.
 """
 from __future__ import annotations
 
@@ -22,8 +30,10 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-DEFAULT_JOURNAL_ROOT = Path("/home/emre/Projects/AudioLLM/Agent-Journal")
+DEFAULT_JOURNAL_ROOT = Path.home() / "SecondBrain"
+LEGACY_JOURNAL_ROOT = Path("/home/emre/Projects/AudioLLM/Agent-Journal")
 PROJECT_DIR_NAME = "LLM-Depression"
+SB_PROJECT = "LLM-Depression"
 PIN_FILE_NAME = ".agent-pin.json"
 LOCK_POLL_SECONDS = 0.05
 
@@ -46,18 +56,32 @@ class Identity:
 
 
 def journal_root() -> Path:
-    override = os.environ.get("AGENT_JOURNAL_ROOT")
-    if override:
-        return Path(override).expanduser().resolve()
+    """Root of the SecondBrain vault that holds the journal.
+
+    ``AGENT_JOURNAL_ROOT`` (tests, backfills) wins, then ``SECONDBRAIN_ROOT``.
+    """
+    for name in ("AGENT_JOURNAL_ROOT", "SECONDBRAIN_ROOT"):
+        override = os.environ.get(name)
+        if override:
+            return Path(override).expanduser().resolve()
     return DEFAULT_JOURNAL_ROOT
 
 
 def journal_dir(root: Path | None = None) -> Path:
-    return (root or journal_root()) / PROJECT_DIR_NAME
+    return (root or journal_root()) / "20-Projects" / SB_PROJECT / "journal"
 
 
 def journal_file(when: date, root: Path | None = None) -> Path:
-    return journal_dir(root) / f"agent-journal-{when.year}.md"
+    """Monthly SecondBrain journal file. ``sb`` picks the month from the UTC date."""
+    return journal_dir(root) / f"{SB_PROJECT}-{when:%Y-%m}.md"
+
+
+def legacy_journal_dir(root: Path | None = None) -> Path:
+    return (root or LEGACY_JOURNAL_ROOT) / PROJECT_DIR_NAME
+
+
+def legacy_journal_file(when: date, root: Path | None = None) -> Path:
+    return legacy_journal_dir(root) / f"agent-journal-{when.year}.md"
 
 
 def istanbul_now() -> datetime:
@@ -259,18 +283,33 @@ def _parse_now(raw: str | None) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _command_sync(root: Path) -> int:
-    ok, message = git_push(root)
-    if ok:
-        print(f"journal push: {message}")
-        return 0
-    print(f"ERROR: journal push failed: {message}", file=sys.stderr)
-    return 1
+def sb_command() -> list[str]:
+    raw = os.environ.get("SECONDBRAIN_SB", "sb")
+    return raw.split()
+
+
+def _run_sb(args: list[str], stdin: str | None = None) -> int:
+    try:
+        result = subprocess.run(
+            [*sb_command(), *args], input=stdin, capture_output=True, text=True
+        )
+    except FileNotFoundError:
+        print(
+            "ERROR: the `sb` command (SecondBrain) was not found. Install it from "
+            "~/Projects/SecondBrain-tool (./install.sh) or set SECONDBRAIN_SB.",
+            file=sys.stderr,
+        )
+        return 1
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
+    return 0 if result.returncode == 0 else 1
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Append one entry to the agent journal (single supported writer)"
+        description="Append one entry to the agent journal (forwards to `sb log` in SecondBrain)"
     )
     parser.add_argument("--title", help="short entry title")
     parser.add_argument(
@@ -278,89 +317,67 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="read the body from this file, or '-' for stdin (default: stdin)",
     )
-    parser.add_argument(
-        "--now",
-        default=None,
-        help="UTC instant for the entry and the rotation year (ISO 8601)",
-    )
     parser.add_argument("--cwd", default=None, help="directory used to derive the identity")
-    parser.add_argument(
-        "--lock-timeout", type=float, default=30.0, help="seconds to wait for the lock"
-    )
     parser.add_argument("--dry-run", action="store_true", help="print the entry only")
     parser.add_argument(
-        "--no-git", action="store_true", help="write without committing to the journal repo"
+        "--sync", action="store_true", help="push pending SecondBrain commits (`sb sync`) and exit"
     )
     parser.add_argument(
-        "--sync", action="store_true", help="push pending journal commits and exit"
+        "--print-identity", action="store_true", help="print the derived lane identity and exit"
     )
     parser.add_argument(
-        "--print-identity", action="store_true", help="print the derived identity and exit"
-    )
-    parser.add_argument(
-        "--print-path", action="store_true", help="print the target journal file and exit"
+        "--print-path", action="store_true", help="print the current journal file and exit"
     )
     args = parser.parse_args(argv)
 
     root = journal_root()
     cwd = Path(args.cwd).resolve() if args.cwd else Path.cwd()
+    env_root = {"SECONDBRAIN_ROOT": str(root)}
 
     if args.sync:
         if args.title:
             print("ERROR: --sync does not take --title", file=sys.stderr)
             return 1
-        return _command_sync(root)
+        os.environ.update(env_root)
+        return _run_sb(["sync"])
 
     try:
         identity = derive_identity(cwd)
-        when_utc = _parse_now(args.now)
-        local_date = when_utc.astimezone(ISTANBUL).date()
-        target = journal_file(local_date, root)
-
         if args.print_identity:
             print(f"{identity.label}\nAgent: {identity.detail}")
             return 0
         if args.print_path:
-            print(str(target))
+            print(str(journal_file(datetime.now(timezone.utc).date(), root)))
             return 0
-        if not args.title:
-            print("ERROR: --title is required to append an entry", file=sys.stderr)
-            return 1
-
-        entry = build_entry(args.title, _read_body(args.body_file), identity, when_utc)
+        if not args.title or not args.title.strip():
+            raise JournalError("--title is required and must not be empty")
+        body = _read_body(args.body_file)
+        if not body.strip():
+            raise JournalError("entry body is empty")
         if args.dry_run:
-            print(f"journal file: {target}")
-            print("--- entry ---")
-            print(entry, end="")
+            print(f"journal file: {journal_file(datetime.now(timezone.utc).date(), root)}")
+            print(f"--- entry (via sb log --project {SB_PROJECT}) ---")
+            print(f"{args.title.strip()}\n\n{body.strip()}")
             return 0
-
-        commit_message = None
-        if not args.no_git:
-            commit_message = f"journal: [{identity.label}] {args.title.strip()}"[:120]
-        append_entry(
-            target,
-            entry,
-            lock_timeout=args.lock_timeout,
-            commit_message=commit_message,
-            root=root,
-            header=f"# Agent journal — {local_date.year}\n\n",
-        )
+        if not os.environ.get("SECONDBRAIN_AGENT", "").strip():
+            raise JournalError(
+                "SECONDBRAIN_AGENT is not set; declare who is writing, e.g. "
+                "`export SECONDBRAIN_AGENT=codex` (or claude-code, opencode, pi)"
+            )
     except JournalError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    print(f"appended to {target} as {identity.label}")
-    if not args.no_git:
-        ok, message = git_push(root)
-        if not ok:
-            print(
-                f"WARNING: local commit kept, push skipped ({message}); run "
-                "--sync later",
-                file=sys.stderr,
-            )
-        else:
-            print(f"journal push: {message}")
-    return 0
+    os.environ.update(env_root)
+    previous = os.getcwd()
+    try:
+        os.chdir(cwd)  # sb records the lane pin / branch of the working directory
+        return _run_sb(
+            ["log", "--project", SB_PROJECT, "--title", args.title.strip(), "--body-file", "-"],
+            stdin=body,
+        )
+    finally:
+        os.chdir(previous)
 
 
 if __name__ == "__main__":

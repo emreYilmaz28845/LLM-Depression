@@ -5,7 +5,9 @@ PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from tools.journal_append import istanbul_now, journal_file
+from datetime import datetime as _datetime, timezone as _timezone
+
+from tools.journal_append import journal_file
 
 SCHEMA_VERSION = "audiollm.parallel_workflow_execution.v1"
 PHASES = list(range(14))
@@ -144,7 +146,7 @@ def cmd_init(args):
         print(f"ERROR: runbook not found: {runbook_path}", file=sys.stderr)
         return 1
     sha = sha256_file(runbook_path)
-    grant_journal = args.grant_journal or str(journal_file(istanbul_now().date()))
+    grant_journal = args.grant_journal or str(journal_file(_datetime.now(_timezone.utc).date()))
     now = utc_now_str()
     state = {
         "schema_version": SCHEMA_VERSION,
