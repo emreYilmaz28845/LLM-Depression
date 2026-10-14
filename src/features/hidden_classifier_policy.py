@@ -24,6 +24,30 @@ PACKED30_AGGREGATION_POLICY = "mean_depressed_probability_threshold_0_5"
 TURKISH_POOLED_TEXT_PAIR_POLICY = "turkish_pooled_text_pair_mean_margin_strict_v1"
 
 
+# Frozen extraction protocol: datasets whose outer_train partition includes the
+# authoritative inner-val subjects. Verified against all 126 reused 100% control
+# heads and their actual parent split files (Androids 30/30 and D3TEC 30/30 use
+# train+inner-val; CMDC 30/30, Turkish 30/30 and DAIC 6/6 use train only).
+POOL_INCLUDES_INNER_VAL_DATASETS = frozenset({"androids_interview", "d3tec"})
+TRAIN_ONLY_POOL_DATASETS = frozenset({"daic", "cmdc", "turkish"})
+
+
+def expected_outer_train_subjects(split: dict[str, Any], dataset: str) -> set[str]:
+    """Authoritative outer_train subject set for a route's frozen protocol.
+
+    Binds the expected head training pool to the actual parent split plus the
+    frozen dataset evaluation role; unknown datasets fail closed.
+    """
+    name = str(dataset or "").strip().lower()
+    train = {str(subject) for subject in (split.get("train_subject_ids") or [])}
+    val = {str(subject) for subject in (split.get("val_inner_subject_ids") or [])}
+    if name in POOL_INCLUDES_INNER_VAL_DATASETS:
+        return train | val
+    if name in TRAIN_ONLY_POOL_DATASETS:
+        return train
+    raise ValueError(f"no frozen outer_train pool policy for dataset {dataset!r}")
+
+
 def is_d3tec_audio_rows(rows: list[dict[str, Any]], metadata: dict[str, Any]) -> bool:
     return (
         str(metadata.get("dataset", "")).lower() == D3TEC_DATASET

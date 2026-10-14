@@ -353,6 +353,12 @@ def command_plan(args: argparse.Namespace) -> int:
                     }
                 )
                 require_under(str(job["extract"]["cache_dir"]), str(cache_root), "job cache dir")
+                train_mask = job.get("train_mask")
+                if train_mask is not None:
+                    entry["train_mask"] = _validated_train_mask_block(
+                        train_mask,
+                        context=f"{route['route_id']} s{job['seed']} f{job['fold']}",
+                    )
                 resolved += 1
             else:
                 entry["reason"] = job.get("reason")
@@ -432,6 +438,40 @@ def _append_registry(path: Path, entry: dict[str, Any]) -> None:
 
 def _key(route_id: str, seed: int, fold: int) -> str:
     return f"{route_id}|{seed}|{fold}"
+
+
+def _validated_train_mask_block(train_mask: Any, *, context: str) -> dict[str, Any]:
+    """Validate one window-cap mask block before it reaches the classifier worker.
+
+    The block comes from the cluster-side planner, which records the parent
+    fold's mask path and the selection hash from the training run_config. The
+    classifier recomputes the membership hash again at fit time; this check
+    fails closed on missing or malformed fields before any job is submitted.
+    """
+    if not isinstance(train_mask, dict):
+        raise DispatchError(f"train_mask for {context} must be an object")
+    mask_path = str(train_mask.get("mask_path") or "").strip()
+    expected = str(train_mask.get("expected_selection_sha256") or "").strip()
+    baseline = str(train_mask.get("baseline_input_sha256") or "").strip()
+    if not mask_path or not expected or not baseline:
+        raise DispatchError(
+            f"train_mask for {context} needs mask_path, expected_selection_sha256 and "
+            "baseline_input_sha256"
+        )
+    for label, value in (
+        ("expected_selection_sha256", expected),
+        ("baseline_input_sha256", baseline),
+    ):
+        if len(value) != 64 or any(ch not in "0123456789abcdef" for ch in value.lower()):
+            raise DispatchError(f"train_mask {label} for {context} must be a 64-hex string")
+    return {
+        "mask_path": mask_path,
+        "expected_selection_sha256": expected.lower(),
+        "baseline_input_sha256": baseline.lower(),
+        "fraction": train_mask.get("fraction"),
+        "sampling_seed": train_mask.get("sampling_seed"),
+        "algorithm_version": train_mask.get("algorithm_version"),
+    }
 
 
 def _validate_registry_entry(entry: dict[str, Any], identity: LaneIdentity) -> None:
@@ -591,21 +631,28 @@ def _job_exports(
             f"LOG_ROOT={job['log_root']}",
         ]
     )
-    classifier_export = ",".join(
-        [
-            "ALL",
-            f"PROJECT_ROOT={code_root}",
-            f"CACHE_DIR={job['cache_dir']}",
-            f"CLASSIFIER_DIR={job['classifier_dir']}",
-            f"CLASSIFIER_VARIANTS={':'.join(HEAD_VARIANTS)}",
-            f"SEED={HEAD_SEED}",
-            f"ENV_ACTIVATE={env['ENV_ACTIVATE']}",
-            f"QWEN_HIDDEN_DEPS={qwen_hidden_deps}",
-            f"LOG_ROOT={job['log_root']}",
-            f"ATTEMPT_DIR={job['remote_attempt_dir']}",
-            f"MATERIALIZE_VARIANTS={':'.join(HEAD_VARIANTS)}",
-        ]
-    )
+    classifier_exports = [
+        "ALL",
+        f"PROJECT_ROOT={code_root}",
+        f"CACHE_DIR={job['cache_dir']}",
+        f"CLASSIFIER_DIR={job['classifier_dir']}",
+        f"CLASSIFIER_VARIANTS={':'.join(HEAD_VARIANTS)}",
+        f"SEED={HEAD_SEED}",
+        f"ENV_ACTIVATE={env['ENV_ACTIVATE']}",
+        f"QWEN_HIDDEN_DEPS={qwen_hidden_deps}",
+        f"LOG_ROOT={job['log_root']}",
+        f"ATTEMPT_DIR={job['remote_attempt_dir']}",
+        f"MATERIALIZE_VARIANTS={':'.join(HEAD_VARIANTS)}",
+    ]
+    train_mask = job.get("train_mask") or {}
+    if train_mask:
+        classifier_exports.extend(
+            [
+                f"TRAIN_MASK={train_mask['mask_path']}",
+                f"TRAIN_MASK_SHA256={train_mask['expected_selection_sha256']}",
+            ]
+        )
+    classifier_export = ",".join(classifier_exports)
     return extract_export, classifier_export
 
 
@@ -817,6 +864,14 @@ def command_submit(args: argparse.Namespace) -> int:
                 "parent": job["parent"],
                 "condition": route["modality"],
                 "extract_gpus": int(job["extract_gpus"]),
+                "train_mask": (
+                    _validated_train_mask_block(
+                        job.get("train_mask"),
+                        context=f"{route['route_id']} s{job['seed']} f{job['fold']}",
+                    )
+                    if job.get("train_mask") is not None
+                    else None
+                ),
                 "payload": payload,
             }
         )

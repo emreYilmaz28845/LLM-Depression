@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -96,6 +97,242 @@ def _load_partition(cache_dir: Path, name: str) -> tuple[np.ndarray, list[dict[s
     if len(sample_ids) != len(set(sample_ids)):
         raise ValueError(f"Duplicate sample IDs in {name} cache.")
     return vectors, rows
+
+
+def _load_authoritative_split(cache_dir: Path, metadata: dict[str, Any]) -> dict[str, Any]:
+    """Load and hash-verify the parent fit's authoritative split for mask binding.
+
+    The extraction metadata records the exact ``saved_split`` path (the fit's
+    ``logs/split_used.json``) and its sha256. A train mask may only be applied
+    when that split is present and unmodified: the masked subjects must equal
+    the split's ``train_subject_ids`` and the head's extra pool subjects must
+    be exactly the split's ``val_inner_subject_ids``.
+    """
+    saved = str(metadata.get("saved_split") or "").strip()
+    recorded_sha = str(metadata.get("saved_split_sha256") or "").strip()
+    if not saved or not recorded_sha:
+        raise ValueError(
+            "train mask requires the authoritative parent split; extraction "
+            "metadata has no saved_split/saved_split_sha256"
+        )
+    path = Path(saved)
+    if not path.is_file():
+        raise ValueError(f"authoritative parent split is missing: {saved}")
+    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual != recorded_sha:
+        raise ValueError(
+            "authoritative parent split hash mismatch: "
+            f"recorded {recorded_sha!r}, actual {actual!r}"
+        )
+    split = read_json(path)
+    if not isinstance(split, dict):
+        raise ValueError(f"authoritative parent split is not an object: {saved}")
+    return split
+
+
+def _validate_train_mask(
+    mask: dict[str, Any], expected_selection_sha256: str | None = None
+) -> dict[str, Any]:
+    """Fail-closed validation of a window-cap mask artifact before fitting.
+
+    The recorded ``selection_sha256`` is never trusted on its own: the canonical
+    hash is recomputed from ``algorithm_version``, ``sampling_seed``,
+    ``fraction`` and ``subjects`` with the training definition
+    (``src.data.window_cap.compute_selection_sha256``), so a mutated membership
+    payload cannot keep a stale accepted hash. Schema and algorithm identity
+    must match, sample ids must be unique, and the expected hash (recorded in
+    run_config) must equal both the recorded and recomputed values.
+    """
+    if not isinstance(mask, dict):
+        raise ValueError("train mask must be a JSON object")
+    from src.data.window_cap import (
+        ALGORITHM_VERSION,
+        MASK_SCHEMA_VERSION,
+        compute_selection_sha256,
+    )
+
+    schema_version = str(mask.get("schema_version") or "")
+    if schema_version != MASK_SCHEMA_VERSION:
+        raise ValueError(
+            f"train mask schema_version {schema_version!r} != {MASK_SCHEMA_VERSION!r}"
+        )
+    algorithm_version = str(mask.get("algorithm_version") or "")
+    if algorithm_version != ALGORITHM_VERSION:
+        raise ValueError(
+            f"train mask algorithm_version {algorithm_version!r} != {ALGORITHM_VERSION!r}"
+        )
+    fraction = mask.get("fraction")
+    if (
+        isinstance(fraction, bool)
+        or not isinstance(fraction, (int, float))
+        or not 0.0 < float(fraction) <= 1.0
+    ):
+        raise ValueError(f"train mask fraction is invalid: {fraction!r}")
+    sampling_seed = mask.get("sampling_seed")
+    if isinstance(sampling_seed, bool) or not isinstance(sampling_seed, int):
+        raise ValueError(f"train mask sampling_seed is invalid: {sampling_seed!r}")
+    subjects = mask.get("subjects")
+    if not isinstance(subjects, dict) or not subjects:
+        raise ValueError("train mask has no subject selections")
+    seen: set[str] = set()
+    for subject_id, ids in subjects.items():
+        if not isinstance(ids, list) or not ids:
+            raise ValueError(f"train mask subject {subject_id!r} has no sample ids")
+        for item in ids:
+            if not isinstance(item, str) or not item:
+                raise ValueError(
+                    f"train mask subject {subject_id!r} has a non-string sample id: {item!r}"
+                )
+            if item in seen:
+                raise ValueError(f"train mask lists sample id {item!r} more than once")
+            seen.add(item)
+    recomputed = compute_selection_sha256(
+        algorithm_version, sampling_seed, float(fraction), subjects
+    )
+    recorded = str(mask.get("selection_sha256") or "")
+    if recomputed != recorded:
+        raise ValueError(
+            "train mask selection_sha256 does not match its membership: "
+            f"recorded {recorded!r}, recomputed {recomputed!r}"
+        )
+    if expected_selection_sha256 is not None:
+        expected = str(expected_selection_sha256)
+        if recomputed != expected:
+            raise ValueError(
+                f"train mask selection_sha256 {recomputed!r} != expected {expected!r} "
+                "from run_config"
+            )
+    return mask
+
+
+def _apply_train_mask(
+    train_x: np.ndarray,
+    train_rows: list[dict[str, Any]],
+    mask: dict[str, Any],
+    *,
+    authoritative_split: dict[str, Any],
+    dataset: str,
+) -> tuple[np.ndarray, list[dict[str, Any]], dict[str, Any]]:
+    """Filter outer_train rows to the capped membership; evaluation stays full.
+
+    The mask artifact is the training-time ``window_cap_mask.json`` built over
+    the fit's authoritative training pool (the parent split's
+    ``train_subject_ids``). The head's ``outer_train`` partition is
+    train + inner-val, so before any filtering this verifies, fail-closed:
+
+    * the outer_train subjects are exactly the authoritative
+      train + ``val_inner_subject_ids`` set;
+    * the masked subjects equal the authoritative training split exactly
+      (a truncated or extended mask is refused, not just hash-checked);
+    * the recorded baseline membership hash matches the cache rows restricted
+      to the masked subjects (the training pool);
+    * every selected sample id exists in the cache, belongs to its declared
+      subject, and ids are unique.
+
+    Only the authoritative parent train rows are capped by the mask; the
+    inner-val rows are retained in full, exactly as the baseline head pipeline
+    trains on the full outer_train pool. The capped train membership and the
+    retained validation membership are recorded separately, and the final_eval
+    partition is never touched.
+    """
+    baseline_sha = str(mask.get("baseline_input_sha256") or "")
+    if not baseline_sha:
+        raise ValueError(
+            "train mask has no baseline_input_sha256; cannot verify the exact "
+            "training-pool subject/sample membership"
+        )
+    subjects = mask.get("subjects")
+    if not isinstance(subjects, dict) or not subjects:
+        raise ValueError("train mask has no subject selections")
+    mask_subjects = {str(subject) for subject in subjects}
+    train_split_subjects = {
+        str(subject) for subject in (authoritative_split.get("train_subject_ids") or [])
+    }
+    val_split_subjects = {
+        str(subject) for subject in (authoritative_split.get("val_inner_subject_ids") or [])
+    }
+    if not train_split_subjects:
+        raise ValueError("authoritative parent split has no train_subject_ids")
+    from src.features.hidden_classifier_policy import expected_outer_train_subjects
+
+    row_subjects = {str(row["subject_id"]) for row in train_rows}
+    expected_pool = expected_outer_train_subjects(authoritative_split, dataset)
+    if row_subjects != expected_pool:
+        raise ValueError(
+            "outer_train subjects are not exactly the authoritative train+inner-val "
+            f"set; only_in_cache={sorted(row_subjects - expected_pool)[:5]} "
+            f"missing_from_cache={sorted(expected_pool - row_subjects)[:5]}"
+        )
+    if mask_subjects != train_split_subjects:
+        raise ValueError(
+            "train mask subjects do not equal the authoritative training split; "
+            f"missing_training_subjects={sorted(train_split_subjects - mask_subjects)[:5]} "
+            f"extra_mask_subjects={sorted(mask_subjects - train_split_subjects)[:5]}"
+        )
+    training_rows = [
+        row for row in train_rows if str(row["subject_id"]) in mask_subjects
+    ]
+    canonical_membership = sorted(
+        [str(row["subject_id"]), str(row["sample_id"])] for row in training_rows
+    )
+    recomputed_baseline = hashlib.sha256(
+        json.dumps(canonical_membership, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    if recomputed_baseline != baseline_sha:
+        raise ValueError(
+            "train mask baseline_input_sha256 does not match the training-pool "
+            f"subject/sample membership: recorded {baseline_sha!r}, "
+            f"recomputed {recomputed_baseline!r}. Diagnose any intentional cache "
+            "membership difference before changing policy."
+        )
+    row_ids = [str(row["sample_id"]) for row in train_rows]
+    row_owner = {sample_id: str(row["subject_id"]) for sample_id, row in zip(row_ids, train_rows)}
+    selected: set[str] = set()
+    for subject_id, ids in subjects.items():
+        if not isinstance(ids, list) or not ids:
+            raise ValueError("every masked subject needs at least one sample id")
+        for item in ids:
+            sample_id = str(item)
+            if sample_id in selected:
+                raise ValueError(f"train mask lists sample id {sample_id!r} more than once")
+            owner = row_owner.get(sample_id)
+            if owner is None:
+                raise ValueError(f"train mask sample id {sample_id!r} is missing from outer_train")
+            if owner != str(subject_id):
+                raise ValueError(
+                    f"train mask assigns sample {sample_id!r} to subject {subject_id!r} "
+                    f"but the outer_train cache has it under {owner!r}"
+                )
+            selected.add(sample_id)
+    # Cap only the authoritative train rows; keep the inner-val rows in full.
+    capped_train = [row for row in training_rows if str(row["sample_id"]) in selected]
+    retain_subjects = expected_pool - train_split_subjects
+    retained_val = [
+        row for row in train_rows if str(row["subject_id"]) in retain_subjects
+    ]
+    capped_ids = {str(row["sample_id"]) for row in capped_train}
+    retained_ids = {str(row["sample_id"]) for row in retained_val}
+    keep = [
+        index
+        for index, row in enumerate(train_rows)
+        if str(row["sample_id"]) in capped_ids or str(row["sample_id"]) in retained_ids
+    ]
+    filtered_rows = [train_rows[index] for index in keep]
+    metadata = {
+        "selection_sha256": mask.get("selection_sha256"),
+        "baseline_input_sha256": mask.get("baseline_input_sha256"),
+        "fraction": mask.get("fraction"),
+        "sampling_seed": mask.get("sampling_seed"),
+        "algorithm_version": mask.get("algorithm_version"),
+        "available_rows": len(training_rows),
+        "selected_rows": len(capped_train),
+        "selected_subject_count": len(mask_subjects),
+        "retained_val_rows": len(retained_val),
+        "retained_val_subject_count": len(retain_subjects),
+        "capped_train_row_ids": sorted(capped_ids),
+        "retained_val_row_ids": sorted(retained_ids),
+    }
+    return train_x[keep], filtered_rows, metadata
 
 
 def _variant_pipeline(variant: str, seed: int, *, unweighted: bool = False):
@@ -361,6 +598,7 @@ def run_variant(
     oversampling_ratio: float | None = None,
     oversampling_seed: int = 1337,
     protocol_backend_mode: str | None = None,
+    train_mask: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     train_x, train_rows = _load_partition(cache_dir, "outer_train")
     test_x, test_rows = _load_partition(cache_dir, "final_eval")
@@ -392,6 +630,24 @@ def run_variant(
         # Harmonized (non-DAIC) Gemma caches enforce the generic invariants
         # already proven above: both classes, disjoint fit/holdout subjects,
         # finite vectors, equal subject totals via the weight audit below.
+    train_mask_metadata: dict[str, Any] | None = None
+    if train_mask is not None:
+        _validate_train_mask(train_mask)
+        authoritative_split = _load_authoritative_split(cache_dir, metadata)
+        train_x, train_rows, train_mask_metadata = _apply_train_mask(
+            train_x,
+            train_rows,
+            train_mask,
+            authoritative_split=authoritative_split,
+            dataset=str(metadata.get("dataset", "")),
+        )
+        train_y = np.asarray([int(row["label"]) for row in train_rows], dtype=np.int64)
+        train_subjects = {str(row["subject_id"]) for row in train_rows}
+        if set(train_y.tolist()) != {0, 1}:
+            raise ValueError("Capped training rows must contain both classes.")
+        overlap = sorted(train_subjects & test_subjects)
+        if overlap:
+            raise ValueError(f"Training/held-out subject leakage after mask: {overlap[:10]}")
     result_identity = {
         "schema_version": FIXED_RESULT_SCHEMA_VERSION,
         "variant": variant,
@@ -404,6 +660,8 @@ def run_variant(
         "cache_identity": cache_identity(cache_dir),
         "aggregation_policy": classifier_aggregation_policy(metadata),
     }
+    if train_mask_metadata is not None:
+        result_identity["train_mask"] = train_mask_metadata
     result_identity["config_sha256"] = canonical_sha256(result_identity)
     variant_dir = output_root / variant
     identity_path = variant_dir / "result_config.json"
@@ -630,6 +888,8 @@ def run_variant(
         "result_config_sha256": result_identity["config_sha256"],
         "response_prediction_count": len(response_rows) if response_rows else None,
     }
+    if train_mask_metadata is not None:
+        artifact_metadata["train_mask"] = train_mask_metadata
     write_jsonl(sample_rows, variant_dir / "predictions_sample_level.jsonl")
     write_jsonl(subject_rows, variant_dir / "predictions_subject_level.jsonl")
     _write_csv(sample_rows, variant_dir / "predictions_sample_level.csv")
@@ -663,11 +923,31 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Use method-specific Qwen backend qualifiers for the v2 text-head study.",
     )
+    parser.add_argument(
+        "--train-mask",
+        type=Path,
+        default=None,
+        help="window_cap_mask.json produced by the capped training run.",
+    )
+    parser.add_argument(
+        "--train-mask-sha256",
+        default=None,
+        help="Expected selection_sha256 of --train-mask (recorded in run_config).",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    train_mask = None
+    if bool(args.train_mask) != bool(args.train_mask_sha256):
+        raise SystemExit("--train-mask and --train-mask-sha256 must be provided together.")
+    if args.train_mask:
+        train_mask = read_json(args.train_mask)
+        try:
+            _validate_train_mask(train_mask, expected_selection_sha256=args.train_mask_sha256)
+        except ValueError as exc:
+            raise SystemExit(f"train mask rejected: {exc}") from exc
     args.output_dir.mkdir(parents=True, exist_ok=True)
     summaries = [
         run_variant(
@@ -679,6 +959,7 @@ def main() -> None:
             oversampling_ratio=args.oversampling_ratio,
             oversampling_seed=args.oversampling_seed,
             protocol_backend_mode=args.protocol_backend_mode,
+            train_mask=train_mask,
         )
         for variant in args.variants
     ]

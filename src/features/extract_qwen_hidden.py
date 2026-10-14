@@ -80,6 +80,9 @@ CACHE_ARTIFACT_NAMES = (
     "final_eval_rows.jsonl",
     "extraction_metadata.json",
 )
+EXTRACTION_SOURCE_COMPAT_SCHEMA = "audiollm.extraction_source_compat.v1"
+EXTRACTION_SOURCE_COMPAT_PATH = PROJECT_ROOT / "configs" / "extraction_source_compat.json"
+CACHE_DECISION_COMPAT_REUSE = "skipped_compatible_complete_cache_via_extraction_source_compat"
 
 
 def resolve_condition(value: str | None, input_modality: str | None, emotion_enabled: bool) -> str:
@@ -1116,6 +1119,89 @@ def _apply_subject_selection(
     return restricted
 
 
+def _extraction_source_compat_reuse_allowed(
+    existing_config: dict[str, Any],
+    cache_config: dict[str, Any],
+    *,
+    code_root: Path | None = None,
+    record_path: Path | None = None,
+    current_file_sha256: dict[str, str] | None = None,
+) -> bool:
+    """Prove narrowly that a complete cache built by an older source may be reused.
+
+    The recorded and current cache identities may differ only in
+    ``source_git_commit``. Reuse additionally requires an audited compatibility
+    record that covers the exact old commit, lists the full extraction-relevant
+    file closure, proves every non-delta file byte-identical across the two
+    sources, and declares the reviewed compatibility-only extractor delta whose
+    new hash matches the running file. Unknown or missing proof returns
+    ``False`` (fail closed); callers must refuse the cache.
+    """
+    differences = {
+        key
+        for key in set(existing_config) | set(cache_config)
+        if existing_config.get(key) != cache_config.get(key)
+    }
+    if differences != {"source_git_commit"}:
+        return False
+    old_commit = existing_config.get("source_git_commit")
+    if not isinstance(old_commit, str) or not old_commit:
+        return False
+    path = record_path if record_path is not None else EXTRACTION_SOURCE_COMPAT_PATH
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(record, dict) or record.get("schema") != EXTRACTION_SOURCE_COMPAT_SCHEMA:
+        return False
+    delta = record.get("extractor_delta")
+    new_files = record.get("new_source_file_sha256")
+    old_sources = record.get("old_sources")
+    if (
+        not isinstance(delta, dict)
+        or not isinstance(new_files, dict)
+        or not isinstance(old_sources, list)
+    ):
+        return False
+    delta_path = delta.get("path")
+    if not isinstance(delta_path, str) or not delta_path:
+        return False
+    old_entry = next(
+        (
+            entry
+            for entry in old_sources
+            if isinstance(entry, dict) and entry.get("git_commit") == old_commit
+        ),
+        None,
+    )
+    if old_entry is None:
+        return False
+    old_files = old_entry.get("file_sha256")
+    if not isinstance(old_files, dict) or set(old_files) != set(new_files):
+        return False
+    if delta_path not in new_files:
+        return False
+    if old_files.get(delta_path) != delta.get("old_sha256"):
+        return False
+    if new_files.get(delta_path) != delta.get("new_sha256"):
+        return False
+    if delta.get("old_sha256") == delta.get("new_sha256"):
+        return False
+    for relative_path, expected_sha in new_files.items():
+        if current_file_sha256 is not None:
+            actual_sha = current_file_sha256.get(relative_path)
+        else:
+            root = code_root if code_root is not None else PROJECT_ROOT
+            target = root / relative_path
+            actual_sha = sha256_file(target) if target.is_file() else None
+        if actual_sha != expected_sha:
+            return False
+    for relative_path, old_sha in old_files.items():
+        if relative_path != delta_path and old_sha != new_files[relative_path]:
+            return False
+    return True
+
+
 def _existing_cache_decision(
     output_dir: Path,
     cache_config: dict[str, Any],
@@ -1125,8 +1211,10 @@ def _existing_cache_decision(
 
     Returns ``"write"`` for an absent or empty output dir,
     ``"skipped_compatible_complete_cache"`` for a complete cache whose identity
-    matches exactly, and raises on a partial or identity-mismatched cache.
-    Never overwrites evidence.
+    matches exactly, ``"skipped_compatible_complete_cache_via_extraction_source_compat"``
+    for a complete cache covered by the audited extraction-source compatibility
+    record (only ``source_git_commit`` may differ), and raises on a partial or
+    otherwise identity-mismatched cache. Never overwrites evidence.
     """
     if not output_dir.exists() or not any(output_dir.iterdir()):
         return "write"
@@ -1137,13 +1225,22 @@ def _existing_cache_decision(
             "Refusing to overwrite a partial cache."
         )
     existing = read_json(metadata_path)
-    if (
-        existing.get("cache_config") != cache_config
-        or existing.get("cache_config_sha256") != cache_config_sha256
-    ):
-        raise ValueError(f"Existing hidden cache is incompatible: {output_dir}.")
+    existing_config = existing.get("cache_config")
+    exact_identity = (
+        existing_config == cache_config
+        and existing.get("cache_config_sha256") == cache_config_sha256
+    )
+    compat_reuse = False
+    if not exact_identity:
+        compat_reuse = isinstance(existing_config, dict) and (
+            _extraction_source_compat_reuse_allowed(existing_config, cache_config)
+        )
+        if not compat_reuse:
+            raise ValueError(f"Existing hidden cache is incompatible: {output_dir}.")
     if not all((output_dir / name).is_file() for name in CACHE_ARTIFACT_NAMES):
         raise ValueError(f"Existing hidden cache is partial: {output_dir}.")
+    if compat_reuse:
+        return CACHE_DECISION_COMPAT_REUSE
     return "skipped_compatible_complete_cache"
 
 
@@ -1289,7 +1386,7 @@ def main() -> None:
         json.dumps(cache_config, sort_keys=True, separators=(",", ":"))
     )
     cache_decision = _existing_cache_decision(output_dir, cache_config, cache_config_sha256)
-    if cache_decision == "skipped_compatible_complete_cache":
+    if cache_decision in ("skipped_compatible_complete_cache", CACHE_DECISION_COMPAT_REUSE):
         print(
             json.dumps(
                 {
