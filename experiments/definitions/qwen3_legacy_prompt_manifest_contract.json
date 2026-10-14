@@ -1,0 +1,60 @@
+{
+  "schema_version": "audiollm.worker4_manifest_contract.v1",
+  "campaign": "qwen3_legacy_prompt_20261008",
+  "lane": "feat-qwen3-legacy-prompt-20261008",
+  "runtime_root": "/gpfs/projects/etur92/ozu647717/AudioLLM/experiment_runtime/feat-qwen3-legacy-prompt-20261008",
+  "policy": "prebuilt",
+  "provenance": {
+    "prepared_before_production": true,
+    "method": "DAIC built by the smoke worker; D3TEC, Androids and CMDC rebuilt with the worker's exact build_manifest command and dataset-root exports; Turkish staged byte-identical from the audited pooled sources",
+    "content_identity": "manifest_jsonl and folds_json byte-identical to feat-qwen3-multiseed-native-20261002 for all five datasets; manifest_metadata differs only in lane paths and build_signature, with equal recorded manifest_hash",
+    "worker_behavior": "production submissions use --manifest-policy prebuilt, so workers skip manifest rebuilds and read these pinned inputs"
+  },
+  "datasets": {
+    "daic": {
+      "manifest_jsonl_sha256": "8d96abc2a411403f0340792c0906cc1d9d9b8bf6c62ab0b07aa081b42894659d",
+      "manifest_csv_sha256": "9f323b2a389893ea87ed89ffd7aa742396081584a5335f60616985c23e428e53",
+      "folds_json_sha256": "9605313c7afd9364e0f0b7a145d7a1717b283a76f80f1dd51db370db6736cfff",
+      "manifest_metadata_sha256": "038f2ede81213e9c8f10c05af4a9e684fd39689e63087630e8e3122fa6a2eef9",
+      "recorded_manifest_hash": "72e2dd204b915ccba3ebf922f030531fe5678b3ea8c9c52b81b41242fe9dda17",
+      "rows": 3021,
+      "subjects": 189
+    },
+    "d3tec": {
+      "manifest_jsonl_sha256": "39ba372e798c9671418e8882ab9f6a2528a1eb0395c86404e2ae04b345d33107",
+      "manifest_csv_sha256": "704e1f29e9bc1bef0299981a2701d0ecd6f3d98071d712679a47eb3604cbffea",
+      "folds_json_sha256": "a672e309fb193d7fd76e7283f5f42828c33713fe770ccbbf90f1ed72bf3fc15c",
+      "manifest_metadata_sha256": "c3d1d5c12ba6add6c28388a66bd09745c289bccd532cccab74fbc3ca446ab5b6",
+      "recorded_manifest_hash": "67a62eb73b4ab7e0cd810b81af5e424f6bf9deea9cfdbc322fb32057a6e6f799",
+      "rows": 2003,
+      "subjects": 62
+    },
+    "androids_interview": {
+      "manifest_jsonl_sha256": "10173b5e5404fa6c8d4fdfe4a3d0a903896dd1688cd9caf2ccba8ee475fec3b0",
+      "manifest_csv_sha256": "d04bc3a1b67956d458c1cfffc34628f2c637c6fca19ab8435250b9ae6d66e9b0",
+      "folds_json_sha256": "f75dd2ba7bb324af26de8c5ae3497d2108e6b50815c0ef6cbcade7de70992518",
+      "manifest_metadata_sha256": "f84f53c8539509f110116d6d475e9967063ea19670ab4d42b2ab43ba6ff9d5e4",
+      "recorded_manifest_hash": "01a351f7277e4763a8bb9e4983bba190b265becafafca6d7ee04bdcfc948cbed",
+      "rows": 1302,
+      "subjects": 116
+    },
+    "cmdc": {
+      "manifest_jsonl_sha256": "3a8d54eb80472420bba3ccb51081cdc19c5a6cdff45fbc73b6396e0e171a0a74",
+      "manifest_csv_sha256": "f630b2dfc84c0a59b1921b78a0850aff089168fe0c5a8bceba6cb169326320e9",
+      "folds_json_sha256": "404342f7594833379eb8c15e6f4f5641c0ccec415374cb95df18f3723b9b54a0",
+      "manifest_metadata_sha256": "f10185e6f7bd43b2cac98b5204dde6c14bfee3f32ac7a8aa5e69e6e43cc8598d",
+      "recorded_manifest_hash": "d9984856e243b6e32c087170652a9202c128f55270c0d8443bb45f7dea794d0f",
+      "rows": 923,
+      "subjects": 78
+    },
+    "turkish": {
+      "manifest_jsonl_sha256": "a0daf6658f111f113bcf17231a6abbc0b8a472a3d60d9ddf76cd9ff25eb4e089",
+      "manifest_csv_sha256": "b8ed19c7dd27a7df5a69effbc57999172ed5ac33c8ead6b0a06c24dc73137c3a",
+      "folds_json_sha256": "3262a009db52c6d049e223947a9be6ce119a31e816b5c3072ce84b3ad92ecd58",
+      "manifest_metadata_sha256": "3d2e4953bd026de2da234a3e7afdd4e23c0a3993c1535dd6b8ebe29c8ec7a20f",
+      "recorded_manifest_hash": "37e991526986d9693c9620682719a6b54c7d30ec86b53152ae23dde167271b70",
+      "rows": 2221,
+      "subjects": 120
+    }
+  }
+}

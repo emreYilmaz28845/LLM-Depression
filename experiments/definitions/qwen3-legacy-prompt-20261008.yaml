@@ -1,0 +1,82 @@
+schema_version: audiollm.experiment_group.v1
+group_id: qwen3-legacy-prompt-20261008
+title: Qwen3 legacy harmonized prompt versus promptcontext_v1 (Native standalone, 15 routes, 189 treatment fits)
+research_question: >-
+  What is the total effect of changing the historical harmonized prompt to
+  promptcontext_v1 with modern Qwen3 backbones and otherwise identical inputs,
+  cohorts, folds, training resources, checkpoint selection and head contracts?
+  This is a whole-prompt comparison, not an isolated depression-information or
+  recording-context effect.
+dataset: >-
+  DAIC-WOZ participant-only packed30 windows (fold 0), D3TEC, Androids
+  interview, CMDC and Turkish pooled t17 positive+negative question set, each in
+  text_only, audio_only and audio_text modes. Native transcripts; external
+  labels stay Depressed / Non-depressed.
+baseline: >-
+  Existing Native standalone promptcontext_v1 runs reused after a read-only
+  hash/provenance/settings/evaluation/head audit: seed 1337 from the 2026-09
+  production and pilot roots, seeds 7 and 2024 from the
+  qwen3_multiseed_native_20261002 campaign (189 reportable fits plus 189 fixed
+  head keys). Controls span earlier source commits; treatment runs on one fresh
+  lane commit, so the cross-generation caveat stays in reports.
+treatment: >-
+  Freshly trained legacy harmonized inline prompts on the current Qwen3
+  contracts: the exact modality-specific system instructions (text_only,
+  audio_only, audio_text), no recording-context block, and the legacy Turkish
+  pooled question-context sentences. Training seeds 7, 1337 and 2024; split seed
+  1337; head seed 1337; likelihood decision rule, strict INVALID-as-wrong
+  metrics, LoRA policy, resource shapes and frozen logreg_raw/xgb_raw head
+  recipes all unchanged from the controls.
+expected_seeds:
+  - 7
+  - 1337
+  - 2024
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+comparison_rule: >-
+  Per-seed fold-mean strict subject-level Macro-F1, Positive-F1 and UAR
+  (INVALID counts as wrong) for each dataset/modality route, then mean and
+  sample SD across the three seed means; DAIC stays its single fixed endpoint;
+  CMDC and Turkish train_val results are selection-linked validation, not
+  independent held-out tests; no metric-based selection between attempts and no
+  winning-seed selection from outcomes.
+scope:
+  campaign: qwen3_legacy_prompt_20261008
+  language: native
+  evidence_dir: outputs/qwen3_legacy_prompt_20261008
+  lane: feat-qwen3-legacy-prompt-20261008
+  checkpoint_role: best_model
+  head_tracking_kind: qwen3_legacy_prompt_head
+  head_run_schema: audiollm.qwen3_legacy_prompt_head_run.v1
+  head_variants:
+    - logreg_raw
+    - xgb_raw
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
+exclusions:
+  - pr_merge
+  - enriched_or_symptom_only_prompt_arms
+  - extra_seeds_or_folds_or_routes
+  - optuna_or_hpo
+  - teacher_forced_evaluation
+  - outcome_based_seed_selection
+  - new_translations_or_transcripts_or_asr
+  - merged_or_english_route_ownership
+  - shared_workbook_or_tables_writes
+  - package_install
+  - shared_environment_or_dataset_change
+  - evidence_overwrite_or_deletion
+github_issue: null
+github_pr: null
