@@ -6,6 +6,7 @@ from typing import Any
 from transformers import GenerationConfig
 
 from src.model import qwen2audio_lora, qwen3omni_lora, text_lora
+from src.model.audio_padding import resolve_min_audio_samples
 from src.model.lora_common import resolve_lora_layer_selection, resolved_lora_layer_selection
 from src.utils import (
     INPUT_MODALITY_TEXT_ONLY,
@@ -71,7 +72,11 @@ def build_collator(
         )
     from src.model.collator import Qwen2AudioSFTCollator  # noqa: PLC0415
 
-    return Qwen2AudioSFTCollator(processor=processor, debug=debug)
+    return Qwen2AudioSFTCollator(
+        processor=processor,
+        debug=debug,
+        min_audio_samples=resolve_min_audio_samples(config),
+    )
 
 
 def prepare_backend_examples(
