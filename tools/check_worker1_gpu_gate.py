@@ -317,6 +317,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scontrol-dump", required=True, help="file with `scontrol show job` output")
     parser.add_argument("--candidate-job", required=True)
     parser.add_argument("--root-approval", default=None)
+    parser.add_argument(
+        "--cpu-head-max-wall-minutes",
+        type=int,
+        default=CPU_HEAD_MAX_WALL_MINUTES,
+        help="wall-time bound for CPU head candidates (default 120; raise only to match a frozen job shape)",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
@@ -331,7 +337,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     candidate = next(j for j in jobs if j.job_id == args.candidate_job)
     others = [j for j in jobs if j.job_id != args.candidate_job]
-    decision = check_release(candidate, others, args.root_approval)
+    decision = check_release(
+        candidate,
+        others,
+        args.root_approval,
+        cpu_head_max_wall_minutes=args.cpu_head_max_wall_minutes,
+    )
     if args.json:
         print(json.dumps(decision, indent=2))
     else:
