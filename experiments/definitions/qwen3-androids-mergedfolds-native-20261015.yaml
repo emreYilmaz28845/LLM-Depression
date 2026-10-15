@@ -1,0 +1,97 @@
+schema_version: audiollm.experiment_group.v1
+group_id: qwen3-androids-mergedfolds-native-20261015
+title: Qwen3 standalone Androids Interview rerun on the merged-protocol folds (native routes)
+research_question: >-
+  How do the standalone Qwen3 Androids Interview native routes (text_only with
+  Qwen3.8-27B, audio_only and audio_text with the Qwen3-Omni-30B-A3B Thinker) score
+  when trained and evaluated on the same five held-out folds as the symmetric
+  merged protocol, so that standalone and merged Androids results become a paired
+  comparison? The earlier standalone runs used the official fold-lists.csv folds
+  (24/23/23/23/23); the merged protocol regenerated its own folds (24/24/23/23/22)
+  over the same 116 subjects.
+dataset: androids_interview
+baseline: >-
+  The merged-CV Androids rows of qwen3-multiseed-merged-20261002 (same folds) and,
+  for context only, the earlier official-fold standalone rows of
+  qwen3-multiseed-native-20261002 (different folds, never paired).
+treatment: >-
+  The canonical native standalone recipe of qwen3-multiseed-native-20261002
+  (promptcontext_v1, candidate-label likelihood, inner_val_macro_f1 selection, split
+  seed 1337, inner val ratio 0.2, one chunk per prompt, frozen audio encoder, FSDP
+  effective global batch 128) with two changes: (1) held-out folds read from the
+  pinned file split.locked_folds_path (sha256
+  4e15cbbf35e6d426b17fd0c8020830a2ccefed421662de8800556553b331b46b), derived from
+  the merged protocol (sha256
+  79fc6c3453044024fb656323816331972548bf338ac12b7df843a546763d2687); the inner
+  validation split is recomputed with the same function and seed as the merged
+  protocol; (2) the Omni audio routes train on one node of four GPUs with
+  accumulation 32 (default since PR #281) instead of two nodes with accumulation 16.
+  Every parent checkpoint receives the fixed heads logreg_raw and xgb_raw with
+  classifier seed 1337, full-cohort extraction, no PCA and no Optuna.
+expected_seeds:
+  - 7
+  - 1337
+  - 2024
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+comparison_rule: >-
+  Per-seed fold-mean strict subject-level Macro-F1, Positive-F1 and UAR (INVALID
+  counts as wrong) per modality; seeds are never averaged into one headline before
+  reporting per-seed values, and no seed is selected from outcomes. Comparison with
+  merged CV is paired by fold.
+runs:
+  - logical_run: androids_text_only_native_mergedfolds
+    dataset: androids_interview
+    modality: text_only
+    config: configs/experiments/androids_mergedfolds/androids_text_only_harmonized_selmacrof1_likelihood_v1_mergedfolds.yaml
+    folds: [0, 1, 2, 3, 4]
+    endpoint: outer_fold_test_partition
+  - logical_run: androids_audio_only_native_mergedfolds
+    dataset: androids_interview
+    modality: audio_only
+    config: configs/experiments/androids_mergedfolds/androids_audio_only_harmonized_selmacrof1_likelihood_v1_mergedfolds.yaml
+    folds: [0, 1, 2, 3, 4]
+    endpoint: outer_fold_test_partition
+  - logical_run: androids_audio_text_native_mergedfolds
+    dataset: androids_interview
+    modality: audio_text
+    config: configs/experiments/androids_mergedfolds/androids_audio_text_harmonized_selmacrof1_likelihood_v1_mergedfolds.yaml
+    folds: [0, 1, 2, 3, 4]
+    endpoint: outer_fold_test_partition
+scope:
+  campaign: qwen3_androids_mergedfolds_native_20261015
+  language: native
+  evidence_dir: outputs/qwen3_androids_mergedfolds_native_20261015
+  head_tracking_kind: qwen3_androids_mergedfolds_native_head
+  head_run_schema: audiollm.qwen3_androids_mergedfolds_native_head_run.v1
+  lane: qwen3-androids-mergedfolds-20261015
+  checkpoint_role: best_model
+  head_variants:
+    - logreg_raw
+    - xgb_raw
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
+exclusions:
+  - pr_merge
+  - extra_seeds_or_folds_or_routes
+  - optuna_or_hpo
+  - teacher_forced_evaluation
+  - outcome_based_seed_selection
+  - shared_workbook_or_tables_writes
+  - package_install
+  - shared_environment_or_dataset_change
+  - evidence_overwrite_or_deletion
+github_issue: null
+github_pr: null

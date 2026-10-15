@@ -29,6 +29,9 @@ _RECORDING_RE = re.compile(
 )
 
 
+LOCKED_FOLDS_PATH_KEY = "locked_folds_path"
+LOCKED_FOLDS_SHA256_KEY = "locked_folds_sha256"
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -228,6 +231,52 @@ def build_androids_interview_official_folds(
     return folds
 
 
+def load_androids_interview_locked_folds(
+    path: str | Path,
+    expected_sha256: str,
+    subject_ids: set[str],
+) -> dict[int, dict[str, list[str]]]:
+    """Load a pinned five-fold Androids Interview assignment from a JSON file.
+
+    The file maps "0".."4" to ``{"final_eval_subject_ids": [...]}``. It is used to
+    rerun the standalone recipe on a fold assignment recorded elsewhere (for
+    example the merged protocol). The sha256 must match so the content is pinned.
+    """
+    file_path = Path(path)
+    actual = _sha256_file(file_path)
+    if actual != str(expected_sha256).strip().lower():
+        raise ValueError(
+            f"Locked ANDROIDS fold file {file_path} has sha256 {actual}, "
+            f"expected {expected_sha256}."
+        )
+    payload = json.loads(file_path.read_text(encoding="utf-8"))
+    if sorted(payload) != [str(index) for index in range(5)]:
+        raise ValueError(f"Locked ANDROIDS fold file must define folds 0-4, got {sorted(payload)}.")
+    folds: dict[int, dict[str, list[str]]] = {}
+    observed: set[str] = set()
+    for fold_index in range(5):
+        heldout = sorted(str(value) for value in payload[str(fold_index)]["final_eval_subject_ids"])
+        if len(set(heldout)) != len(heldout):
+            raise ValueError(f"Duplicate subjects in locked ANDROIDS fold {fold_index}.")
+        unknown = sorted(set(heldout) - subject_ids)
+        if unknown:
+            raise ValueError(f"Unknown subjects in locked ANDROIDS fold {fold_index}: {len(unknown)}")
+        overlap = observed.intersection(heldout)
+        if overlap:
+            raise ValueError(f"Locked ANDROIDS held-out fold overlap in fold {fold_index}: {len(overlap)}")
+        observed.update(heldout)
+        folds[fold_index] = {
+            "outer_train_subject_ids": sorted(subject_ids - set(heldout)),
+            "final_eval_subject_ids": heldout,
+        }
+    if observed != subject_ids:
+        raise ValueError(
+            "Locked ANDROIDS fold coverage mismatch: "
+            f"missing={len(subject_ids - observed)} extra={len(observed - subject_ids)}"
+        )
+    return folds
+
+
 def _load_transcripts(
     path: Path,
     *,
@@ -418,9 +467,28 @@ def build_androids_interview_manifest(
             f"extra_segments={extra_segments[:10]}"
         )
 
-    folds = build_androids_interview_official_folds(
-        root / "fold-lists.csv", subject_by_recording
-    )
+    split_cfg = config.get("split", {})
+    locked_folds_path = split_cfg.get(LOCKED_FOLDS_PATH_KEY)
+    if locked_folds_path:
+        locked_sha256 = split_cfg.get(LOCKED_FOLDS_SHA256_KEY)
+        if not locked_sha256:
+            raise ValueError(
+                f"split.{LOCKED_FOLDS_PATH_KEY} requires split.{LOCKED_FOLDS_SHA256_KEY}."
+            )
+        folds = load_androids_interview_locked_folds(
+            locked_folds_path, str(locked_sha256), set(subject_by_recording.values())
+        )
+        split_source = "locked_androids_interview_folds"
+        split_source_notes = (
+            "Held-out folds read from the pinned JSON file in split.locked_folds_path "
+            "(sha256 in split.locked_folds_sha256); fold-lists.csv is not used."
+        )
+    else:
+        folds = build_androids_interview_official_folds(
+            root / "fold-lists.csv", subject_by_recording
+        )
+        split_source = "official_androids_interview_folds"
+        split_source_notes = "Only columns 8-12 under the Interview header in fold-lists.csv are parsed."
     seed = int(config.get("split", {}).get("seed", config["seed"]))
     fold_report = _fold_report(
         folds,
@@ -453,14 +521,15 @@ def build_androids_interview_manifest(
         "join_audit_rows": join_audit_rows,
         "chunk_window_audit": chunk_audit,
         "fold_hash": fold_hash,
-        "split_source": "official_androids_interview_folds",
-        "split_source_notes": "Only columns 8-12 under the Interview header in fold-lists.csv are parsed.",
+        "split_source": split_source,
+        "split_source_notes": split_source_notes,
         "transcript_paths": {
             "full_turn": str(full_path),
             "segment_aligned": str(segment_path),
         },
         "source_hashes": {
             "fold_lists_sha256": _sha256_file(root / "fold-lists.csv"),
+            "locked_folds_sha256": _sha256_file(Path(locked_folds_path)) if locked_folds_path else None,
             "full_turn_transcripts_sha256": _sha256_file(full_path),
             "segment_transcripts_sha256": _sha256_file(segment_path),
             "full_turn_transcript_report_sha256": (
