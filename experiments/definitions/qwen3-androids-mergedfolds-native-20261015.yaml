@@ -53,19 +53,19 @@ runs:
   - logical_run: androids_text_only_native_mergedfolds
     dataset: androids_interview
     modality: text_only
-    config: configs/main/androids_text_only_harmonized_selmacrof1_likelihood_v1.yaml
+    config: configs/experiments/androids_mergedfolds/androids_text_only_harmonized_selmacrof1_likelihood_v1_mergedfolds.yaml
     folds: [0, 1, 2, 3, 4]
     endpoint: outer_fold_test_partition
   - logical_run: androids_audio_only_native_mergedfolds
     dataset: androids_interview
     modality: audio_only
-    config: configs/main/androids_audio_only_harmonized_selmacrof1_likelihood_v1.yaml
+    config: configs/experiments/androids_mergedfolds/androids_audio_only_harmonized_selmacrof1_likelihood_v1_mergedfolds.yaml
     folds: [0, 1, 2, 3, 4]
     endpoint: outer_fold_test_partition
   - logical_run: androids_audio_text_native_mergedfolds
     dataset: androids_interview
     modality: audio_text
-    config: configs/main/androids_audio_text_harmonized_selmacrof1_likelihood_v1.yaml
+    config: configs/experiments/androids_mergedfolds/androids_audio_text_harmonized_selmacrof1_likelihood_v1_mergedfolds.yaml
     folds: [0, 1, 2, 3, 4]
     endpoint: outer_fold_test_partition
 scope:
