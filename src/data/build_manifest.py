@@ -93,7 +93,14 @@ def manifest_build_signature(config: dict[str, Any]) -> dict[str, Any]:
         for key, value in (config.get("split") or {}).items()
         # The locked baseline fold path is environment-specific; the declared
         # sha256 of that file stays in the signature and pins the content.
-        if key not in {"cv_protocol", "fixed_protocol", "smoke_subject_limit", "locked_original_folds_path"}
+        if key
+        not in {
+            "cv_protocol",
+            "fixed_protocol",
+            "smoke_subject_limit",
+            "locked_original_folds_path",
+            "locked_folds_path",
+        }
     }
     return {
         "builder_options": builder_options,
