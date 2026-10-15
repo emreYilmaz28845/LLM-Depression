@@ -155,11 +155,11 @@ POOLED_ALLOWED_DIFF_PATHS = ALLOWED_DIFF_PATHS | {
     "prompt.question_context_version",
 }
 
-# The audio lane default: two four-GPU nodes with per-rank accumulation 16,
-# which keeps the FSDP effective global batch at 128 (1 x 16 x 8). The
-# existing pooled Qwen3-Omni baselines were submitted with this shape.
-TRAIN_NODES = 2
-GRADIENT_ACCUMULATION_STEPS = 16
+# The audio lane default: one four-GPU node with per-rank accumulation 32,
+# which keeps the FSDP effective global batch at 128 (1 x 32 x 4). Runs before
+# 2026-10-15 used two nodes with accumulation 16 (1 x 16 x 8).
+TRAIN_NODES = 1
+GRADIENT_ACCUMULATION_STEPS = 32
 
 POOLED_DATASET_CONTEXT = "turkish_pooled"
 POOLED_RUN_ROOT_DATASET_DIR = "turkish"

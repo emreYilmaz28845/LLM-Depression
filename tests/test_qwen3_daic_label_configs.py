@@ -66,6 +66,10 @@ def test_generated_config_equals_canonical_source_plus_the_allowlist(modality: s
     expected["output_dirs"]["run_root"] = (
         f"${{PROJECT_ROOT}}/output_model/{CAMPAIGN}/{modality}/daic"
     )
+    if modality != "text_only":
+        # The finished campaign keeps the two-node audio shape it ran with.
+        expected["resources"]["train_nodes"] = 2
+        expected["training"]["gradient_accumulation_steps"] = 16
 
     assert candidate == expected
     differences = set(diff_keys(source, candidate))

@@ -76,13 +76,14 @@ POOLED_TURKISH_DEFAULTS = {
 }
 POOLED_TURKISH_TEXT_AGGREGATION = "turkish_pooled_text_pair_mean_margin_strict_v1"
 
-# The audio lane's default shape: two nodes of four GPUs with per-rank
-# accumulation 16, which is the shape the existing pooled Qwen3-Omni baseline
-# cells were submitted with. The FSDP recipe keeps an effective global batch of
-# 128 (1 x 16 x 8); the text lane keeps one node of four GPUs with accumulation
-# 32 (1 x 32 x 4).
-AUDIO_TRAIN_NODES = 2
-AUDIO_GRADIENT_ACCUMULATION_STEPS = 16
+# The audio lane's default shape: one node of four GPUs with per-rank
+# accumulation 32, the same shape as the text lane. The FSDP recipe keeps an
+# effective global batch of 128 (1 x 32 x 4). Until 2026-10-15 the audio lane
+# used two nodes with accumulation 16 (1 x 16 x 8); the single-node benchmark
+# (lane exp-qwen3omni-single-node-20261015, train job 47333409) fit in memory
+# and ran each epoch about three times faster, so one node is now the default.
+AUDIO_TRAIN_NODES = 1
+AUDIO_GRADIENT_ACCUMULATION_STEPS = 32
 AUDIO_RESOURCES = {
     "train_nodes": AUDIO_TRAIN_NODES,
     "eval_nodes": 1,
@@ -225,7 +226,7 @@ def verify_pooled_turkish_defaults() -> list[str]:
             if training.get("gradient_accumulation_steps") != AUDIO_GRADIENT_ACCUMULATION_STEPS:
                 problems.append(
                     "training.gradient_accumulation_steps must be "
-                    f"{AUDIO_GRADIENT_ACCUMULATION_STEPS} for the two-node audio lane"
+                    f"{AUDIO_GRADIENT_ACCUMULATION_STEPS} for the single-node audio lane"
                 )
         if output_dirs.get("run_root") != expected_run_root:
             problems.append(f"output_dirs.run_root must be {expected_run_root}")
