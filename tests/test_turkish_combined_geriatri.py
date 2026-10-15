@@ -156,7 +156,10 @@ def test_treatment_arms_keep_the_baseline_recipe_fields() -> None:
         baseline_accumulation = BASELINE_RESOLVED_ACCUMULATION[baseline_name]
         treatment_accumulation = treatment["training"]["gradient_accumulation_steps"]
         assert baseline_accumulation * world_size == 128
-        assert treatment_accumulation * world_size == 128
+        # The treatment config declares today's shape (one node of four GPUs
+        # since PR #281), which keeps the same effective global batch.
+        treatment_world_size = 4 * int((treatment.get("resources") or {}).get("train_nodes", 1))
+        assert treatment_accumulation * treatment_world_size == 128
 
 
 def _source(root: Path, cohort: str, condition: str, *, geriatri: bool) -> dict:
