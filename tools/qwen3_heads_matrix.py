@@ -633,9 +633,26 @@ def build_matrix(
     campaign_root: Path | None = None,
     parent_map_path: Path | None = None,
     cache_root: Path | None = None,
+    route_configs: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     selection = build_selection_map()
     routes = selection["routes"]
+    if route_configs:
+        # Restrict the matrix to the named routes and plan them against another
+        # config (for example a copy that pins a different fold assignment).
+        # Parents must still match that config under the usual reduction.
+        known = {str(route["route_id"]) for route in routes}
+        unknown_routes = sorted(set(route_configs) - known)
+        if unknown_routes:
+            raise HeadsMatrixError(f"--route-config names unknown routes: {unknown_routes}")
+        for route_id, config_path in route_configs.items():
+            if not (PROJECT_ROOT / config_path).is_file():
+                raise HeadsMatrixError(f"--route-config {route_id}: missing config {config_path}")
+        routes = [
+            dict(route, config=route_configs[str(route["route_id"])])
+            for route in routes
+            if str(route["route_id"]) in route_configs
+        ]
     parent_map = _load_parent_map(parent_map_path)
     matrix: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -647,6 +664,7 @@ def build_matrix(
         "campaign_root": str(campaign_root) if campaign_root is not None else None,
         "cache_root": str(cache_root) if cache_root is not None else None,
         "parent_map": str(parent_map_path) if parent_map_path is not None else None,
+        "route_configs": dict(sorted(route_configs.items())) if route_configs else None,
         "routes": [],
     }
     requested_keys: set[tuple[str, int, int]] = set()
@@ -778,7 +796,15 @@ def check_matrix(matrix: dict[str, Any]) -> list[str]:
         failures.append("the fixed head variants changed")
     if int(matrix.get("head_seed", -1)) != HEAD_SEED:
         failures.append("the fixed classifier seed changed")
-    if len(matrix.get("routes") or []) != 23:
+    route_configs = matrix.get("route_configs")
+    if route_configs:
+        planned = {str(route["route_id"]) for route in matrix.get("routes") or []}
+        if planned != set(route_configs):
+            failures.append("the head matrix routes differ from its --route-config set")
+        for route in matrix.get("routes") or []:
+            if route.get("config") != route_configs.get(str(route["route_id"])):
+                failures.append(f"{route['route_id']}: config differs from its --route-config")
+    elif len(matrix.get("routes") or []) != 23:
         failures.append("the head matrix must cover the 23 standalone routes")
     for route in matrix.get("routes") or []:
         english = route["language"] == "english"
@@ -859,6 +885,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="lane-owned feature cache root for new head jobs",
     )
+    parser.add_argument(
+        "--route-config",
+        action="append",
+        default=[],
+        metavar="ROUTE_ID=CONFIG",
+        help="plan only these routes, each against the given config path (repeatable)",
+    )
     parser.add_argument("--emit", type=Path, default=None)
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--plan-file", type=Path, default=None, help="re-check this plan instead")
@@ -871,8 +904,16 @@ def main(argv: list[str] | None = None) -> int:
         matrix = json.loads(args.plan_file.read_text(encoding="utf-8"))
     else:
         seeds = args.seed or list(PLANNED_SEEDS)
+        route_configs: dict[str, str] = {}
+        for item in args.route_config:
+            route_id, sep, config_path = item.partition("=")
+            if not sep or not route_id or not config_path:
+                print(f"ERROR: --route-config expects ROUTE_ID=CONFIG, got {item!r}", file=sys.stderr)
+                return 2
+            route_configs[route_id] = config_path
         try:
             matrix = build_matrix(
+                route_configs=route_configs or None,
                 seeds=seeds,
                 scan_roots=list(args.scan_root),
                 campaign_root=args.campaign_root,
