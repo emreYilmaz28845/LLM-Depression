@@ -362,13 +362,14 @@ def test_effective_batch_matches_the_canonical_recipe_for_the_audio_lane() -> No
     config = _omni_config()
     training = config["training"]
     assert training["per_device_train_batch_size"] == 1
-    # The audio lane default: two nodes of four GPUs with accumulation 16.
-    assert training["gradient_accumulation_steps"] == 16
-    assert config["resources"]["train_nodes"] == 2
-    assert effective_global_batch_size(config, 8) == 128
-    four_rank = dict(config)
-    four_rank["training"] = dict(training, gradient_accumulation_steps=32)
-    assert effective_global_batch_size(four_rank, 4) == 128
+    # The audio lane default: one node of four GPUs with accumulation 32.
+    assert training["gradient_accumulation_steps"] == 32
+    assert config["resources"]["train_nodes"] == 1
+    assert effective_global_batch_size(config, 4) == 128
+    # The earlier two-node shape (accumulation 16 at world size 8) gives the same batch.
+    two_node = dict(config)
+    two_node["training"] = dict(training, gradient_accumulation_steps=16)
+    assert effective_global_batch_size(two_node, 8) == 128
 
 
 # --------------------------------------------------------------------------- #

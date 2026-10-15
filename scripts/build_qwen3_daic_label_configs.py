@@ -67,7 +67,18 @@ ARMS: dict[str, tuple[str, str, str]] = {
 }
 
 ARM_ORDER = ("ab", "01", "truefalse", "yesno", "en")
-ALLOWED_DIFF_KEYS = ("recipe_id", "labels", "output_dirs.run_root")
+ALLOWED_DIFF_KEYS = (
+    "recipe_id",
+    "labels",
+    "output_dirs.run_root",
+    "resources.train_nodes",
+    "training.gradient_accumulation_steps",
+)
+# This campaign finished on the two-node audio shape (2 x 4 GPUs, accumulation
+# 16). The canonical audio lane moved to one node with accumulation 32 on
+# 2026-10-15, so the audio arms pin the shape they were run with.
+LABEL_AUDIO_TRAIN_NODES = 2
+LABEL_AUDIO_GRADIENT_ACCUMULATION_STEPS = 16
 # Sections whose content may change as a whole; the tests check their exact content.
 OPAQUE_DIFF_KEYS = ("labels",)
 
@@ -116,6 +127,10 @@ def derive(source: dict[str, Any], *, modality: str, tag: str) -> dict[str, Any]
     config["output_dirs"]["run_root"] = (
         f"${{PROJECT_ROOT}}/output_model/{CAMPAIGN}/{modality}/{DATASET}"
     )
+
+    if modality != "text_only":
+        config["resources"]["train_nodes"] = LABEL_AUDIO_TRAIN_NODES
+        config["training"]["gradient_accumulation_steps"] = LABEL_AUDIO_GRADIENT_ACCUMULATION_STEPS
 
     if modality == "text_only":
         validate_qwen38_config(config)

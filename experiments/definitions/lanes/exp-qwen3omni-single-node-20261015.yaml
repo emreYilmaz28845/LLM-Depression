@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: exp-qwen3omni-single-node-20261015
+slug: qwen3omni-single-node
+tier: 1
+branch: agent/exp-qwen3omni-single-node
+worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-exp-qwen3omni-single-node
+parent_branch: origin/main
+parent_sha: 9e95c82b0a9101f1a605ca5cbe37e5e84e388c7c
+created_at_utc: "2026-10-15T12:47:14Z"
+experiment_group_path: experiments/definitions/qwen3omni-single-node-20261015.yaml
+type: competing

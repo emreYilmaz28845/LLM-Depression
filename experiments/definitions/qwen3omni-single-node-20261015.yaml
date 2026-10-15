@@ -1,0 +1,48 @@
+schema_version: audiollm.experiment_group.v1
+group_id: qwen3omni-single-node-20261015
+title: Qwen3-Omni-30B-A3B Thinker FSDP training on one node (4 x H100) instead of two
+research_question: >-
+  Can the Qwen3-Omni-30B-A3B Thinker LoRA training recipe run on a single MN5 node
+  (FSDP world size 4, per-rank batch 1, accumulation 32, effective global batch 128)
+  without running out of GPU memory, and what are its per-epoch wall time, peak
+  per-rank memory and GPU-hour cost compared with the current two-node shape
+  (world size 8, accumulation 16, same effective global batch 128)? This is an
+  infrastructure benchmark requested by the advisor on 2026-10-15; it is not a
+  reportable scientific result.
+dataset: androids_interview
+baseline: >-
+  The two-node training of the same cell: run
+  q3ms_androids_interview_audio_text_native_s7_f0_r1 of the qwen3-multiseed-native-20261002
+  campaign (train job 46965504, seed 7, split seed 1337, fold 0, config
+  configs/main/androids_audio_text_harmonized_selmacrof1_likelihood_v1.yaml, FSDP world
+  size 8, accumulation 16). Its train log records about 31-34 minutes per epoch including
+  selection evaluation and a per-rank peak of about 22-23.5 GiB allocated / 30-31 GiB
+  reserved on 64 GB H100s.
+treatment: >-
+  The same config, seed, split and fold trained on one node of four H100s: FSDP world
+  size 4, per-rank batch 1, gradient accumulation 32 (effective global batch 128 kept),
+  gradient checkpointing and CPU activation offload unchanged, capped at two epochs
+  (training.num_train_epochs=2) so the job measures memory and epoch time only. The
+  metrics of this capped run are not comparable with a full run and are not reported.
+expected_seeds:
+  - 7
+expected_folds:
+  - 0
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+runs:
+  - logical_run: qwen3omni_androids_audio_text_native_single_node_benchmark
+    dataset: androids_interview
+    modality: audio_text
+    config: configs/main/androids_audio_text_harmonized_selmacrof1_likelihood_v1.yaml
+    folds:
+      - 0
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Benchmark only: one fold, two capped epochs. Compare epoch wall time, peak per-rank
+      memory and inner-validation trajectory with the two-node reference; never report the
+      test metrics as a result.
