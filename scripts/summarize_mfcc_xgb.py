@@ -54,12 +54,21 @@ def summarize_head(dataset_dir: Path, head_parts: tuple[str, ...]) -> dict[str, 
         metrics = read_json(metrics_path)
         rows = read_jsonl(predictions_path)
         pooled_rows.extend(rows)
+        # Recompute from the subject predictions and cross-check the head's
+        # own metrics file. The DAIC packed30 head writes macro_f1 /
+        # positive_f1 / macro_recall instead of binary_strict_* names.
+        recomputed = strict_pooled_metrics(rows)
+        for name, fallback in zip(METRICS, ("macro_f1", "positive_f1", "macro_recall")):
+            reported = metrics.get(name, metrics.get(fallback))
+            if reported is None or abs(float(reported) - recomputed[name]) > 1e-9:
+                raise ValueError(f"{metrics_path}: {name} {reported} != recomputed {recomputed[name]}")
         per_fold.append(
             {
                 "fold": int(fold_dir.name.split("_")[1]),
-                **{name: metrics[name] for name in METRICS},
-                "subjects": metrics["num_subjects"],
-                "aggregation_policy": metrics.get("aggregation_policy"),
+                **{name: recomputed[name] for name in METRICS},
+                "subjects": recomputed["subjects"],
+                "invalid_subjects": recomputed["invalid_subjects"],
+                "aggregation_policy": metrics.get("aggregation_policy") or metrics.get("aggregation_method"),
                 "prediction_backend": metrics.get("prediction_backend"),
                 "metrics_path": str(metrics_path),
                 "metrics_sha256": sha256_file(metrics_path),
