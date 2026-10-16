@@ -47,6 +47,7 @@ GEMMA4_LOGREG_PREDICTION_BACKEND = "gemma4_hidden_logreg_raw"
 GEMMA4_XGB_PREDICTION_BACKEND = "gemma4_hidden_xgb_raw"
 GEMMA4_VARIANTS = ("logreg_raw", "xgb_raw")
 OFFICIALDEV_PROTOCOL = "daic_official_train_inner_split_dev_evaluation"
+OPENSMILE_MFCC_MODEL_BACKEND = "opensmile_mfcc"
 
 
 def resolve_prediction_backend(
@@ -55,6 +56,8 @@ def resolve_prediction_backend(
     """Map the extraction backend and classifier variant to the exact
     prediction-backend identity written into every prediction, metric, and
     evaluation record."""
+    if str(metadata.get("model_backend", "")).strip().lower() == OPENSMILE_MFCC_MODEL_BACKEND:
+        return f"{OPENSMILE_MFCC_MODEL_BACKEND}_{variant}"
     if str(metadata.get("model_backend", "")).strip().lower() != "gemma4":
         if protocol_backend_mode == "native_en_text_heads_v2":
             if variant == "logreg_raw":

@@ -43,6 +43,14 @@ def is_packed30_rows(metadata: dict[str, Any]) -> bool:
 
 
 def classifier_aggregation_policy(metadata: dict[str, Any]) -> str:
+    # A cache may request the hierarchical mean explicitly (the openSMILE MFCC
+    # caches do, including DAIC and pooled Turkish); other caches keep the
+    # dataset defaults below.
+    requested = str(metadata.get("classifier_aggregation_policy") or "").strip()
+    if requested:
+        if requested != HIERARCHICAL_MEAN_CLASSIFIER_POLICY:
+            raise ValueError(f"Unsupported classifier_aggregation_policy {requested!r}.")
+        return requested
     if (
         str(metadata.get("dataset", "")).lower() == "turkish"
         and str(metadata.get("dataset_variant", "")).strip() == "pooled_t17"
