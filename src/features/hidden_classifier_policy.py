@@ -8,9 +8,15 @@ from typing import Any
 
 import numpy as np
 
+from src.aggregate import (
+    HIERARCHICAL_MEAN_CLASSIFIER_POLICY,
+    TURKISH_POOLED_AUDIO_AGGREGATION_POLICY,
+)
+
 
 D3TEC_DATASET = "d3tec"
 D3TEC_RESPONSE_COUNT = 27
+# Legacy rule recorded by runs before 2026-10-17; new runs use the mean policy.
 D3TEC_AGGREGATION_POLICY = (
     "segment_majority_probability_margin_tie_break_then_"
     "equal_response_majority_probability_margin_tie_break_then_subject"
@@ -45,11 +51,17 @@ def classifier_aggregation_policy(metadata: dict[str, Any]) -> str:
         return TURKISH_POOLED_TEXT_PAIR_POLICY
     if is_packed30_rows(metadata):
         return PACKED30_AGGREGATION_POLICY
+    if (
+        str(metadata.get("dataset", "")).lower() == "turkish"
+        and str(metadata.get("dataset_variant", "")).strip() == "pooled_t17"
+    ):
+        # Pooled Turkish audio already averages score margins in src/aggregate.py.
+        return TURKISH_POOLED_AUDIO_AGGREGATION_POLICY
     if str(metadata.get("dataset", "")).lower() == D3TEC_DATASET:
         if str(metadata.get("input_modality", "")) == "text_only":
             return "one_prediction_per_subject"
-        return D3TEC_AGGREGATION_POLICY
-    return "sample_majority_probability_margin_tie_break_then_subject"
+        return HIERARCHICAL_MEAN_CLASSIFIER_POLICY
+    return HIERARCHICAL_MEAN_CLASSIFIER_POLICY
 
 
 def response_normalized_sample_weights(
