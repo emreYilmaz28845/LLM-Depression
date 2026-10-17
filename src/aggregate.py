@@ -30,6 +30,11 @@ DIAGNOSTIC_LABEL_NAMES = {
 TURKISH_POOLED_TEXT_PAIR_POLICY = "turkish_pooled_text_pair_mean_margin_strict_v1"
 TURKISH_POOLED_TEXT_CONDITIONS = ("pos_only_t17", "negative_only_t17")
 TURKISH_POOLED_AUDIO_AGGREGATION_POLICY = "turkish_pooled_audio_response_subject_mean_score_margin_v1"
+# Fixed-head subject rule shared with the merged heads (src/merged/heads.py):
+# mean window probability per response, mean of response probabilities per
+# subject, Depressed when >= 0.5. Rows that do not declare it keep the legacy
+# majority-vote rules so recorded runs still recompute to their saved metrics.
+HIERARCHICAL_MEAN_CLASSIFIER_POLICY = "response_mean_probability_then_subject_mean_threshold_0_5"
 
 
 def _strict_binary_prediction(gold: int, pred: int) -> int:
@@ -1209,6 +1214,77 @@ def aggregate_margin_predictions(
     return subjects, metrics
 
 
+def _declares_hierarchical_mean(sample_rows: list[dict[str, Any]]) -> bool:
+    return bool(sample_rows) and all(
+        str(row.get("aggregation_policy", "")).strip() == HIERARCHICAL_MEAN_CLASSIFIER_POLICY
+        for row in sample_rows
+    )
+
+
+def _classifier_response_means(
+    sample_rows: list[dict[str, Any]],
+) -> dict[str, dict[str, list[float]]]:
+    """Group probabilities by subject, then response (sample id when absent)."""
+    grouped: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    for row in sample_rows:
+        response_id = str(row.get("response_id", "")).strip() or str(row["sample_id"])
+        grouped[str(row["subject_id"])][response_id].append(float(row["probability"]))
+    return grouped
+
+
+def _aggregate_classifier_hierarchical_mean(
+    sample_rows: list[dict[str, Any]],
+    prediction_backend: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    labels: dict[str, set[int]] = defaultdict(set)
+    for row in sample_rows:
+        labels[str(row["subject_id"])].add(int(row["label"]))
+    subject_rows: list[dict[str, Any]] = []
+    for subject_id, responses in sorted(_classifier_response_means(sample_rows).items()):
+        if len(labels[subject_id]) != 1:
+            raise ValueError(f"Inconsistent labels for subject {subject_id}.")
+        response_probabilities = [sum(values) / len(values) for values in responses.values()]
+        probability = sum(response_probabilities) / len(response_probabilities)
+        prediction = int(probability >= 0.5)
+        subject_rows.append(
+            {
+                "subject_id": subject_id,
+                "label": next(iter(labels[subject_id])),
+                "prediction": prediction,
+                "aggregated_prediction": prediction,
+                "probability": probability,
+                "sample_count": sum(len(values) for values in responses.values()),
+                "response_count": len(responses),
+                "response_ids": list(responses),
+                "response_probabilities": response_probabilities,
+                "prediction_backend": prediction_backend,
+                "evaluation_protocol_name": "hidden_classifier_hierarchical_mean_probability",
+                "aggregation_policy": HIERARCHICAL_MEAN_CLASSIFIER_POLICY,
+                "aggregation_method": HIERARCHICAL_MEAN_CLASSIFIER_POLICY,
+            }
+        )
+    y_true = [int(row["label"]) for row in subject_rows]
+    y_pred = [int(row["prediction"]) for row in subject_rows]
+    metrics = classification_metrics(y_true, y_pred)
+    metrics.update(
+        {
+            # Every subject gets a valid label, so strict and plain metrics agree.
+            "binary_strict_accuracy": metrics["accuracy"],
+            "binary_strict_positive_f1": metrics["positive_f1"],
+            "binary_strict_macro_f1": metrics["macro_f1"],
+            "binary_strict_uar": metrics["macro_recall"],
+            "auroc": binary_auroc(y_true, [float(row["probability"]) for row in subject_rows]),
+            "num_subjects": len(subject_rows),
+            "predicted_positive_rate": sum(y_pred) / len(y_pred) if y_pred else 0.0,
+            "prediction_backend": prediction_backend,
+            "evaluation_protocol_name": "hidden_classifier_hierarchical_mean_probability",
+            "aggregation_policy": HIERARCHICAL_MEAN_CLASSIFIER_POLICY,
+            "aggregation_method": HIERARCHICAL_MEAN_CLASSIFIER_POLICY,
+        }
+    )
+    return subject_rows, metrics
+
+
 def aggregate_binary_classifier_predictions(
     sample_rows: list[dict[str, Any]],
     prediction_backend: str = "qwen_hidden_classifier",
@@ -1220,6 +1296,8 @@ def aggregate_binary_classifier_predictions(
     its exact backend value explicitly (``gemma4_hidden_logreg_raw`` /
     ``gemma4_hidden_xgb_raw``).
     """
+    if _declares_hierarchical_mean(sample_rows):
+        return _aggregate_classifier_hierarchical_mean(sample_rows, prediction_backend)
     declared_policies = {_declared_pair_policy(row) for row in sample_rows}
     if TURKISH_POOLED_TEXT_PAIR_POLICY in declared_policies:
         if declared_policies != {TURKISH_POOLED_TEXT_PAIR_POLICY}:
@@ -1412,6 +1490,8 @@ def aggregate_binary_classifier_response_rows(
     sample_rows: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Return D3TEC response-level classifier predictions and metrics."""
+    if _declares_hierarchical_mean(sample_rows):
+        return _classifier_response_rows_mean(sample_rows)
     normalized = []
     for row in sample_rows:
         probability = float(row["probability"])
@@ -1435,6 +1515,43 @@ def aggregate_binary_classifier_response_rows(
     response_metrics["prediction_backend"] = "qwen_hidden_classifier"
     response_metrics["evaluation_protocol_name"] = "d3tec_hidden_response"
     return response_rows, response_metrics
+
+
+
+def _classifier_response_rows_mean(
+    sample_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    labels = {str(row["subject_id"]): int(row["label"]) for row in sample_rows}
+    response_rows: list[dict[str, Any]] = []
+    for subject_id, responses in sorted(_classifier_response_means(sample_rows).items()):
+        for response_id, values in responses.items():
+            probability = sum(values) / len(values)
+            response_rows.append(
+                {
+                    "subject_id": subject_id,
+                    "response_id": response_id,
+                    "label": labels[subject_id],
+                    "prediction": int(probability >= 0.5),
+                    "probability": probability,
+                    "num_segments": len(values),
+                    "prediction_backend": "qwen_hidden_classifier",
+                    "evaluation_protocol_name": "d3tec_hidden_response",
+                    "aggregation_method": "mean_window_probability_threshold_0_5",
+                }
+            )
+    y_true = [int(row["label"]) for row in response_rows]
+    y_pred = [int(row["prediction"]) for row in response_rows]
+    metrics = classification_metrics(y_true, y_pred)
+    metrics.update(
+        {
+            "binary_strict_macro_f1": metrics["macro_f1"],
+            "binary_strict_uar": metrics["macro_recall"],
+            "prediction_backend": "qwen_hidden_classifier",
+            "evaluation_protocol_name": "d3tec_hidden_response",
+            "aggregation_method": "mean_window_probability_threshold_0_5",
+        }
+    )
+    return response_rows, metrics
 
 
 def aggregate_likelihood_predictions_segment_level(sample_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
