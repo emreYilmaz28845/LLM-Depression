@@ -2,7 +2,7 @@
 # Local CPU campaign: openSMILE MFCC functionals on the harmonized LLM windows,
 # then fixed XGBoost and Optuna-100 XGBoost heads per fold.
 #
-#   bash scripts/run_mfcc_xgb_local.sh <androids|cmdc|d3tec|daic|turkish_pooled> [...]
+#   bash scripts/run_mfcc_xgb_local.sh <androids|androids_standalone|cmdc|d3tec|daic|turkish_pooled> [...]
 #
 # Resumable: extraction is skipped when every fold cache exists, fixed heads
 # when metrics.json exists, and Optuna resumes its own study.sqlite3.
@@ -30,6 +30,12 @@ dataset_args() {
       EXTRA=(--manifest-metadata "$INPUTS_ROOT/outputs/splits_harmonized/androids/androids_interview_manifest_metadata.json"
              --locked-folds "$STAGED/androids/androids_merged_folds_v1.json"
              --locked-folds-sha256 4e15cbbf35e6d426b17fd0c8020830a2ccefed421662de8800556553b331b46b) ;;
+    androids_standalone)
+      # Original standalone folds (androids_interview_folds.json), the split the
+      # standalone Qwen2-Audio and Qwen3-Omni Androids runs were scored on.
+      CONFIG=configs/main/androids_audio_only_harmonized_selmacrof1_likelihood_v1.yaml
+      FOLDS=(0 1 2 3 4)
+      EXTRA=(--manifest-metadata "$INPUTS_ROOT/outputs/splits_harmonized/androids/androids_interview_manifest_metadata.json") ;;
     cmdc)
       CONFIG=configs/main/cmdc_audio_only_harmonized_selmacrof1_likelihood_v1.yaml
       FOLDS=(0 1 2 3 4)

@@ -20,7 +20,7 @@ HEADS = {
     "xgb_raw": ("fixed_heads", "xgb_raw"),
     "xgb_optuna100": ("xgb_optuna100",),
 }
-DATASETS = ("androids", "cmdc", "d3tec", "daic", "turkish_pooled")
+DATASETS = ("androids", "androids_standalone", "cmdc", "d3tec", "daic", "turkish_pooled")
 METRICS = ("binary_strict_macro_f1", "binary_strict_positive_f1", "binary_strict_uar")
 
 
