@@ -34,6 +34,7 @@ PACKAGE_PINS = {"optuna": OPTUNA_VERSION, "xgboost": XGBOOST_VERSION}
 
 QWEN_PREDICTION_BACKEND = "qwen_hidden_xgb_optuna100"
 GEMMA4_PREDICTION_BACKEND = "gemma4_hidden_xgb_optuna100"
+OPENSMILE_MFCC_PREDICTION_BACKEND = "opensmile_mfcc_xgb_optuna100"
 MERGED_BACKEND_SUFFIX = "symmetric_merged"
 
 # The exact fixed search space from runbook Section 7.
@@ -106,7 +107,9 @@ def assert_protocol_settings(
 
 
 def prediction_backend(model_backend: str | None, *, merged: bool = False) -> str:
-    if str(model_backend or "").strip().lower() == "gemma4":
+    if str(model_backend or "").strip().lower() == "opensmile_mfcc":
+        backend = OPENSMILE_MFCC_PREDICTION_BACKEND
+    elif str(model_backend or "").strip().lower() == "gemma4":
         backend = GEMMA4_PREDICTION_BACKEND
     else:
         backend = QWEN_PREDICTION_BACKEND
