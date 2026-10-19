@@ -387,7 +387,7 @@ def test_declaration_only_train_nodes_is_accepted(synthetic_cell: Path) -> None:
         synthetic_cell,
         cell_config=config,
         drop_train_nodes=True,
-        world_size=8,
+        world_size=4,
     )
     parent = heads.resolve_parent(
         cell={"config": AUDIO_CELL_CONFIG},
@@ -407,7 +407,7 @@ def test_genuine_shape_mismatch_waits(synthetic_cell: Path) -> None:
         synthetic_cell,
         cell_config=config,
         drop_train_nodes=True,
-        world_size=4,
+        world_size=8,
     )
     parent = heads.resolve_parent(
         cell={"config": AUDIO_CELL_CONFIG},

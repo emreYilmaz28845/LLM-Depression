@@ -44,14 +44,16 @@ ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "configs/main"
 
 # The three pooled native Qwen3 configs are the migration's native source
-# contract: this task must not rewrite them.
+# contract: this task must not rewrite them. The two Omni audio hashes were
+# updated on 2026-10-15 for the one-node audio shape (PR #281); only
+# resources.train_nodes and training.gradient_accumulation_steps changed.
 POOLED_NATIVE_CONFIG_SHA256 = {
     "turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b.yaml":
         "bd945a3ceb3d8e70f8c5894a4702aa87722dc3074774f6a18faa9f4d0b96c8ab",
     "turkish_pooled_t17_audio_only_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml":
-        "b761a709b2ec29214f0fab8f7ba0bbbb9952cb5dde2c53af893a4b37a07f43eb",
+        "d610731c1cfe0d202a5400afdc8476236ebab8cf47b6e45ac4be14a55b8701ab",
     "turkish_pooled_t17_audio_text_harmonized_selmacrof1_likelihood_v1_qwen3asr_promptcontext_v1_qwen3omni_30b_a3b.yaml":
-        "b3ab27cff81518a491ec6a0f81d54388513c05ec57e8ec4d6cdb17ef7254551b",
+        "c5f0d5309c9578985f0cffd2e3e324a78d3c8dbd17baa9229ecd4c10b6a41823",
 }
 
 
