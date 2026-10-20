@@ -177,7 +177,7 @@ echo "  fold_dir: $FOLD_DIR"
 echo "  evaluation_view: $EVAL_VIEW"
 echo "  log_root: $LOG_ROOT"
 # Resolve the training strategy and the effective global batch the run will use.
-read -r SHAPE_STRATEGY PER_DEVICE_BATCH GRAD_ACCUM CONFIG_EVAL_GPUS <<< "$(python - "$CONFIG" "$PROJECT_ROOT" "$EXTRA_TRAIN_ARGS" "$OVERRIDES_JSON_B64" <<'PY'
+read -r SHAPE_STRATEGY PER_DEVICE_BATCH GRAD_ACCUM CONFIG_EVAL_GPUS TARGET_BATCH <<< "$(python - "$CONFIG" "$PROJECT_ROOT" "$EXTRA_TRAIN_ARGS" "$OVERRIDES_JSON_B64" <<'PY'
 import base64, json, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[2])
@@ -198,6 +198,7 @@ print(
     training.get("per_device_train_batch_size", 1),
     training.get("gradient_accumulation_steps", 1),
     resources.get("eval_gpus_per_node", 1),
+    training.get("target_effective_global_batch_size", 128),
 )
 PY
 )"
@@ -213,9 +214,9 @@ if [ "$CONFIG_EVAL_GPUS" != "$EVAL_GPUS_PER_NODE" ]; then
     exit 1
 fi
 EVAL_CPUS_PER_TASK=$((TRAIN_CPUS_PER_GPU * EVAL_GPUS_PER_NODE))
-if [ "$SHAPE_STRATEGY" = "fsdp" ] && [ "$EFFECTIVE_BATCH" -ne 128 ]; then
-    SUGGESTED_ACCUM=$((128 / (PER_DEVICE_BATCH * WORLD_SIZE)))
-    echo "ERROR: the fsdp recipe keeps an effective global batch of 128; ${WORLD_SIZE} rank(s) give ${EFFECTIVE_BATCH}." >&2
+if [ "$SHAPE_STRATEGY" = "fsdp" ] && [ "$EFFECTIVE_BATCH" -ne "$TARGET_BATCH" ]; then
+    SUGGESTED_ACCUM=$((TARGET_BATCH / (PER_DEVICE_BATCH * WORLD_SIZE)))
+    echo "ERROR: the fsdp recipe keeps an effective global batch of ${TARGET_BATCH}; ${WORLD_SIZE} rank(s) give ${EFFECTIVE_BATCH}." >&2
     echo "       Pass EXTRA_TRAIN_ARGS=\"--set training.gradient_accumulation_steps=${SUGGESTED_ACCUM}\" so the change is recorded in provenance." >&2
     exit 1
 fi

@@ -40,3 +40,24 @@ runs:
     folds_note: >-
       Smoke only: one fold, three capped epochs. Check the LR schedule log line, the
       run_config lr_schedule block and non-zero LoRA B; never report the test metrics.
+  - logical_run: text_accum4w10_pilot_d3tec_text_native
+    dataset: d3tec
+    modality: text_only
+    config: configs/experiments/text_accum4/d3tec_text_only_harmonized_selmacrof1_likelihood_v1_accum4w10.yaml
+    folds:
+      - 0
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Pilot of the approved small-corpus text recipe (accumulation 4, effective batch 16,
+      warmup ratio 0.1; user + advisor approved 2026-10-20), seed 7, full 20 epochs with
+      normal early stopping. Checks stability only (no collapse, LoRA B non-zero,
+      inner-val curve); the recipe is predeclared and is not tuned on test scores.
+  - logical_run: text_accum4w10_pilot_cmdc_text_native
+    dataset: cmdc
+    modality: text_only
+    config: configs/experiments/text_accum4/cmdc_text_only_harmonized_selmacrof1_likelihood_v1_accum4w10.yaml
+    folds:
+      - 0
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Same pilot for CMDC (native), seed 7, fold 0, full 20 epochs.
