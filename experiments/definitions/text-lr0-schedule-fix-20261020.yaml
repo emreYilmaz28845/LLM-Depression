@@ -1,0 +1,42 @@
+schema_version: audiollm.experiment_group.v1
+group_id: text-lr0-schedule-fix-20261020
+title: Smoke test of the update-counted LR schedule on standalone Qwen3.8 D3TEC text
+research_question: >-
+  With the update-counted LR schedule (training.lr_schedule_mode=update_counted), does a
+  standalone Qwen3.8-27B D3TEC text fit make a real optimizer update at LR > 0 in epoch 1,
+  so the epoch-1 adapter has non-zero LoRA B matrices? The legacy schedule ran the only
+  epoch-1 update at LR 0 and left LoRA B at zero. This is an infrastructure smoke test;
+  it is not a reportable scientific result.
+dataset: d3tec
+baseline: >-
+  Run q3ms_d3tec_text_only_native_s7_f0_r1 of the qwen3-multiseed-native-20261002 campaign
+  (attempt 20261003T013452Z-q3ms_d3tec_text_only_native_s7_f0_r1-dd410ab6-b1e12741, train job
+  46963736, seed 7, split seed 1337, fold 0, config
+  configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v1.yaml, FSDP world size 4,
+  accumulation 32). Its selected epoch-1 adapter has all LoRA B matrices at zero.
+treatment: >-
+  The same config, seed, split seed and fold, trained from the fixed commit with the
+  update-counted schedule and capped at three epochs (training.num_train_epochs=3) so the
+  job checks the LR plan, the epoch guards and LoRA B after epoch 1. The metrics of this
+  capped run are not comparable with a full run and are not reported.
+expected_seeds:
+  - 7
+expected_folds:
+  - 0
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+runs:
+  - logical_run: text_lr0_fix_smoke_d3tec_text_native
+    dataset: d3tec
+    modality: text_only
+    config: configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v1.yaml
+    folds:
+      - 0
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Smoke only: one fold, three capped epochs. Check the LR schedule log line, the
+      run_config lr_schedule block and non-zero LoRA B; never report the test metrics.
