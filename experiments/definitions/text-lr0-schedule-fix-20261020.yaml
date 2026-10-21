@@ -21,8 +21,14 @@ treatment: >-
   capped run are not comparable with a full run and are not reported.
 expected_seeds:
   - 7
+  - 1337
+  - 2024
 expected_folds:
   - 0
+  - 1
+  - 2
+  - 3
+  - 4
 primary_metric:
   namespace: headline/binary_strict
   name: macro_f1
@@ -61,3 +67,143 @@ runs:
     endpoint: outer_fold_test_partition
     folds_note: >-
       Same pilot for CMDC (native), seed 7, fold 0, full 20 epochs.
+  - logical_run: text_accum4w10_full_daic_text_native
+    dataset: daic
+    modality: text_only
+    config: configs/experiments/text_accum4/daic_text_only_harmonized_selmacrof1_likelihood_v1_accum4w10.yaml
+    folds:
+      - 0
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Full option-C rerun (user approved 2026-10-21) of the paper's standalone Qwen3.8-27B
+      native text cells with the update-counted schedule and the predeclared small-corpus
+      recipe. Seeds 7, 1337, 2024; split seed 1337; same manifests and splits as the
+      original cells. New run names; the original runs are never overwritten.
+  - logical_run: text_accum4w10_full_d3tec_text_native
+    dataset: d3tec
+    modality: text_only
+    config: configs/experiments/text_accum4/d3tec_text_only_harmonized_selmacrof1_likelihood_v1_accum4w10.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Full option-C rerun (user approved 2026-10-21) of the paper's standalone Qwen3.8-27B
+      native text cells with the update-counted schedule and the predeclared small-corpus
+      recipe. Seeds 7, 1337, 2024; split seed 1337; same manifests and splits as the
+      original cells. New run names; the original runs are never overwritten.
+  - logical_run: text_accum4w10_full_d3tec_text_english
+    dataset: d3tec
+    modality: text_only
+    config: configs/experiments/text_accum4/d3tec_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen38_27b_accum4w10.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Full option-C rerun (user approved 2026-10-21) of the paper's standalone Qwen3.8-27B
+      english text cells with the update-counted schedule and the predeclared small-corpus
+      recipe. Seeds 7, 1337, 2024; split seed 1337; same manifests and splits as the
+      original cells. New run names; the original runs are never overwritten.
+  - logical_run: text_accum4w10_full_cmdc_text_native
+    dataset: cmdc
+    modality: text_only
+    config: configs/experiments/text_accum4/cmdc_text_only_harmonized_selmacrof1_likelihood_v1_accum4w10.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Full option-C rerun (user approved 2026-10-21) of the paper's standalone Qwen3.8-27B
+      native text cells with the update-counted schedule and the predeclared small-corpus
+      recipe. Seeds 7, 1337, 2024; split seed 1337; same manifests and splits as the
+      original cells. New run names; the original runs are never overwritten.
+  - logical_run: text_accum4w10_full_cmdc_text_english
+    dataset: cmdc
+    modality: text_only
+    config: configs/experiments/text_accum4/cmdc_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen38_27b_accum4w10.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Full option-C rerun (user approved 2026-10-21) of the paper's standalone Qwen3.8-27B
+      english text cells with the update-counted schedule and the predeclared small-corpus
+      recipe. Seeds 7, 1337, 2024; split seed 1337; same manifests and splits as the
+      original cells. New run names; the original runs are never overwritten.
+  - logical_run: text_accum4w10_full_turkish_text_native
+    dataset: turkish
+    modality: text_only
+    config: configs/experiments/text_accum4/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b_accum4w10.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Full option-C rerun (user approved 2026-10-21) of the paper's standalone Qwen3.8-27B
+      native text cells with the update-counted schedule and the predeclared small-corpus
+      recipe. Seeds 7, 1337, 2024; split seed 1337; same manifests and splits as the
+      original cells. New run names; the original runs are never overwritten.
+  - logical_run: text_accum4w10_full_turkish_text_english
+    dataset: turkish
+    modality: text_only
+    config: configs/experiments/text_accum4/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen38_27b_accum4w10.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Full option-C rerun (user approved 2026-10-21) of the paper's standalone Qwen3.8-27B
+      english text cells with the update-counted schedule and the predeclared small-corpus
+      recipe. Seeds 7, 1337, 2024; split seed 1337; same manifests and splits as the
+      original cells. New run names; the original runs are never overwritten.
+  - logical_run: text_accum4w10_full_androids_mf_text_native
+    dataset: androids_interview
+    modality: text_only
+    config: configs/experiments/text_accum4/androids_text_only_harmonized_selmacrof1_likelihood_v1_mergedfolds_accum4w10.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Full option-C rerun (user approved 2026-10-21) of the paper's standalone Qwen3.8-27B
+      native text cells with the update-counted schedule and the predeclared small-corpus
+      recipe. Seeds 7, 1337, 2024; split seed 1337; same manifests and splits as the
+      original cells. New run names; the original runs are never overwritten.
+  - logical_run: text_accum4w10_full_androids_mf_text_english
+    dataset: androids_interview
+    modality: text_only
+    config: configs/experiments/text_accum4/androids_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen38_27b_mergedfolds_accum4w10.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Full option-C rerun (user approved 2026-10-21) of the paper's standalone Qwen3.8-27B
+      english text cells with the update-counted schedule and the predeclared small-corpus
+      recipe. Seeds 7, 1337, 2024; split seed 1337; same manifests and splits as the
+      original cells. New run names; the original runs are never overwritten.
