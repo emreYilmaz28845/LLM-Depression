@@ -349,6 +349,12 @@ def main(argv: list[str] | None = None) -> int:
         help="keep only the first N evaluated subjects of each class (sorted id); 0 keeps all",
     )
     parser.add_argument(
+        "--transcript-scope",
+        default="",
+        help="override data.audio_text_transcript_scope of the audio+text config "
+        "(e.g. segment_aligned for Androids); empty keeps the saved value",
+    )
+    parser.add_argument(
         "--zero-shot",
         action="store_true",
         help="disable the LoRA adapters (base Thinker) and keep each checkpoint's prompt",
@@ -404,6 +410,9 @@ def main(argv: list[str] | None = None) -> int:
         reference[name] = _read_subject_rows(
             fold_dir / "best_model" / "standalone_eval" / "predictions_subject_level.csv"
         )
+    saved_scope = configs["audio_text"].get("data", {}).get("audio_text_transcript_scope")
+    if args.transcript_scope:
+        configs["audio_text"].setdefault("data", {})["audio_text_transcript_scope"] = args.transcript_scope
     model_paths = {str(saved[name].get("resolved_model_name_or_path")) for name in fold_dirs}
     if len(model_paths) != 1:
         raise RuntimeError(f"the two checkpoints use different base models: {model_paths}")
@@ -627,6 +636,7 @@ def main(argv: list[str] | None = None) -> int:
         "speech_attention_windows": attention_meta,
         "torch": torch.__version__,
         "zero_shot": bool(args.zero_shot),
+        "transcript_scope": {"saved": saved_scope, "used": configs["audio_text"].get("data", {}).get("audio_text_transcript_scope")},
         "subjects_per_class": args.subjects_per_class,
         "elapsed_s": round(time.time() - started, 1),
     }
