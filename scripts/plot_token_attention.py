@@ -37,7 +37,7 @@ REGION_LABELS = {
 }
 
 
-def plot(path: Path, out_dir: Path, variant: str = "fine-tuned") -> Path:
+def plot(path: Path, out_dir: Path, variant: str = "fine-tuned", dataset: str = "Androids") -> Path:
     import matplotlib
 
     matplotlib.use("Agg")
@@ -65,7 +65,7 @@ def plot(path: Path, out_dir: Path, variant: str = "fine-tuned") -> Path:
         origin="lower",
     )
     ax_map.set_ylabel("layer")
-    ax_map.set_title(f"Qwen3-Omni {model} ({variant}), Androids fold 0, true label {label}: "
+    ax_map.set_title(f"Qwen3-Omni {model} ({variant}), {dataset} fold 0, true label {label}: "
                      "attention of the answer position to each prompt token")
     colorbar = fig.colorbar(image, ax=[ax_map, ax_bar], pad=0.01, fraction=0.02)
     colorbar.set_label("attention weight (head mean, log scale)")
@@ -91,10 +91,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("inputs", nargs="+", type=Path)
     parser.add_argument("--out-dir", required=True, type=Path)
+    parser.add_argument("--dataset", default="Androids", help="dataset name for the title")
     parser.add_argument("--variant", default="fine-tuned", help="title tag, e.g. zero-shot")
     args = parser.parse_args()
     for path in args.inputs:
-        print(plot(path, args.out_dir, args.variant))
+        print(plot(path, args.out_dir, args.variant, args.dataset))
     return 0
 
 
