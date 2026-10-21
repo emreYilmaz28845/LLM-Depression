@@ -336,6 +336,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-room-tone-s", type=float, default=1.0)
     parser.add_argument("--attention-windows-per-subject", type=int, default=1)
     parser.add_argument(
+        "--subjects-per-class",
+        type=int,
+        default=0,
+        help="keep only the first N evaluated subjects of each class (sorted id); 0 keeps all",
+    )
+    parser.add_argument(
         "--zero-shot",
         action="store_true",
         help="disable the LoRA adapters (base Thinker) and keep each checkpoint's prompt",
@@ -405,6 +411,17 @@ def main(argv: list[str] | None = None) -> int:
     if subjects["audio_only"] != subjects["audio_text"]:
         raise RuntimeError("the two checkpoints were evaluated on different subjects")
     eval_subjects = subjects["audio_only"]
+    if args.subjects_per_class > 0:
+        labels = {row["subject_id"]: int(row["label"]) for row in reference["audio_only"]}
+        eval_subjects = [
+            subject
+            for cls in (1, 0)
+            for subject in sorted(s for s in eval_subjects if labels[s] == cls)[: args.subjects_per_class]
+        ]
+        reference = {
+            name: [row for row in rows if row["subject_id"] in set(eval_subjects)]
+            for name, rows in reference.items()
+        }
 
     processor = load_processor(fold_dirs["audio_only"] / "best_model", configs["audio_only"])
     sampling_rate = int(resolve_processor_sampling_rate(processor))
@@ -603,6 +620,7 @@ def main(argv: list[str] | None = None) -> int:
         "speech_attention_windows": attention_meta,
         "torch": torch.__version__,
         "zero_shot": bool(args.zero_shot),
+        "subjects_per_class": args.subjects_per_class,
         "elapsed_s": round(time.time() - started, 1),
     }
     (out / "probe_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
