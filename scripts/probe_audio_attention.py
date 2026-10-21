@@ -262,7 +262,15 @@ def acoustic_summary(audio: np.ndarray, sampling_rate: int) -> dict[str, Any]:
 class AttentionRecorder:
     """Forward hooks that recompute selected attention rows of every text layer."""
 
-    def __init__(self, model, query_positions: list[int], regions: np.ndarray, n_regions: int = len(REGIONS)):
+    def __init__(
+        self,
+        model,
+        query_positions: list[int],
+        regions: np.ndarray,
+        n_regions: int = len(REGIONS),
+        keep_weights: bool = False,
+    ):
+        self.keep_weights = bool(keep_weights)
         self.query_positions = list(query_positions)
         self.regions = regions
         self.n_regions = int(n_regions)
@@ -315,6 +323,8 @@ class AttentionRecorder:
                 "layer_idx": int(getattr(module, "layer_idx", len(self.layers))),
                 "mass": region_mass(weights_np, self.regions, self.n_regions),
                 "max_rel_err": float(rel_err.item()),
+                # Head-mean attention row per query, [queries, keys].
+                "weights": weights_np.mean(axis=0).astype(np.float32) if self.keep_weights else None,
             }
         )
 

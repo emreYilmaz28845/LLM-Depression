@@ -59,7 +59,7 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 echo "job=${SLURM_JOB_ID:-} host=$(hostname) project_root=$PROJECT_ROOT probe=$PROBE"
 nvidia-smi --query-gpu=index,name,memory.total --format=csv
 
-python "$PROBE_SCRIPT" \
+python "$PROBE_SCRIPT" ${PROBE_ARGS:-} \
   --audio-text-fold-dir "$AUDIO_TEXT_FOLD_DIR" \
   --audio-only-fold-dir "$AUDIO_ONLY_FOLD_DIR" \
   --output-dir "$OUTPUT_DIR"

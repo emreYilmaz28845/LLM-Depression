@@ -238,7 +238,7 @@ class ConditionAudio:
 # ---------------------------------------------------------------------------
 
 
-def speech_attention(model, processor, example, arrays, sampling_rate, device, ids, top_db):
+def speech_attention(model, processor, example, arrays, sampling_rate, device, ids, top_db, keep_weights=False):
     import torch
 
     from scripts.probe_audio_attention import (
@@ -272,7 +272,7 @@ def speech_attention(model, processor, example, arrays, sampling_rate, device, i
     regions = regions.copy()
     regions[audio_positions[~mask]] = len(REGIONS)
     query = prompt_len - 1
-    recorder = AttentionRecorder(model, [query], regions, n_regions=len(names))
+    recorder = AttentionRecorder(model, [query], regions, n_regions=len(names), keep_weights=keep_weights)
     try:
         with torch.inference_mode():
             model(**inputs, use_cache=False)
@@ -292,6 +292,8 @@ def speech_attention(model, processor, example, arrays, sampling_rate, device, i
         "max_rel_err": max(layer["max_rel_err"] for layer in layers),
         "speech_index": REGION_INDEX["audio"],
         "nonspeech_index": len(REGIONS),
+        "regions": regions,
+        "token_weights": np.stack([layer["weights"][0] for layer in layers]) if keep_weights else None,
     }
 
 
@@ -333,10 +335,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--top-db", type=float, default=30.0)
     parser.add_argument("--min-room-tone-s", type=float, default=1.0)
     parser.add_argument("--attention-windows-per-subject", type=int, default=1)
+    parser.add_argument(
+        "--attention-only",
+        action="store_true",
+        help="skip the condition evaluations; only record attention and save token-level maps",
+    )
     args = parser.parse_args(argv)
     conditions = [item.strip() for item in args.conditions.split(",") if item.strip()]
     unknown = sorted(set(conditions) - set(CONDITIONS))
-    if unknown or conditions[0] != "real":
+    if args.attention_only:
+        conditions = []
+    elif unknown or conditions[0] != "real":
         raise SystemExit(f"conditions must start with 'real' and come from {CONDITIONS}; got {conditions}")
 
     import torch
@@ -494,8 +503,20 @@ def main(argv: list[str] | None = None) -> int:
                 scored.sort(key=lambda item: (item[0], item[1]))
                 for _, _, example, speech_fraction in scored[: args.attention_windows_per_subject]:
                     arrays = provider.real(str(example["sample_id"]))
-                    result = speech_attention(model, processor, example, arrays, sampling_rate, device, ids, args.top_db)
+                    result = speech_attention(
+                        model, processor, example, arrays, sampling_rate, device, ids, args.top_db,
+                        keep_weights=args.attention_only,
+                    )
                     ref = example_ref(example["sample_id"])
+                    if result["token_weights"] is not None:
+                        (out / "token_attention").mkdir(exist_ok=True)
+                        np.savez_compressed(
+                            out / "token_attention" / f"{name}_{int(example['label'])}_{ref}.npz",
+                            weights=result["token_weights"],
+                            regions=result["regions"],
+                            region_names=np.asarray(result["names"]),
+                            label=int(example["label"]),
+                        )
                     attention_meta.append(
                         {
                             "model": name,
