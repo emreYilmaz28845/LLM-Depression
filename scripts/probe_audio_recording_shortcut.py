@@ -314,6 +314,13 @@ def _prediction(value: str) -> int:
     return {"Depressed": 1, "Non-depressed": 0}.get(value, -1)
 
 
+def _margin(row: dict[str, str]) -> float:
+    """Subject margin; some aggregations write only dep_score and non_score."""
+    if row.get("score_margin") not in (None, ""):
+        return float(row["score_margin"])
+    return float(row["dep_score"]) - float(row["non_score"])
+
+
 def _write_csv(rows: list[dict[str, Any]], path: Path) -> None:
     if not rows:
         return
@@ -485,7 +492,7 @@ def main(argv: list[str] | None = None) -> int:
                 rows = _read_subject_rows(condition_dir / "predictions_subject_level.csv")
                 labels = [int(row["label"]) for row in rows]
                 predictions = [_prediction(row["prediction"]) for row in rows]
-                margins = {row["subject_id"]: float(row["score_margin"]) for row in rows}
+                margins = {row["subject_id"]: _margin(row) for row in rows}
                 current = {row["subject_id"]: _prediction(row["prediction"]) for row in rows}
                 if condition == "real":
                     margins_real, preds_real = margins, current
@@ -515,7 +522,7 @@ def main(argv: list[str] | None = None) -> int:
                             "subject_ref": example_ref(row["subject_id"]),
                             "label": int(row["label"]),
                             "prediction": _prediction(row["prediction"]),
-                            "score_margin": round(float(row["score_margin"]), 5),
+                            "score_margin": round(_margin(row), 5),
                         }
                     )
                 print(json.dumps({"done": [name, condition], **metric_rows[-1], "elapsed_s": round(time.time() - started)}), flush=True)
