@@ -347,12 +347,20 @@ def _select_subjects(predictions_csv: Path) -> dict[int, str]:
 
 
 def _processor_inputs(processor, text: str, audio_arrays: list, sampling_rate: int, device):
+    import torch
+
     kwargs: dict[str, Any] = {"text": text, "return_tensors": "pt", "padding": False}
     if audio_arrays:
         kwargs["audio"] = audio_arrays
         kwargs["sampling_rate"] = int(sampling_rate)
     inputs = processor(**kwargs)
-    return {key: value.to(device) for key, value in inputs.items()}
+    inputs = {key: value.to(device) for key, value in inputs.items()}
+    # The backend's audio dtype boundary is a forward pre-hook on the base model,
+    # which PEFT's LoraModel.forward bypasses; cast the features here instead.
+    features = inputs.get("input_features")
+    if features is not None and features.is_floating_point():
+        inputs["input_features"] = features.to(torch.bfloat16)
+    return inputs
 
 
 def _tokenizer_offsets(processor, text: str, input_ids: list[int], audio_token_id: int):
