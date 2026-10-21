@@ -336,6 +336,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-room-tone-s", type=float, default=1.0)
     parser.add_argument("--attention-windows-per-subject", type=int, default=1)
     parser.add_argument(
+        "--zero-shot",
+        action="store_true",
+        help="disable the LoRA adapters (base Thinker) and keep each checkpoint's prompt",
+    )
+    parser.add_argument(
+        "--save-token-attention",
+        action="store_true",
+        help="save token-level attention maps (always on with --attention-only)",
+    )
+    parser.add_argument(
         "--attention-only",
         action="store_true",
         help="skip the condition evaluations; only record attention and save token-level maps",
@@ -439,6 +449,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         for name in ("audio_only", "audio_text"):
             model.set_adapter(adapters[name])
+            if args.zero_shot:
+                # Base Thinker: the adapter stays loaded but contributes nothing.
+                model.base_model.disable_adapter_layers()
             margins_real: dict[str, float] = {}
             preds_real: dict[str, int] = {}
             for condition in conditions:
@@ -505,7 +518,7 @@ def main(argv: list[str] | None = None) -> int:
                     arrays = provider.real(str(example["sample_id"]))
                     result = speech_attention(
                         model, processor, example, arrays, sampling_rate, device, ids, args.top_db,
-                        keep_weights=args.attention_only,
+                        keep_weights=args.attention_only or args.save_token_attention,
                     )
                     ref = example_ref(example["sample_id"])
                     if result["token_weights"] is not None:
@@ -589,6 +602,7 @@ def main(argv: list[str] | None = None) -> int:
         "speech_attention_summary": summary,
         "speech_attention_windows": attention_meta,
         "torch": torch.__version__,
+        "zero_shot": bool(args.zero_shot),
         "elapsed_s": round(time.time() - started, 1),
     }
     (out / "probe_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
