@@ -17,6 +17,8 @@
 # device-map sharded over the 4 GPUs, the same shape as standalone evaluation.
 # Submit with sbatch --chdir=<deployment code dir> and --export with
 # AUDIO_TEXT_FOLD_DIR, AUDIO_ONLY_FOLD_DIR, OUTPUT_DIR and LOG_ROOT.
+# PROBE=recording runs the speech-vs-recording probe
+# (scripts/probe_audio_recording_shortcut.py) instead of the attention probe.
 
 set -e
 set -o pipefail
@@ -45,13 +47,19 @@ AUDIO_ONLY_FOLD_DIR="${AUDIO_ONLY_FOLD_DIR:?Set AUDIO_ONLY_FOLD_DIR}"
 OUTPUT_DIR="${OUTPUT_DIR:?Set OUTPUT_DIR}"
 LOG_ROOT="${LOG_ROOT:?Set LOG_ROOT}"
 mkdir -p "$LOG_ROOT"
-LOG_FILE="$LOG_ROOT/audio_attention_probe_${SLURM_JOB_ID:-local}.log"
+PROBE="${PROBE:-attention}"
+case "$PROBE" in
+  attention) PROBE_SCRIPT=scripts/probe_audio_attention.py ;;
+  recording) PROBE_SCRIPT=scripts/probe_audio_recording_shortcut.py ;;
+  *) echo "unknown PROBE=$PROBE" >&2; exit 2 ;;
+esac
+LOG_FILE="$LOG_ROOT/audio_${PROBE}_probe_${SLURM_JOB_ID:-local}.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-echo "job=${SLURM_JOB_ID:-} host=$(hostname) project_root=$PROJECT_ROOT"
+echo "job=${SLURM_JOB_ID:-} host=$(hostname) project_root=$PROJECT_ROOT probe=$PROBE"
 nvidia-smi --query-gpu=index,name,memory.total --format=csv
 
-python scripts/probe_audio_attention.py \
+python "$PROBE_SCRIPT" \
   --audio-text-fold-dir "$AUDIO_TEXT_FOLD_DIR" \
   --audio-only-fold-dir "$AUDIO_ONLY_FOLD_DIR" \
   --output-dir "$OUTPUT_DIR"

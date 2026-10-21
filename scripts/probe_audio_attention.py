@@ -160,7 +160,7 @@ def assign_regions(
     return regions, method
 
 
-def region_mass(weights: np.ndarray, regions: np.ndarray) -> np.ndarray:
+def region_mass(weights: np.ndarray, regions: np.ndarray, n_regions: int = len(REGIONS)) -> np.ndarray:
     """Sum attention weights per region.
 
     ``weights`` is ``[heads, queries, keys]``; returns ``[heads, queries, regions]``.
@@ -168,7 +168,7 @@ def region_mass(weights: np.ndarray, regions: np.ndarray) -> np.ndarray:
     heads, queries, keys = weights.shape
     if regions.shape[0] != keys:
         raise ValueError("regions must have one code per key position")
-    one_hot = np.zeros((keys, len(REGIONS)), dtype=np.float64)
+    one_hot = np.zeros((keys, n_regions), dtype=np.float64)
     one_hot[np.arange(keys), regions] = 1.0
     return weights.astype(np.float64) @ one_hot
 
@@ -262,9 +262,10 @@ def acoustic_summary(audio: np.ndarray, sampling_rate: int) -> dict[str, Any]:
 class AttentionRecorder:
     """Forward hooks that recompute selected attention rows of every text layer."""
 
-    def __init__(self, model, query_positions: list[int], regions: np.ndarray):
+    def __init__(self, model, query_positions: list[int], regions: np.ndarray, n_regions: int = len(REGIONS)):
         self.query_positions = list(query_positions)
         self.regions = regions
+        self.n_regions = int(n_regions)
         self.layers: list[dict[str, Any]] = []
         self.handles = []
         modules = [
@@ -312,7 +313,7 @@ class AttentionRecorder:
         self.layers.append(
             {
                 "layer_idx": int(getattr(module, "layer_idx", len(self.layers))),
-                "mass": region_mass(weights_np, self.regions),
+                "mass": region_mass(weights_np, self.regions, self.n_regions),
                 "max_rel_err": float(rel_err.item()),
             }
         )
