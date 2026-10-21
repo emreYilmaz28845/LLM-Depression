@@ -459,7 +459,15 @@ def generate_prosody(model, processor, audio_arrays, sampling_rate, device, max_
     inputs = _processor_inputs(processor, text, audio_arrays, sampling_rate, device)
     input_len = int(inputs["input_ids"].shape[1])
     with torch.inference_mode():
-        generated = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
+        # Stop at the end of the assistant turn; without it the Thinker keeps
+        # writing new user/assistant turns until max_new_tokens.
+        tokenizer = getattr(processor, "tokenizer", processor)
+        generated = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            eos_token_id=int(tokenizer.convert_tokens_to_ids("<|im_end|>")),
+        )
     sequences = generated.sequences if hasattr(generated, "sequences") else generated
     return processor.decode(
         sequences[0, input_len:], skip_special_tokens=True, clean_up_tokenization_spaces=False
