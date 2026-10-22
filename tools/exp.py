@@ -773,6 +773,15 @@ def _cmd_submit_merged(args) -> int:
     return command_submit(args)
 
 
+def _cmd_diagnostics(args) -> int:
+    from tools import training_diagnostics
+
+    argv = [args.mode, args.path]
+    if args.output:
+        argv += ["--output", args.output]
+    return training_diagnostics.main(argv)
+
+
 def _cmd_derive_final_epochs(args) -> int:
     from tools.native_en_text_heads import command_derive_final_epochs
 
@@ -1805,6 +1814,15 @@ def main() -> int:
     )
     epoch_parser.add_argument("slug", help="managed v2 lane slug")
     epoch_parser.set_defaults(func=_cmd_derive_final_epochs)
+
+    diag_parser = subparsers.add_parser(
+        "diagnostics",
+        help="training observations from logs/training_history.json (one run, or a scan table over a root)",
+    )
+    diag_parser.add_argument("mode", choices=["run", "scan"])
+    diag_parser.add_argument("path", help="run dir (mode run) or output_model root (mode scan)")
+    diag_parser.add_argument("--output", default=None, help="output directory (default under outputs/training_diagnostics)")
+    diag_parser.set_defaults(func=_cmd_diagnostics)
 
     collect_parser = subparsers.add_parser("collect", help="collect compact evidence from MN5 (dry-run first)")
     collect_parser.add_argument("slug", nargs="?", default=None, help="experiment slug")
