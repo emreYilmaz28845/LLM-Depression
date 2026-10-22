@@ -124,6 +124,12 @@ def analyze_history(
     if best_idx is not None and best_idx == len(rows) - 1:
         flags.append({"flag": "best_is_last", "detail": {"epoch": best_epoch, "note": "may still be improving"}})
 
+    known_val = [(i, v) for i, v in enumerate(val_loss) if v is not None]
+    if known_val:
+        min_i, min_v = min(known_val, key=lambda pair: pair[1])
+        result["val_loss_min"] = _round(min_v)
+        result["val_loss_min_epoch"] = epochs[min_i]
+
     if len(rows) < th["min_epochs_for_trend"]:
         result["status"] = "short_history"
         result["not_recorded"].append(f"trend_flags_need_{int(th['min_epochs_for_trend'])}_epochs")
@@ -131,11 +137,7 @@ def analyze_history(
     result["status"] = "ok"
 
     # overfit: validation loss rises for N epochs in a row after its minimum while train loss keeps falling.
-    known_val = [(i, v) for i, v in enumerate(val_loss) if v is not None]
     if known_val:
-        min_i, min_v = min(known_val, key=lambda pair: pair[1])
-        result["val_loss_min"] = _round(min_v)
-        result["val_loss_min_epoch"] = epochs[min_i]
         tail = val_loss[min_i:]
         rising = len(tail) - 1
         if rising >= th["overfit_min_rising_epochs"] and all(

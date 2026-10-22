@@ -179,3 +179,8 @@ def test_step_log_writer_disabled_writes_nothing(tmp_path):
         writer.write(epoch=1, step=1, loss=1.0, lr=1.0, grad_norm=1.0)
         writer.close()
     assert not path.exists()
+
+
+def test_short_history_still_reports_val_loss_min():
+    res = diagnostics.analyze_history([_row(1, 0.9, 0.8, 0.5), _row(2, 0.7, 0.6, 0.6)])
+    assert res["status"] == "short_history" and res["val_loss_min"] == 0.6 and res["val_loss_min_epoch"] == 2
