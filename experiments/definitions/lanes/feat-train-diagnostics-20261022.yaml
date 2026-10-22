@@ -7,5 +7,5 @@ worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-feat-train-diagn
 parent_branch: main
 parent_sha: d03e97e411fe7b358c6506b65417a0205c187c7b
 created_at_utc: "2026-10-22T09:54:56Z"
-experiment_group_path: null
+experiment_group_path: experiments/definitions/train-diagnostics-smoke-20261022.yaml
 type: complementary
