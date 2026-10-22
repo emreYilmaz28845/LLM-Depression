@@ -27,10 +27,15 @@ DIAGNOSTIC_THRESHOLDS: dict[str, float] = {
     "fold_best_epoch_range_max": 3,  # across folds
     "fold_macro_f1_std_max": 0.10,  # across folds (sample std of best macro-F1)
     "min_epochs_for_trend": 3,
+    "spike_ratio": 5.0,  # step loss above this multiple of the median of the previous logged losses
+    "spike_window": 20,
+    "spike_min_history": 10,
+    "high_clip_rate": 0.5,  # share of logged steps where gradient clipping fired
 }
 
 HISTORY_RELPATH = Path("logs") / "training_history.json"
 SELECTION_RELPATH = Path("logs") / "selected_checkpoint_selection_metrics.json"
+STEP_LOG_RELPATH = Path("logs") / "train_step_log.jsonl"
 
 
 def _num(value: Any) -> float | None:
@@ -189,6 +194,75 @@ def analyze_history(
     return result
 
 
+def analyze_step_log(rows: list[dict[str, Any]], thresholds: dict[str, float] | None = None) -> dict[str, Any]:
+    """Analyze `train_step_log.jsonl` rows (loss, lr, grad_norm, clipped per logged optimizer step)."""
+    th = {**DIAGNOSTIC_THRESHOLDS, **(thresholds or {})}
+    result: dict[str, Any] = {"n_logged_steps": len(rows), "flags": [], "not_recorded": []}
+    if not rows:
+        result["not_recorded"].append("step_log_rows")
+        return result
+    losses = [_num(r.get("loss")) for r in rows]
+    lrs = [_num(r.get("lr")) for r in rows]
+    norms = [_num(r.get("grad_norm")) for r in rows]
+    steps = [r.get("optimizer_step") for r in rows]
+    flags = result["flags"]
+
+    known_lr = [(i, v) for i, v in enumerate(lrs) if v is not None]
+    if known_lr:
+        peak_i, peak = max(known_lr, key=lambda pair: pair[1])
+        result["lr"] = {
+            "first": lrs[known_lr[0][0]], "peak": peak, "peak_optimizer_step": steps[peak_i],
+            "last": lrs[known_lr[-1][0]], "zero_after_peak": any(v == 0.0 for _, v in known_lr if _ > peak_i),
+        }
+    else:
+        result["not_recorded"].append("lr")
+
+    finite_norms = [v for v in norms if v is not None and math.isfinite(v)]
+    if finite_norms:
+        clipped = [r.get("clipped") for r, v in zip(rows, norms) if v is not None and math.isfinite(v)]
+        rate = sum(1 for c in clipped if c) / len(clipped)
+        result["grad_norm"] = {
+            "median": _round(statistics.median(finite_norms)), "max": _round(max(finite_norms)), "clip_rate": _round(rate),
+        }
+        if rate >= th["high_clip_rate"]:
+            flags.append({"flag": "high_clip_rate", "detail": {"clip_rate": _round(rate), "n_logged_steps": len(finite_norms)}})
+    else:
+        result["not_recorded"].append("grad_norm")
+
+    bad = [{"optimizer_step": steps[i], "field": f} for i in range(len(rows))
+           for f, series in (("loss", losses), ("grad_norm", norms))
+           if isinstance(rows[i].get(f), float) and not math.isfinite(rows[i][f])]
+    if bad:
+        flags.append({"flag": "nonfinite", "detail": {"count": len(bad), "occurrences": bad[:10]}})
+
+    spikes = []
+    window, min_hist = int(th["spike_window"]), int(th["spike_min_history"])
+    for i, loss in enumerate(losses):
+        if loss is None or not math.isfinite(loss):
+            continue
+        prev = [v for v in losses[max(0, i - window):i] if v is not None and math.isfinite(v)]
+        if len(prev) < min_hist:
+            continue
+        med = statistics.median(prev)
+        if med > 0 and loss > th["spike_ratio"] * med:
+            spikes.append({"optimizer_step": steps[i], "epoch": rows[i].get("epoch"), "loss": _round(loss), "rolling_median": _round(med)})
+    if spikes:
+        flags.append({"flag": "loss_spike", "detail": {"count": len(spikes), "first": spikes[:3]}})
+    return result
+
+
+def load_step_log(fold_dir: Path) -> dict[str, Any] | None:
+    """Analyze `<fold_dir>/logs/train_step_log.jsonl`; None when the run has no step log."""
+    path = Path(fold_dir) / STEP_LOG_RELPATH
+    if not path.is_file():
+        return None
+    try:
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except (OSError, ValueError) as exc:
+        return {"status": "unreadable", "reason": f"{type(exc).__name__}: {exc}", "flags": [], "not_recorded": []}
+    return {"status": "ok", "path": str(path), **analyze_step_log(rows)}
+
+
 def load_fold(fold_dir: Path) -> dict[str, Any]:
     """Analyze `<fold_dir>/logs/training_history.json`; never raises on missing or broken files."""
     fold_dir = Path(fold_dir)
@@ -208,7 +282,15 @@ def load_fold(fold_dir: Path) -> dict[str, Any]:
         selected = int(sel["selected_epoch"])
     except (OSError, ValueError, KeyError, TypeError):
         selected = None
-    return {**out, **analyze_history(history, selected_epoch=selected)}
+    result = {**out, **analyze_history(history, selected_epoch=selected)}
+    step = load_step_log(fold_dir)
+    if step is None:
+        result["step_log"] = None
+        result["not_recorded"] = [*result.get("not_recorded", []), "step_log (lr, grad_norm, loss spikes)"]
+    else:
+        result["step_log"] = step
+        result["flags"] = [*result["flags"], *step.get("flags", [])]
+    return result
 
 
 def analyze_run(fold_results: dict[str, dict[str, Any]], thresholds: dict[str, float] | None = None) -> dict[str, Any]:
@@ -310,6 +392,20 @@ def render_run_markdown(report: dict[str, Any]) -> str:
         detail_lines.append(f"- run `{flag['flag']}`: {json.dumps(flag['detail'], sort_keys=True)}")
     if detail_lines:
         lines += ["", "Flag details:", *detail_lines]
+    step_lines = []
+    for name, res in report["folds"].items():
+        sl = res.get("step_log")
+        if not sl or sl.get("status") != "ok":
+            continue
+        lr, gn = sl.get("lr"), sl.get("grad_norm")
+        parts = [f"{sl['n_logged_steps']} logged steps"]
+        if lr:
+            parts.append(f"lr first {lr['first']:.3g}, peak {lr['peak']:.3g} at step {lr['peak_optimizer_step']}, last {lr['last']:.3g}")
+        if gn:
+            parts.append(f"grad norm median {gn['median']}, max {gn['max']}, clip rate {gn['clip_rate']}")
+        step_lines.append(f"- {name}: " + "; ".join(parts))
+    if step_lines:
+        lines += ["", "Step log:", *step_lines]
     missing = sorted({m for res in report["folds"].values() for m in res.get("not_recorded", [])})
     if missing:
         lines += ["", "Not recorded: " + ", ".join(missing)]

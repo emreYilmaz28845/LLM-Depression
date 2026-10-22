@@ -114,3 +114,68 @@ def test_scan_and_run_cli_write_outputs(tmp_path, capsys):
     run_dir = root / "camp" / "audio_only" / "cmdc" / "run_a"
     assert training_diagnostics.main(["run", str(run_dir), "--output", str(tmp_path / "runout")]) == 0
     assert "Training observations" in capsys.readouterr().out
+
+
+# ------------------------------------------------------------- step log
+
+
+def _step_rows(losses, lrs=None, norms=None, max_norm=1.0):
+    rows = []
+    for i, loss in enumerate(losses, start=1):
+        norm = norms[i - 1] if norms else 0.5
+        rows.append({"epoch": 1, "step": i, "optimizer_step": i * 10, "loss": loss,
+                     "lr": lrs[i - 1] if lrs else 1e-4, "grad_norm": norm, "clipped": norm > max_norm})
+    return rows
+
+
+def test_step_log_lr_summary_and_clean_run():
+    lrs = [1e-5 * i for i in range(1, 6)] + [5e-5 - 1e-5 * i for i in range(0, 15)]
+    res = diagnostics.analyze_step_log(_step_rows([0.5] * 20, lrs=lrs))
+    assert res["flags"] == [] and res["lr"]["peak"] == max(lrs) and res["lr"]["peak_optimizer_step"] == 50
+    assert res["grad_norm"]["clip_rate"] == 0.0
+
+
+def test_step_log_spike_and_high_clip_rate():
+    losses = [0.5] * 15 + [4.0] + [0.5] * 4
+    res = diagnostics.analyze_step_log(_step_rows(losses, norms=[2.0] * 20))
+    flags = {f["flag"]: f["detail"] for f in res["flags"]}
+    assert flags["loss_spike"]["count"] == 1 and flags["loss_spike"]["first"][0]["optimizer_step"] == 160
+    assert flags["high_clip_rate"]["clip_rate"] == 1.0
+
+
+def test_step_log_nonfinite_and_empty():
+    rows = _step_rows([0.5, 0.5, 0.5])
+    rows[1]["loss"] = float("nan")
+    assert any(f["flag"] == "nonfinite" for f in diagnostics.analyze_step_log(rows)["flags"])
+    assert diagnostics.analyze_step_log([])["not_recorded"] == ["step_log_rows"]
+
+
+def test_load_fold_merges_step_log_flags_and_marks_missing(tmp_path):
+    from src.step_log import StepLogWriter
+
+    fold = tmp_path / "run" / "fold_0"
+    (fold / "logs").mkdir(parents=True)
+    (fold / "logs" / "training_history.json").write_text(json.dumps([_row(1, 0.9, 0.8, 0.6), _row(2, 0.7, 0.7, 0.7), _row(3, 0.6, 0.6, 0.72)]))
+    assert diagnostics.load_fold(fold)["step_log"] is None
+    assert any("step_log" in m for m in diagnostics.load_fold(fold)["not_recorded"])
+
+    writer = StepLogWriter(fold / "logs" / "train_step_log.jsonl", every=2, max_grad_norm=1.0)
+    fired = [writer.count_optimizer_step() for _ in range(6)]
+    assert fired == [False, True, False, True, False, True]
+    for i in range(3):
+        writer.write(epoch=1, step=i + 1, loss=0.4, lr=1e-4, grad_norm=3.0)
+    writer.close()
+    res = diagnostics.load_fold(fold)
+    assert res["step_log"]["n_logged_steps"] == 3 and "high_clip_rate" in _flags(res)
+
+
+def test_step_log_writer_disabled_writes_nothing(tmp_path):
+    from src.step_log import StepLogWriter
+
+    path = tmp_path / "logs" / "train_step_log.jsonl"
+    for kwargs in ({"every": 0, "enabled": True}, {"every": 10, "enabled": False}):
+        writer = StepLogWriter(path, max_grad_norm=1.0, **kwargs)
+        assert not writer.active and writer.count_optimizer_step() is False
+        writer.write(epoch=1, step=1, loss=1.0, lr=1.0, grad_norm=1.0)
+        writer.close()
+    assert not path.exists()
