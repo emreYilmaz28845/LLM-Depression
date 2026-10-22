@@ -1,0 +1,80 @@
+schema_version: audiollm.experiment_group.v1
+group_id: qwen3-window15-20261008
+title: Qwen3 Native 15-second versus 30-second audio windows (10 routes, 126 treatment fits)
+research_question: >-
+  Does halving the maximum audio window from 30 to 15 seconds change the
+  harmonized standalone Native Qwen3 depression-classification results when the
+  dataset, folds, split seed, prompts, frozen encoder policy, optimizer, epoch
+  cap and early-stopping rule, likelihood decision rule and fixed-head
+  classifier seed are held fixed?
+dataset: >-
+  DAIC-WOZ participant-only packed windows (fold 0), D3TEC, Androids interview,
+  CMDC and Turkish pooled t17 positive+negative question set, audio_only and
+  audio_text only. Native transcripts; external labels stay Depressed /
+  Non-depressed.
+baseline: >-
+  The completed three-seed campaign's 126 30-second audio fits (10 routes x 42
+  fold fits), reused as the control after a read-only hash, provenance,
+  settings, evaluation and head audit. No metric-based selection between
+  attempts; incompatible or missing control cells stay blocked.
+treatment: >-
+  126 new 15-second fits of the identical recipe with only the declared
+  window/input identity changed: equal_duration with ceil(unit duration / 15)
+  for the response datasets and DAIC participant-only packed fixed-15
+  (240000-sample chunks) with its existing short-tail convention. Same epoch
+  cap and early-stopping policy, optimizer and per-job resource shape; prompts
+  and promptcontext controls unchanged; no training-window cap. Each treatment
+  checkpoint receives the same two fixed heads (logreg_raw, xgb_raw) fitted on
+  treatment-window features with classifier seed 1337.
+expected_seeds:
+  - 7
+  - 1337
+  - 2024
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+comparison_rule: >-
+  Per-seed fold-mean strict subject-level Macro-F1, Positive-F1 and UAR
+  (INVALID counts as wrong) for each dataset/modality/route, compared against
+  the audited 30-second control for the same key; seeds are never averaged into
+  one headline and no winning seed is selected from outcomes. DAIC is a
+  single-fold result; CMDC and Turkish pooled use the declared train_val
+  protocol (the outer fold is both selection and reported score, not an
+  independent held-out test); D3TEC and Androids keep inner selection and outer
+  held-out evaluation distinct.
+scope:
+  campaign: qwen3_window15_20261008
+  language: native
+  evidence_dir: outputs/qwen3_window15_20261008
+  lane: feat-qwen3-window15-20261008
+  checkpoint_role: best_model
+  head_variants:
+    - logreg_raw
+    - xgb_raw
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
+exclusions:
+  - pr_merge
+  - text_only_or_merged_or_translated_routes
+  - extra_seeds_or_folds_or_routes
+  - optuna_or_hpo
+  - training_window_cap_or_prompt_changes
+  - equal_compute_step_matching
+  - new_translations_or_transcripts
+  - shared_workbook_or_tables_writes
+  - package_install
+  - shared_environment_or_dataset_change
+  - evidence_overwrite_or_deletion
+github_issue: null
+github_pr: null

@@ -57,6 +57,7 @@ from src.model.runtime import (
     prepare_model_for_evaluation,
     resolve_processor_sampling_rate,
 )
+from src.model.audio_padding import pad_audio_arrays, resolve_min_audio_samples
 from src.model.lora_common import resolve_lora_layer_selection
 from src.utils import (
     DAIC_OFFICIALDEV_RECIPE_SUFFIX,
@@ -308,6 +309,11 @@ def _processor_inputs(
             raise ValueError("Audio examples require a processor sampling rate.")
         audio_arrays = _load_example_audio(example, sampling_rate, silence_audio)
     audio_arrays = list(audio_arrays or [])
+    min_audio_samples = resolve_min_audio_samples(example.get("config"))
+    if audio_arrays and min_audio_samples > 0:
+        # Same declared policy as training and hidden extraction: numeric zero
+        # padding at the processor input only.
+        audio_arrays, _ = pad_audio_arrays(audio_arrays, min_audio_samples)
     if repeat_audio > 1:
         audio_arrays = [array for _ in range(int(repeat_audio)) for array in audio_arrays]
     audio = audio_arrays if audio_arrays else None
