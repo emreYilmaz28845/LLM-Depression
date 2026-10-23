@@ -293,3 +293,23 @@ def test_worker_scripts_decode_overrides_json_b64():
         '--dependency=afterok:$TRAIN_JOB_ID'
     ) in wrapper
     assert '"${TRAIN_SBATCH_ARGS[@]}"' in wrapper
+
+
+def test_fsdp_batch_guard_honours_a_declared_target():
+    """Small-corpus text variants declare an effective global batch of 16."""
+    fsdp_config = dict(_config())
+    fsdp_config["training"] = dict(fsdp_config.get("training", {}))
+    fsdp_config["training"].update(
+        {
+            "strategy": "fsdp",
+            "per_device_train_batch_size": 1,
+            "gradient_accumulation_steps": 4,
+            "target_effective_global_batch_size": 16,
+        }
+    )
+    contract = resolve_contract(deployment=_deployment(), config_dict=fsdp_config, **BASE_KW)
+    assert contract["training_shape"]["effective_global_batch_size"] == 16
+    assert contract["training_shape"]["target_effective_global_batch_size"] == 16
+    fsdp_config["training"]["gradient_accumulation_steps"] = 32
+    with pytest.raises(SubmissionError, match="effective global batch of 16"):
+        resolve_contract(deployment=_deployment(), config_dict=fsdp_config, **BASE_KW)

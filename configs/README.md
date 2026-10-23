@@ -72,6 +72,7 @@ It covers D3TEC, Turkish BDI≥17 with Qwen3-ASR, Androids, DAIC-WOZ, and CMDC i
 - Validation checkpoint selection and early stopping use `inner_val_macro_f1`, mode `max`.
 - Evaluation uses candidate-label **likelihood** (`sample_prediction_mode: likelihood`) as the canonical decision rule; the per-subject decision is the argmax of the mean dep/non candidate scores. Teacher forcing (`original_teacher_forced`) is a labelled legacy view: its configs are archived under `configs/archive/pre_likelihood_20260917/` and its former canonical workbook values live in the workbook's "Legacy TF" sheet.
 - The audio encoder remains frozen because `audio_adapter.enabled` and `train_projector` are false.
+- The standalone trainer (`src/train.py`) sizes the linear warmup/decay LR schedule in real optimizer updates per rank (`training.lr_schedule_mode: update_counted`, the default since 2026-10-20). The first update never runs at LR 0, and training fails if an epoch changes no trainable parameter or leaves every LoRA B matrix at zero. `run_config.yaml` records the plan under `lr_schedule`. `legacy_v1` reproduces the earlier schedule, which left small text runs untrained at epoch 1, and exists only for reproducing old runs. The merged trainer (`src/merged/train.py`) is not changed by this.
 
 ### Default backbone policy
 

@@ -1,0 +1,99 @@
+# English twin of text-lr0-schedule-fix-20261020: a separate experiment so its runtime
+# manifests/splits (English transcripts) never share a path with the native cells.
+schema_version: audiollm.experiment_group.v1
+group_id: text-lr0-schedule-fix-en-20261021
+title: Option-C rerun of the English-transcript standalone Qwen3.8 text cells
+research_question: >-
+  Rerun (user approved 2026-10-21, option C) of the 60 English-transcript standalone
+  Qwen3.8-27B text cells of the paper (D3TEC, CMDC, Turkish pooled t17, Androids merged
+  folds) with the update-counted LR schedule and the predeclared small-corpus recipe
+  (accumulation 4, effective batch 16, warmup ratio 0.1), so no cell keeps an untrained
+  epoch-1 adapter.
+dataset: multi
+baseline: >-
+  The original English cells in campaigns qwen3_multiseed_english_20261002 and
+  qwen3_androids_mergedfolds_english_20261015 (accumulation 32, legacy schedule).
+treatment: >-
+  Same configs, seeds, split seed, folds and manifests, with the fix and the recipe change
+  recorded as configs/experiments/text_accum4/*_accum4w10.yaml variants.
+expected_seeds:
+  - 7
+  - 1337
+  - 2024
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+runs:
+  - logical_run: text_accum4w10_full_d3tec_text_english
+    dataset: d3tec
+    modality: text_only
+    config: configs/experiments/text_accum4/d3tec_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen38_27b_accum4w10.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Full option-C rerun (user approved 2026-10-21) of the paper's standalone Qwen3.8-27B
+      english text cells with the update-counted schedule and the predeclared small-corpus
+      recipe. Seeds 7, 1337, 2024; split seed 1337; same manifests and splits as the
+      original cells. New run names; the original runs are never overwritten.
+  - logical_run: text_accum4w10_full_cmdc_text_english
+    dataset: cmdc
+    modality: text_only
+    config: configs/experiments/text_accum4/cmdc_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen38_27b_accum4w10.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Full option-C rerun (user approved 2026-10-21) of the paper's standalone Qwen3.8-27B
+      english text cells with the update-counted schedule and the predeclared small-corpus
+      recipe. Seeds 7, 1337, 2024; split seed 1337; same manifests and splits as the
+      original cells. New run names; the original runs are never overwritten.
+  - logical_run: text_accum4w10_full_turkish_text_english
+    dataset: turkish
+    modality: text_only
+    config: configs/experiments/text_accum4/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen38_27b_accum4w10.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Full option-C rerun (user approved 2026-10-21) of the paper's standalone Qwen3.8-27B
+      english text cells with the update-counted schedule and the predeclared small-corpus
+      recipe. Seeds 7, 1337, 2024; split seed 1337; same manifests and splits as the
+      original cells. New run names; the original runs are never overwritten.
+  - logical_run: text_accum4w10_full_androids_mf_text_english
+    dataset: androids_interview
+    modality: text_only
+    config: configs/experiments/text_accum4/androids_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_en_qwen38_27b_mergedfolds_accum4w10.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Full option-C rerun (user approved 2026-10-21) of the paper's standalone Qwen3.8-27B
+      english text cells with the update-counted schedule and the predeclared small-corpus
+      recipe. Seeds 7, 1337, 2024; split seed 1337; same manifests and splits as the
+      original cells. New run names; the original runs are never overwritten.

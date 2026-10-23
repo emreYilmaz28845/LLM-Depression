@@ -33,6 +33,16 @@ from src.daic_chunking import (
     gradient_accumulation_for_reference_updates,
     resolve_chunking_controls,
 )
+from src.lr_schedule import (
+    LR_SCHEDULE_LEGACY_V1,
+    UpdateTracker,
+    assert_saved_adapter_trained,
+    build_update_counted_scheduler,
+    check_epoch_changed_parameters,
+    plan_update_schedule,
+    resolve_lr_schedule_mode,
+    trainable_parameter_fingerprint,
+)
 from src.daic_mil import candidate_mean_token_logprob, streaming_subject_mil_backward
 from src.data.prompt_context import prompt_context_record
 from src.experiment_tracking.manifest_policy import (
@@ -1147,6 +1157,34 @@ def _evaluate_selection_components(
     }
 
 
+def _micro_batches_per_rank_per_epoch(
+    train_loader,
+    train_dataset,
+    *,
+    epochs: int,
+    epoch_schedule: list[list[dict[str, Any]]] | None,
+    mil_subject_count: int | None,
+) -> list[int]:
+    """Per-rank micro-batch count of every epoch, read from the prepared loader.
+
+    The prepared loader is already sharded, so its length is what one rank
+    iterates. Datasets with a per-epoch schedule are measured epoch by epoch.
+    """
+    if mil_subject_count is not None:
+        return [int(mil_subject_count)] * epochs
+    if epoch_schedule is None:
+        return [len(train_loader)] * epochs
+    original_examples = train_dataset.examples
+    try:
+        counts = []
+        for epoch_index in range(epochs):
+            train_dataset.examples = epoch_schedule[epoch_index]
+            counts.append(len(train_loader))
+    finally:
+        train_dataset.examples = original_examples
+    return counts
+
+
 def _save_best_checkpoint(save_strategy: str) -> bool:
     return save_strategy in {"full", "best_only"}
 
@@ -1961,15 +1999,25 @@ def main() -> None:
             raise ValueError("subject_mean_margin_mil requires dataloader_num_workers=0.")
         if int(config["training"].get("gradient_accumulation_steps", 1)) != 1:
             raise ValueError("subject_mean_margin_mil requires gradient_accumulation_steps=1 so a subject cannot be split across updates.")
-    micro_batches_per_epoch = len(train_loader)
-    if objective == "subject_mean_margin_mil":
-        micro_batches_per_epoch = len({str(row["subject_id"]) for row in train_examples})
-    total_steps = max(
-        1,
-        math.ceil(micro_batches_per_epoch / int(config["training"]["gradient_accumulation_steps"])) * int(config["training"]["num_train_epochs"]),
-    )
-    warmup_steps = int(total_steps * float(config["training"]["warmup_ratio"]))
-    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps)
+    lr_schedule_mode = resolve_lr_schedule_mode(config)
+    scheduler = None
+    if lr_schedule_mode == LR_SCHEDULE_LEGACY_V1:
+        # Pre-fix schedule, kept only to reproduce old runs: sized from the
+        # unsharded loader and stepped num_processes times per update by Accelerate.
+        micro_batches_per_epoch = len(train_loader)
+        if objective == "subject_mean_margin_mil":
+            micro_batches_per_epoch = len({str(row["subject_id"]) for row in train_examples})
+        total_steps = max(
+            1,
+            math.ceil(micro_batches_per_epoch / int(config["training"]["gradient_accumulation_steps"])) * int(config["training"]["num_train_epochs"]),
+        )
+        warmup_steps = int(total_steps * float(config["training"]["warmup_ratio"]))
+        scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps)
+        lr_schedule_record: dict[str, Any] = {
+            "lr_schedule_mode": LR_SCHEDULE_LEGACY_V1,
+            "legacy_total_scheduler_steps": total_steps,
+            "legacy_warmup_scheduler_steps": warmup_steps,
+        }
     dist_timeout_minutes = int(config.get("training", {}).get("dist_timeout_minutes", 0) or 0)
     if dist_timeout_minutes > 0 and not torch.distributed.is_initialized():
         # A slow collective (e.g. the epoch-end evaluation or an FSDP all-gather)
@@ -2003,7 +2051,50 @@ def main() -> None:
         int(config["training"].get("gradient_accumulation_steps", 1)),
         effective_global_batch_size(config, int(os.environ.get("WORLD_SIZE", "1"))),
     )
-    model, optimizer, train_loader, scheduler = accelerator.prepare(model, optimizer, train_loader, scheduler)
+    if scheduler is not None:
+        model, optimizer, train_loader, scheduler = accelerator.prepare(model, optimizer, train_loader, scheduler)
+    else:
+        # The update-counted scheduler is built after prepare from the sharded
+        # loader and is stepped by this loop once per real optimizer update, so
+        # it is deliberately not handed to Accelerate.
+        model, optimizer, train_loader = accelerator.prepare(model, optimizer, train_loader)
+        lr_schedule_record = plan_update_schedule(
+            _micro_batches_per_rank_per_epoch(
+                train_loader,
+                train_dataset,
+                epochs=int(config["training"]["num_train_epochs"]),
+                epoch_schedule=d3tec_epoch_schedule if d3tec_epoch_schedule is not None else daic_epoch_schedule,
+                mil_subject_count=(
+                    len({str(row["subject_id"]) for row in train_examples})
+                    if objective == "subject_mean_margin_mil"
+                    else None
+                ),
+            ),
+            int(config["training"]["gradient_accumulation_steps"]),
+            float(config["training"]["warmup_ratio"]),
+        )
+        scheduler = build_update_counted_scheduler(optimizer, lr_schedule_record)
+    lr_schedule_record["num_processes"] = int(accelerator.num_processes)
+    lr_schedule_record["base_learning_rate"] = float(config["training"]["learning_rate"])
+    if "first_update_lr_factor" in lr_schedule_record:
+        lr_schedule_record["first_update_lr"] = (
+            lr_schedule_record["base_learning_rate"] * lr_schedule_record["first_update_lr_factor"]
+        )
+        LOGGER.info(
+            "LR schedule | mode=%s updates_per_epoch=%s total_updates=%s warmup_updates=%s "
+            "first_update_lr=%.3e last_update_lr=%.3e num_processes=%s",
+            lr_schedule_record["lr_schedule_mode"],
+            lr_schedule_record["updates_per_epoch"][0]
+            if len(set(lr_schedule_record["updates_per_epoch"])) == 1
+            else lr_schedule_record["updates_per_epoch"],
+            lr_schedule_record["total_updates"],
+            lr_schedule_record["warmup_updates"],
+            lr_schedule_record["first_update_lr"],
+            lr_schedule_record["base_learning_rate"] * lr_schedule_record["last_update_lr_factor"],
+            lr_schedule_record["num_processes"],
+        )
+    else:
+        LOGGER.warning("LR schedule | mode=legacy_v1 (pre-fix schedule) %s", lr_schedule_record)
     if daic_schedule_audit is not None:
         gradient_accumulation = int(config["training"].get("gradient_accumulation_steps", 1))
         schedule_micro_batches = len(train_loader)
@@ -2044,6 +2135,7 @@ def main() -> None:
         "cv_protocol": partition_plan["cv_protocol"],
         "fold": int(args.fold),
         "save_strategy": args.save_strategy,
+        "lr_schedule": lr_schedule_record,
         "training_strategy": {
             "strategy": resolve_training_strategy(config),
             "world_size": int(os.environ.get("WORLD_SIZE", "1")),
@@ -2213,6 +2305,8 @@ def main() -> None:
             logs_dir,
         )
 
+    update_tracker = UpdateTracker(lr_schedule_record, logger=LOGGER)
+    parameter_fingerprint = trainable_parameter_fingerprint(model, accelerator.device)
     for epoch in range(1, int(config["training"]["num_train_epochs"]) + 1):
         if d3tec_epoch_schedule is not None:
             train_dataset.examples = d3tec_epoch_schedule[epoch - 1]
@@ -2224,6 +2318,7 @@ def main() -> None:
         # epoch's forward, or activations balloon and OOM the heaviest configs.
         restore_model_for_training(accelerator.unwrap_model(model), config)
         epoch_losses: list[float] = []
+        update_tracker.start_epoch(epoch)
         objective = str(config.get("training", {}).get("objective", "token_ce"))
         if objective == "subject_mean_margin_mil":
             if accelerator.num_processes != 1:
@@ -2263,8 +2358,9 @@ def main() -> None:
                     )
                     if accelerator.sync_gradients:
                         accelerator.clip_grad_norm_(model.parameters(), float(config["training"]["max_grad_norm"]))
+                        update_tracker.record_update(optimizer)
                     optimizer.step()
-                    scheduler.step()
+                    update_tracker.step_scheduler(scheduler, accelerator.sync_gradients)
                     optimizer.zero_grad()
                 mil_batches.append(result)
             training_batches = []
@@ -2291,11 +2387,12 @@ def main() -> None:
                 step_lr = None
                 if accelerator.sync_gradients:
                     grad_norm = accelerator.clip_grad_norm_(model.parameters(), float(config["training"]["max_grad_norm"]))
+                    update_tracker.record_update(optimizer)
                     log_this_step = step_log.count_optimizer_step()
                     if log_this_step:
                         step_lr = float(optimizer.param_groups[0]["lr"])
                 optimizer.step()
-                scheduler.step()
+                update_tracker.step_scheduler(scheduler, accelerator.sync_gradients)
                 optimizer.zero_grad()
             epoch_losses.append(float(loss.detach().item()))
             if log_this_step:
@@ -2331,6 +2428,12 @@ def main() -> None:
             )
 
         accelerator.wait_for_everyone()
+        # Loud guard: an epoch that leaves every trainable parameter unchanged,
+        # or ends with all LoRA B matrices at zero, is an untrained model.
+        update_tracker.finish_epoch()
+        parameter_fingerprint = check_epoch_changed_parameters(
+            model, accelerator.device, parameter_fingerprint, epoch=epoch
+        )
         selection_eval: dict[str, Any] | None = None
         if selection_enabled:
             selection_eval = _evaluate_selection_components(
@@ -2511,6 +2614,17 @@ def main() -> None:
         save_best_selected = broadcast_flag(accelerator, save_best_selected)
         if save_best_selected:
             save_training_checkpoint(accelerator, model, processor, best_dir, config=config)
+            saved_adapter_error = None
+            if accelerator.is_main_process:
+                try:
+                    assert_saved_adapter_trained(best_dir)
+                except RuntimeError as exc:
+                    saved_adapter_error = str(exc)
+            if broadcast_flag(accelerator, saved_adapter_error is not None):
+                raise RuntimeError(
+                    saved_adapter_error
+                    or f"The selected checkpoint at epoch={epoch} failed the trained-adapter check on rank 0."
+                )
         stop_training_tensor = torch.tensor(0, device=accelerator.device, dtype=torch.int32)
         if accelerator.is_main_process and early_stop_cfg["enabled"] and early_stop_bad_epochs >= early_stop_cfg["patience"]:
             stopped_early = True

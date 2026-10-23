@@ -1,0 +1,161 @@
+schema_version: audiollm.experiment_group.v1
+group_id: text-lr0-schedule-fix-20261020
+title: Smoke test of the update-counted LR schedule on standalone Qwen3.8 D3TEC text
+research_question: >-
+  With the update-counted LR schedule (training.lr_schedule_mode=update_counted), does a
+  standalone Qwen3.8-27B D3TEC text fit make a real optimizer update at LR > 0 in epoch 1,
+  so the epoch-1 adapter has non-zero LoRA B matrices? The legacy schedule ran the only
+  epoch-1 update at LR 0 and left LoRA B at zero. This is an infrastructure smoke test;
+  it is not a reportable scientific result.
+dataset: d3tec
+baseline: >-
+  Run q3ms_d3tec_text_only_native_s7_f0_r1 of the qwen3-multiseed-native-20261002 campaign
+  (attempt 20261003T013452Z-q3ms_d3tec_text_only_native_s7_f0_r1-dd410ab6-b1e12741, train job
+  46963736, seed 7, split seed 1337, fold 0, config
+  configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v1.yaml, FSDP world size 4,
+  accumulation 32). Its selected epoch-1 adapter has all LoRA B matrices at zero.
+treatment: >-
+  The same config, seed, split seed and fold, trained from the fixed commit with the
+  update-counted schedule and capped at three epochs (training.num_train_epochs=3) so the
+  job checks the LR plan, the epoch guards and LoRA B after epoch 1. The metrics of this
+  capped run are not comparable with a full run and are not reported.
+expected_seeds:
+  - 7
+  - 1337
+  - 2024
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+runs:
+  - logical_run: text_lr0_fix_smoke_d3tec_text_native
+    dataset: d3tec
+    modality: text_only
+    config: configs/main/d3tec_text_only_harmonized_selmacrof1_likelihood_v1.yaml
+    folds:
+      - 0
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Smoke only: one fold, three capped epochs. Check the LR schedule log line, the
+      run_config lr_schedule block and non-zero LoRA B; never report the test metrics.
+  - logical_run: text_accum4w10_pilot_d3tec_text_native
+    dataset: d3tec
+    modality: text_only
+    config: configs/experiments/text_accum4/d3tec_text_only_harmonized_selmacrof1_likelihood_v1_accum4w10.yaml
+    folds:
+      - 0
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Pilot of the approved small-corpus text recipe (accumulation 4, effective batch 16,
+      warmup ratio 0.1; user + advisor approved 2026-10-20), seed 7, full 20 epochs with
+      normal early stopping. Checks stability only (no collapse, LoRA B non-zero,
+      inner-val curve); the recipe is predeclared and is not tuned on test scores.
+  - logical_run: text_accum4w10_pilot_cmdc_text_native
+    dataset: cmdc
+    modality: text_only
+    config: configs/experiments/text_accum4/cmdc_text_only_harmonized_selmacrof1_likelihood_v1_accum4w10.yaml
+    folds:
+      - 0
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Same pilot for CMDC (native), seed 7, fold 0, full 20 epochs.
+  - logical_run: text_accum4w10_full_daic_text_native
+    dataset: daic
+    modality: text_only
+    config: configs/experiments/text_accum4/daic_text_only_harmonized_selmacrof1_likelihood_v1_accum4w10.yaml
+    folds:
+      - 0
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Full option-C rerun (user approved 2026-10-21) of the paper's standalone Qwen3.8-27B
+      native text cells with the update-counted schedule and the predeclared small-corpus
+      recipe. Seeds 7, 1337, 2024; split seed 1337; same manifests and splits as the
+      original cells. New run names; the original runs are never overwritten.
+  - logical_run: text_accum4w10_full_d3tec_text_native
+    dataset: d3tec
+    modality: text_only
+    config: configs/experiments/text_accum4/d3tec_text_only_harmonized_selmacrof1_likelihood_v1_accum4w10.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Full option-C rerun (user approved 2026-10-21) of the paper's standalone Qwen3.8-27B
+      native text cells with the update-counted schedule and the predeclared small-corpus
+      recipe. Seeds 7, 1337, 2024; split seed 1337; same manifests and splits as the
+      original cells. New run names; the original runs are never overwritten.
+  - logical_run: text_accum4w10_full_cmdc_text_native
+    dataset: cmdc
+    modality: text_only
+    config: configs/experiments/text_accum4/cmdc_text_only_harmonized_selmacrof1_likelihood_v1_accum4w10.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Full option-C rerun (user approved 2026-10-21) of the paper's standalone Qwen3.8-27B
+      native text cells with the update-counted schedule and the predeclared small-corpus
+      recipe. Seeds 7, 1337, 2024; split seed 1337; same manifests and splits as the
+      original cells. New run names; the original runs are never overwritten.
+  - logical_run: text_accum4w10_full_turkish_text_native
+    dataset: turkish
+    modality: text_only
+    config: configs/experiments/text_accum4/turkish_pooled_t17_text_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen38_27b_accum4w10.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Full option-C rerun (user approved 2026-10-21) of the paper's standalone Qwen3.8-27B
+      native text cells with the update-counted schedule and the predeclared small-corpus
+      recipe. Seeds 7, 1337, 2024; split seed 1337; same manifests and splits as the
+      original cells. New run names; the original runs are never overwritten.
+  - logical_run: text_accum4w10_full_androids_mf_text_native
+    dataset: androids_interview
+    modality: text_only
+    config: configs/experiments/text_accum4/androids_text_only_harmonized_selmacrof1_likelihood_v1_mergedfolds_accum4w10.yaml
+    folds:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Full option-C rerun (user approved 2026-10-21) of the paper's standalone Qwen3.8-27B
+      native text cells with the update-counted schedule and the predeclared small-corpus
+      recipe. Seeds 7, 1337, 2024; split seed 1337; same manifests and splits as the
+      original cells. New run names; the original runs are never overwritten.
+
+scope:
+  campaign: text_accum4w10_rerun_native_20261021
+  language: native
+  evidence_dir: outputs/text_accum4w10_rerun_native_20261021
+  head_tracking_kind: text_accum4w10_native_head
+  head_run_schema: audiollm.text_accum4w10_head_run.v1
+  lane: text-lr0-schedule-fix-20261020
+  checkpoint_role: best_model
+  head_variants:
+    - logreg_raw
+    - xgb_raw
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar

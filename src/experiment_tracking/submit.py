@@ -162,10 +162,13 @@ def resolve_contract(
     effective_global_batch_size = (
         per_device_train_batch_size * gradient_accumulation_steps * world_size
     )
-    if strategy == "fsdp" and effective_global_batch_size != 128:
-        suggested = 128 // max(1, per_device_train_batch_size * world_size)
+    # The fsdp recipe keeps an effective global batch of 128 unless the config
+    # declares another target (the small-corpus text variants declare 16).
+    target_batch = int(training_cfg.get("target_effective_global_batch_size", 128))
+    if strategy == "fsdp" and effective_global_batch_size != target_batch:
+        suggested = target_batch // max(1, per_device_train_batch_size * world_size)
         raise SubmissionError(
-            "the fsdp recipe keeps an effective global batch of 128; "
+            f"the fsdp recipe keeps an effective global batch of {target_batch}; "
             f"{world_size} rank(s) with accumulation {gradient_accumulation_steps} give "
             f"{effective_global_batch_size}. Pass --set training.gradient_accumulation_steps={suggested}."
         )
@@ -180,6 +183,8 @@ def resolve_contract(
         "gradient_accumulation_steps": gradient_accumulation_steps,
         "effective_global_batch_size": effective_global_batch_size,
     }
+    if "target_effective_global_batch_size" in training_cfg:
+        training_shape["target_effective_global_batch_size"] = target_batch
     runtime_root = REMOTE_RUNTIME_BASE / experiment_id
     permanent_output_base = REMOTE_PROJECT_BASE / "output_model"
     run_root = str(permanent_output_base / campaign / modality / dataset)
