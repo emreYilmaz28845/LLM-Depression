@@ -97,3 +97,19 @@ runs:
       english text cells with the update-counted schedule and the predeclared small-corpus
       recipe. Seeds 7, 1337, 2024; split seed 1337; same manifests and splits as the
       original cells. New run names; the original runs are never overwritten.
+
+scope:
+  campaign: text_accum4w10_rerun_english_20261021
+  language: english
+  evidence_dir: outputs/text_accum4w10_rerun_english_20261021
+  head_tracking_kind: text_accum4w10_english_head
+  head_run_schema: audiollm.text_accum4w10_head_run.v1
+  lane: text-lr0-schedule-fix-en-20261021
+  checkpoint_role: best_model
+  head_variants:
+    - logreg_raw
+    - xgb_raw
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
