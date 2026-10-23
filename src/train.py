@@ -97,6 +97,7 @@ from src.training_strategy import (
     resolve_training_strategy,
     save_training_checkpoint,
 )
+from src.step_log import DEFAULT_EVERY as STEP_LOG_DEFAULT_EVERY, STEP_LOG_NAME, StepLogWriter
 from src.sampling import (
     SAMPLING_MODE_SUBJECT_OVERSAMPLE,
     build_subject_oversampling,
@@ -2271,6 +2272,12 @@ def main() -> None:
     stop_reason: str | None = None
     history: list[dict[str, Any]] = []
     mil_training_audit: list[dict[str, Any]] = []
+    step_log = StepLogWriter(
+        logs_dir / STEP_LOG_NAME,
+        every=int(config["training"].get("step_log_every", STEP_LOG_DEFAULT_EVERY)),
+        max_grad_norm=float(config["training"]["max_grad_norm"]),
+        enabled=bool(accelerator.is_main_process),
+    )
 
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
@@ -2375,13 +2382,21 @@ def main() -> None:
                         )
                     loss = loss * loss_weights.reshape(-1)[0].to(loss.device)
                 accelerator.backward(loss)
+                grad_norm = None
+                log_this_step = False
+                step_lr = None
                 if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(model.parameters(), float(config["training"]["max_grad_norm"]))
+                    grad_norm = accelerator.clip_grad_norm_(model.parameters(), float(config["training"]["max_grad_norm"]))
                     update_tracker.record_update(optimizer)
+                    log_this_step = step_log.count_optimizer_step()
+                    if log_this_step:
+                        step_lr = float(optimizer.param_groups[0]["lr"])
                 optimizer.step()
                 update_tracker.step_scheduler(scheduler, accelerator.sync_gradients)
                 optimizer.zero_grad()
             epoch_losses.append(float(loss.detach().item()))
+            if log_this_step:
+                step_log.write(epoch=epoch, step=step, loss=epoch_losses[-1], lr=step_lr, grad_norm=grad_norm)
             if accelerator.is_main_process and step % int(config["training"]["logging_steps"]) == 0:
                 LOGGER.info("epoch=%s step=%s loss=%.6f", epoch, step, sum(epoch_losses) / len(epoch_losses))
         if mil_batches:
@@ -2662,6 +2677,7 @@ def main() -> None:
                 },
                 logs_dir / "mil_training_audit.json",
             )
+        step_log.close()
         completed_epochs = len(history)
         save_json(history, logs_dir / "training_history.json")
         selected_history_row = next(

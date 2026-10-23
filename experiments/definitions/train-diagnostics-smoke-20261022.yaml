@@ -1,0 +1,40 @@
+schema_version: audiollm.experiment_group.v1
+group_id: train-diagnostics-smoke-20261022
+title: Step-level train log smoke on CMDC audio+text
+research_question: >-
+  Does train.py write a correct logs/train_step_log.jsonl (loss, lr used, grad
+  norm before clipping, clipped) on a real MN5 worker, and does the diagnostics
+  tool read it back? Tooling check only; no scientific question and no result
+  to report.
+dataset: cmdc
+baseline: >-
+  None. Smoke job on 1 GPU, 1 epoch, 6 subjects, gradient accumulation 1,
+  step_log_every 1. Non-reportable.
+treatment: >-
+  configs/main/cmdc_audio_text_harmonized_selmacrof1_likelihood_v1_en.yaml with
+  smoke overrides.
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+github_issue: null
+github_pr: 288
+scope:
+  campaign: train_diagnostics_smoke
+  checkpoint_role: best_model
+  report_metrics:
+    - macro_f1
+  statistics_family: none (smoke)
+  expansion_trigger: none; a smoke result is never expanded or reported as a score.
+  cells:
+    - {id: cmdc_audio_text_smoke, dataset: cmdc, modality: audio_text, config: configs/main/cmdc_audio_text_harmonized_selmacrof1_likelihood_v1_en.yaml, run_root: output_model/train_diagnostics_smoke/audio_text/cmdc}
+exclusions:
+  - production_matrix
+  - scientific_claims
+  - workbook_cell_rewrite
