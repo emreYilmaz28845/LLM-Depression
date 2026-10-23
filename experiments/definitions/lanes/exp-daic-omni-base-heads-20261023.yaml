@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: exp-daic-omni-base-heads-20261023
+slug: daic-omni-base-heads
+tier: 1
+branch: agent/exp-daic-omni-base-heads
+worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-exp-daic-omni-base-heads
+parent_branch: main
+parent_sha: 46e84427b3d427b33cfd621eb41b7ab2de0c969e
+created_at_utc: "2026-10-23T10:35:23Z"
+experiment_group_path: experiments/definitions/daic-omni-base-heads-20261023.yaml
+type: competing
