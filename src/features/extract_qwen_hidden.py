@@ -479,6 +479,7 @@ def _resolve_subject_partitions(
     saved: dict[str, Any],
     config: dict[str, Any],
     split_payload: dict[str, Any],
+    final_eval_source: str = "saved",
 ) -> tuple[dict[str, list[str]], dict[str, Any]]:
     cv_protocol = str(
         saved.get("cv_protocol")
@@ -501,6 +502,16 @@ def _resolve_subject_partitions(
             evaluation_protocol = "daic_official_train_inner_split_dev_evaluation"
         else:
             evaluation_protocol = "daic_official_train_fit_locked_test_evaluation"
+        if final_eval_source == "selection":
+            # Official-split DAIC only: score the saved selection (official
+            # development) subjects with the same official-train fit.
+            if final_partition == "val" or not has_selection_partition:
+                raise ValueError(
+                    "--final-eval-source selection requires the official "
+                    "train/val/test DAIC protocol."
+                )
+            heldout_source = "selection_subject_ids"
+            evaluation_protocol = "daic_official_train_fit_dev_evaluation"
     elif cv_protocol == "train_val":
         train_sources = ("train_subject_ids",)
         heldout_source = "selection_subject_ids"
@@ -516,6 +527,8 @@ def _resolve_subject_partitions(
         for subject_id in split_payload.get(source, [])
     })
     heldout_ids = sorted({str(subject_id) for subject_id in split_payload.get(heldout_source, [])})
+    if final_eval_source != "saved" and not is_daic_chunking:
+        raise ValueError("--final-eval-source selection is supported for DAIC only.")
     if not train_ids:
         raise ValueError("Resolved outer_train subject set is empty.")
     if not heldout_ids:
@@ -528,7 +541,11 @@ def _resolve_subject_partitions(
     partitions = {"outer_train": train_ids, "final_eval": heldout_ids}
     provenance = {
         "evaluation_protocol": evaluation_protocol,
-        "split_name": str(config.get("split", {}).get("final_eval_partition", "test")),
+        "split_name": (
+            str(config.get("split", {}).get("selection_partition", "val"))
+            if final_eval_source == "selection"
+            else str(config.get("split", {}).get("final_eval_partition", "test"))
+        ),
         "saved_cv_protocol": cv_protocol or None,
         "partition_sources": {
             "outer_train": list(train_sources),
@@ -550,6 +567,7 @@ def _validate_saved_split(
     fold: int,
     train_source_count: int,
     split_payload: dict[str, Any] | None = None,
+    final_eval_source: str = "saved",
 ) -> Path:
     split_metadata_path = _saved_path(saved["split_metadata_path"])
     if not split_metadata_path.exists():
@@ -637,7 +655,11 @@ def _validate_saved_split(
                     config["split"]["selection_partition"],
                 ])
             )
-            final_partition = str(config["split"]["final_eval_partition"])
+            final_partition = str(
+                config["split"]["selection_partition"]
+                if final_eval_source == "selection"
+                else config["split"]["final_eval_partition"]
+            )
             expected_train = {
                 str(row["subject_id"]) for row in split_metadata if str(row["partition"]) in dev_partitions
             }
@@ -1016,6 +1038,13 @@ def parse_args() -> argparse.Namespace:
         help="Extract from the frozen base model without loading the checkpoint adapter. "
         "The checkpoint still supplies the run config, split, manifest, prompt and processor.",
     )
+    parser.add_argument(
+        "--final-eval-source",
+        choices=("saved", "selection"),
+        default="saved",
+        help="DAIC official split only: 'selection' writes the official development "
+        "subjects into the final_eval cache instead of the saved test subjects.",
+    )
     return parser.parse_args()
 
 
@@ -1208,14 +1237,20 @@ def main() -> None:
     _require_best_model(checkpoint_dir)
     split_payload = read_json(split_path)
     partition_subject_ids, evaluation_provenance = _resolve_subject_partitions(
-        saved, config, split_payload
+        saved, config, split_payload, final_eval_source=args.final_eval_source
     )
     cv_protocol = str(
         saved.get("cv_protocol") or config.get("split", {}).get("cv_protocol") or ""
     )
     train_source_count = 1 if (cv_protocol == "train_val" or _is_daic_chunking(config)) else 2
     split_metadata_path = _validate_saved_split(
-        saved, config, partition_subject_ids, fold, train_source_count, split_payload=split_payload
+        saved,
+        config,
+        partition_subject_ids,
+        fold,
+        train_source_count,
+        split_payload=split_payload,
+        final_eval_source=args.final_eval_source,
     )
     manifest_path = args.manifest_path.resolve() if args.manifest_path else _saved_path(saved["manifest_path"])
     if not manifest_path.exists():
@@ -1265,6 +1300,8 @@ def main() -> None:
             subject_selection["sha256"] if subject_selection is not None else None
         ),
     }
+    if args.final_eval_source != "saved":
+        cache_config["final_eval_source"] = args.final_eval_source
     if base_only:
         # The checkpoint is only a reference for config/split/prompt; its
         # adapter hashes are kept for traceability but never loaded.

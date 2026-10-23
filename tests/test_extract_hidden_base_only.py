@@ -36,7 +36,7 @@ def _setup(tmp_path: Path, monkeypatch, *, base_only: bool) -> tuple[Path, dict]
     patches = {
         "_load_saved_run": lambda c: (saved, config, run_config, split),
         "ensure_hidden_extraction_supported": lambda c, p: None,
-        "_resolve_subject_partitions": lambda s, c, p: ({"outer_train": ["1"], "final_eval": ["2"]}, {}),
+        "_resolve_subject_partitions": lambda s, c, p, **k: ({"outer_train": ["1"], "final_eval": ["2"]}, {}),
         "_validate_saved_split": lambda *a, **k: split_metadata,
         "load_manifest_rows": lambda p: [{}],
         "sha256_jsonl_rows": lambda rows: "m",
@@ -98,3 +98,55 @@ def _setup_existing(tmp_path: Path, monkeypatch) -> None:
     argv.remove("--base-only")
     monkeypatch.setattr(sys, "argv", argv)
     ex.main()
+
+
+def _daic_official(tmp_path: Path):
+    config = {
+        "dataset": "daic",
+        "protocol_id": "daic_participant_speech_packed30_v1",
+        "split": {"train_partition": "train", "selection_partition": "val", "final_eval_partition": "test"},
+    }
+    split_payload = {
+        "train_subject_ids": ["1", "2"],
+        "selection_subject_ids": ["3"],
+        "final_eval_subject_ids": ["4"],
+    }
+    metadata = [
+        {"subject_id": "1", "partition": "train"},
+        {"subject_id": "2", "partition": "train"},
+        {"subject_id": "3", "partition": "val"},
+        {"subject_id": "4", "partition": "test"},
+    ]
+    path = tmp_path / "partitions.json"
+    path.write_text(json.dumps(metadata), encoding="utf-8")
+    saved = {"split_metadata_path": str(path)}
+    return saved, config, split_payload
+
+
+def test_selection_source_scores_official_dev(tmp_path):
+    saved, config, payload = _daic_official(tmp_path)
+    parts, prov = ex._resolve_subject_partitions(saved, config, payload, final_eval_source="selection")
+    assert parts == {"outer_train": ["1", "2"], "final_eval": ["3"]}
+    assert prov["evaluation_protocol"] == "daic_official_train_fit_dev_evaluation"
+    assert prov["split_name"] == "val"
+    ex._validate_saved_split(saved, config, parts, 0, 1, split_payload=payload, final_eval_source="selection")
+    with pytest.raises(ValueError, match="does not match"):
+        ex._validate_saved_split(saved, config, parts, 0, 1, split_payload=payload)
+
+
+def test_saved_source_is_unchanged(tmp_path):
+    saved, config, payload = _daic_official(tmp_path)
+    parts, prov = ex._resolve_subject_partitions(saved, config, payload)
+    assert parts["final_eval"] == ["4"]
+    assert prov["evaluation_protocol"] == "daic_official_train_fit_locked_test_evaluation"
+
+
+def test_selection_source_refused_outside_official_daic(tmp_path):
+    saved, config, payload = _daic_official(tmp_path)
+    officialdev = json.loads(json.dumps(config))
+    officialdev["split"] = {"train_partition": "train", "final_eval_partition": "val"}
+    with pytest.raises(ValueError, match="official"):
+        ex._resolve_subject_partitions(saved, officialdev, payload, final_eval_source="selection")
+    other = dict(config, dataset="cmdc")
+    with pytest.raises(ValueError, match="DAIC only"):
+        ex._resolve_subject_partitions(saved, other, payload, final_eval_source="selection")
