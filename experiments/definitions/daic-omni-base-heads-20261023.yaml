@@ -1,0 +1,45 @@
+schema_version: audiollm.experiment_group.v1
+group_id: daic-omni-base-heads-20261023
+title: Frozen base Qwen3-Omni hidden states + fixed heads on DAIC audio-only
+research_question: >-
+  Do frozen base Qwen3-Omni Thinker hidden states (no LoRA) carry DAIC
+  depression signal on the official split, given that our Omni LoRA run
+  collapses to the majority class and an external frozen-Omni logistic head
+  reports test macro-F1 0.755?
+dataset: daic
+baseline: >-
+  qwen3omni_daic_audio_only_fold0_prod_20260923 (Omni LoRA, likelihood),
+  official test macro-F1 0.4125 (majority-class).
+treatment: >-
+  extract_qwen_hidden.py --base-only with that run's best_model as the config,
+  split, manifest, prompt and processor reference; final_eval = official test
+  (saved) and, in a second pass, official dev (--final-eval-source selection).
+  Heads: logreg_raw and xgb_raw from baselines/qwen_hidden_classifier.py,
+  fit on the 107 official train subjects.
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: qwen_hidden_logreg_raw
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+github_issue: null
+github_pr: 289
+scope:
+  campaign: frozen_base_omni_heads
+  checkpoint_role: base_model
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
+  statistics_family: none (single diagnostic comparison)
+  expansion_trigger: none; other datasets or prompts need a new user decision.
+  cells:
+    - {id: daic_audio_only_base_omni_heads, dataset: daic, modality: audio_only, config: configs/main/daic_audio_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen3omni_30b_a3b.yaml, run_root: output_model/frozen_base_omni_heads/audio_only/daic}
+exclusions:
+  - production_matrix
+  - workbook_cell_rewrite
+  - other_datasets
