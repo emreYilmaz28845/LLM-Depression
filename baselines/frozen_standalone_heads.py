@@ -247,7 +247,11 @@ def run_route(
         parts.append((dev_cache, "final_eval"))
     if output_dir.exists() and any(output_dir.iterdir()):
         raise ValueError(f"Refusing to overwrite existing output: {output_dir}")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    final_dir = output_dir
+    output_dir = output_dir.with_name(output_dir.name + ".partial")
+    if output_dir.exists():
+        raise ValueError(f"A partial output from an earlier failed run exists: {output_dir}")
+    output_dir.mkdir(parents=True)
     cache = PooledCache(parts)
     identity = {
         "schema_version": SCHEMA_VERSION, "variant": VARIANT, "protocol": protocol, "route": route,
@@ -282,6 +286,9 @@ def run_route(
         "num_subjects_in_cache": len(cache.units),
     }
     save_json(summary, output_dir / "summary.json")
+    if final_dir.exists():
+        final_dir.rmdir()  # empty, checked above
+    output_dir.rename(final_dir)
     return summary
 
 
