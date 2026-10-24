@@ -1,0 +1,49 @@
+schema_version: audiollm.experiment_group.v1
+group_id: frozen-base-standalone-heads-20261024
+title: Frozen base models (no LoRA) + subject-mean L2 head on the 23 standalone routes
+research_question: >-
+  How do frozen base Qwen3.8-27B (text) and Qwen3-Omni Thinker (audio, audio+text)
+  hidden states with one subject-mean L2 logistic head compare with the LoRA
+  standalone results, per dataset, modality and language?
+dataset: >-
+  DAIC-WOZ (official split), D3TEC, Androids interview (merged outer folds),
+  CMDC and Turkish pooled t17; text, audio and audio+text; native and English
+  where the LoRA tables have them (23 routes).
+baseline: >-
+  The seed-1337 standalone LoRA parents of each route (paper Table 4 Qwen and
+  head columns); their run_config, manifest, prompt and split_used.json are the
+  references. No adapter weights are loaded.
+treatment: >-
+  extract_qwen_hidden.py --base-only on each route's fold-0 parent: the fold-0
+  cache holds every subject (DAIC adds an official-dev cache), so one
+  extraction serves all folds. Head baselines/frozen_standalone_heads.py
+  (logreg_subjmean_l2sel): hierarchical subject-mean fit on train subjects,
+  balanced class weights, L2 grid 1e-4..1e3, mean-logit subject score,
+  threshold 0.5. L2 selection: DAIC official dev; D3TEC/Androids saved inner
+  validation; CMDC/Turkish stratified inner 5-fold CV on train (seed 1337).
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: frozen_base_logreg_subjmean_l2sel
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+comparison_rule: >-
+  Unweighted five-fold mean of subject-level Macro-F1, Positive-F1 and UAR
+  (DAIC: official test). One run per route, no SD. CMDC/Turkish LoRA rows
+  select the checkpoint on the reported fold; the head does not.
+exclusions:
+  - pr_merge
+  - merged_rows
+  - extra_seeds
+  - optuna_or_hpo
+  - paper_or_prism_edits
+github_issue: null
+github_pr: null
