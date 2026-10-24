@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: exp-daic-subject-mean-head-20261024
+slug: daic-subject-mean-head
+tier: 1
+branch: agent/exp-daic-subject-mean-head
+worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-exp-daic-subject-mean-head
+parent_branch: origin/main
+parent_sha: 6b948f096ef0938a0b2aab8e3a5d2a4782713187
+created_at_utc: "2026-10-24T17:15:48Z"
+experiment_group_path: null
+type: competing
