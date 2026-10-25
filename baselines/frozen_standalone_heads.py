@@ -16,6 +16,11 @@ Head (same as ``baselines/subject_mean_logreg_head.py``):
 * subject score = hierarchical mean of window logits (= logit of the
   hierarchical mean vector, because the head is linear); threshold 0.5.
 
+With ``--allow-adapter`` the same head runs on LoRA caches instead. A LoRA
+adapter differs per fold, so each fold then takes its own cache (one
+``--cache-dirs`` entry per split file), and the cache's ``final_eval``
+subjects must equal that fold's reported subjects.
+
 L2 selection by protocol (the reported subjects never take part):
 
 * ``daic_official``: fit on official train, select on official dev, report test;
@@ -23,7 +28,11 @@ L2 selection by protocol (the reported subjects never take part):
   validation (``selection_subject_ids``), report ``final_eval_subject_ids``;
 * ``train_val``: fit on ``train_subject_ids``, select by stratified inner
   5-fold CV on those subjects (pooled out-of-fold logits, seed 1337), refit on
-  all of them, report ``selection_subject_ids`` (the outer validation fold).
+  all of them, report ``selection_subject_ids`` (the outer validation fold);
+* ``train_cv_test``: fit on ``train_subject_ids``, select by the same inner CV,
+  report ``final_eval_subject_ids``; ``selection_subject_ids`` stay unused (DAIC
+  LoRA caches have no dev partition, so both sides use this for a like-for-like
+  comparison).
 """
 
 from __future__ import annotations
@@ -54,9 +63,10 @@ from src.features.hidden_classifier_policy import cache_identity, canonical_sha2
 from src.utils import read_json, save_json, write_jsonl
 
 
-SCHEMA_VERSION = "frozen_standalone_heads.v1"
+SCHEMA_VERSION = "frozen_standalone_heads.v2"
 VARIANT = "logreg_subjmean_l2sel"
-PROTOCOLS = ("daic_official", "train_val_test", "train_val")
+PROTOCOLS = ("daic_official", "train_val_test", "train_val", "train_cv_test")
+INNER_CV_PROTOCOLS = ("train_val", "train_cv_test")
 INNER_FOLDS = 5
 INNER_SEED = 1337
 
@@ -163,9 +173,11 @@ def run_fold(cache: PooledCache, split: dict[str, Any], protocol: str, grid) -> 
         report, select_on = selection, None
         if final:
             raise ValueError("train_val split unexpectedly has final_eval subjects.")
+    elif protocol == "train_cv_test":
+        report, select_on = final, None
     else:
         report, select_on = final, selection
-    if not report or (protocol != "train_val" and not select_on):
+    if not report or (protocol not in INNER_CV_PROTOCOLS and not select_on):
         raise ValueError(f"{protocol}: empty selection or report subjects.")
     groups = [set(train), set(select_on or []), set(report)]
     if any(a & b for i, a in enumerate(groups) for b in groups[i + 1:]):
@@ -174,7 +186,7 @@ def run_fold(cache: PooledCache, split: dict[str, Any], protocol: str, grid) -> 
 
     candidates = []
     inner = None
-    if protocol == "train_val":
+    if protocol in INNER_CV_PROTOCOLS:
         y_train = cache.y(train)
         inner = inner_cv_folds(train, y_train)
         for penalty in grid:
@@ -227,24 +239,49 @@ def _write_csv(rows: list[dict[str, Any]], path: Path) -> None:
         writer.writerows(rows)
 
 
-def run_route(
-    *, cache_dir: Path, dev_cache: Path | None, split_files: list[Path], protocol: str,
-    output_dir: Path, route: dict[str, Any], grid=DEFAULT_L2_GRID,
-) -> dict[str, Any]:
-    if protocol not in PROTOCOLS:
-        raise ValueError(f"Unknown protocol {protocol!r}.")
-    if (protocol == "daic_official") != (dev_cache is not None):
-        raise ValueError("A dev cache is required for, and only for, daic_official.")
+def _load_caches(cache_dir: Path, dev_cache: Path | None, allow_adapter: bool) -> tuple[PooledCache, dict]:
     meta = read_json(cache_dir / "extraction_metadata.json")
-    if meta.get("weights_source") != "base_model_no_adapter":
+    if not allow_adapter and meta.get("weights_source") != "base_model_no_adapter":
         raise ValueError("Cache is not a frozen base-model (no adapter) extraction.")
+    if allow_adapter and meta.get("weights_source") == "base_model_no_adapter":
+        raise ValueError("--allow-adapter was given but the cache is a frozen base extraction.")
     parts = [(cache_dir, "outer_train"), (cache_dir, "final_eval")]
     if dev_cache is not None:
         dev_meta = read_json(dev_cache / "extraction_metadata.json")
-        for key in ("base_model", "weights_source", "manifest_sha256", "condition", "input_modality", "pooling"):
+        keys = ("base_model", "weights_source", "manifest_sha256", "condition", "input_modality", "pooling")
+        for key in keys + (("checkpoint_dir", "adapter_sha256") if allow_adapter else ()):
             if dev_meta.get(key) != meta.get(key):
                 raise ValueError(f"Dev cache differs from main cache in {key}.")
         parts.append((dev_cache, "final_eval"))
+    return PooledCache(parts), meta
+
+
+def _check_adapter_partition(cache_dir: Path, split: dict[str, Any], protocol: str) -> None:
+    """A per-fold LoRA cache must hold exactly that fold's reported subjects in final_eval."""
+    _, rows = load_partition(cache_dir, "final_eval")
+    held = {str(r["subject_id"]) for r in rows}
+    key = "selection_subject_ids" if protocol == "train_val" else "final_eval_subject_ids"
+    if held != {str(s) for s in split.get(key, [])}:
+        raise ValueError(f"{cache_dir}: final_eval subjects do not match the fold's {key}.")
+
+
+def run_route(
+    *, cache_dirs: list[Path], dev_caches: list[Path] | None, split_files: list[Path], protocol: str,
+    output_dir: Path, route: dict[str, Any], grid=DEFAULT_L2_GRID, allow_adapter: bool = False,
+) -> dict[str, Any]:
+    if protocol not in PROTOCOLS:
+        raise ValueError(f"Unknown protocol {protocol!r}.")
+    if (protocol == "daic_official") != bool(dev_caches):
+        raise ValueError("A dev cache is required for, and only for, daic_official.")
+    if len(cache_dirs) not in {1, len(split_files)}:
+        raise ValueError("Give one cache for all folds or one cache per split file.")
+    if allow_adapter and len(cache_dirs) != len(split_files):
+        raise ValueError("Adapter caches are fold-specific: give one cache per split file.")
+    if dev_caches and len(dev_caches) != len(cache_dirs):
+        raise ValueError("Give one dev cache per main cache.")
+    loaded = [_load_caches(c, dev_caches[i] if dev_caches else None, allow_adapter)
+              for i, c in enumerate(cache_dirs)]
+    meta = loaded[0][1]
     if output_dir.exists() and any(output_dir.iterdir()):
         raise ValueError(f"Refusing to overwrite existing output: {output_dir}")
     final_dir = output_dir
@@ -252,12 +289,13 @@ def run_route(
     if output_dir.exists():
         raise ValueError(f"A partial output from an earlier failed run exists: {output_dir}")
     output_dir.mkdir(parents=True)
-    cache = PooledCache(parts)
     identity = {
         "schema_version": SCHEMA_VERSION, "variant": VARIANT, "protocol": protocol, "route": route,
         "l2_grid": list(grid), "inner_folds": INNER_FOLDS, "inner_seed": INNER_SEED, "threshold": 0.5,
-        "cache_identity": cache_identity(cache_dir),
-        "dev_cache_identity": cache_identity(dev_cache) if dev_cache else None,
+        "feature_source": "lora_adapter" if allow_adapter else "frozen_base",
+        "cache_identities": [cache_identity(c) for c in cache_dirs],
+        "dev_cache_identities": [cache_identity(c) for c in dev_caches] if dev_caches else None,
+        "checkpoints": [m.get("checkpoint_dir") for _, m in loaded] if allow_adapter else None,
         "split_files": [{"path": str(p), "sha256": canonical_sha256(read_json(p))} for p in split_files],
         "base_model": meta.get("base_model"), "model_backend": meta.get("model_backend"),
         "manifest_sha256": meta.get("manifest_sha256"),
@@ -266,7 +304,11 @@ def run_route(
     save_json(identity, output_dir / "result_config.json")
     folds = []
     for fold, path in enumerate(split_files):
-        result = run_fold(cache, read_json(path), protocol, grid)
+        split = read_json(path)
+        cache = loaded[fold if len(loaded) > 1 else 0][0]
+        if allow_adapter:
+            _check_adapter_partition(cache_dirs[fold], split, protocol)
+        result = run_fold(cache, split, protocol, grid)
         fold_dir = output_dir / f"fold_{fold}"
         fold_dir.mkdir()
         save_json(result["selection"], fold_dir / "selection.json")
@@ -283,7 +325,8 @@ def run_route(
         "route": route, "protocol": protocol, "variant": VARIANT, "folds": folds,
         "aggregation": "unweighted_fold_mean_of_subject_level_metrics",
         "fold_mean": {k: float(np.mean([f[k] for f in folds])) for k in ("macro_f1", "positive_f1", "uar")},
-        "num_subjects_in_cache": len(cache.units),
+        "feature_source": identity["feature_source"],
+        "num_subjects_in_cache": max(len(c.units) for c, _ in loaded),
     }
     save_json(summary, output_dir / "summary.json")
     if final_dir.exists():
@@ -294,8 +337,11 @@ def run_route(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--cache-dir", required=True, type=Path)
-    parser.add_argument("--dev-cache", type=Path)
+    parser.add_argument("--cache-dirs", required=True, nargs="+", type=Path,
+                        help="One cache for all folds (frozen base) or one per split file.")
+    parser.add_argument("--dev-caches", nargs="+", type=Path, help="DAIC only: one dev cache per main cache.")
+    parser.add_argument("--allow-adapter", action="store_true",
+                        help="Accept per-fold LoRA caches instead of a frozen base cache.")
     parser.add_argument("--split-files", required=True, nargs="+", type=Path)
     parser.add_argument("--protocol", required=True, choices=PROTOCOLS)
     parser.add_argument("--output-dir", required=True, type=Path)
@@ -305,8 +351,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    summary = run_route(cache_dir=args.cache_dir, dev_cache=args.dev_cache, split_files=args.split_files,
-                        protocol=args.protocol, output_dir=args.output_dir, route=json.loads(args.route))
+    summary = run_route(cache_dirs=args.cache_dirs, dev_caches=args.dev_caches, split_files=args.split_files,
+                        protocol=args.protocol, output_dir=args.output_dir, route=json.loads(args.route),
+                        allow_adapter=args.allow_adapter)
     print(json.dumps({"route": summary["route"], "fold_mean": summary["fold_mean"]}, indent=2), flush=True)
 
 
