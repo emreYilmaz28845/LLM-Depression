@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: exp-merged-new-head-ablation-20261027
+slug: merged-new-head-ablation
+tier: 1
+branch: agent/exp-merged-new-head-ablation
+worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-exp-merged-new-head-ablation
+parent_branch: main
+parent_sha: 7487244520ce695c254e5d5732a97a8014e31f14
+created_at_utc: "2026-10-27T18:25:45Z"
+experiment_group_path: null
+type: competing
