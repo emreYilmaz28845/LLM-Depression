@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: exp-frozen-base-standalone-heads-20261024
+slug: frozen-base-standalone-heads
+tier: 1
+branch: agent/exp-frozen-base-standalone-heads
+worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-exp-frozen-base-standalone-heads
+parent_branch: agent/exp-daic-subject-mean-head
+parent_sha: 96588d51f98cbc97529f24feefe1c3ce9cb4f6f0
+created_at_utc: "2026-10-24T17:46:59Z"
+experiment_group_path: experiments/definitions/frozen-base-standalone-heads-20261024.yaml
+type: competing
