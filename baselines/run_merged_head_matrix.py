@@ -2,7 +2,7 @@
 """Run ``merged_subject_mean_heads`` over every merged route, seed and fold.
 
 LoRA: every seed's own features. Frozen: one run per route and fold, using the
-seed-1337 row index; the other seeds' row hashes must match it, so the frozen
+seed-1337 row index; the other seeds' rows (minus the checkpoint path) must match it, so the frozen
 result does not depend on the seed whose index is used.
 """
 
@@ -44,6 +44,15 @@ def features_dir(root: Path, language: str, modality: str, seed: int, stage: str
             / stage / f"fold_{fold}" / "features")
 
 
+def row_index(features: Path) -> list[list[dict]]:
+    """Rows of both partitions without the per-seed checkpoint path."""
+    return [
+        [{k: v for k, v in json.loads(line).items() if k != "checkpoint"}
+         for line in (features / f"{part}_rows.jsonl").read_text().splitlines() if line.strip()]
+        for part in ("outer_train", "outer_holdout")
+    ]
+
+
 def _job(args):
     features, output, source, caches = args
     summary = run(features, output, source, caches)
@@ -65,11 +74,10 @@ def main() -> None:
         route = f"{language}_{modality}"
         for stage, fold in STAGES:
             reference = features_dir(args.merged_features_root, language, modality, 1337, stage, fold)
-            ref_hashes = json.loads((reference / "feature_metadata.json").read_text())["row_hashes"]
+            ref_rows = row_index(reference)
             for seed in SEEDS:
                 f = features_dir(args.merged_features_root, language, modality, seed, stage, fold)
-                hashes = json.loads((f / "feature_metadata.json").read_text())["row_hashes"]
-                if hashes != ref_hashes:
+                if seed != 1337 and row_index(f) != ref_rows:
                     raise ValueError(f"Row index differs from seed 1337: {f}")
                 jobs.append((f, args.output_root / "lora" / route / f"s{seed}" / f"{stage}_fold_{fold}", "lora", None))
             jobs.append((reference, args.output_root / "frozen" / route / f"{stage}_fold_{fold}", "frozen",
