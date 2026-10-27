@@ -90,7 +90,14 @@ def load_merged(heads_root: Path, features_root: Path) -> list[dict]:
                 runs += [("lora", s, heads_root / "lora" / f"{language}_{modality}" / f"s{s}" / cell) for s in SEEDS]
                 for source, seed, run_dir in runs:
                     for head, tag in heads.items():
-                        for r in csv.DictReader((run_dir / head / "predictions_subject_level.csv").open()):
+                        path = run_dir / head / "predictions_subject_level.csv"
+                        if source == "lora" and head == "paper_logreg":
+                            # The paper's own merged LogReg cell, as saved on MN5. The local
+                            # refit matches it in 89/90 cells; one subject sits at p=0.495-0.501.
+                            path = (features_root / f"qwen3_pooled_{language}" / modality
+                                    / f"qmsm_{language}_{modality}_s{seed}" / stage / f"fold_{fold}"
+                                    / "heads" / "logreg" / "predictions_subject_level.csv")
+                        for r in csv.DictReader(path.open()):
                             records.append({"scope": scope, "dataset": r["dataset"], "route": route,
                                             "condition": f"{source}_{tag}", "seed": seed, "fold": fold,
                                             "subject": _strip(r["subject_id"]), "label": int(r["label"]),
