@@ -29,6 +29,10 @@ def _route(route: str) -> str:
     return f"{ROUTE_NAMES[modality]} ({'EN' if language == 'english' else 'native'})"
 
 
+def _p(p: float | None) -> str:
+    return "—" if p is None else f"{p:.4f}"
+
+
 def render(stats: dict) -> str:
     lines = ["# Frozen vs LoRA × paper vs new head", "",
              "Cells: macro-F1 / positive-F1 (fold-mean, subject level, binary strict). LoRA cells are the mean of 3 seeds; "
@@ -54,18 +58,21 @@ def render(stats: dict) -> str:
                 out.append(f"🟩 **{text}**" if abs(cells[c]["macro_f1"] - best) < 1e-12 else text)
             lines.append(f"| {DATASET_NAMES.get(key[1], key[1])} | {_route(key[2])} | " + " | ".join(out) + " |")
         lines.append("")
-    lines += ["## Paired tests (macro-F1)", "",
-              f"Subject-level paired bootstrap, {stats['settings']['replicates']} replicates; "
-              "resampling inside each class per dataset and fold, shared across routes, conditions and seeds. "
-              "Group difference = mean over routes. Holm correction within each scope.", "",
-              "| Scope | Group | Comparison | Routes | Mean diff | 95% CI | p | p (Holm) | Routes up / down |",
-              "|---|---|---|---|---|---|---|---|---|"]
+    lines += ["## Paired t-tests (macro-F1)", "",
+              "Two-sided paired t-tests, no multiplicity correction. Route test: one difference per route "
+              "(fold-mean scores), so its mean is the group difference shown. Fold test: one difference per "
+              "route × fold cell (LoRA averaged over seeds within the fold). — = not testable (fewer than 2 units, or all differences identical).", "",
+              "| Scope | Group | Comparison | Routes | Mean diff | 95% CI (route t) | t (df) | p (route) | "
+              "Cells | p (fold cells) | Routes up / down |",
+              "|---|---|---|---|---|---|---|---|---|---|---|"]
     for t in stats["tests"]:
-        mark = " **" if t["p_holm"] < 0.05 else " "
-        lines.append(f"| {t['scope']} | {t['group']} | {COMPARISON_NAMES[t['comparison']]} | {t['n_routes']} |"
-                     f"{mark}{t['mean_diff_macro_f1']:+.3f}{mark.strip() and '**'} | "
-                     f"[{t['ci95'][0]:+.3f}, {t['ci95'][1]:+.3f}] | {t['p_bootstrap']:.4f} | {t['p_holm']:.4f} | "
-                     f"{t['routes_a_better']} / {t['routes_b_better']} |")
+        sig = t["p_route"] is not None and t["p_route"] < 0.05
+        diff = f"{t['mean_diff_macro_f1']:+.3f}"
+        ci = "—" if t["ci95_route"][0] is None else f"[{t['ci95_route'][0]:+.3f}, {t['ci95_route'][1]:+.3f}]"
+        tdf = "—" if t["t_route"] is None else f"{t['t_route']:+.2f} ({t['df_route']})"
+        lines.append(f"| {t['scope']} | {t['group']} | {COMPARISON_NAMES[t['comparison']]} | {t['n_routes']} | "
+                     f"{f'**{diff}**' if sig else diff} | {ci} | {tdf} | {_p(t['p_route'])} | "
+                     f"{t['n_route_folds']} | {_p(t['p_fold'])} | {t['routes_a_better']} / {t['routes_b_better']} |")
     return "\n".join(lines) + "\n"
 
 

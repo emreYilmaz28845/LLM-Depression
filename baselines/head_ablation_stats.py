@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Frozen/LoRA x paper/new head ablation: table and subject-level paired bootstrap.
+"""Frozen/LoRA x paper/new head ablation: table and paired t-tests.
 
 Conditions per route (``<modality>_<language>``):
   frozen_paper, frozen_new (one run), lora_paper, lora_new, lora_llm (3 LoRA seeds).
@@ -11,11 +11,11 @@ A route's score is the fold-mean of subject-level binary-strict metrics; LoRA
 conditions are averaged over seeds. A group statistic is the mean over the
 group's routes of the paired difference between two conditions.
 
-Bootstrap: in every replicate and for every (scope, dataset, fold), the test
-subjects are resampled with replacement inside each class. The same resample
-is applied to every route, condition and seed of that dataset and fold, so
-subjects shared by several routes stay paired. p is the two-sided shifted-null
-bootstrap p-value; Holm's correction runs over all tests of one scope.
+Tests: two-sided paired t-tests on macro-F1 differences, no multiplicity
+correction. Primary unit = route (the fold-mean score, so the tested mean equals
+the reported group difference). Secondary unit = route x fold cell (LoRA scores
+averaged over seeds within the fold). A test needs at least two units with
+non-identical differences; otherwise p is None.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
+from scipy import stats
 
 CONDITIONS = ("frozen_paper", "frozen_new", "lora_paper", "lora_new", "lora_llm")
 EXPORT_CONDITIONS = {
@@ -150,43 +151,26 @@ class Cells:
             p = np.asarray([preds[s] for s in subjects])
             self.vectors[key] = (y, p)
 
-    def weights(self, rng: np.random.Generator | None, replicates: int) -> dict[tuple, np.ndarray]:
-        out = {}
-        for unit, subjects in self.order.items():
-            y = np.asarray([self.universe[unit][s] for s in subjects])
-            if rng is None:
-                out[unit] = np.ones((1, len(subjects)))
-                continue
-            w = np.zeros((replicates, len(subjects)))
-            for label in (0, 1):
-                idx = np.flatnonzero(y == label)
-                if len(idx):
-                    draws = rng.integers(0, len(idx), size=(replicates, len(idx)))
-                    np.add.at(w, (np.arange(replicates)[:, None], idx[draws]), 1.0)
-            out[unit] = w
-        return out
-
-    def route_scores(self, weights: dict[tuple, np.ndarray]) -> dict[tuple, dict[str, np.ndarray]]:
-        """(scope, dataset, route, condition) -> metric -> per-replicate fold-mean, seed-mean score."""
-        by_route: dict[tuple, dict[int, list[dict]]] = defaultdict(lambda: defaultdict(list))
+    def route_scores(self) -> dict[tuple, dict]:
+        """(scope, dataset, route, condition) -> fold-mean, seed-mean scores and per-fold macro-F1."""
+        by_route: dict[tuple, dict[int, dict[int, dict]]] = defaultdict(lambda: defaultdict(dict))
         for key, (y, p) in self.vectors.items():
             scope, dataset, route, cond, seed, fold = key
-            w = weights[(scope, dataset, fold)]
-            m = _metrics(w @ (y * p), w @ ((1 - y) * p), w @ (y * (1 - p)), w @ ((1 - y) * (1 - p)))
-            by_route[(scope, dataset, route, cond)][seed].append(m)
+            m = _metrics(np.sum(y * p), np.sum((1 - y) * p), np.sum(y * (1 - p)), np.sum((1 - y) * (1 - p)))
+            by_route[(scope, dataset, route, cond)][seed][fold] = {k: float(v) for k, v in m.items()}
         out = {}
         for key, seeds in by_route.items():
-            folds = {len(v) for v in seeds.values()}
+            folds = {tuple(sorted(v)) for v in seeds.values()}
             if len(folds) != 1:
-                raise ValueError(f"{key}: seeds have different fold counts {folds}.")
-            out[key] = {
-                metric: np.mean([np.mean([m[metric] for m in fold_metrics], axis=0) for fold_metrics in seeds.values()], axis=0)
-                for metric in ("macro_f1", "positive_f1", "uar")
-            }
-            out[key]["seed_sd_macro_f1"] = (np.std([np.mean([m["macro_f1"] for m in v], axis=0) for v in seeds.values()], axis=0)
-                                            if len(seeds) > 1 else None)
+                raise ValueError(f"{key}: seeds have different folds {folds}.")
+            folds = folds.pop()
+            per_seed = {metric: [np.mean([v[f][metric] for f in folds]) for v in seeds.values()]
+                        for metric in ("macro_f1", "positive_f1", "uar")}
+            out[key] = {metric: float(np.mean(vals)) for metric, vals in per_seed.items()}
+            out[key]["fold_macro_f1"] = {f: float(np.mean([v[f]["macro_f1"] for v in seeds.values()])) for f in folds}
+            out[key]["seed_sd_macro_f1"] = float(np.std(per_seed["macro_f1"])) if len(seeds) > 1 else None
             out[key]["n_seeds"] = len(seeds)
-            out[key]["n_folds"] = folds.pop()
+            out[key]["n_folds"] = len(folds)
         return out
 
 
@@ -194,60 +178,62 @@ def _group_of(route: str) -> str:
     return route.rsplit("_", 1)[0]
 
 
-def _holm(pvalues: list[float]) -> list[float]:
-    order = np.argsort(pvalues)
-    adjusted, running = [0.0] * len(pvalues), 0.0
-    for rank, i in enumerate(order):
-        running = max(running, min(1.0, (len(pvalues) - rank) * pvalues[i]))
-        adjusted[i] = running
-    return adjusted
+def _paired_t(diffs: list[float]) -> dict:
+    """Two-sided one-sample t-test of paired differences against 0, with a 95% CI."""
+    d = np.asarray(diffs, dtype=float)
+    n = len(d)
+    if n < 2:
+        return {"n": n, "t": None, "df": None, "p": None, "ci95": [None, None]}
+    se = d.std(ddof=1) / np.sqrt(n)
+    if se == 0:  # identical differences: t is undefined, not significant
+        return {"n": n, "t": None, "df": n - 1, "p": 1.0 if d.mean() == 0 else None, "ci95": [None, None]}
+    t = d.mean() / se
+    half = stats.t.ppf(0.975, n - 1) * se
+    return {"n": n, "t": float(t), "df": n - 1, "p": float(2 * stats.t.sf(abs(t), n - 1)),
+            "ci95": [float(d.mean() - half), float(d.mean() + half)]}
 
 
-def analyse(records: list[dict], replicates: int, seed: int) -> dict:
-    cells = Cells(records)
-    observed = cells.route_scores(cells.weights(None, 1))
-    boot = cells.route_scores(cells.weights(np.random.default_rng(seed), replicates))
+def analyse(records: list[dict]) -> dict:
+    observed = Cells(records).route_scores()
     table = []
     for (scope, dataset, route, cond), m in sorted(observed.items()):
         table.append({"scope": scope, "dataset": dataset, "route": route, "condition": cond,
-                      "n_folds": m["n_folds"], "n_seeds": m["n_seeds"],
-                      "macro_f1": float(m["macro_f1"][0]), "positive_f1": float(m["positive_f1"][0]),
-                      "uar": float(m["uar"][0]),
-                      "seed_sd_macro_f1": None if m["seed_sd_macro_f1"] is None else float(m["seed_sd_macro_f1"][0])})
+                      "n_folds": m["n_folds"], "n_seeds": m["n_seeds"], "macro_f1": m["macro_f1"],
+                      "positive_f1": m["positive_f1"], "uar": m["uar"], "seed_sd_macro_f1": m["seed_sd_macro_f1"]})
     tests = []
     for scope in sorted({k[0] for k in observed}):
         routes = sorted({(k[1], k[2]) for k in observed if k[0] == scope})
-        scope_tests = []
         for group in GROUPS:
             members = [r for r in routes if group == "all" or _group_of(r[1]) == group]
-            if not members:
-                continue
             for name, a, b in COMPARISONS:
                 pairs = [(d, r) for d, r in members
                          if (scope, d, r, a) in observed and (scope, d, r, b) in observed]
                 if not pairs:
                     continue
-                obs_diffs = [observed[(scope, d, r, a)]["macro_f1"][0] - observed[(scope, d, r, b)]["macro_f1"][0]
-                             for d, r in pairs]
-                obs = float(np.mean(obs_diffs))
-                dist = np.mean([boot[(scope, d, r, a)]["macro_f1"] - boot[(scope, d, r, b)]["macro_f1"]
-                                for d, r in pairs], axis=0)
-                p = float((np.sum(np.abs(dist - obs) >= abs(obs) - 1e-12) + 1) / (replicates + 1))
-                scope_tests.append({
+                route_diffs = [observed[(scope, d, r, a)]["macro_f1"] - observed[(scope, d, r, b)]["macro_f1"]
+                               for d, r in pairs]
+                fold_diffs = []
+                for d, r in pairs:
+                    fa, fb = observed[(scope, d, r, a)]["fold_macro_f1"], observed[(scope, d, r, b)]["fold_macro_f1"]
+                    if set(fa) != set(fb):
+                        raise ValueError(f"{scope} {d} {r}: folds differ between {a} and {b}.")
+                    fold_diffs += [fa[f] - fb[f] for f in sorted(fa)]
+                by_route, by_fold = _paired_t(route_diffs), _paired_t(fold_diffs)
+                tests.append({
                     "scope": scope, "group": group, "comparison": name, "a": a, "b": b,
-                    "n_routes": len(pairs), "mean_diff_macro_f1": obs,
-                    "ci95": [float(np.percentile(dist, 2.5)), float(np.percentile(dist, 97.5))],
-                    "p_bootstrap": p,
-                    "routes_a_better": int(sum(x > 1e-9 for x in obs_diffs)),
-                    "routes_b_better": int(sum(x < -1e-9 for x in obs_diffs)),
+                    "n_routes": len(pairs), "mean_diff_macro_f1": float(np.mean(route_diffs)),
+                    "t_route": by_route["t"], "df_route": by_route["df"], "p_route": by_route["p"],
+                    "ci95_route": by_route["ci95"],
+                    "n_route_folds": len(fold_diffs), "mean_diff_fold_cells": float(np.mean(fold_diffs)),
+                    "t_fold": by_fold["t"], "df_fold": by_fold["df"], "p_fold": by_fold["p"],
+                    "routes_a_better": int(sum(x > 1e-9 for x in route_diffs)),
+                    "routes_b_better": int(sum(x < -1e-9 for x in route_diffs)),
                 })
-        for t, adj in zip(scope_tests, _holm([t["p_bootstrap"] for t in scope_tests])):
-            t["p_holm"] = adj
-        tests.extend(scope_tests)
     return {"table": table, "tests": tests,
-            "settings": {"replicates": replicates, "seed": seed, "metric": "fold-mean subject-level macro-F1",
-                         "lora_seed_aggregation": "mean over seeds", "resampling": "stratified by class within (scope, dataset, fold), shared across routes/conditions/seeds",
-                         "p_value": "two-sided shifted-null bootstrap", "correction": "Holm within scope"}}
+            "settings": {"metric": "fold-mean subject-level macro-F1", "lora_seed_aggregation": "mean over seeds",
+                         "test": "two-sided paired t-test on macro-F1 differences",
+                         "units": "primary: routes (fold-mean); secondary: route x fold cells",
+                         "correction": "none"}}
 
 
 def main() -> None:
@@ -257,14 +243,12 @@ def main() -> None:
     parser.add_argument("--merged-heads-root", required=True, type=Path)
     parser.add_argument("--merged-features-root", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--replicates", type=int, default=10000)
-    parser.add_argument("--seed", type=int, default=1337)
     args = parser.parse_args()
     if args.output_dir.exists() and any(args.output_dir.iterdir()):
         raise ValueError(f"Refusing to overwrite {args.output_dir}.")
     records = load_standalone(args.export_csv_root, args.daic_traincv_root)
     records += load_merged(args.merged_heads_root, args.merged_features_root)
-    result = analyse(records, args.replicates, args.seed)
+    result = analyse(records)
     result["inputs"] = {k: str(v) for k, v in vars(args).items() if k.endswith("root")}
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "ablation_stats.json").write_text(json.dumps(result, indent=2))
@@ -276,8 +260,8 @@ def main() -> None:
             writer.writerows(rows)
     for t in result["tests"]:
         print(f"{t['scope']:13s} {t['group']:10s} {t['comparison']:24s} n={t['n_routes']:2d} "
-              f"diff={t['mean_diff_macro_f1']:+.3f} CI=[{t['ci95'][0]:+.3f},{t['ci95'][1]:+.3f}] "
-              f"p={t['p_bootstrap']:.4f} holm={t['p_holm']:.4f}")
+              f"diff={t['mean_diff_macro_f1']:+.3f} p_route={t['p_route']} "
+              f"n_cells={t['n_route_folds']:3d} p_fold={t['p_fold']}")
 
 
 if __name__ == "__main__":
