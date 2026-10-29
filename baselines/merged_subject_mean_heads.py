@@ -30,6 +30,13 @@ fits and the final fit alike; held-out subjects are never balanced or copied):
 - ``oversample_dataset_class``: every dataset x class cell is copied up to the
   largest cell (whole copies, then a seeded random remainder without
   replacement), all copies weight 1. The scaler still uses each subject once.
+- ``smote_dataset_class``: every dataset x class cell is filled up to the
+  largest cell with SMOTE points (seeded), interpolated between a training
+  subject's standardized subject-mean vector and one of its 5 nearest
+  neighbours in the same cell; all rows weight 1.
+
+``paper_logreg_class_balanced`` is ``paper_logreg`` with the hierarchical
+weights rescaled so the two classes carry equal mass inside every dataset.
 """
 
 from __future__ import annotations
@@ -58,7 +65,7 @@ from src.merged.heads import (  # noqa: E402
     _prediction_response_id,
     aggregate_head_predictions,
 )
-from src.merged.protocol import build_grouped_inner_folds  # noqa: E402
+from src.merged.protocol import DATASETS, build_grouped_inner_folds, compute_hierarchical_example_weights  # noqa: E402
 from src.utils import sha256_file  # noqa: E402
 
 SCHEMA_VERSION = "merged_subject_mean_heads.v1"
@@ -68,7 +75,9 @@ INNER_SEED = 1337
 SOURCES = ("lora", "frozen")
 SELECTION_RULE = "max mean per-dataset inner macro-F1, then min BCE, then larger L2"
 WEIGHT_POLICY = "equal_dataset_then_balanced_class_one_row_per_subject"
-BALANCING = ("dataset_class_weight", "dataset_weight", "none", "oversample_dataset_class")
+BALANCING = ("dataset_class_weight", "dataset_weight", "none", "oversample_dataset_class", "smote_dataset_class")
+SEEDED_BALANCING = ("oversample_dataset_class", "smote_dataset_class")
+SMOTE_NEIGHBORS = 5
 
 
 def load_frozen_index(cache_dirs: list[Path]) -> tuple[dict[str, tuple[np.ndarray, str]], dict[str, Any]]:
@@ -176,6 +185,34 @@ def oversample_dataset_class(subjects: list[str], units: SubjectUnits, rng: np.r
     return out
 
 
+def smote_dataset_class(x: np.ndarray, y: np.ndarray, groups: list[str], rng: np.random.Generator,
+                        neighbors: int = SMOTE_NEIGHBORS) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """Fill every (group, class) cell up to the largest one with SMOTE points from that cell."""
+    cells: dict[tuple[str, int], list[int]] = defaultdict(list)
+    for i, (g, label) in enumerate(zip(groups, y.tolist())):
+        cells[(g, int(label))].append(i)
+    target = max(len(v) for v in cells.values())
+    xs, ys, gs = [x], [y], list(groups)
+    for key in sorted(cells):
+        index = np.asarray(cells[key])
+        need = target - len(index)
+        if need == 0:
+            continue
+        if len(index) < 2:
+            raise ValueError(f"SMOTE needs at least 2 subjects in cell {key}.")
+        points = x[index]
+        distance = ((points[:, None, :] - points[None, :, :]) ** 2).sum(-1)
+        np.fill_diagonal(distance, np.inf)
+        nearest = np.argsort(distance, axis=1, kind="stable")[:, :min(neighbors, len(index) - 1)]
+        base = rng.integers(len(index), size=need)
+        mate = nearest[base, rng.integers(nearest.shape[1], size=need)]
+        gap = rng.random((need, 1))
+        xs.append(points[base] + gap * (points[mate] - points[base]))
+        ys.append(np.full(need, key[1], dtype=y.dtype))
+        gs += [key[0]] * need
+    return np.vstack(xs), np.concatenate(ys), gs
+
+
 def balanced_training_set(subjects: list[str], units: SubjectUnits, balancing: str,
                           rng: np.random.Generator) -> tuple[list[str], np.ndarray]:
     """Training subject list (with copies when oversampling) and their loss weights."""
@@ -206,11 +243,21 @@ def _fit_subject_head(x: np.ndarray, units: SubjectUnits, subjects: list[str], p
     scale = np.sqrt(variance)
     scale[scale < 1e-6] = 1.0
     z = (x - mean) / scale
-    fit_subjects, sample_weight = balanced_training_set(subjects, units, balancing,
-                                                        rng if rng is not None else np.random.default_rng(0))
-    weight, bias, info = fit_logistic(units.means(z, fit_subjects), units.y(fit_subjects), sample_weight, penalty)
-    info = {**info, "balancing": balancing, "fit_rows": len(fit_subjects),
-            "fit_cell_counts": {f"{d}:{y}": n for (d, y), n in sorted(_cell_counts(fit_subjects, units).items())}}
+    rng = rng if rng is not None else np.random.default_rng(0)
+    if balancing == "smote_dataset_class":
+        dataset_class_weights(subjects, units)  # every dataset needs both classes
+        features, labels, groups = smote_dataset_class(units.means(z, subjects), units.y(subjects),
+                                                       [units.dataset[s] for s in subjects], rng)
+        sample_weight = np.ones(len(labels))
+    else:
+        fit_subjects, sample_weight = balanced_training_set(subjects, units, balancing, rng)
+        features, labels = units.means(z, fit_subjects), units.y(fit_subjects)
+        groups = [units.dataset[s] for s in fit_subjects]
+    weight, bias, info = fit_logistic(features, labels, sample_weight, penalty)
+    counts: dict[str, int] = defaultdict(int)
+    for g, label in zip(groups, labels.tolist()):
+        counts[f"{g}:{label}"] += 1
+    info = {**info, "balancing": balancing, "fit_rows": len(labels), "fit_cell_counts": dict(sorted(counts.items()))}
     return mean, scale, weight, bias, info
 
 
@@ -267,7 +314,7 @@ def fit_subjmean_l2(x_train, train_rows, x_holdout, holdout_rows, grid=DEFAULT_L
         for s, z in zip(holdout, logits.tolist())
     ]
     return {
-        "balancing": {"policy": balancing, "oversample_seed": oversample_seed if balancing.startswith("oversample") else None},
+        "balancing": {"policy": balancing, "oversample_seed": oversample_seed if balancing in SEEDED_BALANCING else None},
         "selection": {"selected_l2_penalty": best["l2_penalty"], "rule": SELECTION_RULE,
                       "inner_folds": INNER_FOLDS, "inner_seed": INNER_SEED,
                       "inner_assignments_hash": inner.get("assignments_hash"), "candidates": candidates},
@@ -277,10 +324,29 @@ def fit_subjmean_l2(x_train, train_rows, x_holdout, holdout_rows, grid=DEFAULT_L
     }
 
 
-def fit_paper_logreg(x_train, train_rows, x_holdout, holdout_rows) -> dict[str, Any]:
+def class_balanced_hierarchical_weights(rows: list[dict[str, Any]]) -> np.ndarray:
+    """Hierarchical merged weights, rescaled so each class has half of every dataset's mass (mean 1)."""
+    weighted, _ = compute_hierarchical_example_weights(rows, expected_datasets=DATASETS)
+    weights = np.asarray([r["loss_weight"] for r in weighted], dtype=np.float64)
+    keys = [(str(r["dataset"]).lower(), int(r["label"])) for r in rows]
+    mass: dict[tuple[str, int], float] = defaultdict(float)
+    for key, w in zip(keys, weights):
+        mass[key] += w
+    for d in {k[0] for k in keys}:
+        if mass[(d, 0)] == 0 or mass[(d, 1)] == 0:
+            raise ValueError(f"Dataset {d} lacks a class in this training set.")
+    dataset_mass = {d: mass[(d, 0)] + mass[(d, 1)] for d in {k[0] for k in keys}}
+    weights = np.asarray([w * dataset_mass[k[0]] / (2 * mass[k]) for k, w in zip(keys, weights)])
+    return weights * len(weights) / weights.sum()
+
+
+def fit_paper_logreg(x_train, train_rows, x_holdout, holdout_rows, class_balanced: bool = False) -> dict[str, Any]:
     y = np.asarray([int(r["label"]) for r in train_rows], dtype=np.int64)
     estimator = _new_logreg(HEAD_SEED)
-    _fit_weighted(estimator, x_train, y, train_rows)
+    if class_balanced:
+        estimator.fit(x_train, y, classifier__sample_weight=class_balanced_hierarchical_weights(train_rows))
+    else:
+        _fit_weighted(estimator, x_train, y, train_rows)
     probability = _predict_probability(estimator, x_holdout)
     subjects, metrics = aggregate_head_predictions(holdout_rows, probability, threshold=0.5)
     predictions = [row for rows in subjects.values() for row in rows]
@@ -330,6 +396,7 @@ def run(features_dir: Path, output_dir: Path, source: str, frozen_caches: list[P
         "heads": {},
     }
     fitters = {"paper_logreg": fit_paper_logreg,
+               "paper_logreg_class_balanced": lambda *a: fit_paper_logreg(*a, class_balanced=True),
                "subjmean_l2": lambda *a: fit_subjmean_l2(*a, balancing=balancing, oversample_seed=oversample_seed)}
     for name in heads:
         result = fitters[name](x_train, train_rows, x_holdout, holdout_rows)
