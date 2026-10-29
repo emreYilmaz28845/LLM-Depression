@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: merged-oversampling-20261029
+slug: merged-oversampling-20261029
+tier: 1
+branch: agent/exp-merged-oversampling-20261029
+worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-exp-merged-oversampling-20261029
+parent_branch: main
+parent_sha: bdedbb226f858f2145d3a4dc7ee1159ba76328f8
+created_at_utc: "2026-10-29T18:03:37Z"
+experiment_group_path: null
+type: competing
