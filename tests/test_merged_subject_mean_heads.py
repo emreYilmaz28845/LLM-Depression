@@ -7,6 +7,8 @@ import pytest
 from baselines.merged_subject_mean_heads import (
     SubjectUnits,
     _fit_subject_head,
+    _subject_logits,
+    fit_subjmean_l2,
     balanced_training_set,
     class_balanced_hierarchical_weights,
     dataset_class_weights,
@@ -217,3 +219,79 @@ def test_smote_and_class_balanced_paper_run_end_to_end(tmp_path):
     assert head["balancing"] == {"policy": "smote_dataset_class", "oversample_seed": 2}
     assert len(set(head["fit_info"]["fit_cell_counts"].values())) == 1
     assert set(summary["heads"]["paper_logreg_class_balanced"]["metrics_by_dataset"]) == set(DATASETS)
+
+
+def _shifted(rows, vectors, scale=3.0):
+    """Every dataset gets its own offset and gain: a pure per-dataset affine shift."""
+    out = vectors.astype(np.float64).copy()
+    for k, dataset in enumerate(DATASETS):
+        index = [i for i, r in enumerate(rows) if r["dataset"] == dataset]
+        out[index] = out[index] * (1.0 + 0.5 * k) + scale * (k - 2)
+    return out
+
+
+def test_per_dataset_scaler_removes_per_dataset_affine_shift():
+    rows, vectors = _imbalanced_rows()
+    units = SubjectUnits(rows)
+    subjects = sorted(units.units)
+    plain = _fit_subject_head(vectors.astype(np.float64), units, subjects, 0.1, normalization="per_dataset")
+    moved = _fit_subject_head(_shifted(rows, vectors), units, subjects, 0.1, normalization="per_dataset")
+    np.testing.assert_allclose(moved[2], plain[2], atol=1e-6)
+    np.testing.assert_allclose(_subject_logits(_shifted(rows, vectors), units, moved, subjects),
+                               _subject_logits(vectors.astype(np.float64), units, plain, subjects), atol=1e-6)
+    shifted_global = _fit_subject_head(_shifted(rows, vectors), units, subjects, 0.1)
+    assert not np.allclose(shifted_global[2], plain[2], atol=1e-3)
+
+
+def test_per_dataset_scaler_uses_training_subjects_of_that_dataset_only():
+    rows, vectors = _imbalanced_rows()
+    units = SubjectUnits(rows)
+    train = sorted(units.units)[::2]
+    head = _fit_subject_head(vectors, units, train, 0.1, normalization="per_dataset")
+    scalers = head[0]
+    assert sorted(scalers) == sorted(DATASETS)
+    for dataset in DATASETS:
+        mine = [s for s in train if units.dataset[s] == dataset]
+        expected = np.mean([np.mean([vectors[r].mean(0) for r in units.units[s].values()], axis=0) for s in mine], axis=0)
+        np.testing.assert_allclose(scalers[dataset][0], expected, rtol=1e-6)
+    # Holdout vectors never reach the scaler.
+    changed = vectors.copy()
+    held = [i for s in sorted(units.units)[1::2] for rs in units.units[s].values() for i in rs]
+    changed[held] += 100.0
+    again = _fit_subject_head(changed, units, train, 0.1, normalization="per_dataset")
+    for dataset in DATASETS:
+        np.testing.assert_array_equal(again[0][dataset][0], scalers[dataset][0])
+
+
+def test_dataset_indicator_adds_one_column_per_dataset_and_learns_offsets():
+    rows, vectors = _imbalanced_rows()
+    units = SubjectUnits(rows)
+    subjects = sorted(units.units)
+    head = _fit_subject_head(vectors, units, subjects, 0.1, dataset_indicator=True)
+    assert len(head[2]) == vectors.shape[1] + len(DATASETS)
+    assert set(head[4]["indicator_weights"]) == set(DATASETS)
+    assert head[4]["dataset_indicator"] is True and head[4]["normalization"] == "global"
+    logits = _subject_logits(vectors, units, head, subjects)
+    assert logits.shape == (len(subjects),)
+
+
+def test_default_shift_options_reproduce_the_current_head():
+    rows, vectors = _imbalanced_rows()
+    units = SubjectUnits(rows)
+    subjects = sorted(units.units)
+    head = _fit_subject_head(vectors, units, subjects, 0.1)
+    mean = np.mean([np.mean([vectors[r].mean(0) for r in units.units[s].values()], axis=0) for s in subjects], axis=0)
+    np.testing.assert_allclose(head[0]["*"][0], mean, rtol=1e-6)
+    assert head[1] is False and len(head[2]) == vectors.shape[1]
+
+
+def test_shift_options_run_end_to_end_and_are_recorded(tmp_path):
+    rows, vectors = _imbalanced_rows()
+    features = _features(tmp_path / "features", rows, vectors)
+    summary = run(features, tmp_path / "out", "lora", heads=("subjmean_l2",),
+                  normalization="per_dataset", dataset_indicator=True)
+    head = summary["heads"]["subjmean_l2"]
+    assert head["dataset_shift"] == {"normalization": "per_dataset", "dataset_indicator": True}
+    assert set(head["metrics_by_dataset"]) == set(DATASETS)
+    with pytest.raises(ValueError, match="normalization"):
+        fit_subjmean_l2(vectors, rows, vectors, rows, normalization="bad")

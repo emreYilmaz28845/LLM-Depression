@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: merged-domainshift-20261030
+slug: merged-domainshift-20261030
+tier: 1
+branch: agent/exp-merged-domainshift-20261030
+worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-exp-merged-domainshift-20261030
+parent_branch: agent/exp-merged-oversampling-20261029
+parent_sha: ce91b3c27bb6b6345b2788765ddfa114572f933b
+created_at_utc: "2026-10-30T11:57:01Z"
+experiment_group_path: null
+type: competing
