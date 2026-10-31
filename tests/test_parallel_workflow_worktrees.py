@@ -252,7 +252,7 @@ def make_overlay_test_repo(tmp_path):
     repo, env = make_create_test_repo(tmp_path)
     (repo / ".gitignore").write_text(
         "outputs/\n.agent-pin.json\n__pycache__/\n*.pyc\n"
-        "AGENTS.md\n.agents/\nskills-lock.json\ndocs/\n.env\n.provenance/\n",
+        "AGENTS.md\n.agents/\n.claude/\nskills-lock.json\ndocs/\n.env\n.provenance/\n",
         encoding="utf-8",
     )
     run_cmd(["git", "add", ".gitignore"], cwd=repo)
@@ -262,6 +262,9 @@ def make_overlay_test_repo(tmp_path):
     skill = repo / ".agents" / "skills" / "agent-journal"
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text("---\nname: agent-journal\n---\n", encoding="utf-8")
+    claude_skills = repo / ".claude" / "skills"
+    claude_skills.mkdir(parents=True)
+    (claude_skills / "agent-journal").symlink_to("../../.agents/skills/agent-journal")
     (repo / "skills-lock.json").write_text('{"version": 1}\n', encoding="utf-8")
 
     # Decoys: other ignored paths must never reach a lane worktree.
@@ -293,6 +296,12 @@ def test_exp_create_copies_only_the_allowlisted_overlay(tmp_path):
     assert (worktree / "AGENTS.md").is_file()
     assert (worktree / ".agents" / "skills" / "agent-journal" / "SKILL.md").is_file()
     assert (worktree / "skills-lock.json").is_file()
+    # Claude Code skill links stay relative links into the worktree's own copy.
+    claude_link = worktree / ".claude" / "skills" / "agent-journal"
+    assert claude_link.is_symlink()
+    assert (claude_link / "SKILL.md").resolve() == (
+        worktree / ".agents" / "skills" / "agent-journal" / "SKILL.md"
+    ).resolve()
 
     assert not (worktree / ".env").exists()
     assert not (worktree / "outputs").exists()
@@ -311,12 +320,13 @@ def test_exp_create_copies_only_the_allowlisted_overlay(tmp_path):
             "-v",
             "AGENTS.md",
             ".agents/skills/agent-journal/SKILL.md",
+            ".claude/skills/agent-journal",
             "skills-lock.json",
         ],
         cwd=worktree,
     )
     assert ignored.returncode == 0
-    assert len(ignored.stdout.strip().splitlines()) == 3
+    assert len(ignored.stdout.strip().splitlines()) == 4
 
     pin = json.loads((worktree / ".agent-pin.json").read_text(encoding="utf-8"))
     assert pin["allowed_paths"] == [str(worktree), str(journal_root.resolve())]
