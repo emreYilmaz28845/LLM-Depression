@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: deepseek-v4flash-textfeat-20261031
+slug: deepseek-v4flash-textfeat-20261031
+tier: 2
+branch: agent/feat-deepseek-v4flash-textfeat-20261031
+worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-feat-deepseek-v4flash-textfeat-20261031
+parent_branch: main
+parent_sha: 125bf152c9922db6fb8887be49c92bb42bef1eae
+created_at_utc: "2026-10-31T15:53:43Z"
+experiment_group_path: null
+type: complementary
