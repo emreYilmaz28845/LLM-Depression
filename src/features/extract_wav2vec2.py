@@ -89,6 +89,17 @@ def window_rows(manifest_rows: list[dict[str, Any]], config: dict[str, Any], seg
     raise ValueError(f"Unsupported dataset {dataset!r}.")
 
 
+def _git_head() -> str | None:
+    """HEAD of a real checkout; ``_git_commit`` may return a stale deploy-time value."""
+    import subprocess
+
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, text=True,
+                                       stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        return None
+
+
 def remap_audio_paths(rows: list[dict[str, Any]], path_map: dict[str, str]) -> list[dict[str, Any]]:
     """Replace every audio path through ``path_map``; any unmapped path is an error."""
     missing: set[str] = set()
@@ -324,6 +335,7 @@ def main() -> None:
                 "torch": torch.__version__,
                 "transformers": _package_version("transformers"),
                 "project_git": _git_commit(),
+                "git_head": _git_head(),
             },
         }
         save_json(metadata, staged[name] / "extraction_metadata.json")
