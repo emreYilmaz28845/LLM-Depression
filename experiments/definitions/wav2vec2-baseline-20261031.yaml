@@ -30,7 +30,7 @@ primary_metric:
   aggregation: unweighted_fold_mean_of_subject_level_metrics
   evaluation_view: harmonized_all_windows_full_coverage
 github_issue: null
-github_pr: null
+github_pr: 296
 scope:
   campaign: wav2vec2_frozen_baseline_20261031
   checkpoint_role: base_model
