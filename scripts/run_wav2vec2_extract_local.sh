@@ -22,6 +22,9 @@ MODEL_REVISION="${MODEL_REVISION:-1a640f32ac3e39899438a2931f9924c02f080a54}"
 SEGMENT_SECONDS="${SEGMENT_SECONDS:-20}"
 SMOKE_SUBJECTS="${SMOKE_SUBJECTS:-0}"
 ONLY="${ONLY:-}"
+ALL_LAYERS="${ALL_LAYERS:-0}"
+EXTRA_ARGS=()
+if [ "$ALL_LAYERS" = "1" ]; then EXTRA_ARGS+=(--all-layers); fi
 
 mkdir -p "$OUTPUT_ROOT/logs"
 LOG="$OUTPUT_ROOT/logs/w2v2-local-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -30,7 +33,7 @@ cp "$ROUTES_FILE" "$OUTPUT_ROOT/routes.txt.$(date -u +%Y%m%dT%H%M%SZ)"
 
 python -c 'import torch, transformers, soundfile; print("versions", torch.__version__, transformers.__version__, soundfile.__version__, torch.cuda.get_device_name(0))'
 echo "project_git=$(git -C "$PROJECT_ROOT" rev-parse HEAD) dirty=$(git -C "$PROJECT_ROOT" status --porcelain --untracked-files=no | wc -l)"
-echo "output_root=$OUTPUT_ROOT segment_seconds=$SEGMENT_SECONDS smoke_subjects=$SMOKE_SUBJECTS"
+echo "output_root=$OUTPUT_ROOT segment_seconds=$SEGMENT_SECONDS smoke_subjects=$SMOKE_SUBJECTS all_layers=$ALL_LAYERS"
 
 while IFS='|' read -r name ref source manifest; do
   [ -z "$name" ] && continue
@@ -45,6 +48,6 @@ while IFS='|' read -r name ref source manifest; do
     --segment-seconds "$SEGMENT_SECONDS" \
     --final-eval-source "$source" \
     --smoke-subjects "$SMOKE_SUBJECTS" \
-    --output-root "$OUTPUT_ROOT/$name"
+    --output-root "$OUTPUT_ROOT/$name" "${EXTRA_ARGS[@]}"
 done < "$ROUTES_FILE"
 echo "=== done $(date -u +%FT%TZ)"

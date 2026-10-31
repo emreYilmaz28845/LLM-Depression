@@ -19,6 +19,11 @@ caches in the layout ``baselines/frozen_standalone_heads.py`` reads:
 Partitions follow the Omni extraction (``outer_train`` / ``final_eval``);
 ``--final-eval-source selection`` writes the DAIC official-dev cache.
 
+``--all-layers`` keeps every hidden state (``hidden_states[0]`` = projected CNN
+features + positional conv, ``1..N`` = transformer layers; the last one is
+checked to equal ``last_hidden_state``) and writes
+``<output-root>/<pooling>/layer_XX`` caches for layer selection.
+
 ``--audio-path-map`` runs the extraction on another machine: a JSON object
 mapping every manifest audio path (as written on MN5) to a local file whose
 content hash was checked against the MN5 file. Paths are remapped only after
@@ -177,11 +182,21 @@ def _load_window_audio(example: dict[str, Any]) -> np.ndarray:
 
 
 @torch.inference_mode()
-def _embed(model, feature_extractor, audio: np.ndarray, device: torch.device) -> tuple[dict[str, np.ndarray], int]:
+def _embed(model, feature_extractor, audio: np.ndarray, device: torch.device,
+           all_layers: bool = False) -> tuple[dict[Any, dict[str, np.ndarray]], int]:
+    """Pooled features keyed by layer: ``"last"`` or, with ``all_layers``, 0..N."""
     inputs = feature_extractor(audio, sampling_rate=SAMPLING_RATE, return_tensors="pt")
     values = inputs["input_values"].to(device=device, dtype=torch.float32)
-    hidden = model(input_values=values).last_hidden_state
-    return pool_hidden(hidden), int(hidden.shape[1])
+    output = model(input_values=values, output_hidden_states=all_layers)
+    hidden = output.last_hidden_state
+    if not all_layers:
+        return {"last": pool_hidden(hidden)}, int(hidden.shape[1])
+    states = output.hidden_states
+    if len(states) != model.config.num_hidden_layers + 1:
+        raise ValueError(f"Expected {model.config.num_hidden_layers + 1} hidden states, got {len(states)}.")
+    if not torch.equal(states[-1], hidden):
+        raise ValueError("hidden_states[-1] differs from last_hidden_state.")
+    return {index: pool_hidden(state) for index, state in enumerate(states)}, int(hidden.shape[1])
 
 
 def parse_args() -> argparse.Namespace:
@@ -198,6 +213,8 @@ def parse_args() -> argparse.Namespace:
                         help="Smoke only: keep this many subjects per partition (non-reportable).")
     parser.add_argument("--audio-path-map", type=Path,
                         help="JSON {mn5_path: local_path} of content-hash-verified audio files.")
+    parser.add_argument("--all-layers", action="store_true",
+                        help="Write one cache per hidden state (layer selection).")
     parser.add_argument("--device", default="cuda")
     return parser.parse_args()
 
@@ -230,10 +247,11 @@ def main() -> None:
         path_map_identity = {"path": str(args.audio_path_map.resolve()), "sha256": sha256_file(args.audio_path_map)}
 
     output_root = args.output_root.resolve()
-    out_dirs = {name: output_root / name for name in POOLINGS}
-    for path in out_dirs.values():
-        if path.exists() and any(path.iterdir()):
-            raise FileExistsError(f"Refusing to overwrite existing cache: {path}")
+    if output_root.exists() and any(output_root.iterdir()):
+        raise FileExistsError(f"Refusing to overwrite existing output: {output_root}")
+    staged_root = output_root.with_name(output_root.name + ".partial")
+    if staged_root.exists():
+        raise FileExistsError(f"Partial output from an earlier run exists: {staged_root}")
 
     examples: dict[str, list[dict[str, Any]]] = {}
     fold = int(saved["fold"])
@@ -256,36 +274,44 @@ def main() -> None:
         raise ValueError("Feature extractor sampling rate is not 16 kHz.")
     model = Wav2Vec2Model.from_pretrained(str(args.model_path), torch_dtype=torch.float32).to(device).eval()
     hidden_size = int(model.config.hidden_size)
+    last_layer = int(model.config.num_hidden_layers)
+    layers: list[Any] = list(range(last_layer + 1)) if args.all_layers else ["last"]
+
+    def cache_dir(root: Path, name: str, layer: Any) -> Path:
+        return root / name if layer == "last" else root / name / f"layer_{int(layer):02d}"
 
     summaries: dict[str, Any] = {}
-    staged = {name: path.with_name(path.name + ".partial") for name, path in out_dirs.items()}
-    for path in staged.values():
-        if path.exists():
-            raise FileExistsError(f"Partial output from an earlier run exists: {path}")
-        path.mkdir(parents=True)
+    staged_root.mkdir(parents=True)
     for partition in PARTITIONS:
-        vectors = {name: [] for name in POOLINGS}
+        vectors = {(layer, name): [] for layer in layers for name in POOLINGS}
         records = []
         durations = []
         for example in examples[partition]:
             audio = _load_window_audio(example)
-            pooled, frames = _embed(model, feature_extractor, audio, device)
-            for name in POOLINGS:
-                vectors[name].append(pooled[name])
+            pooled, frames = _embed(model, feature_extractor, audio, device, args.all_layers)
+            for layer in layers:
+                for name in POOLINGS:
+                    vectors[(layer, name)].append(pooled[layer][name])
             records.append(_row_record(example, partition, fold, audio.size, frames))
             durations.append(audio.size / SAMPLING_RATE)
         first = examples[partition][0]
-        repeat, _ = _embed(model, feature_extractor, _load_window_audio(first), device)
-        determinism = float(np.max(np.abs(repeat["meanvar"] - vectors["meanvar"][0])))
+        repeat, _ = _embed(model, feature_extractor, _load_window_audio(first), device, args.all_layers)
+        determinism = float(max(np.max(np.abs(repeat[layer]["meanvar"] - vectors[(layer, "meanvar")][0]))
+                                for layer in layers))
         if determinism > DETERMINISM_ATOL:
             raise RuntimeError(f"{partition}: repeated forward differs by {determinism}.")
-        for name in POOLINGS:
-            matrix = np.stack(vectors[name]).astype(np.float32)
-            if not np.isfinite(matrix).all():
-                raise ValueError(f"{partition}/{name}: non-finite features.")
-            np.savez(staged[name] / f"{partition}.npz", vectors=matrix)
-            write_jsonl([{**r, "pooling": POOLINGS[name], "vector_dimension": int(matrix.shape[1])} for r in records],
-                        staged[name] / f"{partition}_rows.jsonl")
+        for layer in layers:
+            for name in POOLINGS:
+                matrix = np.stack(vectors[(layer, name)]).astype(np.float32)
+                if not np.isfinite(matrix).all():
+                    raise ValueError(f"{partition}/{name}/layer {layer}: non-finite features.")
+                target = cache_dir(staged_root, name, layer)
+                target.mkdir(parents=True, exist_ok=True)
+                np.savez(target / f"{partition}.npz", vectors=matrix)
+                write_jsonl([{**r, "pooling": POOLINGS[name], "hidden_layer": layer,
+                              "vector_dimension": int(matrix.shape[1])} for r in records],
+                            target / f"{partition}_rows.jsonl")
+            del vectors[(layer, "mean")], vectors[(layer, "meanvar")]
         summaries[partition] = {
             "rows": len(records),
             "subjects": len({r["subject_id"] for r in records}),
@@ -295,51 +321,57 @@ def main() -> None:
             "determinism_max_abs_diff": determinism,
         }
 
-    for name, path in out_dirs.items():
-        metadata = {
-            "schema_version": SCHEMA_VERSION,
-            "dataset": config["dataset"],
-            "condition": f"audio_only_frozen_wav2vec2_{int(round(args.segment_seconds))}s",
-            "input_modality": "audio_only",
-            "fold": fold,
-            "model_backend": MODEL_BACKEND,
-            "weights_source": "base_model_no_adapter",
-            "base_model": model_identity["path"],
-            "base_model_revision": args.model_revision,
-            "base_model_files_sha256": model_identity["file_sha256"],
-            "hidden_layer": "last_hidden_state",
-            "pooling": POOLINGS[name],
-            "vector_dimension": hidden_size * (2 if name == "meanvar" else 1),
-            "vector_dtype": "float32",
-            "inference_dtype": "float32",
-            "feature_extractor": {"do_normalize": bool(feature_extractor.do_normalize),
-                                  "sampling_rate": SAMPLING_RATE},
-            "segment_seconds": float(args.segment_seconds),
-            "window_policy": window_policy,
-            "manifest_sha256": window_manifest_sha256,
-            "source_manifest": str(manifest_path),
-            "source_manifest_sha256": source_manifest_sha256,
-            "audio_path_map": path_map_identity,
-            "reference_fold_dir": str(fold_dir),
-            "reference_run_config_sha256": sha256_file(run_config_path),
-            "reference_split": str(split_path),
-            "reference_split_sha256": sha256_file(split_path),
-            "evaluation_provenance": evaluation_provenance,
-            "final_eval_source": args.final_eval_source,
-            "partition_subject_ids": partitions,
-            "smoke": bool(args.smoke_subjects > 0),
-            "partitions": summaries,
-            "gold_label_protection": {"labels_passed_to_model": False},
-            "versions": {
-                "python": platform.python_version(),
-                "torch": torch.__version__,
-                "transformers": _package_version("transformers"),
-                "project_git": _git_commit(),
-                "git_head": _git_head(),
-            },
-        }
-        save_json(metadata, staged[name] / "extraction_metadata.json")
-        staged[name].rename(path)
+    for layer in layers:
+        for name in POOLINGS:
+            metadata = {
+                "schema_version": SCHEMA_VERSION,
+                "dataset": config["dataset"],
+                "condition": f"audio_only_frozen_wav2vec2_{int(round(args.segment_seconds))}s",
+                "input_modality": "audio_only",
+                "fold": fold,
+                "model_backend": MODEL_BACKEND,
+                "weights_source": "base_model_no_adapter",
+                "base_model": model_identity["path"],
+                "base_model_revision": args.model_revision,
+                "base_model_files_sha256": model_identity["file_sha256"],
+                "hidden_layer": "last_hidden_state" if layer == "last" else f"hidden_states[{layer}]",
+                "hidden_layer_index": last_layer if layer == "last" else int(layer),
+                "hidden_layer_note": ("hidden_states[0] = projected CNN features + positional conv embedding; "
+                                      f"hidden_states[{last_layer}] = last_hidden_state (final layer norm applied)."),
+                "pooling": POOLINGS[name],
+                "vector_dimension": hidden_size * (2 if name == "meanvar" else 1),
+                "vector_dtype": "float32",
+                "inference_dtype": "float32",
+                "feature_extractor": {"do_normalize": bool(feature_extractor.do_normalize),
+                                      "sampling_rate": SAMPLING_RATE},
+                "segment_seconds": float(args.segment_seconds),
+                "window_policy": window_policy,
+                "manifest_sha256": window_manifest_sha256,
+                "source_manifest": str(manifest_path),
+                "source_manifest_sha256": source_manifest_sha256,
+                "audio_path_map": path_map_identity,
+                "reference_fold_dir": str(fold_dir),
+                "reference_run_config_sha256": sha256_file(run_config_path),
+                "reference_split": str(split_path),
+                "reference_split_sha256": sha256_file(split_path),
+                "evaluation_provenance": evaluation_provenance,
+                "final_eval_source": args.final_eval_source,
+                "partition_subject_ids": partitions,
+                "smoke": bool(args.smoke_subjects > 0),
+                "partitions": summaries,
+                "gold_label_protection": {"labels_passed_to_model": False},
+                "versions": {
+                    "python": platform.python_version(),
+                    "torch": torch.__version__,
+                    "transformers": _package_version("transformers"),
+                    "project_git": _git_commit(),
+                    "git_head": _git_head(),
+                },
+            }
+            save_json(metadata, cache_dir(staged_root, name, layer) / "extraction_metadata.json")
+    if output_root.exists():
+        output_root.rmdir()  # empty, checked above
+    staged_root.rename(output_root)
     print(json.dumps({"output_root": str(output_root), "partitions": summaries}, indent=2), flush=True)
 
 
