@@ -49,10 +49,13 @@ PROTECTED_PATHS = [
 # these paths because they are gitignored, so a lane agent would otherwise start
 # without its instructions and skills. Keep this an explicit allowlist: other
 # ignored paths such as `.env`, `.deps/`, `.provenance/`, `output_model/`,
-# `logs/`, and `outputs/` must never be copied.
+# `logs/`, and `outputs/` must never be copied. `.claude/skills` holds relative
+# symlinks into `.agents/skills` so Claude Code discovers the same skills; the
+# links are copied as links and resolve inside the new worktree.
 OVERLAY_PATHS = (
     Path("AGENTS.md"),
     Path(".agents") / "skills",
+    Path(".claude") / "skills",
     Path("skills-lock.json"),
 )
 
@@ -70,6 +73,7 @@ def _copy_private_overlay(source_root: Path, worktree_path: Path) -> list[Path]:
             shutil.copytree(
                 source,
                 target,
+                symlinks=True,
                 dirs_exist_ok=True,
                 ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
             )
