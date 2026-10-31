@@ -35,6 +35,17 @@ fits and the final fit alike; held-out subjects are never balanced or copied):
   subject's standardized subject-mean vector and one of its 5 nearest
   neighbours in the same cell; all rows weight 1.
 
+``subjmean_l2`` also takes two dataset-shift options (both off by default):
+
+- ``normalization="per_dataset"``: one scaler per dataset instead of one global
+  scaler, each fit on that dataset's training subjects only (same
+  "every subject equal weight" definition); a holdout subject uses its own
+  dataset's scaler.
+- ``dataset_indicator=True``: a 0/1 one-hot dataset vector (fixed order
+  ``DATASETS``) is appended to the standardized subject-mean features, so the
+  head can learn a per-dataset intercept. The indicator columns carry the same
+  L2 penalty as the features; the global intercept stays unpenalized.
+
 ``paper_logreg_class_balanced`` is ``paper_logreg`` with the hierarchical
 weights rescaled so the two classes carry equal mass inside every dataset.
 """
@@ -78,6 +89,7 @@ WEIGHT_POLICY = "equal_dataset_then_balanced_class_one_row_per_subject"
 BALANCING = ("dataset_class_weight", "dataset_weight", "none", "oversample_dataset_class", "smote_dataset_class")
 SEEDED_BALANCING = ("oversample_dataset_class", "smote_dataset_class")
 SMOTE_NEIGHBORS = 5
+NORMALIZATION = ("global", "per_dataset")
 
 
 def load_frozen_index(cache_dirs: list[Path]) -> tuple[dict[str, tuple[np.ndarray, str]], dict[str, Any]]:
@@ -137,6 +149,7 @@ class SubjectUnits:
         self.units: dict[str, OrderedDict[str, list[int]]] = {}
         self.labels: dict[str, int] = {}
         self.dataset: dict[str, str] = {}
+        self.row_dataset = np.asarray([str(row["dataset"]).lower() for row in rows])
         for i, row in enumerate(rows):
             subject = str(row["subject_id"])
             if self.labels.setdefault(subject, int(row["label"])) != int(row["label"]):
@@ -233,16 +246,52 @@ def balanced_training_set(subjects: list[str], units: SubjectUnits, balancing: s
     raise ValueError(f"Unknown balancing {balancing!r}.")
 
 
-def _fit_subject_head(x: np.ndarray, units: SubjectUnits, subjects: list[str], penalty: float,
-                      balancing: str = "dataset_class_weight", rng: np.random.Generator | None = None):
-    # Train-only scaler in which every subject has equal total weight.
+def _fit_scaler(x: np.ndarray, units: SubjectUnits, subjects: list[str]) -> tuple[np.ndarray, np.ndarray]:
+    """Train-only scaler in which every subject has equal total weight."""
     sub_means = [np.mean([x[r].mean(0) for r in units.units[s].values()], axis=0) for s in subjects]
     mean = np.mean(sub_means, axis=0)
     variance = np.mean([np.mean([((x[r] - mean) ** 2).mean(0) for r in units.units[s].values()], axis=0)
                         for s in subjects], axis=0)
     scale = np.sqrt(variance)
     scale[scale < 1e-6] = 1.0
-    z = (x - mean) / scale
+    return mean, scale
+
+
+def _fit_scalers(x: np.ndarray, units: SubjectUnits, subjects: list[str],
+                 normalization: str) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """``{"*": scaler}`` (global) or ``{dataset: scaler}`` fit on that dataset's subjects only."""
+    if normalization == "global":
+        return {"*": _fit_scaler(x, units, subjects)}
+    if normalization == "per_dataset":
+        return {d: _fit_scaler(x, units, [s for s in subjects if units.dataset[s] == d])
+                for d in sorted({units.dataset[s] for s in subjects})}
+    raise ValueError(f"Unknown normalization {normalization!r}.")
+
+
+def _standardize(x: np.ndarray, units: SubjectUnits, scalers: dict[str, tuple[np.ndarray, np.ndarray]]) -> np.ndarray:
+    if "*" in scalers:
+        mean, scale = scalers["*"]
+        return (x - mean) / scale
+    z = np.empty_like(x, dtype=np.float64)
+    for d in np.unique(units.row_dataset):
+        if d not in scalers:
+            raise ValueError(f"No training scaler for dataset {d}.")
+        mean, scale = scalers[d]
+        rows = units.row_dataset == d
+        z[rows] = (x[rows] - mean) / scale
+    return z
+
+
+def _with_indicator(features: np.ndarray, groups: list[str]) -> np.ndarray:
+    onehot = np.asarray([[float(g == d) for d in DATASETS] for g in groups])
+    return np.hstack([features, onehot])
+
+
+def _fit_subject_head(x: np.ndarray, units: SubjectUnits, subjects: list[str], penalty: float,
+                      balancing: str = "dataset_class_weight", rng: np.random.Generator | None = None,
+                      normalization: str = "global", dataset_indicator: bool = False):
+    scalers = _fit_scalers(x, units, subjects, normalization)
+    z = _standardize(x, units, scalers)
     rng = rng if rng is not None else np.random.default_rng(0)
     if balancing == "smote_dataset_class":
         dataset_class_weights(subjects, units)  # every dataset needs both classes
@@ -253,17 +302,25 @@ def _fit_subject_head(x: np.ndarray, units: SubjectUnits, subjects: list[str], p
         fit_subjects, sample_weight = balanced_training_set(subjects, units, balancing, rng)
         features, labels = units.means(z, fit_subjects), units.y(fit_subjects)
         groups = [units.dataset[s] for s in fit_subjects]
+    if dataset_indicator:
+        features = _with_indicator(features, groups)
     weight, bias, info = fit_logistic(features, labels, sample_weight, penalty)
     counts: dict[str, int] = defaultdict(int)
     for g, label in zip(groups, labels.tolist()):
         counts[f"{g}:{label}"] += 1
-    info = {**info, "balancing": balancing, "fit_rows": len(labels), "fit_cell_counts": dict(sorted(counts.items()))}
-    return mean, scale, weight, bias, info
+    info = {**info, "balancing": balancing, "normalization": normalization, "dataset_indicator": dataset_indicator,
+            "fit_rows": len(labels), "fit_cell_counts": dict(sorted(counts.items()))}
+    if dataset_indicator:
+        info["indicator_weights"] = dict(zip(DATASETS, weight[-len(DATASETS):].tolist()))
+    return scalers, dataset_indicator, weight, bias, info
 
 
 def _subject_logits(x: np.ndarray, units: SubjectUnits, head, subjects: list[str]) -> np.ndarray:
-    mean, scale, weight, bias, _ = head
-    return units.means((x - mean) / scale, subjects) @ weight + bias
+    scalers, dataset_indicator, weight, bias, _ = head
+    features = units.means(_standardize(x, units, scalers), subjects)
+    if dataset_indicator:
+        features = _with_indicator(features, [units.dataset[s] for s in subjects])
+    return features @ weight + bias
 
 
 def _per_dataset(units: SubjectUnits, subjects: list[str], logits: np.ndarray) -> dict[str, dict[str, Any]]:
@@ -275,9 +332,13 @@ def _per_dataset(units: SubjectUnits, subjects: list[str], logits: np.ndarray) -
 
 
 def fit_subjmean_l2(x_train, train_rows, x_holdout, holdout_rows, grid=DEFAULT_L2_GRID,
-                    balancing: str = "dataset_class_weight", oversample_seed: int = 0) -> dict[str, Any]:
+                    balancing: str = "dataset_class_weight", oversample_seed: int = 0,
+                    normalization: str = "global", dataset_indicator: bool = False) -> dict[str, Any]:
     if balancing not in BALANCING:
         raise ValueError(f"Unknown balancing {balancing!r}.")
+    if normalization not in NORMALIZATION:
+        raise ValueError(f"Unknown normalization {normalization!r}.")
+    shift = {"normalization": normalization, "dataset_indicator": dataset_indicator}
 
     def rng(fit_index: int) -> np.random.Generator:
         # One stream per fit (inner fold or final), shared by every L2 candidate.
@@ -293,7 +354,7 @@ def fit_subjmean_l2(x_train, train_rows, x_holdout, holdout_rows, grid=DEFAULT_L
         for fold_index, fold in enumerate(inner["folds"]):
             held = set(fold["validation_subject_ids"])
             fit_subjects = [s for s in train if s not in held]
-            head = _fit_subject_head(x_train, tr, fit_subjects, float(penalty), balancing, rng(fold_index))
+            head = _fit_subject_head(x_train, tr, fit_subjects, float(penalty), balancing, rng(fold_index), **shift)
             held_list = [s for s in train if s in held]
             oof.update(zip(held_list, _subject_logits(x_train, tr, head, held_list).tolist()))
         logits = np.asarray([oof[s] for s in train])
@@ -305,7 +366,7 @@ def fit_subjmean_l2(x_train, train_rows, x_holdout, holdout_rows, grid=DEFAULT_L
             "per_dataset_macro_f1": {d: m["macro_f1"] for d, m in per.items()},
         })
     best = max(candidates, key=lambda c: (c["mean_dataset_macro_f1"], -c["binary_cross_entropy"], c["l2_penalty"]))
-    head = _fit_subject_head(x_train, tr, train, best["l2_penalty"], balancing, rng(len(inner["folds"])))
+    head = _fit_subject_head(x_train, tr, train, best["l2_penalty"], balancing, rng(len(inner["folds"])), **shift)
     holdout = sorted(ho.units)
     logits = _subject_logits(x_holdout, ho, head, holdout)
     predictions = [
@@ -315,6 +376,7 @@ def fit_subjmean_l2(x_train, train_rows, x_holdout, holdout_rows, grid=DEFAULT_L
     ]
     return {
         "balancing": {"policy": balancing, "oversample_seed": oversample_seed if balancing in SEEDED_BALANCING else None},
+        "dataset_shift": shift,
         "selection": {"selected_l2_penalty": best["l2_penalty"], "rule": SELECTION_RULE,
                       "inner_folds": INNER_FOLDS, "inner_seed": INNER_SEED,
                       "inner_assignments_hash": inner.get("assignments_hash"), "candidates": candidates},
@@ -364,7 +426,7 @@ def _write_csv(rows: list[dict[str, Any]], path: Path) -> None:
 
 def run(features_dir: Path, output_dir: Path, source: str, frozen_caches: list[Path] | None = None,
         heads: tuple[str, ...] = ("paper_logreg", "subjmean_l2"), balancing: str = "dataset_class_weight",
-        oversample_seed: int = 0) -> dict[str, Any]:
+        oversample_seed: int = 0, normalization: str = "global", dataset_indicator: bool = False) -> dict[str, Any]:
     if source not in SOURCES:
         raise ValueError(f"Unknown source {source!r}.")
     if output_dir.exists() and any(output_dir.iterdir()):
@@ -397,7 +459,9 @@ def run(features_dir: Path, output_dir: Path, source: str, frozen_caches: list[P
     }
     fitters = {"paper_logreg": fit_paper_logreg,
                "paper_logreg_class_balanced": lambda *a: fit_paper_logreg(*a, class_balanced=True),
-               "subjmean_l2": lambda *a: fit_subjmean_l2(*a, balancing=balancing, oversample_seed=oversample_seed)}
+               "subjmean_l2": lambda *a: fit_subjmean_l2(*a, balancing=balancing, oversample_seed=oversample_seed,
+                                                         normalization=normalization,
+                                                         dataset_indicator=dataset_indicator)}
     for name in heads:
         result = fitters[name](x_train, train_rows, x_holdout, holdout_rows)
         head_dir = output_dir / name
@@ -420,13 +484,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--balancing", default="dataset_class_weight", choices=BALANCING,
                         help="Training-subject balancing for subjmean_l2.")
     parser.add_argument("--oversample-seed", type=int, default=0)
+    parser.add_argument("--normalization", default="global", choices=NORMALIZATION,
+                        help="subjmean_l2 scaler: one global scaler or one per dataset (train subjects only).")
+    parser.add_argument("--dataset-indicator", action="store_true",
+                        help="Append a one-hot dataset vector to the subjmean_l2 features.")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     summary = run(args.features_dir, args.output_dir, args.source, args.frozen_cache,
-                  tuple(h for h in args.heads.split(",") if h), args.balancing, args.oversample_seed)
+                  tuple(h for h in args.heads.split(",") if h), args.balancing, args.oversample_seed,
+                  args.normalization, args.dataset_indicator)
     for name, head in summary["heads"].items():
         print(name, {d: round(m["macro_f1"], 4) for d, m in head["metrics_by_dataset"].items()})
 
