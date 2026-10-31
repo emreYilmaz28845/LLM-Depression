@@ -1,0 +1,54 @@
+schema_version: audiollm.experiment_group.v1
+group_id: wav2vec2-baseline-20261031
+title: Frozen wav2vec2-xls-r-300m + subject-mean L2 head, audio-only baseline
+research_question: >-
+  How does a frozen self-supervised acoustic encoder (wav2vec2-xls-r-300m,
+  last layer, 20 s windows) compare with frozen Qwen3-Omni features under the
+  same subject-mean L2 head, splits and natural units? Advisor request
+  2026-10-30 (state-of-the-art audio baseline for the paper).
+dataset: multi
+baseline: >-
+  Qwen3-Omni frozen + new head, audio_only native, standalone
+  (output_model/frozen_base_standalone_heads/heads/<dataset>/audio_only_native).
+treatment: >-
+  src/features/extract_wav2vec2.py with each dataset's Omni audio_only fold-0
+  run as config/split/manifest reference; segment_seconds 20 (DAIC packed20);
+  FP32, last_hidden_state, time mean+variance (headline) and time mean.
+  Heads: baselines/frozen_standalone_heads.py unchanged, fit locally.
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: frozen_standalone_heads_logreg_subjmean_l2sel
+  aggregation: unweighted_fold_mean_of_subject_level_metrics
+  evaluation_view: harmonized_all_windows_full_coverage
+github_issue: null
+github_pr: null
+scope:
+  campaign: wav2vec2_frozen_baseline_20261031
+  checkpoint_role: base_model
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
+  statistics_family: paired t-test over (dataset, fold) units vs Qwen3-Omni frozen + new head, no multiplicity correction
+  expansion_trigger: none; 30 s windows, Omni 20 s, layer selection and merged heads are TODO items needing a new decision.
+  cells:
+    - {id: daic_audio_only_w2v2, dataset: daic, modality: audio_only, config: configs/main/daic_audio_only_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen3omni_30b_a3b.yaml, run_root: output_model/wav2vec2_frozen_baseline_20261031/audio_only/daic}
+    - {id: d3tec_audio_only_w2v2, dataset: d3tec, modality: audio_only, config: reference run qwen3omni_d3tec_audio_only_f0_prod_20260923, run_root: output_model/wav2vec2_frozen_baseline_20261031/audio_only/d3tec}
+    - {id: androids_audio_only_w2v2, dataset: androids_interview, modality: audio_only, config: reference run q3amf_audio_only_native_s1337_f0_r1, run_root: output_model/wav2vec2_frozen_baseline_20261031/audio_only/androids_interview}
+    - {id: cmdc_audio_only_w2v2, dataset: cmdc, modality: audio_only, config: reference run qwen3omni_cmdc_audio_only_f0_prod_20260923, run_root: output_model/wav2vec2_frozen_baseline_20261031/audio_only/cmdc}
+    - {id: turkish_audio_only_w2v2, dataset: turkish, modality: audio_only, config: reference run turkish_pooled_baseline_audio_only_f0_20260925, run_root: output_model/wav2vec2_frozen_baseline_20261031/audio_only/turkish}
+exclusions:
+  - production_matrix
+  - workbook_cell_rewrite
+  - layer_selection
+  - window_length_cross_runs
+  - merged_heads
