@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: feat-wav2vec2-layersel-20261031
+slug: feat-wav2vec2-layersel-20261031
+tier: 2
+branch: agent/feat-wav2vec2-layersel-20261031
+worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-feat-wav2vec2-layersel-20261031
+parent_branch: main
+parent_sha: ce3ed4a1d33a5586a0e7dad2c2cfed7da47dd724
+created_at_utc: "2026-10-31T18:02:39Z"
+experiment_group_path: null
+type: complementary
