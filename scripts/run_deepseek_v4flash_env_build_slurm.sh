@@ -2,7 +2,7 @@
 #SBATCH -J dsv4-env-build
 #SBATCH -A etur92
 #SBATCH -q acc_ehpc
-#SBATCH -t 01:00:00
+#SBATCH -t 03:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
