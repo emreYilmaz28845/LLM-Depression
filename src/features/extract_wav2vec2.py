@@ -18,6 +18,11 @@ caches in the layout ``baselines/frozen_standalone_heads.py`` reads:
 
 Partitions follow the Omni extraction (``outer_train`` / ``final_eval``);
 ``--final-eval-source selection`` writes the DAIC official-dev cache.
+
+``--audio-path-map`` runs the extraction on another machine: a JSON object
+mapping every manifest audio path (as written on MN5) to a local file whose
+content hash was checked against the MN5 file. Paths are remapped only after
+the reference manifest hash is verified; an unmapped path is fatal.
 """
 
 from __future__ import annotations
@@ -82,6 +87,29 @@ def window_rows(manifest_rows: list[dict[str, Any]], config: dict[str, Any], seg
     if dataset in RUNTIME_WINDOW_DATASETS:
         return list(manifest_rows), config, "runtime_equal_duration"
     raise ValueError(f"Unsupported dataset {dataset!r}.")
+
+
+def remap_audio_paths(rows: list[dict[str, Any]], path_map: dict[str, str]) -> list[dict[str, Any]]:
+    """Replace every audio path through ``path_map``; any unmapped path is an error."""
+    missing: set[str] = set()
+
+    def _map(path: str) -> str:
+        if path not in path_map:
+            missing.add(path)
+            return path
+        return path_map[path]
+
+    output = []
+    for row in rows:
+        new = dict(row)
+        if new.get("audio_path"):
+            new["audio_path"] = _map(str(new["audio_path"]))
+        if new.get("audio_paths"):
+            new["audio_paths"] = [_map(str(p)) for p in new["audio_paths"]]
+        output.append(new)
+    if missing:
+        raise ValueError(f"{len(missing)} audio paths are not in the verified path map, e.g. {sorted(missing)[:3]}")
+    return output
 
 
 def pool_hidden(hidden: torch.Tensor) -> dict[str, np.ndarray]:
@@ -157,6 +185,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--final-eval-source", choices=("saved", "selection"), default="saved")
     parser.add_argument("--smoke-subjects", type=int, default=0,
                         help="Smoke only: keep this many subjects per partition (non-reportable).")
+    parser.add_argument("--audio-path-map", type=Path,
+                        help="JSON {mn5_path: local_path} of content-hash-verified audio files.")
     parser.add_argument("--device", default="cuda")
     return parser.parse_args()
 
@@ -183,6 +213,10 @@ def main() -> None:
         raise ValueError("Reference manifest hash differs from the reference run's saved manifest hash.")
     rows, config, window_policy = window_rows(manifest_rows, config, args.segment_seconds)
     window_manifest_sha256 = sha256_jsonl_rows(rows)
+    path_map_identity = None
+    if args.audio_path_map:
+        rows = remap_audio_paths(rows, read_json(args.audio_path_map))
+        path_map_identity = {"path": str(args.audio_path_map.resolve()), "sha256": sha256_file(args.audio_path_map)}
 
     output_root = args.output_root.resolve()
     out_dirs = {name: output_root / name for name in POOLINGS}
@@ -274,6 +308,7 @@ def main() -> None:
             "manifest_sha256": window_manifest_sha256,
             "source_manifest": str(manifest_path),
             "source_manifest_sha256": source_manifest_sha256,
+            "audio_path_map": path_map_identity,
             "reference_fold_dir": str(fold_dir),
             "reference_run_config_sha256": sha256_file(run_config_path),
             "reference_split": str(split_path),

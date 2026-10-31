@@ -101,3 +101,14 @@ def test_pool_hidden_mean_and_population_variance():
     np.testing.assert_allclose(pooled["meanvar"], np.concatenate([h.mean(0), h.var(0)]), rtol=1e-6, atol=1e-6)
     with pytest.raises(ValueError):
         pool_hidden(torch.randn(2, 5, 8))
+
+
+def test_remap_audio_paths_requires_every_path():
+    from src.features.extract_wav2vec2 import remap_audio_paths
+
+    rows = [{"audio_path": "/gpfs/a.wav"}, {"audio_paths": ["/gpfs/b.wav"], "audio_path": ""}]
+    out = remap_audio_paths(rows, {"/gpfs/a.wav": "/local/a.wav", "/gpfs/b.wav": "/local/b.wav"})
+    assert out[0]["audio_path"] == "/local/a.wav" and out[1]["audio_paths"] == ["/local/b.wav"]
+    assert rows[0]["audio_path"] == "/gpfs/a.wav"
+    with pytest.raises(ValueError, match="not in the verified path map"):
+        remap_audio_paths(rows, {"/gpfs/a.wav": "/local/a.wav"})
