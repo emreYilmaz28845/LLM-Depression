@@ -14,10 +14,9 @@ set -euo pipefail
 BASE=/gpfs/projects/etur92/ozu647717
 SRC=${SRC:-$BASE/models/DeepSeek-V4-Flash}
 OUT=${OUT:-$BASE/models/DeepSeek-V4-Flash-mp4}
-VENV=${VENV:-$BASE/venvs/deepseek_v4flash}
 [ -e "$OUT" ] && { echo "FAILED: $OUT exists" >&2; exit 1; }
-module purge; module load bsc/1.0 miniforge/24.3.0-0
-source "$VENV/bin/activate"
+# sbatch copies this script to a spool dir, so locate the helper from the submit dir.
+source "${DSV4_ENV:-$SLURM_SUBMIT_DIR/scripts/deepseek_v4flash_env.sh}"
 cd "$SRC/inference"
 free -g | head -2
 python convert.py --hf-ckpt-path "$SRC" --save-path "$OUT" --n-experts 256 --model-parallel 4

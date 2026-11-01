@@ -16,10 +16,8 @@ PROJECT_ROOT="${PROJECT_ROOT:?Set PROJECT_ROOT (deployment code root)}"
 ROUTES="${ROUTES:?Set ROUTES}"
 MODEL_DIR=${MODEL_DIR:-$BASE/models/DeepSeek-V4-Flash}
 MP_DIR=${MP_DIR:-$BASE/models/DeepSeek-V4-Flash-mp4}
-VENV=${VENV:-$BASE/venvs/deepseek_v4flash}
-module purge; module load bsc/1.0 miniforge/24.3.0-0
-source "$VENV/bin/activate"
-export PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+source "${DSV4_ENV:-$PROJECT_ROOT/scripts/deepseek_v4flash_env.sh}"
+export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 export TOKENIZERS_PARALLELISM=false
 cd "$PROJECT_ROOT"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
