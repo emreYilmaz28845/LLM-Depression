@@ -1,0 +1,156 @@
+schema_version: audiollm.experiment_group.v1
+group_id: qwen3-androids-official-folds-20261008
+title: Qwen3 merged official-Androids-fold corrected baseline (Worker 1)
+research_question: >-
+  How do the five merged Qwen3 pooled contracts (native text-only, audio-only and
+  audio+text; English text-only and audio+text) behave across training seeds
+  7/1337/2024 when the Androids interview component uses its exact official outer
+  subject/fold membership (sizes 24/23/23/23/23 over 116 subjects) instead of the
+  historically regenerated stratified folds (24/24/23/23/22), with every other
+  component, cohort, prompt, head recipe and resource contract frozen?
+dataset: >-
+  The five-component symmetric merged protocol: DAIC participant-only packed30,
+  CMDC, Turkish pooled pos+neg BDI>=17 (Qwen3-ASR transcripts), D3TEC and Androids
+  interview. The corrected run changes only the Androids outer-fold membership; the
+  CMDC, D3TEC and Turkish memberships are preserved (verified identical to their
+  official folds) and the intentional DAIC fixed development/test handling is
+  preserved. Native routes use original transcripts; English routes use the
+  accepted translations with the versioned translation notice (DAIC keeps its
+  native English input). Every dataset is reported separately within each
+  route/seed/stage.
+baseline: >-
+  The historical merged campaign evidence at 35f2d91e55acf6f21cd9e0f82590a56648180044
+  (PR #273), which used regenerated Androids folds. It is retained as qualified,
+  non-paired reference evidence only: historical runs, registries, protocols and
+  outputs are never overwritten or normalized. The corrected baseline produced by
+  this group is a new set of runs with new identities and a new immutable
+  deployment; it is not a repair of the historical runs.
+treatment: >-
+  Fail-closed official Androids fold loading in the merged protocol: production
+  requires the exact official Androids outer membership and fails clearly on
+  missing, malformed, incomplete, unexpected-subject or overlapping membership.
+  Training seeds 7/1337/2024 with identical fold and inner-validation membership
+  (split seed 1337) and identical classifier randomness (head seed 1337). CV
+  trains five outer folds with mean-dataset macro-F1 checkpoint selection and
+  early stopping; the final stage trains the frozen rounded-median selected epoch
+  from the corrected CV evidence on all non-test data and evaluates only the
+  untouched DAIC official test. Postprocess and fixed heads (merged logreg and
+  xgb_fixed, class_weight=None, hierarchical dataset->subject->response->window
+  sample weights) are downstream jobs tied to each parent checkpoint, not extra
+  training seeds. No Optuna, no threshold tuning on outer outcomes.
+expected_seeds:
+  - 7
+  - 1337
+  - 2024
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+runs:
+  - logical_run: qwen3_androids_fixed_merged_native_text_only
+    dataset: symmetric_merged_native_text_only
+    modality: text_only
+    config: configs/experiments/merged/symmetric_merged_qwen3_pooled_native_text_only.yaml
+    folds: [0, 1, 2, 3, 4]
+    endpoint: cv_and_final
+    folds_note: >-
+      Five CV fits plus one final fit per training seed; final fold identifier 0
+      trains the frozen median epoch from the corrected CV selections on all
+      non-test data and evaluates the untouched DAIC official test.
+  - logical_run: qwen3_androids_fixed_merged_native_audio_only
+    dataset: symmetric_merged_native_audio_only
+    modality: audio_only
+    config: configs/experiments/merged/symmetric_merged_qwen3_pooled_native_audio_only.yaml
+    folds: [0, 1, 2, 3, 4]
+    endpoint: cv_and_final
+    folds_note: >-
+      Transcripts stay in the manifest but are not rendered into the prompt; the
+      audio encoder stays frozen.
+  - logical_run: qwen3_androids_fixed_merged_native_audio_text
+    dataset: symmetric_merged_native_audio_text
+    modality: audio_text
+    config: configs/experiments/merged/symmetric_merged_qwen3_pooled_native_audio_text.yaml
+    folds: [0, 1, 2, 3, 4]
+    endpoint: cv_and_final
+    folds_note: >-
+      Native transcripts with original-language audio; promptcontext_v1 rendering.
+  - logical_run: qwen3_androids_fixed_merged_english_text_only
+    dataset: symmetric_merged_english_text_only
+    modality: text_only
+    config: configs/experiments/merged/symmetric_merged_qwen3_pooled_english_text_only.yaml
+    folds: [0, 1, 2, 3, 4]
+    endpoint: cv_and_final
+    folds_note: >-
+      The four translated components render accepted English transcripts with the
+      translation_notice_v1 notice; DAIC keeps its native English input.
+  - logical_run: qwen3_androids_fixed_merged_english_audio_text
+    dataset: symmetric_merged_english_audio_text
+    modality: audio_text
+    config: configs/experiments/merged/symmetric_merged_qwen3_pooled_english_audio_text.yaml
+    folds: [0, 1, 2, 3, 4]
+    endpoint: cv_and_final
+    folds_note: >-
+      English transcripts plus the notice and original-language audio.
+prompt_contract:
+  prompt_context_version: promptcontext_v1
+  english_notice_version: translation_notice_v1
+  label_contract: Depressed / Non-depressed
+  modality_honest_rendering: >-
+    Native routes keep the native prompt; English routes change the transcript and
+    the translation notice together. DAIC is already English and is not translated.
+model_contract:
+  backends: qwen38_and_qwen3omni
+  text_model: Qwen3.8-27B (pinned revision 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0)
+  audio_model: Qwen3-Omni-30B-A3B Thinker (Talker not retained)
+  precision: bf16
+  training_strategy: fsdp
+  activation_offload: cpu
+  training_shapes:
+    text: 1 node x 4 GPUs, per-device 1, accumulation 32
+    audio: 2 nodes x 4 GPUs, per-device 1, accumulation 16
+  evaluation_shape: 1 GPU for text-only routes, 4-GPU device map for audio routes
+comparison_rule: >-
+  Per-route, per-seed, per-stage, per-dataset results. Seeds are replicates, not
+  winner candidates; no seed is selected by outer-fold outcome. CV fold-mean and
+  pooled subject-level conventions are labelled and never conflated; native and
+  English are separate comparison columns; likelihood results never share a
+  column or table block with teacher-forced legacy evidence. Standalone-vs-merged
+  paired fold comparisons for Androids require the corrected official membership;
+  the historical regenerated-fold merged evidence stays separately qualified.
+scope:
+  campaign: qwen3_androids_official_folds_20261008
+  checkpoint_role: best_model
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
+  storage_note: >-
+    Protocol artifacts, training outputs and postprocess evidence stay under the
+    permanent merged roots on GPFS; the local lane receives compact evidence only,
+    and adapter weights are copied only when a head stage needs them. Selected
+    adapters remain on GPFS projects; no deletion.
+exclusions:
+  - merge_or_main_push
+  - non_androids_split_change
+  - extra_seeds_folds_or_routes
+  - optuna_or_hpo
+  - new_translations
+  - pos_only_or_geriatri_fallback
+  - outcome_based_seed_selection
+  - teacher_forced_prediction
+  - package_install
+  - shared_environment_or_dataset_change
+  - headline_or_workbook_changes
+  - wandb_cloud_export
+  - evidence_overwrite_or_deletion
+  - other_lane_interference
+github_issue: null
+github_pr: null

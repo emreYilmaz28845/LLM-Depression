@@ -73,6 +73,24 @@ def _records():
                             "split_original": split,
                         }
                     )
+        if dataset == "androids_interview":
+            subjects = [f"{dataset[:3]}-{index:02d}" for index in range(12)]
+            holdouts = [
+                subjects[0:3],
+                subjects[3:6],
+                subjects[6:8],
+                subjects[8:10],
+                subjects[10:12],
+            ]
+            folds = {
+                str(fold): {
+                    "outer_train_subject_ids": sorted(set(subjects) - set(holdout)),
+                    "final_eval_subject_ids": sorted(holdout),
+                }
+                for fold, holdout in enumerate(holdouts)
+            }
+        else:
+            folds = {}
         records.append(
             {
                 "dataset": dataset,
@@ -81,7 +99,7 @@ def _records():
                 "manifest_hash": f"manifest-{dataset}",
                 "rows": rows,
                 "labels": {f"{dataset[:3]}-{i:02d}": i % 2 for i in range(12)},
-                "folds": {},
+                "folds": folds,
                 "official_test_subject_ids": [f"{dataset[:3]}-10", f"{dataset[:3]}-11"] if dataset == "daic" else [],
             }
         )
@@ -313,3 +331,54 @@ def test_smoke_head_folds_are_nonempty_for_two_subjects_per_class() -> None:
     assert resolve_head_inner_folds(
         {"protocol_settings": {"head_inner_folds": 3}}, "cv"
     ) == 3
+
+
+def test_androids_requires_official_folds_fail_closed() -> None:
+    record = {
+        "dataset": "androids_interview",
+        "config": {"dataset": "androids_interview"},
+        "labels": {f"and-{index:02d}": index % 2 for index in range(12)},
+        "folds": {},
+        "official_test_subject_ids": [],
+        "folds_path": None,
+        "folds_path_declared": "outputs/splits_harmonized/androids/androids_interview_folds.json",
+    }
+    try:
+        build_component_outer_folds(record, seed=1337)
+    except ValueError as exc:
+        assert "official outer folds" in str(exc)
+    else:
+        raise AssertionError("androids_interview must fail closed without official folds")
+
+
+def test_androids_official_folds_are_used_when_present() -> None:
+    records = _records()
+    protocol = build_protocol_splits(records, seed=1337, inner_val_ratio=0.2)
+    folds = protocol["components"]["androids_interview"]["folds"]
+    assert all(payload["source"] == "component_official_folds" for payload in folds.values())
+    holdout_sizes = [len(folds[str(fold)]["component_outer_holdout_subject_ids"]) for fold in range(5)]
+    assert holdout_sizes == [3, 3, 2, 2, 2]
+
+
+def test_relative_folds_path_resolves_next_to_metadata(tmp_path: Path) -> None:
+    from src.merged.protocol import _resolve_component_folds_path
+
+    metadata_dir = tmp_path / "outputs" / "splits_harmonized" / "androids"
+    metadata_dir.mkdir(parents=True)
+    metadata_path = metadata_dir / "androids_interview_manifest_metadata.json"
+    metadata_path.write_text("{}", encoding="utf-8")
+    folds_path = metadata_dir / "androids_interview_folds.json"
+    folds_path.write_text("{}", encoding="utf-8")
+    declared = "outputs/splits_harmonized/androids/androids_interview_folds.json"
+    assert _resolve_component_folds_path(declared, metadata_path) == folds_path
+    assert _resolve_component_folds_path(folds_path, metadata_path) == folds_path
+    missing = "outputs/splits_harmonized/does-not-exist/x_folds.json"
+    assert _resolve_component_folds_path(missing, metadata_path) is None
+
+
+def test_protocol_records_resolved_folds_path_for_audit() -> None:
+    records = _records()
+    records[0] = {**records[0], "folds_path": "/tmp/example_folds.json"}
+    protocol = build_protocol_splits(records, seed=1337, inner_val_ratio=0.2)
+    assert protocol["components"]["daic"]["folds_path"] == "/tmp/example_folds.json"
+    assert protocol["components"]["androids_interview"]["folds_path"] is None
