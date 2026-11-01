@@ -18,7 +18,9 @@ set -euo pipefail
 BASE=/gpfs/projects/etur92/ozu647717
 SHARED_VENV=$BASE/venvs/qwen38_inference
 EXTRA=$BASE/wheelhouses/deepseek_v4flash_extra
-OUT_TAR=${OUT_TAR:-$BASE/venvs/deepseek_v4flash_overlay.tar}
+OUT_TAR=${OUT_TAR:-$BASE/venvs/deepseek_v4flash_overlay_v2.tar}
+# Optional: deployed code root; if set, the extractor module is imported as a check.
+PROJECT_ROOT=${PROJECT_ROOT:-}
 [ -e "$OUT_TAR" ] && { echo "FAILED: $OUT_TAR exists" >&2; exit 1; }
 
 module purge; module load bsc/1.0 miniforge/24.3.0-0
@@ -31,6 +33,36 @@ echo "node=$(hostname) work=$WORK"; date
 
 # 1) tilelang 0.1.8, no deps (all deps already in the shared venv).
 "$PY" -m pip install --no-index --no-deps --target "$OV" "$EXTRA"/tilelang-0.1.8-*.whl
+date
+
+# 1b) Project data-loading deps missing from qwen38_inference (job 48382554:
+# no soundfile). Versions follow qwen_mn5_rebuilt (the Qwen extraction env);
+# peft/accelerate follow the transformers-5 Gemma wheelhouse. --no-deps: the other
+# requirements (numpy, numba, cffi, torch, transformers...) are in the shared venv.
+WHS=$BASE/wheelhouses
+PROJECT_WHEELS=(
+  "$WHS/gemma4_tf5_14_1/accelerate-1.14.0-py3-none-any.whl"
+  "$WHS/gemma4_tf5_14_1/peft-0.19.1-py3-none-any.whl"
+  "$WHS/gemma4_tf5_14_1/platformdirs-4.11.2-py3-none-any.whl"
+  "$WHS/wheelhouse_manifest_repaired/scipy-1.15.3-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+  "$WHS/wheelhouse_manifest_repaired/scikit_learn-1.7.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+  "$WHS/wheelhouse_manifest_repaired/pandas-2.2.3-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+  "$WHS/gemma4_tf5_14_1/librosa-0.11.0-py3-none-any.whl"
+  "$WHS/gemma4_tf5_14_1/soundfile-0.13.1-py2.py3-none-manylinux_2_28_x86_64.whl"
+  "$WHS/wheelhouse_manifest_repaired/soxr-1.1.0-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
+  "$WHS/gemma4_tf5_14_1/joblib-1.5.3-py3-none-any.whl"
+  "$WHS/gemma4_tf5_14_1/threadpoolctl-3.6.0-py3-none-any.whl"
+  "$WHS/gemma4_tf5_14_1/lazy_loader-0.5-py3-none-any.whl"
+  "$WHS/gemma4_tf5_14_1/audioread-3.1.0-py3-none-any.whl"
+  "$WHS/wheelhouse_manifest_repaired/msgpack-1.1.2-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+  "$WHS/gemma4_tf5_14_1/pooch-1.9.0-py3-none-any.whl"
+  "$WHS/wheelhouse_manifest_repaired/decorator-5.2.1-py3-none-any.whl"
+  "$WHS/wheelhouse_manifest_repaired/python_dateutil-2.9.0.post0-py2.py3-none-any.whl"
+  "$WHS/wheelhouse_manifest_repaired/pytz-2026.2-py2.py3-none-any.whl"
+  "$WHS/wheelhouse_manifest_repaired/tzdata-2026.2-py2.py3-none-any.whl"
+  "$WHS/wheelhouse_manifest_repaired/six-1.17.0-py2.py3-none-any.whl"
+)
+"$PY" -m pip install --no-index --no-deps --target "$OV" "${PROJECT_WHEELS[@]}"
 date
 
 # 2) fast_hadamard_transform from source for H100 (sm_90).
@@ -67,7 +99,15 @@ assert md.version("tilelang") == "0.1.8", md.version("tilelang")
 from fast_hadamard_transform import hadamard_transform  # loads the compiled .so
 print("ok tilelang", md.version("tilelang"), "fht", md.version("fast_hadamard_transform"),
       "torch", torch.__version__, "cuda", torch.version.cuda, "py", sys.version.split()[0])
+import numpy, librosa, soundfile, sklearn, scipy, pandas, peft, accelerate  # project deps
+print("ok project deps librosa", librosa.__version__, "sklearn", sklearn.__version__,
+      "scipy", scipy.__version__, "pandas", pandas.__version__, "peft", peft.__version__,
+      "numpy", numpy.__version__)
 EOF
+if [ -n "$PROJECT_ROOT" ]; then
+  ( cd "$PROJECT_ROOT" && PYTHONPATH="$OV:$PROJECT_ROOT" "$PY" -c \
+      'import src.features.extract_deepseek_hidden as m; print("ok extractor import", m.__file__)' )
+fi
 "$PY" -m pip list --path "$OV" --format=freeze > "$OV/OVERLAY_FREEZE.txt"
 cat "$OV/OVERLAY_FREEZE.txt"
 

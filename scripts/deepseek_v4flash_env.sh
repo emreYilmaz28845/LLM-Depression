@@ -5,7 +5,7 @@
 # node-local disk so GPFS never sees thousands of small files at run time.
 BASE=${BASE:-/gpfs/projects/etur92/ozu647717}
 SHARED_VENV=${SHARED_VENV:-$BASE/venvs/qwen38_inference}
-OVERLAY_TAR=${OVERLAY_TAR:-$BASE/venvs/deepseek_v4flash_overlay.tar}
+OVERLAY_TAR=${OVERLAY_TAR:-$BASE/venvs/deepseek_v4flash_overlay_v2.tar}
 module purge; module load bsc/1.0 miniforge/24.3.0-0
 source "$SHARED_VENV/bin/activate"
 [ -f "$OVERLAY_TAR" ] || { echo "FAILED: missing $OVERLAY_TAR" >&2; exit 1; }
