@@ -260,8 +260,11 @@ def main() -> None:
                     if not torch.allclose(vec, again, rtol=1e-5, atol=1e-5):
                         raise ValueError(f"{name}: determinism check failed, max_abs_diff={max_diff}")
                     # The vector must reproduce the model's own logits on this rank's vocabulary shard.
-                    local = torch.nn.functional.linear(vec, model.head.weight)
-                    full = model(tokens, 0)
+                    # inference_mode: head.weight requires grad, and vec is an inference tensor
+                    # (smoke job 48383325 failed here without it).
+                    with torch.inference_mode():
+                        local = torch.nn.functional.linear(vec, model.head.weight)
+                        full = model(tokens, 0)
                     shard = full[:, rank * local.shape[-1]:(rank + 1) * local.shape[-1]]
                     if not torch.allclose(local, shard.float(), rtol=1e-3, atol=1e-3):
                         raise ValueError(f"{name}: hidden vector does not reproduce model logits.")
