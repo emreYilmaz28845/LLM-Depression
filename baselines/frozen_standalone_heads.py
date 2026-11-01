@@ -69,6 +69,7 @@ PROTOCOLS = ("daic_official", "train_val_test", "train_val", "train_cv_test")
 INNER_CV_PROTOCOLS = ("train_val", "train_cv_test")
 INNER_FOLDS = 5
 INNER_SEED = 1337
+HANDCRAFTED_BACKENDS = ("opensmile_mfcc",)
 
 
 def unit_key(row: dict[str, Any]) -> str:
@@ -239,12 +240,17 @@ def _write_csv(rows: list[dict[str, Any]], path: Path) -> None:
         writer.writerows(rows)
 
 
+def is_fixed_feature_cache(meta: dict[str, Any]) -> bool:
+    """Features that do not change with the fold: a frozen base model or handcrafted openSMILE MFCC."""
+    return meta.get("weights_source") == "base_model_no_adapter" or meta.get("model_backend") in HANDCRAFTED_BACKENDS
+
+
 def _load_caches(cache_dir: Path, dev_cache: Path | None, allow_adapter: bool) -> tuple[PooledCache, dict]:
     meta = read_json(cache_dir / "extraction_metadata.json")
-    if not allow_adapter and meta.get("weights_source") != "base_model_no_adapter":
-        raise ValueError("Cache is not a frozen base-model (no adapter) extraction.")
-    if allow_adapter and meta.get("weights_source") == "base_model_no_adapter":
-        raise ValueError("--allow-adapter was given but the cache is a frozen base extraction.")
+    if not allow_adapter and not is_fixed_feature_cache(meta):
+        raise ValueError("Cache is not a frozen base-model (no adapter) or handcrafted-feature extraction.")
+    if allow_adapter and is_fixed_feature_cache(meta):
+        raise ValueError("--allow-adapter was given but the cache is a frozen base or handcrafted extraction.")
     parts = [(cache_dir, "outer_train"), (cache_dir, "final_eval")]
     if dev_cache is not None:
         dev_meta = read_json(dev_cache / "extraction_metadata.json")
@@ -282,6 +288,8 @@ def run_route(
     loaded = [_load_caches(c, dev_caches[i] if dev_caches else None, allow_adapter)
               for i, c in enumerate(cache_dirs)]
     meta = loaded[0][1]
+    feature_source = ("lora_adapter" if allow_adapter else
+                      "handcrafted" if meta.get("model_backend") in HANDCRAFTED_BACKENDS else "frozen_base")
     if output_dir.exists() and any(output_dir.iterdir()):
         raise ValueError(f"Refusing to overwrite existing output: {output_dir}")
     final_dir = output_dir
@@ -292,7 +300,7 @@ def run_route(
     identity = {
         "schema_version": SCHEMA_VERSION, "variant": VARIANT, "protocol": protocol, "route": route,
         "l2_grid": list(grid), "inner_folds": INNER_FOLDS, "inner_seed": INNER_SEED, "threshold": 0.5,
-        "feature_source": "lora_adapter" if allow_adapter else "frozen_base",
+        "feature_source": feature_source,
         "cache_identities": [cache_identity(c) for c in cache_dirs],
         "dev_cache_identities": [cache_identity(c) for c in dev_caches] if dev_caches else None,
         "checkpoints": [m.get("checkpoint_dir") for _, m in loaded] if allow_adapter else None,
