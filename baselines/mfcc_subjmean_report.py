@@ -4,7 +4,8 @@
 Every head side is a ``frozen_standalone_heads.py`` output on the same split
 files, so each fold must report the same subjects (checked, fails closed). The
 old fixed XGBoost MFCC head (``outputs/mfcc_xgb/<dataset>/fold_<n>/fixed_heads/xgb_raw``)
-is read from its own subject predictions; it is compared only on folds whose
+is read from its own subject predictions (Androids: the merged-fold run, the
+folds the frozen Omni heads use); it is compared only on datasets whose
 subjects match. Scores are fold means of subject-level binary-strict metrics.
 Paired t-tests on Macro-F1 differences (MFCC new head - other), no multiplicity
 correction; units = dataset (fold mean) and dataset x fold.
@@ -25,7 +26,7 @@ import numpy as np
 
 from baselines.wav2vec2_vs_omni import DATASETS, METRICS, _read_jsonl, load_route, paired_t
 
-OLD_MFCC_DIRS = {"daic": "daic", "d3tec": "d3tec", "androids_interview": "androids_standalone",
+OLD_MFCC_DIRS = {"daic": "daic", "d3tec": "d3tec", "androids_interview": "androids",
                  "cmdc": "cmdc", "turkish": "turkish_pooled"}
 
 
