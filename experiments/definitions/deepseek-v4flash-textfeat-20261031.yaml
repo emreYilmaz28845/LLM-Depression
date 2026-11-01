@@ -1,0 +1,48 @@
+schema_version: audiollm.experiment_group.v1
+group_id: deepseek-v4flash-textfeat-20261031
+title: Frozen DeepSeek-V4-Flash text features + subject-mean L2 head vs frozen Qwen3.8-27B
+research_question: >-
+  Do frozen DeepSeek-V4-Flash (284B MoE, 13B active) text-only hidden states,
+  with the same subject-mean L2 logistic head, beat the frozen Qwen3.8-27B
+  text-only results per dataset and transcript language?
+dataset: >-
+  Text-only routes of the frozen-base study: Androids interview, CMDC, D3TEC
+  and Turkish (native and English transcripts), DAIC-WOZ native (official
+  split, plus the official-dev cache). 10 routes.
+baseline: >-
+  Frozen Qwen3.8-27B text-only caches and heads of
+  frozen-base-standalone-heads-20261024 (same reference runs, manifests,
+  prompts and split_used.json).
+treatment: >-
+  src/features/extract_deepseek_hidden.py on each route's fold-0 reference run
+  (no adapter): DeepSeek chat encoding of the stored prompt, final post-norm
+  hidden state of the last prompt token (4096-d), weights_source
+  base_model_no_adapter. MP=4 reference inference on 1 node x 4 H100. One
+  extraction serves all folds. Head baselines/frozen_standalone_heads.py
+  (logreg_subjmean_l2sel), same L2 selection rules as the Qwen baseline.
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: frozen_base_logreg_subjmean_l2sel
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+comparison_rule: >-
+  Unweighted five-fold mean of subject-level Macro-F1, Positive-F1 and UAR
+  (DAIC: official test), paired by route against the frozen Qwen3.8-27B text
+  rows. One run per route, no SD.
+exclusions:
+  - lora_training
+  - audio_or_audio_text_routes
+  - extra_seeds
+  - optuna_or_hpo
+  - paper_or_prism_edits
+github_issue: null
+github_pr: null
