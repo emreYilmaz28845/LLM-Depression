@@ -158,3 +158,24 @@ def test_train_cv_test_ignores_selection_subjects(tmp_path):
     selection = json.loads((tmp_path / "o" / "fold_0" / "selection.json").read_text())
     assert sorted(sum(selection["inner_folds"], [])) == sorted(ids[:24])
     assert summary["folds"][0]["report"] == 8 and summary["folds"][0]["selection"] == 0
+
+
+def test_accepts_handcrafted_mfcc_cache_with_same_head(tmp_path):
+    subjects = _subjects()
+    _cache(tmp_path / "base", subjects)
+    _cache(tmp_path / "mfcc", subjects)
+    meta_path = tmp_path / "mfcc" / "extraction_metadata.json"
+    meta = json.loads(meta_path.read_text())
+    meta.pop("weights_source")
+    meta["model_backend"] = "opensmile_mfcc"
+    meta_path.write_text(json.dumps(meta))
+    ids = [s for s, _ in subjects]
+    split = _split(tmp_path, "tv", {"train_subject_ids": ids[:30], "selection_subject_ids": ids[30:]})
+    base = run_route(cache_dirs=[tmp_path / "base"], dev_caches=None, split_files=[split],
+                     protocol="train_val", output_dir=tmp_path / "o_base", route={})
+    mfcc = run_route(cache_dirs=[tmp_path / "mfcc"], dev_caches=None, split_files=[split],
+                     protocol="train_val", output_dir=tmp_path / "o_mfcc", route={})
+    assert mfcc["fold_mean"] == base["fold_mean"] and mfcc["feature_source"] == "handcrafted"
+    with pytest.raises(ValueError, match="handcrafted"):
+        run_route(cache_dirs=[tmp_path / "mfcc"], dev_caches=None, split_files=[split], protocol="train_val",
+                  output_dir=tmp_path / "o_adapter", route={}, allow_adapter=True)
