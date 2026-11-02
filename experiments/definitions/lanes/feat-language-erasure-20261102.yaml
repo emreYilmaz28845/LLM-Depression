@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: feat-language-erasure-20261102
+slug: feat-language-erasure-20261102
+tier: 2
+branch: agent/feat-language-erasure-20261102
+worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-feat-language-erasure-20261102
+parent_branch: main
+parent_sha: e8d344cc850ec47684881afbc4c8652ac690b463
+created_at_utc: "2026-11-02T11:15:24Z"
+experiment_group_path: null
+type: complementary
