@@ -10,7 +10,9 @@ plus the merged final fold. The new head (``subjmean_l2``, balancing
   ``--reference-root`` prediction for prediction when given);
 - ``S``: one scaler per dataset, fit on that dataset's training subjects only;
 - ``I``: global scaler plus a one-hot dataset indicator (same L2 penalty);
-- ``SI``: both.
+- ``SI``: both;
+- ``E``: global scaler plus LEACE erasure of the dataset from the subject means
+  (opt-in through ``--variants``; see ``baselines.concept_erasure``).
 
 Also loads the standalone frozen new head of the same route: the advisor export
 test-split predictions per CV fold, and for DAIC the train-CV-selected head on
@@ -45,12 +47,15 @@ from baselines.merged_subject_mean_heads import run  # noqa: E402
 from baselines.run_merged_balancing_matrix import DATASET_NAMES, _fold_scores, train_counts  # noqa: E402
 from baselines.run_merged_head_matrix import STAGES, features_dir, frozen_caches  # noqa: E402
 
-# variant -> (normalization, dataset_indicator)
-VARIANTS = {"B": ("global", False), "S": ("per_dataset", False), "I": ("global", True), "SI": ("per_dataset", True)}
+# variant -> (normalization, dataset_indicator, erasure)
+VARIANTS = {"B": ("global", False, "none"), "S": ("per_dataset", False, "none"), "I": ("global", True, "none"),
+            "SI": ("per_dataset", True, "none"), "E": ("global", False, "leace")}
+DEFAULT_VARIANTS = ("B", "S", "I", "SI")
 REFERENCE = "B"
 STANDALONE = "standalone"
 LABELS = {"B": "B: global scaler (current)", "S": "S: per-dataset scaler", "I": "I: dataset indicator",
-          "SI": "S+I: per-dataset scaler + indicator", STANDALONE: "Standalone frozen + new head"}
+          "SI": "S+I: per-dataset scaler + indicator", "E": "E: LEACE dataset erasure",
+          STANDALONE: "Standalone frozen + new head"}
 HEAD = "subjmean_l2"
 BALANCING = "dataset_class_weight"
 DAIC = "daic"
@@ -58,8 +63,8 @@ DAIC = "daic"
 
 def _job(args):
     features, output, caches, variant = args
-    normalization, indicator = VARIANTS[variant]
-    run(features, output, "frozen", caches, (HEAD,), BALANCING, 0, normalization, indicator)
+    normalization, indicator, erasure = VARIANTS[variant]
+    run(features, output, "frozen", caches, (HEAD,), BALANCING, 0, normalization, indicator, erasure)
     return str(output)
 
 
@@ -123,12 +128,12 @@ def compare_reference(root: Path, reference: Path) -> dict:
     return {"reference": str(reference), "identical": all(v["same_predictions"] for v in out.values()), "folds": out}
 
 
-def summarize(root: Path, standalone: dict) -> dict:
+def summarize(root: Path, standalone: dict, variants: tuple[str, ...] = DEFAULT_VARIANTS) -> dict:
     cv: dict[str, dict[str, dict[str, list[float]]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     final: dict[str, dict[str, dict[str, float]]] = {}
     l2: dict[str, list] = defaultdict(list)
     indicator: dict[str, list] = defaultdict(list)
-    for variant in VARIANTS:
+    for variant in variants:
         for stage, fold in STAGES:
             run_dir = root / "runs" / variant / f"{stage}_fold_{fold}"
             head = json.loads((run_dir / "summary.json").read_text())["heads"][HEAD]
@@ -150,10 +155,10 @@ def summarize(root: Path, standalone: dict) -> dict:
     n_folds = {b: {d: len(ms["macro_f1"]) for d, ms in ds.items()} for b, ds in cv.items()}
     datasets = sorted(table[REFERENCE])
     # "Headline" per dataset: CV fold-mean, except DAIC = official test (merged final / standalone).
-    headline = {b: {d: (final[b][d] if d == DAIC else table[b][d]) for d in datasets} for b in VARIANTS}
+    headline = {b: {d: (final[b][d] if d == DAIC else table[b][d]) for d in datasets} for b in variants}
     headline[STANDALONE] = {d: table[STANDALONE][d] for d in datasets}
     tests = {}
-    for b in VARIANTS:
+    for b in variants:
         if b != REFERENCE:
             diffs = [table[b][d]["macro_f1"] - table[REFERENCE][d]["macro_f1"] for d in datasets]
             tests[f"{b}_vs_{REFERENCE}_cv"] = {"variant": b, "versus": REFERENCE, "basis": "merged CV fold-mean, 5 datasets",
@@ -170,7 +175,8 @@ def summarize(root: Path, standalone: dict) -> dict:
         "cv": table,
         "cv_n_folds": n_folds,
         "cv_mean_over_datasets": {b: float(np.mean([table[b][d]["macro_f1"] for d in datasets]))
-                                  for b in VARIANTS},
+                                  for b in variants},
+        "variants": list(variants),
         "final": final,
         "headline": headline,
         "headline_mean_over_datasets": {b: float(np.mean([headline[b][d]["macro_f1"] for d in datasets]))
@@ -183,10 +189,11 @@ def summarize(root: Path, standalone: dict) -> dict:
 
 def render(summary: dict, meta: dict) -> str:
     cv, headline = summary["cv"], summary["headline"]
+    variants = tuple(summary.get("variants", DEFAULT_VARIANTS))
     datasets = sorted(cv[REFERENCE])
-    order = list(VARIANTS) + [STANDALONE]
+    order = list(variants) + [STANDALONE]
     cell = lambda m: f"{m['macro_f1']:.3f} / {m['positive_f1']:.3f} / {m['uar']:.3f}"  # noqa: E731
-    lines = ["# Merged audio, frozen features, new head: per-dataset shift removal", "",
+    lines = [f"# Merged {meta['route']}, frozen features, new head: per-dataset shift removal", "",
              f"Source commit `{meta['commit']}`. Route `{meta['route']}`. Balancing `{BALANCING}`.", "",
              "Cells: macro-F1 / positive-F1 / UAR, subject level, binary strict. Merged rows: CV fold-mean. "
              "Standalone: CV fold-mean over the same holdout subjects; DAIC standalone is the official test.", "",
@@ -194,8 +201,8 @@ def render(summary: dict, meta: dict) -> str:
     for d in datasets:
         lines.append(f"| {DATASET_NAMES.get(d, d)} | " + " | ".join(cell(cv[b][d]) for b in order) + " |")
     lines.append("| Mean macro-F1 (CV) | " + " | ".join(
-        f"{summary['cv_mean_over_datasets'][b]:.3f}" for b in VARIANTS) + " | — |")
-    lines.append("| DAIC official test | " + " | ".join(cell(summary["final"][b][DAIC]) for b in VARIANTS)
+        f"{summary['cv_mean_over_datasets'][b]:.3f}" for b in variants) + " | — |")
+    lines.append("| DAIC official test | " + " | ".join(cell(summary["final"][b][DAIC]) for b in variants)
                  + f" | {cell(headline[STANDALONE][DAIC])} |")
     lines.append("| Mean macro-F1 (DAIC = official test) | " + " | ".join(
         f"{summary['headline_mean_over_datasets'][b]:.3f}" for b in order) + " |")
@@ -226,7 +233,12 @@ def main() -> None:
     parser.add_argument("--language", default="native")
     parser.add_argument("--modality", default="audio_only")
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--variants", default=",".join(DEFAULT_VARIANTS),
+                        help=f"Comma list from {','.join(VARIANTS)}; must include {REFERENCE}.")
     args = parser.parse_args()
+    variants = tuple(v for v in args.variants.split(",") if v)
+    if REFERENCE not in variants or any(v not in VARIANTS for v in variants):
+        raise SystemExit(f"--variants must be drawn from {sorted(VARIANTS)} and include {REFERENCE}.")
     if args.output_root.exists() and any(args.output_root.iterdir()):
         raise SystemExit(f"Refusing to overwrite {args.output_root}.")
     caches = frozen_caches(args.frozen_caches_root, args.frozen_daic_audio, args.language, args.modality)
@@ -235,7 +247,7 @@ def main() -> None:
     standalone = load_standalone(args.standalone_export_csv, args.standalone_daic_traincv, args.language, args.modality)
     identity = fold_identity(standalone, features_of)
     jobs = [(features_of[(stage, fold)], args.output_root / "runs" / v / f"{stage}_fold_{fold}", caches, v)
-            for v in VARIANTS for stage, fold in STAGES]
+            for v in variants for stage, fold in STAGES]
     print(f"{len(jobs)} head runs", flush=True)
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
         for future in as_completed([pool.submit(_job, j) for j in jobs]):
@@ -250,7 +262,7 @@ def main() -> None:
             "fold_identity": identity,
             "train_counts": {f"{s}_fold_{f}": train_counts(features_of[(s, f)]) for s, f in STAGES},
             "reference_check": compare_reference(args.output_root, args.reference_root) if args.reference_root else None}
-    summary = {"meta": meta, **summarize(args.output_root, standalone)}
+    summary = {"meta": meta, **summarize(args.output_root, standalone, variants)}
     (args.output_root / "summary.json").write_text(json.dumps(summary, indent=2))
     (args.output_root / "summary.md").write_text(render(summary, meta))
     print(render(summary, meta))
