@@ -46,6 +46,15 @@ fits and the final fit alike; held-out subjects are never balanced or copied):
   head can learn a per-dataset intercept. The indicator columns carry the same
   L2 penalty as the features; the global intercept stays unpenalized.
 
+``subjmean_l2`` also takes ``erasure="leace"`` (off by default): after the
+scaler, a LEACE eraser (``baselines.concept_erasure``) is fit on the training
+subject-mean rows with the dataset as the concept and the head's sample weights,
+and applied to every training and holdout subject mean. Afterwards the weighted
+per-dataset means of the training rows are equal, so no linear head can read
+the dataset from them. The eraser is refit inside every inner fold and needs no
+dataset label at prediction time. Not combinable with the seeded balancing
+policies or with ``dataset_indicator``.
+
 ``paper_logreg_class_balanced`` is ``paper_logreg`` with the hierarchical
 weights rescaled so the two classes carry equal mass inside every dataset.
 """
@@ -67,6 +76,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from baselines.concept_erasure import fit_leace, max_group_mean_gap  # noqa: E402
 from baselines.subject_mean_logreg_head import DEFAULT_L2_GRID, fit_logistic, score_metrics  # noqa: E402
 from src.merged.heads import (  # noqa: E402
     _fit_weighted,
@@ -90,6 +100,7 @@ BALANCING = ("dataset_class_weight", "dataset_weight", "none", "oversample_datas
 SEEDED_BALANCING = ("oversample_dataset_class", "smote_dataset_class")
 SMOTE_NEIGHBORS = 5
 NORMALIZATION = ("global", "per_dataset")
+ERASURE = ("none", "leace")
 
 
 def load_frozen_index(cache_dirs: list[Path]) -> tuple[dict[str, tuple[np.ndarray, str]], dict[str, Any]]:
@@ -289,7 +300,7 @@ def _with_indicator(features: np.ndarray, groups: list[str]) -> np.ndarray:
 
 def _fit_subject_head(x: np.ndarray, units: SubjectUnits, subjects: list[str], penalty: float,
                       balancing: str = "dataset_class_weight", rng: np.random.Generator | None = None,
-                      normalization: str = "global", dataset_indicator: bool = False):
+                      normalization: str = "global", dataset_indicator: bool = False, erasure: str = "none"):
     scalers = _fit_scalers(x, units, subjects, normalization)
     z = _standardize(x, units, scalers)
     rng = rng if rng is not None else np.random.default_rng(0)
@@ -302,6 +313,17 @@ def _fit_subject_head(x: np.ndarray, units: SubjectUnits, subjects: list[str], p
         fit_subjects, sample_weight = balanced_training_set(subjects, units, balancing, rng)
         features, labels = units.means(z, fit_subjects), units.y(fit_subjects)
         groups = [units.dataset[s] for s in fit_subjects]
+    eraser, erasure_info = None, {}
+    if erasure == "leace":
+        if balancing in SEEDED_BALANCING or dataset_indicator:
+            raise ValueError("LEACE erasure works only with unseeded balancing and without the dataset indicator.")
+        eraser = fit_leace(features, groups, sample_weight)
+        erasure_info = {"gap_before": max_group_mean_gap(features, groups, sample_weight)}
+        features = eraser(features)
+        erasure_info.update({"gap_after": max_group_mean_gap(features, groups, sample_weight),
+                             "rank": eraser.rank, "erased_dims": eraser.erased_dims})
+    elif erasure != "none":
+        raise ValueError(f"Unknown erasure {erasure!r}.")
     if dataset_indicator:
         features = _with_indicator(features, groups)
     weight, bias, info = fit_logistic(features, labels, sample_weight, penalty)
@@ -309,15 +331,18 @@ def _fit_subject_head(x: np.ndarray, units: SubjectUnits, subjects: list[str], p
     for g, label in zip(groups, labels.tolist()):
         counts[f"{g}:{label}"] += 1
     info = {**info, "balancing": balancing, "normalization": normalization, "dataset_indicator": dataset_indicator,
+            **({"erasure": erasure, "erasure_info": erasure_info} if erasure != "none" else {}),
             "fit_rows": len(labels), "fit_cell_counts": dict(sorted(counts.items()))}
     if dataset_indicator:
         info["indicator_weights"] = dict(zip(DATASETS, weight[-len(DATASETS):].tolist()))
-    return scalers, dataset_indicator, weight, bias, info
+    return scalers, dataset_indicator, weight, bias, info, eraser
 
 
 def _subject_logits(x: np.ndarray, units: SubjectUnits, head, subjects: list[str]) -> np.ndarray:
-    scalers, dataset_indicator, weight, bias, _ = head
+    scalers, dataset_indicator, weight, bias, _, eraser = head
     features = units.means(_standardize(x, units, scalers), subjects)
+    if eraser is not None:
+        features = eraser(features)
     if dataset_indicator:
         features = _with_indicator(features, [units.dataset[s] for s in subjects])
     return features @ weight + bias
@@ -333,12 +358,17 @@ def _per_dataset(units: SubjectUnits, subjects: list[str], logits: np.ndarray) -
 
 def fit_subjmean_l2(x_train, train_rows, x_holdout, holdout_rows, grid=DEFAULT_L2_GRID,
                     balancing: str = "dataset_class_weight", oversample_seed: int = 0,
-                    normalization: str = "global", dataset_indicator: bool = False) -> dict[str, Any]:
+                    normalization: str = "global", dataset_indicator: bool = False,
+                    erasure: str = "none") -> dict[str, Any]:
     if balancing not in BALANCING:
         raise ValueError(f"Unknown balancing {balancing!r}.")
     if normalization not in NORMALIZATION:
         raise ValueError(f"Unknown normalization {normalization!r}.")
+    if erasure not in ERASURE:
+        raise ValueError(f"Unknown erasure {erasure!r}.")
     shift = {"normalization": normalization, "dataset_indicator": dataset_indicator}
+    if erasure != "none":  # keep the key out of default runs so their summaries stay unchanged
+        shift["erasure"] = erasure
 
     def rng(fit_index: int) -> np.random.Generator:
         # One stream per fit (inner fold or final), shared by every L2 candidate.
@@ -426,7 +456,8 @@ def _write_csv(rows: list[dict[str, Any]], path: Path) -> None:
 
 def run(features_dir: Path, output_dir: Path, source: str, frozen_caches: list[Path] | None = None,
         heads: tuple[str, ...] = ("paper_logreg", "subjmean_l2"), balancing: str = "dataset_class_weight",
-        oversample_seed: int = 0, normalization: str = "global", dataset_indicator: bool = False) -> dict[str, Any]:
+        oversample_seed: int = 0, normalization: str = "global", dataset_indicator: bool = False,
+        erasure: str = "none") -> dict[str, Any]:
     if source not in SOURCES:
         raise ValueError(f"Unknown source {source!r}.")
     if output_dir.exists() and any(output_dir.iterdir()):
@@ -461,7 +492,8 @@ def run(features_dir: Path, output_dir: Path, source: str, frozen_caches: list[P
                "paper_logreg_class_balanced": lambda *a: fit_paper_logreg(*a, class_balanced=True),
                "subjmean_l2": lambda *a: fit_subjmean_l2(*a, balancing=balancing, oversample_seed=oversample_seed,
                                                          normalization=normalization,
-                                                         dataset_indicator=dataset_indicator)}
+                                                         dataset_indicator=dataset_indicator,
+                                                         erasure=erasure)}
     for name in heads:
         result = fitters[name](x_train, train_rows, x_holdout, holdout_rows)
         head_dir = output_dir / name
@@ -488,6 +520,8 @@ def parse_args() -> argparse.Namespace:
                         help="subjmean_l2 scaler: one global scaler or one per dataset (train subjects only).")
     parser.add_argument("--dataset-indicator", action="store_true",
                         help="Append a one-hot dataset vector to the subjmean_l2 features.")
+    parser.add_argument("--erasure", default="none", choices=ERASURE,
+                        help="LEACE-erase the dataset from the subjmean_l2 subject means (train-fit).")
     return parser.parse_args()
 
 
@@ -495,7 +529,7 @@ def main() -> None:
     args = parse_args()
     summary = run(args.features_dir, args.output_dir, args.source, args.frozen_cache,
                   tuple(h for h in args.heads.split(",") if h), args.balancing, args.oversample_seed,
-                  args.normalization, args.dataset_indicator)
+                  args.normalization, args.dataset_indicator, args.erasure)
     for name, head in summary["heads"].items():
         print(name, {d: round(m["macro_f1"], 4) for d, m in head["metrics_by_dataset"].items()})
 

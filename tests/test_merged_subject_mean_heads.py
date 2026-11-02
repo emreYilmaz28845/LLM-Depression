@@ -295,3 +295,46 @@ def test_shift_options_run_end_to_end_and_are_recorded(tmp_path):
     assert set(head["metrics_by_dataset"]) == set(DATASETS)
     with pytest.raises(ValueError, match="normalization"):
         fit_subjmean_l2(vectors, rows, vectors, rows, normalization="bad")
+
+
+def test_leace_equalizes_weighted_dataset_means_and_keeps_rank():
+    from baselines.concept_erasure import fit_leace, max_group_mean_gap
+    rng = np.random.default_rng(0)
+    groups = np.repeat(["a", "b", "c"], [10, 15, 20])
+    x = rng.normal(size=(45, 80)) + np.repeat(rng.normal(scale=4.0, size=(3, 80)), [10, 15, 20], axis=0)
+    w = rng.uniform(0.5, 2.0, size=45)
+    eraser = fit_leace(x, groups, w)
+    assert eraser.erased_dims == 2 and eraser.rank == 44  # n < d: rank n-1
+    assert max_group_mean_gap(x, groups, w) > 1.0
+    assert max_group_mean_gap(eraser(x), groups, w) < 1e-8
+    # Erasing twice changes nothing more (the edit is a projection).
+    np.testing.assert_allclose(fit_leace(eraser(x), groups, w)(eraser(x)), eraser(x), atol=1e-8)
+
+
+def test_leace_head_fits_on_training_subjects_and_hides_dataset_offsets():
+    rows, vectors = _imbalanced_rows()
+    units = SubjectUnits(rows)
+    subjects = sorted(units.units)
+    shifted = _shifted(rows, vectors)
+    head = _fit_subject_head(shifted, units, subjects, 0.1, erasure="leace")
+    info = head[4]
+    assert info["erasure"] == "leace" and info["erasure_info"]["gap_after"] < 1e-8
+    assert info["erasure_info"]["gap_before"] > 1.0
+    assert _subject_logits(shifted, units, head, subjects).shape == (len(subjects),)
+    plain = _fit_subject_head(shifted, units, subjects, 0.1)
+    assert "erasure" not in plain[4] and plain[5] is None
+    with pytest.raises(ValueError, match="LEACE"):
+        _fit_subject_head(shifted, units, subjects, 0.1, "oversample_dataset_class", np.random.default_rng(0),
+                          erasure="leace")
+
+
+def test_fit_subjmean_l2_records_erasure_and_default_summary_unchanged():
+    rows, vectors = _imbalanced_rows()
+    train = [r for r in rows if not r["subject_id"].endswith(("s0", "s1"))]
+    hold = [r for r in rows if r["subject_id"].endswith(("s0", "s1"))]
+    xi = np.asarray([vectors[i] for i, r in enumerate(rows) if r in train])
+    xh = np.asarray([vectors[i] for i, r in enumerate(rows) if r in hold])
+    erased = fit_subjmean_l2(xi, train, xh, hold, erasure="leace")
+    assert erased["dataset_shift"]["erasure"] == "leace"
+    default = fit_subjmean_l2(xi, train, xh, hold)
+    assert "erasure" not in default["dataset_shift"]
