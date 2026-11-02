@@ -269,6 +269,7 @@ def test_balanced_cover_complete_and_equal() -> None:
         assert set(seen) == {f"{index:03d}" for index in range(expected_n)}
 
 
+@pytest.mark.real_data("outputs/manifests_daic_participant_packed30/daic_participant_speech_packed30_manifest.jsonl")
 def test_locked_cardinalities_from_current_manifest() -> None:
     if not PACKED30_MANIFEST.is_file():
         raise FileNotFoundError(
@@ -464,6 +465,7 @@ def test_selected_epoch_fit_refuses_missing_or_inconsistent(tmp_path: Path) -> N
         _selected_epoch_fit_examples(tampered, config, rows, 0)
 
 
+@pytest.mark.real_data("outputs/manifests_daic_participant_packed30/daic_participant_speech_packed30_manifest.jsonl")
 def test_production_head_cache_cardinality() -> None:
     if not PACKED30_MANIFEST.is_file():
         raise FileNotFoundError(f"Requires {PACKED30_MANIFEST}; build the packed30 manifest first.")

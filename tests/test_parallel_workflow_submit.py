@@ -253,6 +253,7 @@ def test_seed_override_must_match_context_seed():
         )
 
 
+@pytest.mark.real_data("docs/PARALLEL_EXPERIMENT_WORKFLOW_PLAN.md")
 def test_state_tool_record_job_appends_atomically(tmp_path):
     state_path = tmp_path / "state.json"
     subprocess.run(

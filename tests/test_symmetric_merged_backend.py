@@ -290,6 +290,7 @@ def _fake_merged_features(tmp_path: Path, *, modality: str = "audio_text", backe
 
 
 class TestMergedOptuna100:
+    @pytest.mark.slow
     def test_merged_study_writes_backend_qualified_evidence(self, tmp_path: Path, monkeypatch) -> None:
         features = _fake_merged_features(tmp_path, backend="gemma4")
         output = tmp_path / "fold_0" / policy.EXPERIMENT_ID
@@ -346,6 +347,7 @@ class TestMergedOptuna100:
         )
         assert result_again["completed_trials"] == 100
 
+    @pytest.mark.slow
     def test_merged_study_refuses_changed_identity(self, tmp_path: Path, monkeypatch) -> None:
         features = _fake_merged_features(tmp_path, backend="qwen")
         output = tmp_path / "fold_0" / policy.EXPERIMENT_ID
@@ -389,6 +391,7 @@ class TestMergedOptuna100:
             )
 
 
+@pytest.mark.real_data("output_model/harmonized_v1_merged_optuna100", "outputs/symmetric_merged/harmonized_v1")
 class TestMergedResolver:
     def test_merged_resolver_counts(self) -> None:
         import tools.resolve_optuna100_manifest as resolver

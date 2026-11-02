@@ -276,6 +276,7 @@ def test_final_smoke_requires_structured_local_fold_path():
     assert any("lacks local_fold_path" in e for e in errors)
 
 
+@pytest.mark.real_data("docs/PARALLEL_EXPERIMENT_WORKFLOW_PLAN.md")
 def test_state_tool_records_absolute_local_fold_path(tmp_path):
     state_path = tmp_path / "state.json"
     tool = str(PROJECT_ROOT / "tools" / "parallel_workflow_state.py")
@@ -323,6 +324,7 @@ def test_tampered_preterminal_audit_detected(tmp_path):
     assert any("hash does not match file" in m for m in messages2)
 
 
+@pytest.mark.real_data("docs/PARALLEL_EXPERIMENT_WORKFLOW_PLAN.md")
 def test_state_tool_complete_consumes_preterminal_audit_atomically(tmp_path):
     state_path = tmp_path / "state.json"
     subprocess.run(

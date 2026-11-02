@@ -375,6 +375,7 @@ class FakeGemmaProcessor:
         return f"<bos>system|{system}|user|{text}|"
 
 
+@pytest.mark.slow
 def test_gemma_preflight_audit_rejects_when_processor_unavailable(
     monkeypatch, tmp_path: Path
 ) -> None:

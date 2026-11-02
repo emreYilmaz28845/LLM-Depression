@@ -329,7 +329,13 @@ def test_harmonized_launchers_allow_unlimited_parallelism(tmp_path: Path) -> Non
     for launcher, extra_env in (
         ("scripts/submit_harmonized_standalone.sh", {"MAX_CONCURRENT_AUX": "1"}),
         ("scripts/submit_harmonized_standalone_retry.sh", {"MAX_CONCURRENT_AUX": "1", "CELLS": str(cells)}),
-        ("scripts/submit_harmonized_merged.sh", {"MAX_CONCURRENT_POSTPROCESS": "1", "STAGE": "smoke"}),
+        # REGISTRY keeps the dry-run job registry in tmp_path. Without it the
+        # launcher writes outputs/symmetric_merged_jobs/unit.json in the real
+        # checkout, and a stale file from an older plan fails later runs.
+        (
+            "scripts/submit_harmonized_merged.sh",
+            {"MAX_CONCURRENT_POSTPROCESS": "1", "STAGE": "smoke", "REGISTRY": str(tmp_path / "merged_registry.json")},
+        ),
     ):
         result = subprocess.run(
             ["bash", str(ROOT / launcher)],

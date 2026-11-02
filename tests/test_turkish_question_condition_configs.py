@@ -40,12 +40,26 @@ CELLS = {
 }
 
 
-def _load(name: str) -> dict:
-    return yaml.safe_load((MAIN / name).read_text(encoding="utf-8"))
+# The three native Qwen pos_only cells were migrated in place to the canonical
+# Qwen3 backends on 2026-09-23 (commit 387e8a2). The Qwen2 configs this group
+# ran with were moved, byte-identical, to the archive below; the locked-recipe
+# checks read those, and the migrated main configs are checked separately.
+ARCHIVE_PRE_QWEN3 = ROOT / "configs" / "archive" / "pre_default_backbone_20260923"
+MIGRATED_TO_QWEN3 = {
+    "P01": ("qwen3omni", "Qwen3-Omni-30B-A3B-Instruct"),
+    "P02": ("qwen38", "Qwen3.8-27B"),
+    "P04": ("qwen3omni", "Qwen3-Omni-30B-A3B-Instruct"),
+}
+PROMPTCONTEXT_RECIPE = f"{NATIVE_RECIPE}_promptcontext_v1"
+
+
+def _load(name: str, directory: Path = MAIN) -> dict:
+    return yaml.safe_load((directory / name).read_text(encoding="utf-8"))
 
 
 def _config_for(cell: str) -> dict:
-    return _load(CELLS[cell][4])
+    directory = ARCHIVE_PRE_QWEN3 if cell in MIGRATED_TO_QWEN3 else MAIN
+    return _load(CELLS[cell][4], directory)
 
 
 def test_group_definition_records_exact_twenty_cells() -> None:
@@ -102,6 +116,24 @@ def test_all_cells_use_locked_harmonized_recipe() -> None:
         else:
             assert "model_backend" not in config
             assert isinstance(config["lora"]["target_modules"], list)
+
+
+def test_migrated_pos_only_qwen_cells_use_canonical_qwen3_backends() -> None:
+    for cell_id, (backend, model_dir) in MIGRATED_TO_QWEN3.items():
+        name = CELLS[cell_id][4]
+        current = _load(name)
+        archived = _load(name, ARCHIVE_PRE_QWEN3)
+        assert current["recipe_id"] == PROMPTCONTEXT_RECIPE
+        assert current["model_backend"] == backend
+        assert model_dir in current["model_name_or_path"]
+        assert current["prompt"]["version"] == "promptcontext_v1"
+        assert archived["recipe_id"] == NATIVE_RECIPE
+        assert "model_backend" not in archived
+        assert "Qwen2" in archived["model_name_or_path"]
+        for key in ("dataset", "dataset_variant", "threshold", "split"):
+            assert current[key] == archived[key], f"{cell_id}: {key} changed in the Qwen3 migration"
+        assert current["evaluation"]["sample_prediction_mode"] == "likelihood"
+        assert current["training"]["selection_metric"] == "inner_val_macro_f1"
 
 
 def test_negative_gemma_configs_are_qwen_derived_with_only_approved_backend_diffs() -> None:

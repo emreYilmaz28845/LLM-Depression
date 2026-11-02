@@ -92,6 +92,7 @@ def test_pooled_qwen3_migration_contract_is_pinned() -> None:
         assert hashlib.sha256(payload).hexdigest() == digest, name
 
 
+@pytest.mark.slow
 def test_generators_are_deterministic_and_idempotent() -> None:
     generated = sorted(
         [f"configs/main/{cell[2]}" for cell in english_configs.CELLS]

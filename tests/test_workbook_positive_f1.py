@@ -28,6 +28,9 @@ import pytest
 CODE_ROOT = Path(__file__).resolve().parents[1]
 ROOT = Path(os.environ.get("LLMDEP_EVIDENCE_ROOT", CODE_ROOT))
 
+# Every test here recomputes workbook cells from local run artifacts.
+pytestmark = pytest.mark.real_data("output_model/harmonized_v1", "outputs/hidden_classifiers")
+
 import importlib.util as _ilu
 
 _BUILDER_PATH = CODE_ROOT / "scripts/build_clean_workbook.py"

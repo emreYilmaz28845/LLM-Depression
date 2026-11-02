@@ -185,6 +185,11 @@ def test_run_audit_rejects_missing_registry(tmp_path: Path) -> None:
     assert "missing submission registry" in result.stderr
 
 
+@pytest.mark.slow
+@pytest.mark.real_data(
+    "/media/emre/Backup/AudioLLM/Datasets/DAIC-WOZ/unprocessed",
+    "/media/emre/Backup/AudioLLM/Datasets/DAIC-WOZ/minimal_zips",
+)
 def test_preflight_script_writes_job_scope_24(tmp_path: Path) -> None:
     # Model-free against the real canonical manifest, rebuilt so the metadata
     # carries the officialdev build signature.

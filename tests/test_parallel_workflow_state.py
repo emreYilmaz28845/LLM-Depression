@@ -48,6 +48,7 @@ def test_init_defaults_grant_journal_to_the_current_year_file(tmp_path):
     assert "docs/agent-journal" not in data["grant_journal_path"]
 
 
+@pytest.mark.real_data("docs/PARALLEL_EXPERIMENT_WORKFLOW_PLAN.md")
 def test_init_honours_explicit_grant_journal(tmp_path):
     state_path = init_state(tmp_path)
     runbook = pathlib.Path(__file__).resolve().parents[1] / "docs" / "PARALLEL_EXPERIMENT_WORKFLOW_PLAN.md"

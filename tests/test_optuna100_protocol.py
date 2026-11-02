@@ -209,6 +209,7 @@ class TestOptunaProfileRun:
         ("qwen", "qwen_hidden_xgb_optuna100"),
         ("gemma4", "gemma4_hidden_xgb_optuna100"),
     ])
+    @pytest.mark.slow
     def test_full_100_trial_study_writes_qualified_evidence(
         self, tmp_path: Path, backend: str, expected_backend: str
     ) -> None:
@@ -262,6 +263,7 @@ class TestOptunaProfileRun:
         ]
         assert Counter(validation_coverage) == Counter(subjects)
 
+    @pytest.mark.slow
     def test_resume_identical_partial_study_and_refuse_changed_identity(
         self, tmp_path: Path
     ) -> None:
@@ -435,6 +437,7 @@ class TestPosthocAttempt:
                 )
                 campaign.create_attempt(repo_root=ROOT, attempt_dir=attempt_dir, task_spec=spec_path)
 
+    @pytest.mark.slow
     def test_materialize_idempotent_and_refuses_changed_content(self, tmp_path: Path) -> None:
         cache, metadata = make_cache(tmp_path, n_train=24, n_test=6)
         parent_attempt = metadata["cache_config"]["parent_attempt_id"]
@@ -464,6 +467,7 @@ class TestPosthocAttempt:
         with pytest.raises(campaign.PosthocError, match="refusing to change"):
             campaign.materialize_mn5_evidence(attempt_dir)
 
+    @pytest.mark.slow
     def test_verify_local_recomputes_and_reaches_reportable(self, tmp_path: Path) -> None:
         cache, metadata = make_cache(tmp_path)
         parent_attempt = metadata["cache_config"]["parent_attempt_id"]
@@ -486,6 +490,7 @@ class TestPosthocAttempt:
         evaluations = json.loads((attempt_dir / "evaluations.json").read_text())
         assert all(entry["reportable"] and entry["locally_verified"] for entry in evaluations["evaluations"])
 
+    @pytest.mark.slow
     def test_failed_attempt_cannot_become_reportable(self, tmp_path: Path) -> None:
         cache, metadata = make_cache(tmp_path)
         parent_attempt = metadata["cache_config"]["parent_attempt_id"]
@@ -502,6 +507,7 @@ class TestPosthocAttempt:
         status = json.loads((attempt_dir / "status.json").read_text())
         assert status["state"] == "FAILED"
 
+    @pytest.mark.slow
     def test_posthoc_attempt_discovered_and_imported_as_modern(self, tmp_path: Path) -> None:
         from src.experiment_tracking.discovery import discover_runs
         from src.experiment_tracking.qualification import qualify_run
@@ -537,6 +543,7 @@ class TestPosthocAttempt:
         assert sidecars.metadata["parent"]["parent_attempt_id"] == parent_attempt
 
 
+@pytest.mark.real_data("outputs/hidden_features/harmonized_v1", "output_model/harmonized_v1_optuna100", "output_model/harmonized_v1_officialdev_heads", "outputs/symmetric_merged/harmonized_v1")
 class TestResolver:
     def test_resolver_counts_and_missing_caches(self) -> None:
         import tools.resolve_optuna100_manifest as resolver
