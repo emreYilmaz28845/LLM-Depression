@@ -191,12 +191,18 @@ def test_run_audit_rejects_missing_registry(tmp_path: Path) -> None:
     "/media/emre/Backup/AudioLLM/Datasets/DAIC-WOZ/minimal_zips",
 )
 def test_preflight_script_writes_job_scope_24(tmp_path: Path) -> None:
-    # Model-free against the real canonical manifest, rebuilt so the metadata
-    # carries the officialdev build signature.
+    # Model-free against the real DAIC data. The manifest is rebuilt so its
+    # metadata carries the officialdev build signature. PROJECT_ROOT points at a
+    # scratch root that sees the real configs, so the rebuilt manifest and split
+    # land in tmp_path and the canonical outputs/ files stay untouched.
     run_id = "test_preflight_000001"
     output = tmp_path / "audit.json"
+    scratch_root = tmp_path / "project"
+    scratch_root.mkdir()
+    (scratch_root / "configs").symlink_to(PROJECT_ROOT / "configs", target_is_directory=True)
     env = {
         **__import__("os").environ,
+        "PROJECT_ROOT": str(scratch_root),
         "DAIC_UNPROCESSED_ROOT": "/media/emre/Backup/AudioLLM/Datasets/DAIC-WOZ/unprocessed",
         "DAIC_LABEL_ROOT": "/media/emre/Backup/AudioLLM/Datasets/DAIC-WOZ/minimal_zips",
     }
