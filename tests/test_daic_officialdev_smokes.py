@@ -195,6 +195,7 @@ def test_smoke_audit_accepts_and_rejects(tmp_path: Path) -> None:
     assert "official-development subjects entered the smoke" in result.stderr
 
 
+@pytest.mark.real_data("output_model/harmonized_v1/audio_only/daic")
 def test_smoke_submitter_dry_run_has_20_jobs_and_no_mutation() -> None:
     smoke_id = "test_smoke_000001"
     smoke_root = PROJECT_ROOT / "outputs/daic_officialdev_smokes" / smoke_id

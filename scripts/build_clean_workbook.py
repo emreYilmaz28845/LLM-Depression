@@ -3437,11 +3437,14 @@ def _put_turkish_pooled_provenance(ws, put, *, report_path: Path) -> None:
             ]
             if provenance_rows:
                 prov_keys = provenance_rows[0].get("provenance_keys") or ""
+            # The model name belongs in the method label: without it the Qwen
+            # and Gemma 4 rows share one provenance key (experiment, dataset,
+            # modality, method) and cannot be told apart.
             put(
                 f"Turkish pooled {experiment}",
                 "Turkish",
                 modality,
-                method,
+                f"{model} {method}",
                 value,
                 f"{source}; provenance keys {prov_keys}",
                 aggregation,

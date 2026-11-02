@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import pytest
 from openpyxl import load_workbook
 
 from scripts.update_androids_hidden_workbook import (
@@ -41,6 +42,7 @@ def _acceptance() -> dict[str, object]:
     }
 
 
+@pytest.mark.real_data("docs/archive/results_20260806/depression_results_combined_with_posf1_graphs.xlsx")
 def test_androids_workbook_rows_tables_and_chart_are_updated(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     source = repo_root / "docs" / "archive" / "results_20260806" / "depression_results_combined_with_posf1_graphs.xlsx"

@@ -323,6 +323,7 @@ HAS_CORPUS = (
 )
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(
     not HAS_CORPUS,
     reason="Requires the real DAIC corpus (189 subjects) for the locked contract totals.",
