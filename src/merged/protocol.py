@@ -169,6 +169,29 @@ def _default_metadata_path(component_config: dict[str, Any]) -> Path:
     return output_dir / f"{str(component_config['dataset']).lower()}_manifest_metadata.json"
 
 
+def _resolve_component_folds_path(value: str | Path, metadata_path: Path) -> Path | None:
+    """Resolve a metadata ``folds_path`` deterministically across layouts.
+
+    Absolute paths are used as-is.  Relative paths are tried next to the
+    metadata file first: metadata and folds live in the same split directory in
+    every known layout, including deployment and runtime contexts where the
+    legacy project-root-relative resolution silently missed the file and the
+    caller regenerated replacement folds.  The legacy project-root resolution is
+    kept as a fallback.  Returns ``None`` when no candidate exists.
+    """
+
+    candidate = Path(value)
+    if candidate.is_absolute():
+        return candidate
+    local = metadata_path.parent / candidate.name
+    if local.is_file():
+        return local
+    legacy = resolve_project_path(candidate)
+    if legacy.is_file():
+        return legacy
+    return None
+
+
 def load_component_records(
     merged_config: dict[str, Any],
     *,
@@ -231,10 +254,14 @@ def load_component_records(
             if partition_path.is_file():
                 partition_rows = list(read_json(partition_path))
         folds: dict[str, Any] | dict[int, Any] = {}
-        if metadata.get("folds_path"):
-            folds_path = _resolve_component_path(metadata["folds_path"])
-            if folds_path.is_file():
-                folds = read_json(folds_path)
+        folds_path_declared = metadata.get("folds_path")
+        resolved_folds_path: Path | None = None
+        if folds_path_declared:
+            resolved_folds_path = _resolve_component_folds_path(
+                folds_path_declared, metadata_path
+            )
+            if resolved_folds_path is not None:
+                folds = read_json(resolved_folds_path)
         labels = _label_map(rows)
         official_test = {
             str(subject_id)
@@ -264,6 +291,10 @@ def load_component_records(
                 "labels": labels,
                 "partition_rows": partition_rows,
                 "folds": folds,
+                "folds_path": str(resolved_folds_path) if resolved_folds_path else None,
+                "folds_path_declared": (
+                    str(folds_path_declared) if folds_path_declared else None
+                ),
                 "official_test_subject_ids": sorted(official_test),
             }
         )
@@ -398,6 +429,14 @@ def build_component_outer_folds(
             # CV here without ever admitting official-test subjects.
             resolved = {}
     if len(resolved) != OUTER_FOLDS:
+        if dataset == "androids_interview":
+            raise ValueError(
+                "androids_interview requires its exact official outer folds; refusing to "
+                "generate replacement folds. Provide the official folds file declared by "
+                f"the component metadata (declared folds_path="
+                f"{record.get('folds_path_declared')!r}, resolved="
+                f"{record.get('folds_path')!r})."
+            )
         generated = assign_stratified_group_folds(
             {subject: labels[subject] for subject in eligible},
             n_splits=OUTER_FOLDS,
@@ -469,6 +508,7 @@ def build_protocol_splits(
             "dataset": dataset,
             "config_path": str(record["config_path"]),
             "manifest_hash": str(record["manifest_hash"]),
+            "folds_path": record.get("folds_path"),
             "official_test_subject_ids": [namespace_id(dataset, value) for value in record.get("official_test_subject_ids", [])],
             "folds": namespaced_folds,
         }
