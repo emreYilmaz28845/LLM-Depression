@@ -611,8 +611,10 @@ def test_pin_rejects_missing_required_identity_fields(tmp_path):
     assert "missing required field" in checked.stderr
 
 def test_stacked_child_records_parent(tmp_path):
-    # Use real project root's exp create dry-run with --from to check parent recording
-    result = run_cmd([sys.executable, str(pathlib.Path.cwd() / TOOL_EXP), "create", "stacked-test-123", "--tier", "1", "--from", "agent/feat-parallel-worktree-pins", "--dry-run"], cwd=pathlib.Path.cwd())
-    assert result.returncode == 0
-    assert "parent branch: agent/feat-parallel-worktree-pins" in result.stdout
-    assert "parent ref:" in result.stdout
+    # Use real project root's exp create dry-run with --from to check parent recording.
+    # The parent is HEAD so the test does not depend on a local-only branch
+    # (CI clones have just the checked-out commit).
+    result = run_cmd([sys.executable, str(pathlib.Path.cwd() / TOOL_EXP), "create", "stacked-test-123", "--tier", "1", "--from", "HEAD", "--dry-run"], cwd=pathlib.Path.cwd())
+    assert result.returncode == 0, result.stderr
+    assert "parent branch: HEAD" in result.stdout
+    assert "parent ref: HEAD -> " in result.stdout
