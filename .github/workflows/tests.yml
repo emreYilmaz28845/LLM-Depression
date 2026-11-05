@@ -1,0 +1,47 @@
+name: tests
+
+# CPU-only unit tests on every PR and on pushes to main. Datasets, models,
+# outputs/ and the private docs/ overlay are not available here, so
+# real_data tests skip themselves (see tests/conftest.py). The checkout write
+# guard and --strict-markers (pytest.ini) apply as they do locally.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: requirements_ci.txt
+
+      - name: Install system libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsndfile1
+
+      - name: Install Python packages
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements_ci.txt
+
+      - name: Run tests
+        env:
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+          WANDB_MODE: disabled
+        run: python -m pytest -n auto -q -rfE

@@ -1,0 +1,26 @@
+# Packages the CPU-only unit test suite needs (GitHub Actions CI).
+# Versions match the local llmdep4090 env. torch comes from the CPU wheel
+# index, see .github/workflows/tests.yml. Not for training or MN5 jobs.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.3.0+cpu
+torchaudio==2.3.0+cpu
+numpy==1.26.4
+scipy==1.15.3
+scikit-learn==1.7.0
+xgboost==2.1.4
+optuna==4.0.0
+pandas==2.2.3
+openpyxl==3.1.5
+PyYAML==6.0.3
+joblib==1.5.3
+soundfile==0.13.1
+librosa==0.11.0
+transformers==4.55.0
+tokenizers==0.21.4
+huggingface_hub==0.36.2
+accelerate==1.8.1
+peft==0.17.0
+safetensors==0.8.0
+tqdm==4.68.4
+pytest==8.4.1
+pytest-xdist==3.8.0

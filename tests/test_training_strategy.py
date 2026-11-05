@@ -37,6 +37,14 @@ def _reset_accelerate_state():
     PartialState._reset_state()
 
 
+# accelerate's FullyShardedDataParallelPlugin refuses to build without an
+# accelerator device ("no available devices found"). These tests run on the
+# GPU workstation and skip on CPU-only machines such as GitHub Actions.
+needs_accelerator_device = pytest.mark.skipif(
+    not torch.cuda.is_available(),
+    reason="accelerate FSDP plugin needs a CUDA (or other accelerator) device",
+)
+
 class _Layer(torch.nn.Module):
     pass
 
@@ -82,6 +90,7 @@ def test_effective_global_batch_size_keeps_128_across_shapes() -> None:
     assert effective_global_batch_size(eight_gpu, 8) == 128
 
 
+@needs_accelerator_device
 def test_fsdp_plugin_uses_orig_params_and_wrap_policy() -> None:
     config = {"training": {"strategy": "fsdp"}}
     model = _fake_decoder_model()
@@ -101,6 +110,7 @@ def test_fsdp_plugin_refuses_an_empty_wrap_policy() -> None:
         build_fsdp_plugin({"training": {"strategy": "fsdp"}}, _fake_decoder_model(), lambda model: [])
 
 
+@needs_accelerator_device
 def test_fsdp_plugin_allows_a_backend_without_a_wrap_policy() -> None:
     plugin = build_fsdp_plugin({"training": {"strategy": "fsdp"}}, _fake_decoder_model(), None)
     assert plugin.transformer_cls_names_to_wrap is None
@@ -131,6 +141,7 @@ def test_accelerator_builds_for_ddp_by_default() -> None:
     assert accelerator.mixed_precision == "bf16"
 
 
+@needs_accelerator_device
 def test_accelerator_builds_for_fsdp() -> None:
     config = {
         "training": {
@@ -165,6 +176,7 @@ def test_activation_offload_defaults_to_none_and_validates() -> None:
     assert hasattr(cpu_context, "__enter__") and hasattr(cpu_context, "__exit__")
 
 
+@needs_accelerator_device
 def test_fsdp_accelerator_syncs_gradients_on_every_microbatch() -> None:
     """FSDP's no_sync keeps unsharded gradients per rank and OOMed the 27B run."""
     import contextlib
@@ -192,6 +204,7 @@ def test_ddp_accelerator_keeps_the_framework_no_sync() -> None:
     assert accelerator.no_sync.__func__ is not None
 
 
+@needs_accelerator_device
 def test_fsdp_plugin_pins_bf16_parameters() -> None:
     plugin = build_fsdp_plugin(
         {"training": {"strategy": "fsdp", "bf16": True}},
@@ -388,6 +401,7 @@ def test_align_fsdp_model_dtypes_makes_parameters_uniform() -> None:
     assert {id(group["params"][0]) for group in optimizer.param_groups} == {id(model.base)}
 
 
+@needs_accelerator_device
 def test_accelerator_aligns_dtypes_for_fsdp(monkeypatch) -> None:
     from src import training_strategy as strategy_module
 
