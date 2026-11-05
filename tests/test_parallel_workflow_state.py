@@ -13,11 +13,13 @@ def run_tool(*args):
     return result
 
 def init_state(tmp_path, execution_id="20260820T205735Z-parallel-workflow-2d995f4c"):
+    # The runbook lives in the private docs/ overlay, which lane worktrees and
+    # CI clones do not have. `init` only records its path and sha256, so a stub
+    # in tmp_path exercises the same state machine.
     runbook = pathlib.Path(__file__).resolve().parents[1] / "docs" / "PARALLEL_EXPERIMENT_WORKFLOW_PLAN.md"
     if not runbook.exists():
-        runbook = pathlib.Path("/home/emre/Projects/AudioLLM/LLM-Depression/docs/PARALLEL_EXPERIMENT_WORKFLOW_PLAN.md")
-    if not runbook.exists():
-        runbook = pathlib.Path("docs/PARALLEL_EXPERIMENT_WORKFLOW_PLAN.md")
+        runbook = tmp_path / "PARALLEL_EXPERIMENT_WORKFLOW_PLAN.md"
+        runbook.write_text("# Parallel experiment workflow plan (test stub)\n", encoding="utf-8")
     state_path = tmp_path / "state.json"
     res = run_tool("init", "--runbook", str(runbook), "--execution-id", execution_id, "--output", str(state_path))
     assert res.returncode == 0, res.stderr
