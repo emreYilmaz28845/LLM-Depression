@@ -74,7 +74,11 @@ The shell starts in conda `base`, which has no PyTorch. Activate the project env
 ```bash
 conda activate llmdep4090
 python -m pytest tests/     # from the repo root; bare pytest fails to import src/scripts
+python -m pytest -n auto    # same suite on all cores (needs pytest-xdist)
+python -m pytest -n auto -m "not slow and not real_data"   # quick unit check
 ```
+
+The suite fails if any test writes into the checkout (see `tests/conftest.py`); tests must write under `tmp_path`.
 
 The no-model sanity suite is `./scripts/sanity_tests_no_model.sh` (builds manifests and audits splits; needs the dataset roots). `scripts/sanity_tests_with_model.sh` is for machines with the local base models and GPU capacity.
 
