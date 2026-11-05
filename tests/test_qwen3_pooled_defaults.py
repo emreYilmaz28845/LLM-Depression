@@ -13,6 +13,7 @@ import copy
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -93,7 +94,14 @@ def test_pooled_qwen3_migration_contract_is_pinned() -> None:
 
 
 @pytest.mark.slow
-def test_generators_are_deterministic_and_idempotent() -> None:
+def test_generators_are_deterministic_and_idempotent(tmp_path) -> None:
+    # The generators locate the project from their own file path and write
+    # configs plus an outputs/ audit. Run them on a copy so the real
+    # configs/main and outputs/ are never rewritten by the test suite.
+    copy_root = tmp_path / "project"
+    ignore = shutil.ignore_patterns("__pycache__")
+    for name in ("scripts", "src", "configs", "experiments", "tools"):
+        shutil.copytree(ROOT / name, copy_root / name, ignore=ignore, symlinks=True)
     generated = sorted(
         [f"configs/main/{cell[2]}" for cell in english_configs.CELLS]
         + [f"configs/experiments/merged/{cell[2]}" for cell in merged_configs.CELLS]
@@ -106,14 +114,14 @@ def test_generators_are_deterministic_and_idempotent() -> None:
         "scripts/build_qwen3_pooled_merged_configs.py",
     ):
         check = subprocess.run(
-            [sys.executable, script, "--check"], cwd=ROOT, capture_output=True, text=True
+            [sys.executable, script, "--check"], cwd=copy_root, capture_output=True, text=True
         )
         assert check.returncode == 0, (script, check.stderr)
         write = subprocess.run(
-            [sys.executable, script], cwd=ROOT, capture_output=True, text=True
+            [sys.executable, script], cwd=copy_root, capture_output=True, text=True
         )
         assert write.returncode == 0, (script, write.stderr)
-    after = {rel: hashlib.sha256((ROOT / rel).read_bytes()).hexdigest() for rel in generated}
+    after = {rel: hashlib.sha256((copy_root / rel).read_bytes()).hexdigest() for rel in generated}
     assert before == after
 
 

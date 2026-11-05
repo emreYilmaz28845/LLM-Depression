@@ -185,15 +185,30 @@ def test_wandb_resolver_never_exports_optuna100_entries_without_evidence(
     assert optuna_unit_ids == set()
 
 
-def test_generator_is_idempotent() -> None:
+def test_generator_is_idempotent(tmp_path: Path) -> None:
+    import shutil
     import subprocess
+    import sys
 
-    before = WANDB_SELECTION_PATH.read_text(encoding="utf-8")
+    # The tool locates the project from its own file path and rewrites both
+    # selection YAMLs. Run it on a copy so the real experiments/definitions/
+    # files are never rewritten by the test suite.
+    copy_root = tmp_path / "project"
+    for rel in (
+        "tools/build_optuna100_wandb_selection.py",
+        "experiments/definitions/workbook_optuna100_selection.yaml",
+        "experiments/definitions/workbook_wandb_selection.yaml",
+        "depression_results_clean.xlsx",
+        "scripts/build_clean_workbook.py",
+    ):
+        (copy_root / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / rel, copy_root / rel)
     result = subprocess.run(
-        ["python", str(ROOT / "tools/build_optuna100_wandb_selection.py")],
+        [sys.executable, str(copy_root / "tools/build_optuna100_wandb_selection.py")],
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0, result.stderr
-    after = WANDB_SELECTION_PATH.read_text(encoding="utf-8")
-    assert before == after
+    for path in (SELECTION_PATH, WANDB_SELECTION_PATH):
+        rel = path.relative_to(ROOT)
+        assert (copy_root / rel).read_text(encoding="utf-8") == path.read_text(encoding="utf-8"), rel
