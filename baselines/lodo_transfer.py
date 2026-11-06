@@ -11,6 +11,9 @@ subject (``dataset_probe`` loaders). Variants:
 - ``T``: per-dataset standardization; the target dataset is standardized with
   its own (unlabeled) subject statistics. Transductive: it uses target
   features, never target labels.
+- ``TE``: ``T`` followed by LEACE erasure of the (training) dataset concept,
+  fit on the per-dataset standardized training subjects with the head's sample
+  weights and applied to the standardized target.
 
 Head: L2 logistic (``fit_logistic``), equal dataset mass and balanced classes,
 penalty chosen by leave-one-training-dataset-out inner CV (mean inner macro-F1,
@@ -37,7 +40,8 @@ from baselines.concept_erasure import fit_leace  # noqa: E402
 from baselines.dataset_probe import parse_source  # noqa: E402
 from baselines.subject_mean_logreg_head import DEFAULT_L2_GRID, fit_logistic, score_metrics  # noqa: E402
 
-VARIANTS = ("B", "E", "T")
+VARIANTS = ("B", "E", "T", "TE")
+PAIRED_TESTS = (("E", "B"), ("T", "B"), ("TE", "B"), ("TE", "T"))
 
 
 def _weights(g: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -58,16 +62,16 @@ def _standardize(x, ref):
 
 
 def _prepare(variant: str, xtr, gtr, ytr, xte, gte):
-    if variant == "T":
+    if variant in ("T", "TE"):
         ztr = np.empty_like(xtr)
         for d in set(gtr.tolist()):
             ztr[gtr == d] = _standardize(xtr[gtr == d], xtr[gtr == d])
         zte = np.empty_like(xte)
         for d in set(gte.tolist()):
             zte[gte == d] = _standardize(xte[gte == d], xte[gte == d])
-        return ztr, zte
-    ztr, zte = _standardize(xtr, xtr), _standardize(xte, xtr)
-    if variant == "E":
+    else:
+        ztr, zte = _standardize(xtr, xtr), _standardize(xte, xtr)
+    if variant in ("E", "TE"):
         eraser = fit_leace(ztr, gtr, _weights(gtr, ytr))
         ztr, zte = eraser(ztr), eraser(zte)
     return ztr, zte
@@ -123,17 +127,17 @@ def main() -> None:
     lines = ["# Leave-one-dataset-out transfer (train on 4, test on the unseen 5th)", "",
              "Cells: macro-F1 / positive-F1, subject level, binary strict, threshold 0. "
              "B = global scaler, E = + LEACE dataset erasure, T = per-dataset standardization (target uses its own "
-             "unlabeled statistics).", ""]
+             "unlabeled statistics), TE = T + LEACE dataset erasure.", ""]
     for spec in args.source:
         name, src = parse_source(spec, args)
         x, g, y = src["x"], np.asarray(src["dataset"]), np.asarray(src["label"])
         res = {v: lodo(x, g, y, v) for v in VARIANTS}
         targets = sorted(res["B"])
         tests = {}
-        for v in ("E", "T"):
-            diffs = [res[v][t]["macro_f1"] - res["B"][t]["macro_f1"] for t in targets]
+        for v, ref in PAIRED_TESTS:
+            diffs = [res[v][t]["macro_f1"] - res[ref][t]["macro_f1"] for t in targets]
             p = float(stats.ttest_1samp(diffs, 0.0).pvalue) if np.std(diffs) > 0 else None
-            tests[f"{v}_vs_B"] = {"mean_diff": float(np.mean(diffs)), "p": p, "per_target": dict(zip(targets, diffs))}
+            tests[f"{v}_vs_{ref}"] = {"mean_diff": float(np.mean(diffs)), "p": p, "per_target": dict(zip(targets, diffs))}
         result["sources"][name] = {"subjects": len(y), "dimension": int(x.shape[1]), "provenance": src["provenance"],
                                    "lodo": res, "paired_t": tests,
                                    "mean_macro_f1": {v: float(np.mean([res[v][t]["macro_f1"] for t in targets]))
