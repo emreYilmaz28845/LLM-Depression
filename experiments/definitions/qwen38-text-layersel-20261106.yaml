@@ -1,0 +1,52 @@
+schema_version: audiollm.experiment_group.v1
+group_id: qwen38-text-layersel-20261106
+title: Frozen Qwen3.8-27B text features from every layer + subject-mean L2 head (layer sweep)
+research_question: >-
+  Does a non-final hidden layer of frozen Qwen3.8-27B, under the same
+  subject-mean L2 logistic head, give better text-only depression features
+  than the final layer, per dataset and transcript language?
+dataset: >-
+  Text-only routes of the frozen-base study: Androids interview, CMDC, D3TEC
+  and Turkish (native and English transcripts), DAIC-WOZ native (official
+  split, plus the official-dev cache). 10 routes.
+baseline: >-
+  Frozen Qwen3.8-27B final-layer text-only caches and heads of
+  frozen-base-standalone-heads-20261024 (same reference runs, manifests,
+  prompts and split_used.json). layer_64 of this run must equal those caches
+  bit for bit.
+treatment: >-
+  src/features/extract_qwen_hidden.py --base-only --all-layers on each
+  route's fold-0 reference run: last prompt token of the embedding output and
+  of every decoder block (layer_64 = final post-norm), 65 x 5120-d, from one
+  forward pass, 1 H100 per route. Heads: (1) headline
+  baselines/layer_select_heads.py --layers 0:64:4, layer chosen jointly with
+  L2 on inner validation; (2) pre-registered fixed layer 32 with
+  baselines/frozen_standalone_heads.py; (3) per-layer test curve, descriptive
+  only. Pre-registration: journal j-20261106T100350Z-4d46.
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: frozen_base_logreg_subjmean_l2sel_layersel
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+comparison_rule: >-
+  Unweighted five-fold mean of subject-level Macro-F1, Positive-F1 and UAR
+  (DAIC: official test), paired by route against the frozen Qwen3.8-27B
+  final-layer text rows. One run per route, no SD. The per-layer test curve is
+  never a headline.
+exclusions:
+  - lora_training
+  - audio_or_audio_text_routes
+  - extra_seeds
+  - optuna_or_hpo
+  - paper_or_prism_edits
+github_issue: null
+github_pr: 308
