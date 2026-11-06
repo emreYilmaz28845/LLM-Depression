@@ -80,6 +80,13 @@ CACHE_ARTIFACT_NAMES = (
     "final_eval_rows.jsonl",
     "extraction_metadata.json",
 )
+ALL_LAYERS_SUBDIR = "layers"
+ALL_LAYERS_SCHEMA = "qwen38_all_layers.v1"
+ALL_LAYERS_DEFINITION = (
+    "layer_00 = token embedding output; layer_k (1 <= k < N) = residual stream after "
+    "decoder block k, before any norm; layer_N = final post-norm state (identical to "
+    "the 'final' cache). Last valid prompt token, one prompt per forward pass."
+)
 
 
 def resolve_condition(value: str | None, input_modality: str | None, emotion_enabled: bool) -> str:
@@ -778,6 +785,83 @@ def _forward_final_hidden_states(
     return outputs.hidden_states[-1], getattr(outputs, "attention_mask", None)
 
 
+class LayerTap:
+    """Capture one token row from the embedding output and every decoder block but the last.
+
+    Forward hooks keep only the row at the armed index (the last valid prompt
+    token), so all layers come out of the same single forward pass that produces
+    the final vector, with no per-layer full-sequence tensors kept. The last
+    block's pre-norm output is not kept: the final post-norm vector stands in
+    for layer N.
+    """
+
+    def __init__(self, embedding: torch.nn.Module, blocks: list[torch.nn.Module]):
+        if not blocks:
+            raise ValueError("LayerTap needs at least one decoder block.")
+        self.num_hidden_layers = len(blocks)
+        self._modules = [embedding, *blocks[:-1]]
+        self._index: int | None = None
+        self._captured: list[np.ndarray | None] = [None] * len(self._modules)
+        self._handles = [
+            module.register_forward_hook(self._hook(position))
+            for position, module in enumerate(self._modules)
+        ]
+
+    @classmethod
+    def for_model(cls, model, backend: str) -> "LayerTap":
+        if backend != MODEL_BACKEND_QWEN38:
+            raise ValueError(f"--all-layers supports the {MODEL_BACKEND_QWEN38} backend only, not {backend!r}.")
+        base = _qwen38_base_decoder(model)
+        if base is None:
+            raise ValueError("Qwen3.8 base decoder not found; cannot tap layers.")
+        text = base.language_model
+        blocks = list(text.layers[: text.config.num_hidden_layers])
+        return cls(text.embed_tokens, blocks)
+
+    def _hook(self, position: int):
+        def hook(_module, _inputs, output):
+            if self._index is None:
+                return
+            if self._captured[position] is not None:
+                raise RuntimeError(f"Tapped module {position} ran twice in one forward pass.")
+            tensor = output[0] if isinstance(output, (tuple, list)) else output
+            if tensor.ndim != 3 or tensor.shape[0] != 1:
+                raise ValueError(f"Tapped output must be [1, S, H], got {tuple(tensor.shape)}.")
+            self._captured[position] = (
+                tensor[0, self._index, :].detach().float().cpu().numpy().astype(np.float32, copy=False)
+            )
+
+        return hook
+
+    def arm(self, index: int) -> None:
+        self._index = int(index)
+        self._captured = [None] * len(self._modules)
+
+    def collect(self, final_vector: np.ndarray) -> np.ndarray:
+        """Return [N + 1, H]: the captured rows followed by the final vector."""
+        missing = [position for position, row in enumerate(self._captured) if row is None]
+        if missing:
+            raise RuntimeError(f"Tapped modules did not run: {missing[:5]}.")
+        self._index = None
+        return np.stack([*self._captured, final_vector]).astype(np.float32, copy=False)
+
+    def close(self) -> None:
+        for handle in self._handles:
+            handle.remove()
+        self._handles = []
+
+
+def _armed_index(model_inputs: dict[str, Any]) -> int:
+    """Last valid token index under the same rule as ``last_valid_token`` (batch of one)."""
+    mask = model_inputs["attention_mask"]
+    if mask.ndim != 2 or mask.shape[0] != 1:
+        raise ValueError("--all-layers needs one prompt per forward pass.")
+    count = int(mask.long().sum().item())
+    if count <= 0:
+        raise ValueError("Every extraction input must contain at least one valid token.")
+    return count - 1
+
+
 def _extract_partition(
     *,
     model,
@@ -789,6 +873,7 @@ def _extract_partition(
     partition: str,
     max_examples: int | None,
     expected_hidden_size: int,
+    layer_tap: LayerTap | None = None,
 ) -> dict[str, Any]:
     device = next(model.parameters()).device
     sampling_rate = resolve_processor_sampling_rate(processor)
@@ -804,9 +889,11 @@ def _extract_partition(
     else:
         collator = PromptOnlyExtractionCollator(processor)
     vectors: list[np.ndarray] = []
+    layer_stacks: list[np.ndarray] = []
     rows: list[dict[str, Any]] = []
     mask_sources: dict[str, int] = {}
     determinism_max_abs_diff: float | None = None
+    layer_determinism_max_abs_diff: float | None = None
     selected = examples[:max_examples] if max_examples else examples
     seen_samples: set[str] = set()
     subject_labels: dict[str, int] = {}
@@ -849,6 +936,9 @@ def _extract_partition(
                         f"Gemma text-only extraction must omit audio feature tensors: "
                         f"{sorted(extra_audio)}"
                     )
+        armed_index = _armed_index(model_inputs) if layer_tap is not None else None
+        if layer_tap is not None:
+            layer_tap.arm(armed_index)
         hidden, output_mask = _forward_final_hidden_states(model, model_inputs, backend)
         if gemma_backend:
             if tuple(hidden.shape[:2]) != tuple(model_inputs["attention_mask"].shape):
@@ -865,7 +955,20 @@ def _extract_partition(
             raise ValueError(f"Expected {expected_hidden_size} features, got {vector.shape}.")
         if not bool(np.isfinite(vector).all()):
             raise ValueError(f"Non-finite vector for sample {metadata['sample_id']}.")
+        layer_stack = None
+        if layer_tap is not None:
+            pooled_index = int(mask.long().sum().item()) - 1
+            if tuple(hidden.shape[:2]) != tuple(model_inputs["attention_mask"].shape) or pooled_index != armed_index:
+                raise ValueError(
+                    f"Layer tap index {armed_index} does not match the pooled final-token index "
+                    f"{pooled_index} for sample {metadata['sample_id']}."
+                )
+            layer_stack = layer_tap.collect(vector)
+            if not bool(np.isfinite(layer_stack).all()):
+                raise ValueError(f"Non-finite layer vector for sample {metadata['sample_id']}.")
         if index == 1:
+            if layer_tap is not None:
+                layer_tap.arm(armed_index)
             repeated_hidden, repeated_output_mask = _forward_final_hidden_states(
                 model, model_inputs, backend
             )
@@ -886,6 +989,14 @@ def _extract_partition(
                     f"Determinism check failed for {metadata['sample_id']}: "
                     f"max_abs_diff={determinism_max_abs_diff}"
                 )
+            if layer_tap is not None:
+                repeated_stack = layer_tap.collect(repeated_vector)
+                layer_determinism_max_abs_diff = float(np.max(np.abs(layer_stack - repeated_stack)))
+                if not np.allclose(layer_stack, repeated_stack, rtol=1e-5, atol=1e-5):
+                    raise ValueError(
+                        f"Layer determinism check failed for {metadata['sample_id']}: "
+                        f"max_abs_diff={layer_determinism_max_abs_diff}"
+                    )
         sample_id = metadata["sample_id"]
         if sample_id in seen_samples:
             raise ValueError(f"Duplicate sample ID within {partition}: {sample_id}")
@@ -949,6 +1060,8 @@ def _extract_partition(
             })
         rows.append(metadata)
         vectors.append(vector)
+        if layer_stack is not None:
+            layer_stacks.append(layer_stack)
         mask_sources[mask_source] = mask_sources.get(mask_source, 0) + 1
         if index % 25 == 0 or index == len(selected):
             print(f"{partition}: extracted {index}/{len(selected)}", flush=True)
@@ -967,6 +1080,14 @@ def _extract_partition(
         "determinism_atol": 1e-5,
         "determinism_max_abs_diff": determinism_max_abs_diff,
     }
+    if layer_tap is not None:
+        _write_layer_partition(
+            output_dir, partition, layer_stacks, rows, layer_tap.num_hidden_layers, expected_hidden_size
+        )
+        summary["all_layers"] = {
+            "layers": layer_tap.num_hidden_layers + 1,
+            "determinism_max_abs_diff": layer_determinism_max_abs_diff,
+        }
     if pooled_turkish:
         expected = {"pos_only_t17", "negative_only_t17"}
         if set(condition_counts) != expected:
@@ -1009,6 +1130,48 @@ def _extract_partition(
     return summary
 
 
+def layer_dir(output_dir: Path, layer: int) -> Path:
+    return output_dir / ALL_LAYERS_SUBDIR / f"layer_{layer:02d}"
+
+
+def _write_layer_partition(
+    output_dir: Path,
+    partition: str,
+    layer_stacks: list[np.ndarray],
+    rows: list[dict[str, Any]],
+    num_hidden_layers: int,
+    hidden_size: int,
+) -> None:
+    """Write one ``layer_XX`` cache partition per hidden state from [rows, N + 1, H] stacks."""
+    stacked = (
+        np.stack(layer_stacks)
+        if layer_stacks
+        else np.empty((0, num_hidden_layers + 1, hidden_size), np.float32)
+    )
+    if stacked.shape[1:] != (num_hidden_layers + 1, hidden_size) or len(stacked) != len(rows):
+        raise ValueError(f"Unexpected layer stack shape {stacked.shape} for {len(rows)} rows.")
+    for layer in range(num_hidden_layers + 1):
+        target = layer_dir(output_dir, layer)
+        target.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(target / f"{partition}.npz", vectors=np.ascontiguousarray(stacked[:, layer, :]))
+        layer_rows = [{**row, "hidden_layer": layer} for row in rows]
+        write_jsonl(layer_rows, target / f"{partition}_rows.jsonl")
+
+
+def write_layer_metadata(output_dir: Path, metadata: dict[str, Any], num_hidden_layers: int) -> None:
+    """Per-layer ``extraction_metadata.json``: the final cache's metadata with the layer fields set."""
+    for layer in range(num_hidden_layers + 1):
+        layer_metadata = {
+            **metadata,
+            "hidden_layer": layer,
+            "hidden_layer_index": layer,
+            "hidden_layer_count": num_hidden_layers + 1,
+            "hidden_layer_definition": ALL_LAYERS_DEFINITION,
+            "all_layers_schema": ALL_LAYERS_SCHEMA,
+        }
+        save_json(layer_metadata, layer_dir(output_dir, layer) / "extraction_metadata.json")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Extract prompt-only final hidden vectors.")
     parser.add_argument("--checkpoint-dir", required=True, type=Path)
@@ -1044,6 +1207,13 @@ def parse_args() -> argparse.Namespace:
         default="saved",
         help="DAIC official split only: 'selection' writes the official development "
         "subjects into the final_eval cache instead of the saved test subjects.",
+    )
+    parser.add_argument(
+        "--all-layers",
+        action="store_true",
+        help="Qwen3.8 only: also write <output-dir>/layers/layer_XX caches for the embedding "
+        "output, every decoder block and the final post-norm state, from the same forward pass. "
+        "The top-level final cache is unchanged.",
     )
     return parser.parse_args()
 
@@ -1302,6 +1472,10 @@ def main() -> None:
     }
     if args.final_eval_source != "saved":
         cache_config["final_eval_source"] = args.final_eval_source
+    if args.all_layers:
+        if backend != MODEL_BACKEND_QWEN38:
+            raise ValueError(f"--all-layers supports the {MODEL_BACKEND_QWEN38} backend only, not {backend!r}.")
+        cache_config["all_layers_schema"] = ALL_LAYERS_SCHEMA
     if base_only:
         # The checkpoint is only a reference for config/split/prompt; its
         # adapter hashes are kept for traceability but never loaded.
@@ -1380,6 +1554,7 @@ def main() -> None:
     _place_model_for_extraction(model, config)
     model.eval()
     expected_hidden_size = _decoder_hidden_size(model, config)
+    layer_tap = LayerTap.for_model(model, backend) if args.all_layers else None
     partition_summaries = {}
     for partition in ("outer_train", "final_eval"):
         partition_summaries[partition] = _extract_partition(
@@ -1392,7 +1567,10 @@ def main() -> None:
             partition=partition,
             max_examples=args.max_examples,
             expected_hidden_size=expected_hidden_size,
+            layer_tap=layer_tap,
         )
+    if layer_tap is not None:
+        layer_tap.close()
     metadata = {
         "dataset": config["dataset"],
         "condition": condition,
@@ -1452,6 +1630,15 @@ def main() -> None:
                 "aggregation_policy": cache_config.get("aggregation_policy"),
                 "paired_text_examples_per_subject": 2,
             })
+    if layer_tap is not None:
+        metadata["all_layers"] = {
+            "schema": ALL_LAYERS_SCHEMA,
+            "subdir": ALL_LAYERS_SUBDIR,
+            "layers": layer_tap.num_hidden_layers + 1,
+            "definition": ALL_LAYERS_DEFINITION,
+        }
+        # Layer metadata first: the top-level metadata is the completeness marker.
+        write_layer_metadata(output_dir, metadata, layer_tap.num_hidden_layers)
     save_json(metadata, output_dir / "extraction_metadata.json")
     print(json.dumps(metadata, indent=2), flush=True)
 

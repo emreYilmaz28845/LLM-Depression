@@ -81,3 +81,25 @@ def test_requires_contiguous_layers(layered):
     with pytest.raises(ValueError, match="layer_00..layer_NN"):
         run(layers_root=root, dev_layers_root=None, split_files=splits, protocol="train_val",
             output_dir=tmp / "out", route={})
+
+
+def test_parse_layers():
+    from baselines.layer_select_heads import parse_layers
+    assert parse_layers(None) is None and parse_layers("all") is None
+    assert parse_layers("0:64:4") == list(range(0, 65, 4)) and len(parse_layers("0:64:4")) == 17
+    assert parse_layers("3,1") == [1, 3]
+    for bad in ("1,1", "4:0:1", "0:4:0", "-1"):
+        with pytest.raises(ValueError):
+            parse_layers(bad)
+
+
+def test_layer_subset_restricts_candidates(layered):
+    root, splits, tmp = layered
+    summary = run(layers_root=root, dev_layers_root=None, split_files=splits, protocol="train_val",
+                  output_dir=tmp / "sub", route={}, layers=[0, 1, 3])
+    assert SIGNAL_LAYER not in summary["selected_layers"]
+    config = json.loads((tmp / "sub" / "result_config.json").read_text())
+    assert config["layers"] == [0, 1, 3]
+    with pytest.raises(ValueError, match="Requested layers"):
+        run(layers_root=root, dev_layers_root=None, split_files=splits, protocol="train_val",
+            output_dir=tmp / "bad", route={}, layers=[0, 9])

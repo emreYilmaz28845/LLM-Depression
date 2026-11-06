@@ -43,6 +43,7 @@ SKIP_CLASSIFIERS="${SKIP_CLASSIFIERS:-0}"
 CLASSIFIER_VARIANTS="${CLASSIFIER_VARIANTS:-}"
 BASE_ONLY="${BASE_ONLY:-0}"
 FINAL_EVAL_SOURCE="${FINAL_EVAL_SOURCE:-}"
+ALL_LAYERS="${ALL_LAYERS:-0}"
 QWEN_HIDDEN_DEPS="${QWEN_HIDDEN_DEPS:-$PROJECT_ROOT/.deps/qwen_hidden}"
 export PYTHONPATH="$QWEN_HIDDEN_DEPS:$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
@@ -63,6 +64,7 @@ if [ -n "$EMOTION_SOURCE" ]; then CMD+=(--emotion-source "$EMOTION_SOURCE"); fi
 if [ -n "$EMOTION_LANGUAGE" ]; then CMD+=(--emotion-language "$EMOTION_LANGUAGE"); fi
 if [ "$BASE_ONLY" = "1" ]; then CMD+=(--base-only); fi
 if [ -n "$FINAL_EVAL_SOURCE" ]; then CMD+=(--final-eval-source "$FINAL_EVAL_SOURCE"); fi
+if [ "$ALL_LAYERS" = "1" ]; then CMD+=(--all-layers); fi
 printf 'Extraction command: '; printf '%q ' "${CMD[@]}"; printf '\n'
 "${CMD[@]}"
 
