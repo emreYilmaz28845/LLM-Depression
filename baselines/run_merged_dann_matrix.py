@@ -170,9 +170,9 @@ def render(summary: dict, meta: dict, variants: list[str]) -> str:
              SELECTED: "Dsel (inner-selected λ)"}
     cell = lambda m: f"{m['macro_f1']:.3f} / {m['positive_f1']:.3f}"  # noqa: E731
     lines = [f"# Merged {meta['route']}: gradient reversal (DANN) head vs the L2 head", "",
-             f"Commit `{meta['commit']}`. Seeds {meta['seeds']}. Cells: macro-F1 / positive-F1, subject level, binary "
+             f"Runs at commit `{meta.get('runs_commit') or meta['commit']}` (summary `{meta['commit']}`). Seeds {meta['seeds']}. Cells: macro-F1 / positive-F1, subject level, binary "
              "strict; CV fold-mean, DAIC = official test; seeded variants averaged over seeds.", "",
-             "| Dataset | " + " | ".join(label.get(v, f"{v} (reversal, λ={variant_lambda(v)})") for v in order) + " |",
+             "| Dataset | " + " | ".join((label[v] if v in label else f"{v} (reversal, λ={variant_lambda(v)})") for v in order) + " |",
              "|---|" + "---|" * len(order)]
     for d in datasets:
         lines.append(f"| {DATASET_NAMES.get(d, d)} | " + " | ".join(cell(t[v]["headline"][d]) for v in order) + " |")
@@ -211,11 +211,15 @@ def main() -> None:
     parser.add_argument("--lambdas", default=",".join(f"{x:g}" for x in LAMBDA_GRID))
     parser.add_argument("--seeds", default="0,1,2")
     parser.add_argument("--workers", type=int, default=3)
+    parser.add_argument("--summarize-only", action="store_true",
+                        help="Skip the head runs and rebuild summary.json / summary.md from an existing output root.")
     args = parser.parse_args()
     lambdas = tuple(float(x) for x in args.lambdas.split(",") if x)
     variants = [lambda_name(x) for x in lambdas] + [SELECTED]
     seeds = [int(s) for s in args.seeds.split(",") if s]
-    if args.output_root.exists() and any(args.output_root.iterdir()):
+    if args.summarize_only and not (args.output_root / "runs").is_dir():
+        raise SystemExit(f"--summarize-only needs existing runs under {args.output_root}.")
+    if not args.summarize_only and args.output_root.exists() and any(args.output_root.iterdir()):
         raise SystemExit(f"Refusing to overwrite {args.output_root}.")
     caches = frozen_caches(args.frozen_caches_root, args.frozen_daic_audio, args.language, args.modality)
     index, audit = load_frozen_index(caches)
@@ -231,7 +235,9 @@ def main() -> None:
     standalone = load_standalone(args.standalone_export_csv, args.standalone_daic_traincv, args.language, args.modality)
     identity = fold_identity(standalone, features_of)
     jobs = [(stage, fold, seed, str(args.output_root / "runs"), lambdas) for seed in seeds for stage, fold in STAGES]
-    print(f"{len(jobs)} head runs", flush=True)
+    print(f"{len(jobs)} head runs" + (" (summarize only)" if args.summarize_only else ""), flush=True)
+    if args.summarize_only:
+        jobs = []
     with ProcessPoolExecutor(max_workers=args.workers) as pool:  # fork: workers inherit _DATA
         for future in as_completed([pool.submit(_job, j) for j in jobs]):
             print(future.result(), flush=True)
@@ -246,6 +252,12 @@ def main() -> None:
             "standalone_export_csv": str(args.standalone_export_csv),
             "standalone_daic_traincv": str(args.standalone_daic_traincv),
             "dann_config_defaults": DannConfig().__dict__, "fold_identity": identity}
+    previous = args.output_root / "summary.json"
+    if args.summarize_only:
+        meta["runs_commit"] = (json.loads(previous.read_text())["meta"].get("runs_commit")
+                               or json.loads(previous.read_text())["meta"]["commit"]) if previous.exists() else None
+    else:
+        meta["runs_commit"] = meta["commit"]
     summary = {"meta": meta, **summarize(args.output_root, args.reference_root, standalone, variants, seeds)}
     (args.output_root / "summary.json").write_text(json.dumps(summary, indent=2, default=float))
     text = render(summary, meta, variants)
