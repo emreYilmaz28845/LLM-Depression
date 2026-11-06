@@ -13,7 +13,9 @@ The gradient reversal layer is the identity on the forward pass and multiplies
 the gradient by ``-lambda`` on the backward pass: the dataset head learns to
 recognise the dataset, the encoder learns to make that hard while keeping
 depression detectable. ``lambda`` ramps from 0 to ``adv_lambda`` with the usual
-``2 / (1 + exp(-10 p)) - 1`` schedule (``p`` = training progress).
+``2 / (1 + exp(-10 p)) - 1`` schedule, where ``p`` is progress through the first
+``ramp_epochs`` epochs (fixed, so an encoder snapshot at epoch ``e`` of a long
+run saw the same schedule as a run of ``e`` epochs).
 ``adv_lambda = 0`` is the same network with no adversarial pressure.
 
 Batches are drawn from rows oversampled so that every dataset x class cell has
@@ -54,8 +56,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from baselines.subject_mean_logreg_head import DEFAULT_L2_GRID, fit_logistic, score_metrics  # noqa: E402
 
-EPOCH_GRID = (10, 25, 50, 100)
-LAMBDA_GRID = (0.0, 0.1, 0.3, 1.0)
+EPOCH_GRID = (5, 10, 25, 50)
+LAMBDA_GRID = (0.0, 0.3, 1.0, 3.0)
 SELECTION_RULE = ("max mean per-dataset inner macro-F1, then min BCE, then larger L2, then fewer epochs "
                   "(across lambda: then smaller lambda)")
 
@@ -72,6 +74,7 @@ class DannConfig:
     weight_decay: float = 1e-2
     batch_size: int = 64
     epochs: int = max(EPOCH_GRID)
+    ramp_epochs: int = 10
 
 
 class _GradReverse(torch.autograd.Function):
@@ -151,7 +154,7 @@ def train_dann(x: np.ndarray, y: np.ndarray, groups: list[str], cfg: DannConfig,
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     bce, ce = nn.BCEWithLogitsLoss(), nn.CrossEntropyLoss()
     steps_per_epoch = math.ceil(len(rows) / cfg.batch_size)
-    total = cfg.epochs * steps_per_epoch
+    ramp_steps = cfg.ramp_epochs * steps_per_epoch
     step, history, snapshots = 0, [], {}
     for epoch in range(1, cfg.epochs + 1):
         model.train()
@@ -159,7 +162,7 @@ def train_dann(x: np.ndarray, y: np.ndarray, groups: list[str], cfg: DannConfig,
         sums = np.zeros(4)
         for start in range(0, len(order), cfg.batch_size):
             batch = torch.as_tensor(order[start:start + cfg.batch_size])
-            lam = cfg.adv_lambda * _ramp(step / max(total - 1, 1))
+            lam = cfg.adv_lambda * _ramp(min(1.0, step / max(ramp_steps, 1)))
             dep_logit, dataset_logit, _ = model(xt[batch], lam)
             loss_dep = bce(dep_logit, yt[batch])
             loss_dataset = ce(dataset_logit, gt[batch])
