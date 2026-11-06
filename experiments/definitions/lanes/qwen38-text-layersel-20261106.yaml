@@ -7,5 +7,5 @@ worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-feat-qwen38-text
 parent_branch: main
 parent_sha: 2605fe7f22e51d5da6b538822f5c2ff4457fdc9d
 created_at_utc: "2026-11-06T10:03:43Z"
-experiment_group_path: null
+experiment_group_path: experiments/definitions/qwen38-text-layersel-20261106.yaml
 type: complementary
