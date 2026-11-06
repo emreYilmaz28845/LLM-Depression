@@ -12,7 +12,9 @@ plus the merged final fold. The new head (``subjmean_l2``, balancing
 - ``I``: global scaler plus a one-hot dataset indicator (same L2 penalty);
 - ``SI``: both;
 - ``E``: global scaler plus LEACE erasure of the dataset from the subject means
-  (opt-in through ``--variants``; see ``baselines.concept_erasure``).
+  (opt-in through ``--variants``; see ``baselines.concept_erasure``);
+- ``X`` / ``XI``: the XGBoost head ``subjmean_xgb`` instead of the L2 head, without / with the
+  one-hot dataset indicator (opt-in through ``--variants``).
 
 Also loads the standalone frozen new head of the same route: the advisor export
 test-split predictions per CV fold, and for DAIC the train-CV-selected head on
@@ -49,14 +51,21 @@ from baselines.run_merged_head_matrix import STAGES, features_dir, frozen_caches
 
 # variant -> (normalization, dataset_indicator, erasure)
 VARIANTS = {"B": ("global", False, "none"), "S": ("per_dataset", False, "none"), "I": ("global", True, "none"),
-            "SI": ("per_dataset", True, "none"), "E": ("global", False, "leace")}
+            "SI": ("per_dataset", True, "none"), "E": ("global", False, "leace"),
+            "X": ("global", False, "none"), "XI": ("global", True, "none")}
 DEFAULT_VARIANTS = ("B", "S", "I", "SI")
 REFERENCE = "B"
 STANDALONE = "standalone"
 LABELS = {"B": "B: global scaler (current)", "S": "S: per-dataset scaler", "I": "I: dataset indicator",
           "SI": "S+I: per-dataset scaler + indicator", "E": "E: LEACE dataset erasure",
+          "X": "X: XGBoost", "XI": "X+I: XGBoost + dataset indicator",
           STANDALONE: "Standalone frozen + new head"}
 HEAD = "subjmean_l2"
+XGB_HEAD = "subjmean_xgb"
+
+
+def head_of(variant: str) -> str:
+    return XGB_HEAD if variant.startswith("X") else HEAD
 BALANCING = "dataset_class_weight"
 DAIC = "daic"
 
@@ -64,7 +73,7 @@ DAIC = "daic"
 def _job(args):
     features, output, caches, variant, balancing, seed = args
     normalization, indicator, erasure = VARIANTS[variant]
-    run(features, output, "frozen", caches, (HEAD,), balancing, seed, normalization, indicator, erasure)
+    run(features, output, "frozen", caches, (head_of(variant),), balancing, seed, normalization, indicator, erasure)
     return str(output)
 
 
@@ -136,11 +145,14 @@ def summarize(root: Path, standalone: dict, variants: tuple[str, ...] = DEFAULT_
     for variant in variants:
         for stage, fold in STAGES:
             run_dir = root / "runs" / variant / f"{stage}_fold_{fold}"
-            head = json.loads((run_dir / "summary.json").read_text())["heads"][HEAD]
-            l2[variant].append({"stage": stage, "fold": fold, "l2": head["selection"]["selected_l2_penalty"]})
-            if "indicator_weights" in head["fit_info"]:
-                indicator[variant].append({"stage": stage, "fold": fold, "weights": head["fit_info"]["indicator_weights"]})
-            scores = _fold_scores(run_dir, HEAD)
+            head = json.loads((run_dir / "summary.json").read_text())["heads"][head_of(variant)]
+            selection = head["selection"]
+            l2[variant].append({"stage": stage, "fold": fold,
+                                "l2": selection.get("selected_l2_penalty", selection.get("selected_params"))})
+            weights = head["fit_info"].get("indicator_weights", head["fit_info"].get("indicator_gain"))
+            if weights is not None:
+                indicator[variant].append({"stage": stage, "fold": fold, "weights": weights})
+            scores = _fold_scores(run_dir, head_of(variant))
             if stage == "final":
                 final[variant] = scores
                 continue

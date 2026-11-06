@@ -323,8 +323,11 @@ def test_leace_head_fits_on_training_subjects_and_hides_dataset_offsets():
     assert _subject_logits(shifted, units, head, subjects).shape == (len(subjects),)
     plain = _fit_subject_head(shifted, units, subjects, 0.1)
     assert "erasure" not in plain[4] and plain[5] is None
+    oversampled = _fit_subject_head(shifted, units, subjects, 0.1, "oversample_dataset_class",
+                                    np.random.default_rng(0), erasure="leace")
+    assert oversampled[4]["erasure_info"]["gap_after"] < 1e-8
     with pytest.raises(ValueError, match="LEACE"):
-        _fit_subject_head(shifted, units, subjects, 0.1, "oversample_dataset_class", np.random.default_rng(0),
+        _fit_subject_head(shifted, units, subjects, 0.1, "smote_dataset_class", np.random.default_rng(0),
                           erasure="leace")
 
 
@@ -338,3 +341,18 @@ def test_fit_subjmean_l2_records_erasure_and_default_summary_unchanged():
     assert erased["dataset_shift"]["erasure"] == "leace"
     default = fit_subjmean_l2(xi, train, xh, hold)
     assert "erasure" not in default["dataset_shift"]
+
+
+def test_xgb_head_runs_with_indicator_and_is_deterministic(tmp_path):
+    pytest.importorskip("xgboost")
+    rows, vectors = _imbalanced_rows()
+    features = _features(tmp_path / "features", rows, vectors)
+    first = run(features, tmp_path / "a", "lora", heads=("subjmean_xgb",), dataset_indicator=True)
+    second = run(features, tmp_path / "b", "lora", heads=("subjmean_xgb",), dataset_indicator=True)
+    head = first["heads"]["subjmean_xgb"]
+    assert head["dataset_shift"] == {"normalization": "global", "dataset_indicator": True}
+    assert set(head["fit_info"]["indicator_gain"]) == set(DATASETS)
+    assert set(head["metrics_by_dataset"]) == set(DATASETS)
+    assert head["selection"]["selected_params"] in [c["params"] for c in head["selection"]["candidates"]]
+    assert (tmp_path / "a" / "subjmean_xgb" / "predictions_subject_level.csv").read_text() == \
+        (tmp_path / "b" / "subjmean_xgb" / "predictions_subject_level.csv").read_text()

@@ -52,8 +52,8 @@ subject-mean rows with the dataset as the concept and the head's sample weights,
 and applied to every training and holdout subject mean. Afterwards the weighted
 per-dataset means of the training rows are equal, so no linear head can read
 the dataset from them. The eraser is refit inside every inner fold and needs no
-dataset label at prediction time. Not combinable with the seeded balancing
-policies or with ``dataset_indicator``.
+dataset label at prediction time. Combinable with ``oversample_dataset_class``
+(copied rows) but not with SMOTE or ``dataset_indicator``.
 
 ``paper_logreg_class_balanced`` is ``paper_logreg`` with the hierarchical
 weights rescaled so the two classes carry equal mass inside every dataset.
@@ -315,8 +315,10 @@ def _fit_subject_head(x: np.ndarray, units: SubjectUnits, subjects: list[str], p
         groups = [units.dataset[s] for s in fit_subjects]
     eraser, erasure_info = None, {}
     if erasure == "leace":
-        if balancing in SEEDED_BALANCING or dataset_indicator:
-            raise ValueError("LEACE erasure works only with unseeded balancing and without the dataset indicator.")
+        # Oversampling only copies rows (integer weights), so LEACE fits on it as on weighted rows;
+        # SMOTE rows are synthetic, so it stays excluded.
+        if balancing == "smote_dataset_class" or dataset_indicator:
+            raise ValueError("LEACE erasure does not work with SMOTE balancing or the dataset indicator.")
         eraser = fit_leace(features, groups, sample_weight)
         erasure_info = {"gap_before": max_group_mean_gap(features, groups, sample_weight)}
         features = eraser(features)
@@ -416,6 +418,85 @@ def fit_subjmean_l2(x_train, train_rows, x_holdout, holdout_rows, grid=DEFAULT_L
     }
 
 
+XGB_GRID = tuple({"max_depth": d, "n_estimators": n, "learning_rate": 0.05}
+                 for d in (2, 3) for n in (100, 300))
+XGB_SELECTION_RULE = "max mean per-dataset inner macro-F1, then min BCE, then grid order"
+
+
+def _fit_subject_xgb(x: np.ndarray, units: SubjectUnits, subjects: list[str], params: dict[str, Any],
+                     dataset_indicator: bool):
+    """Gradient-boosted trees on global-standardized subject means (dataset x class weights)."""
+    from xgboost import XGBClassifier
+
+    scalers = _fit_scalers(x, units, subjects, "global")
+    features = units.means(_standardize(x, units, scalers), subjects)
+    if dataset_indicator:
+        features = _with_indicator(features, [units.dataset[s] for s in subjects])
+    weights = dataset_class_weights(subjects, units)
+    model = XGBClassifier(**params, subsample=1.0, colsample_bytree=0.5, tree_method="hist",
+                          random_state=HEAD_SEED, n_jobs=2, eval_metric="logloss")
+    model.fit(features, units.y(subjects), sample_weight=weights * len(weights) / weights.sum())
+    return scalers, dataset_indicator, model
+
+
+def _subject_xgb_logits(x: np.ndarray, units: SubjectUnits, head, subjects: list[str]) -> np.ndarray:
+    scalers, dataset_indicator, model = head
+    features = units.means(_standardize(x, units, scalers), subjects)
+    if dataset_indicator:
+        features = _with_indicator(features, [units.dataset[s] for s in subjects])
+    return np.asarray(model.predict(features, output_margin=True), dtype=np.float64)
+
+
+def fit_subjmean_xgb(x_train, train_rows, x_holdout, holdout_rows, grid=XGB_GRID,
+                     dataset_indicator: bool = False) -> dict[str, Any]:
+    """XGBoost counterpart of ``subjmean_l2``: same subjects, weights, inner folds and selection rule."""
+    tr = SubjectUnits(train_rows)
+    ho = SubjectUnits(holdout_rows)
+    train = sorted(tr.units)
+    inner = build_grouped_inner_folds(train_rows, inner_folds=INNER_FOLDS, seed=INNER_SEED)
+    candidates = []
+    for index, params in enumerate(grid):
+        oof: dict[str, float] = {}
+        for fold in inner["folds"]:
+            held = set(fold["validation_subject_ids"])
+            head = _fit_subject_xgb(x_train, tr, [s for s in train if s not in held], params, dataset_indicator)
+            held_list = [s for s in train if s in held]
+            oof.update(zip(held_list, _subject_xgb_logits(x_train, tr, head, held_list).tolist()))
+        logits = np.asarray([oof[s] for s in train])
+        per = _per_dataset(tr, train, logits)
+        candidates.append({
+            "params": params, "grid_index": index,
+            "mean_dataset_macro_f1": float(np.mean([m["macro_f1"] for m in per.values()])),
+            "binary_cross_entropy": float(np.mean(np.logaddexp(0.0, logits) - tr.y(train) * logits)),
+            "per_dataset_macro_f1": {d: m["macro_f1"] for d, m in per.items()},
+        })
+    best = max(candidates, key=lambda c: (c["mean_dataset_macro_f1"], -c["binary_cross_entropy"], -c["grid_index"]))
+    head = _fit_subject_xgb(x_train, tr, train, best["params"], dataset_indicator)
+    holdout = sorted(ho.units)
+    logits = _subject_xgb_logits(x_holdout, ho, head, holdout)
+    predictions = [
+        {"dataset": ho.dataset[s], "subject_id": s, "label": ho.labels[s], "prediction": int(z > 0),
+         "probability": 1.0 / (1.0 + math.exp(-z)), "mean_logit": z, "num_units": len(ho.units[s])}
+        for s, z in zip(holdout, logits.tolist())
+    ]
+    fit_info = {"dataset_indicator": dataset_indicator, "balancing": "dataset_class_weight"}
+    if dataset_indicator:
+        gain = head[2].get_booster().get_score(importance_type="gain")
+        n = features_dim = len(head[0]["*"][0])
+        fit_info["indicator_gain"] = {d: float(gain.get(f"f{n + i}", 0.0)) for i, d in enumerate(DATASETS)}
+        fit_info["feature_dimension"] = features_dim
+    return {
+        "balancing": {"policy": "dataset_class_weight", "oversample_seed": None},
+        "dataset_shift": {"normalization": "global", "dataset_indicator": dataset_indicator},
+        "selection": {"selected_params": best["params"], "rule": XGB_SELECTION_RULE,
+                      "inner_folds": INNER_FOLDS, "inner_seed": INNER_SEED,
+                      "inner_assignments_hash": inner.get("assignments_hash"), "candidates": candidates},
+        "fit_info": fit_info,
+        "metrics_by_dataset": _per_dataset(ho, holdout, logits),
+        "predictions": predictions,
+    }
+
+
 def class_balanced_hierarchical_weights(rows: list[dict[str, Any]]) -> np.ndarray:
     """Hierarchical merged weights, rescaled so each class has half of every dataset's mass (mean 1)."""
     weighted, _ = compute_hierarchical_example_weights(rows, expected_datasets=DATASETS)
@@ -493,7 +574,8 @@ def run(features_dir: Path, output_dir: Path, source: str, frozen_caches: list[P
                "subjmean_l2": lambda *a: fit_subjmean_l2(*a, balancing=balancing, oversample_seed=oversample_seed,
                                                          normalization=normalization,
                                                          dataset_indicator=dataset_indicator,
-                                                         erasure=erasure)}
+                                                         erasure=erasure),
+               "subjmean_xgb": lambda *a: fit_subjmean_xgb(*a, dataset_indicator=dataset_indicator)}
     for name in heads:
         result = fitters[name](x_train, train_rows, x_holdout, holdout_rows)
         head_dir = output_dir / name
