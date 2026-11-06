@@ -3,7 +3,7 @@
 
 Frozen base features, one merged route (default native audio_only), 5 CV folds
 plus the merged final fold. The new head (``subjmean_l2``, balancing
-``dataset_class_weight``) is fitted in four variants (see
+``dataset_class_weight`` by default, ``--balancing`` to change it) is fitted in four variants (see
 ``merged_subject_mean_heads``):
 
 - ``B``: one global scaler (the current head; a control that must reproduce
@@ -43,7 +43,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from baselines.head_ablation_stats import _metrics, _paired_t  # noqa: E402
-from baselines.merged_subject_mean_heads import run  # noqa: E402
+from baselines.merged_subject_mean_heads import BALANCING as BALANCING_CHOICES, run  # noqa: E402
 from baselines.run_merged_balancing_matrix import DATASET_NAMES, _fold_scores, train_counts  # noqa: E402
 from baselines.run_merged_head_matrix import STAGES, features_dir, frozen_caches  # noqa: E402
 
@@ -62,9 +62,9 @@ DAIC = "daic"
 
 
 def _job(args):
-    features, output, caches, variant = args
+    features, output, caches, variant, balancing, seed = args
     normalization, indicator, erasure = VARIANTS[variant]
-    run(features, output, "frozen", caches, (HEAD,), BALANCING, 0, normalization, indicator, erasure)
+    run(features, output, "frozen", caches, (HEAD,), balancing, seed, normalization, indicator, erasure)
     return str(output)
 
 
@@ -233,6 +233,8 @@ def main() -> None:
     parser.add_argument("--language", default="native")
     parser.add_argument("--modality", default="audio_only")
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--balancing", default=BALANCING, choices=BALANCING_CHOICES)
+    parser.add_argument("--oversample-seed", type=int, default=0)
     parser.add_argument("--variants", default=",".join(DEFAULT_VARIANTS),
                         help=f"Comma list from {','.join(VARIANTS)}; must include {REFERENCE}.")
     args = parser.parse_args()
@@ -246,7 +248,8 @@ def main() -> None:
                    for stage, fold in STAGES}
     standalone = load_standalone(args.standalone_export_csv, args.standalone_daic_traincv, args.language, args.modality)
     identity = fold_identity(standalone, features_of)
-    jobs = [(features_of[(stage, fold)], args.output_root / "runs" / v / f"{stage}_fold_{fold}", caches, v)
+    jobs = [(features_of[(stage, fold)], args.output_root / "runs" / v / f"{stage}_fold_{fold}", caches, v,
+             args.balancing, args.oversample_seed)
             for v in variants for stage, fold in STAGES]
     print(f"{len(jobs)} head runs", flush=True)
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
@@ -254,7 +257,7 @@ def main() -> None:
             print(future.result(), flush=True)
     meta = {"commit": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
                                      cwd=PROJECT_ROOT).stdout.strip(),
-            "route": f"{args.language}_{args.modality}", "balancing": BALANCING,
+            "route": f"{args.language}_{args.modality}", "balancing": args.balancing, "oversample_seed": args.oversample_seed,
             "merged_features_root": str(args.merged_features_root), "row_index_seed": 1337,
             "frozen_caches": [str(c) for c in caches],
             "standalone_export_csv": str(args.standalone_export_csv),
