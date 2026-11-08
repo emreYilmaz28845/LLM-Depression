@@ -33,3 +33,39 @@ def test_metrics_macro_f1_zero_division():
     m = metrics(np.array([0, 0, 1, 1]), np.array([0, 0, 0, 0]))
     assert m["macro_f1"] == (0.0 + 2 * 0.5 / 1.5) / 2
     assert m["confusion_matrix"] == [[2, 0], [2, 0]]
+
+
+def test_swap_test_matches_brute_force_and_holm():
+    from itertools import product
+
+    from sklearn.metrics import f1_score
+
+    from baselines.text_replication_significance import Pair, holm
+
+    rng = np.random.default_rng(0)
+    subjects = [f"d::{i}" for i in range(8)]
+    labels = {s: int(i % 2) for i, s in enumerate(subjects)}
+    a = {(f, s, u): int(rng.integers(0, 2)) for f in (0, 1) for s in (0, 1) for u in subjects[f * 4:(f + 1) * 4]}
+    b = {k: int(rng.integers(0, 2)) for k in a}
+    pair = Pair(a, b, labels)
+
+    def score(pred):
+        out = []
+        for f in (0, 1):
+            out.append(np.mean([f1_score([labels[u] for u in subjects[f * 4:(f + 1) * 4]],
+                                         [pred[(f, s, u)] for u in subjects[f * 4:(f + 1) * 4]],
+                                         labels=[0, 1], average="macro", zero_division=0) for s in (0, 1)]))
+        return float(np.mean(out))
+
+    sa, sb, d = pair.observed()
+    assert np.isclose(sa, score(a)) and np.isclose(sb, score(b))
+    p, k, method = pair.swap_test(0)
+    disc = sorted({u for (f, s, u) in a if a[(f, s, u)] != b[(f, s, u)]})
+    hits = 0
+    for bits in product((0, 1), repeat=len(disc)):
+        swap = {u for u, bit in zip(disc, bits) if bit}
+        a2 = {key: (b[key] if key[2] in swap else v) for key, v in a.items()}
+        b2 = {key: (a[key] if key[2] in swap else v) for key, v in b.items()}
+        hits += abs(score(b2) - score(a2)) >= abs(d) - 1e-12
+    assert method == "exact" and k == len(disc) and np.isclose(p, hits / 2 ** len(disc))
+    assert holm([0.01, 0.04, 0.03]) == [0.03, 0.06, 0.06]
