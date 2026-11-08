@@ -174,7 +174,9 @@ def main() -> None:
                 s = "" if arm == "base" else " " + _sig(sig, tl, f"{arm} vs base on {ev}")
                 cells.append(f"{e['macro_f1']:.3f}{s}")
             L.append(f"| {arm} | " + " | ".join(cells) + " |")
-        L += ["", "`base` = A3 refit. XGBoost arms use fixed settings (depth 3, 300 trees, lr 0.05, colsample 0.5) "
+        L += ["", "`base` = A3 refit. `onehot_lr` equals `base`: with C=0.01 the head keeps the one-hot weights near 0. "
+              "`perlang_leace_lr` matches `perlang_z_lr` (to within float noise): per-language centering already "
+              "equalizes the language means, so LEACE has almost nothing left to erase. XGBoost arms use fixed settings (depth 3, 300 trees, lr 0.05, colsample 0.5) "
               "and threshold 0.5. Not run: 32D encoder, GRL, MMD, supervised contrastive (need Kaan's source).", ""]
 
         geo = json.loads((root / a.geometry / tl / "geometry.json").read_text())
@@ -195,7 +197,7 @@ def main() -> None:
         for x in LANGUAGES:
             r = [kn[k]["per_language"][x] for k in ("30", "60", "90")]
             binds = ", ".join(f"K={k}" for k in ("30", "60", "90") if kn[k]["per_language"][x]["capacity_binding"]) or "—"
-            L.append(f"| {x} | {r[0]['n']} | {r[0]['same_pct']:.3f} | {r[1]['same_pct']:.3f} | {r[2]['same_pct']:.3f} | "
+            L.append(f"| {x} | {int(r[0]['n'])} | {r[0]['same_pct']:.3f} | {r[1]['same_pct']:.3f} | {r[2]['same_pct']:.3f} | "
                      f"{r[0]['random_same_pct']:.3f} | {binds} |")
         L.append(f"| Overall | 565 | {kn['30']['overall_same_pct']:.3f} | {kn['60']['overall_same_pct']:.3f} | "
                  f"{kn['90']['overall_same_pct']:.3f} | | |")
