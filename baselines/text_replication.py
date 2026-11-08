@@ -64,8 +64,11 @@ def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def oversample_draw(labels: np.ndarray, seed: int) -> np.ndarray:
-    """Kaan's reference sampler: indices into the unique training array, classes equalized."""
+def oversample_draw(labels: np.ndarray, seed) -> np.ndarray:
+    """Kaan's reference sampler: indices into the unique training array, classes equalized.
+
+    ``seed`` is an int or a ``SeedSequence``; ``default_rng(seed)`` is used either way.
+    """
     rng = np.random.default_rng(seed)
     groups = [np.flatnonzero(labels == 0), np.flatnonzero(labels == 1)]
     n = max(len(g) for g in groups)
@@ -93,6 +96,13 @@ def fit_head(x_unique: np.ndarray, y_unique: np.ndarray, draw: np.ndarray, c: fl
     n_iter = int(np.max(model.n_iter_))
     converged = n_iter < 10000 and not any(issubclass(w.category, ConvergenceWarning) for w in caught)
     return model, {"n_iter": n_iter, "converged": converged}
+
+
+def fit_rows(x: np.ndarray, y: np.ndarray, rows: np.ndarray, scaler_keys: np.ndarray, c: float):
+    """Fit on global row indices ``rows`` (duplicates allowed); scaler on unique ``scaler_keys``."""
+    scaler = fit_scaler(x[np.unique(scaler_keys)])
+    model, conv = fit_head(x, y, rows, c, scaler)
+    return model, scaler, conv
 
 
 def predict(model: LogisticRegression, scaler, x: np.ndarray, threshold: float):
