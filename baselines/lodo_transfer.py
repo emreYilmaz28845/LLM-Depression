@@ -15,7 +15,10 @@ subject (``dataset_probe`` loaders). Variants:
   fit on the per-dataset standardized training subjects with the head's sample
   weights and applied to the standardized target.
 
-Head: L2 logistic (``fit_logistic``), equal dataset mass and balanced classes,
+Head: L2 logistic (``fit_logistic``), equal dataset mass and balanced classes
+(sample weights by default; ``--balancing oversample`` instead copies every
+training dataset x class cell up to the largest one, seeded remainder, copies
+entered as integer weights; scaler and LEACE are still fit on the original training subjects),
 penalty chosen by leave-one-training-dataset-out inner CV (mean inner macro-F1,
 then lower BCE, then larger penalty) so selection also rewards transfer.
 Threshold 0 on the logit; binary-strict subject-level metrics.
@@ -77,29 +80,54 @@ def _prepare(variant: str, xtr, gtr, ytr, xte, gte):
     return ztr, zte
 
 
-def _fit_predict(variant, penalty, xtr, gtr, ytr, xte, gte):
+def _oversample(g: np.ndarray, y: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Indices that copy every dataset x class cell up to the largest cell (seeded remainder)."""
+    _weights(g, y)  # same check: every dataset needs both classes
+    cells = {}
+    for i, key in enumerate(zip(g.tolist(), y.tolist())):
+        cells.setdefault(key, []).append(i)
+    target = max(len(v) for v in cells.values())
+    out = []
+    for key in sorted(cells):
+        members = cells[key]
+        whole, remainder = divmod(target, len(members))
+        out += members * whole + [members[i] for i in sorted(rng.choice(len(members), size=remainder, replace=False))]
+    return np.asarray(out)
+
+
+def _fit_predict(variant, penalty, xtr, gtr, ytr, xte, gte, rng=None):
     ztr, zte = _prepare(variant, xtr, gtr, ytr, xte, gte)
-    w = _weights(gtr, ytr)
-    weight, bias, _ = fit_logistic(ztr, ytr, w / w.sum() * len(w), penalty)
+    if rng is None:
+        w = _weights(gtr, ytr)
+        weight, bias, _ = fit_logistic(ztr, ytr, w / w.sum() * len(w), penalty)
+    else:
+        # Copies enter as integer weights on the original rows: the same loss, and the SVD inside
+        # fit_logistic does not converge on matrices with many duplicated rows.
+        copies = np.bincount(_oversample(gtr, ytr, rng), minlength=len(ytr)).astype(float)
+        weight, bias, _ = fit_logistic(ztr, ytr, copies, penalty)
     return zte @ weight + bias
 
 
-def lodo(x: np.ndarray, g: np.ndarray, y: np.ndarray, variant: str) -> dict:
+def lodo(x: np.ndarray, g: np.ndarray, y: np.ndarray, variant: str, oversample_seed: int | None = None) -> dict:
+    # One stream per (target, inner fit), shared by every penalty; None = sample weights.
+    rng = (lambda *key: None) if oversample_seed is None else \
+        (lambda *key: np.random.default_rng([oversample_seed, *key]))
     out = {}
-    for target in sorted(set(g.tolist())):
+    for t_index, target in enumerate(sorted(set(g.tolist()))):
         tr, te = g != target, g == target
         xtr, gtr, ytr = x[tr], g[tr], y[tr]
         candidates = []
         for penalty in DEFAULT_L2_GRID:
             f1s, bces = [], []
-            for inner in sorted(set(gtr.tolist())):
+            for i_index, inner in enumerate(sorted(set(gtr.tolist()))):
                 a, b = gtr != inner, gtr == inner
-                logits = _fit_predict(variant, penalty, xtr[a], gtr[a], ytr[a], xtr[b], gtr[b])
+                logits = _fit_predict(variant, penalty, xtr[a], gtr[a], ytr[a], xtr[b], gtr[b],
+                                      rng(t_index, i_index))
                 f1s.append(score_metrics(ytr[b], logits)["macro_f1"])
                 bces.append(float(np.mean(np.logaddexp(0.0, logits) - ytr[b] * logits)))
             candidates.append((float(np.mean(f1s)), -float(np.mean(bces)), penalty))
         best = max(candidates)
-        logits = _fit_predict(variant, best[2], xtr, gtr, ytr, x[te], g[te])
+        logits = _fit_predict(variant, best[2], xtr, gtr, ytr, x[te], g[te], rng(t_index, 99))
         m = score_metrics(y[te], logits)
         out[target] = {"macro_f1": m["macro_f1"], "positive_f1": m["positive_f1"], "uar": m["binary_strict_uar"],
                        "predicted_positive_rate": float(np.mean(logits > 0)), "true_positive_rate": float(np.mean(y[te])),
@@ -116,14 +144,17 @@ def main() -> None:
     parser.add_argument("--w2v-cache-root", type=Path)
     parser.add_argument("--acoustic-npz", type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--balancing", default="weight", choices=("weight", "oversample"))
+    parser.add_argument("--oversample-seed", type=int, default=0)
     args = parser.parse_args()
+    seed = args.oversample_seed if args.balancing == "oversample" else None
     if args.output_dir.exists() and any(args.output_dir.iterdir()):
         raise SystemExit(f"Refusing to overwrite {args.output_dir}.")
     result = {"git_head": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
                                          cwd=PROJECT_ROOT).stdout.strip(),
               "git_dirty": bool(subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"],
                                                capture_output=True, text=True, cwd=PROJECT_ROOT).stdout.strip()),
-              "l2_grid": list(DEFAULT_L2_GRID), "sources": {}}
+              "l2_grid": list(DEFAULT_L2_GRID), "balancing": args.balancing, "oversample_seed": seed, "sources": {}}
     lines = ["# Leave-one-dataset-out transfer (train on 4, test on the unseen 5th)", "",
              "Cells: macro-F1 / positive-F1, subject level, binary strict, threshold 0. "
              "B = global scaler, E = + LEACE dataset erasure, T = per-dataset standardization (target uses its own "
@@ -131,7 +162,7 @@ def main() -> None:
     for spec in args.source:
         name, src = parse_source(spec, args)
         x, g, y = src["x"], np.asarray(src["dataset"]), np.asarray(src["label"])
-        res = {v: lodo(x, g, y, v) for v in VARIANTS}
+        res = {v: lodo(x, g, y, v, seed) for v in VARIANTS}
         targets = sorted(res["B"])
         tests = {}
         for v, ref in PAIRED_TESTS:

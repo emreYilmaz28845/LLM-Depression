@@ -34,3 +34,20 @@ def test_te_variant_standardizes_per_dataset_then_erases_weighted_dataset_means(
     assert max_group_mean_gap(ztr, g[~te], w) < 1e-8
     assert zte.shape == (20, 30)
     assert ("TE", "T") in lt.PAIRED_TESTS
+
+
+def test_oversample_fills_cells_and_lodo_runs_seeded():
+    g = np.asarray(["a"] * 5 + ["b"] * 3)
+    y = np.asarray([1, 0, 0, 0, 0, 1, 1, 0])
+    index = lt._oversample(g, y, np.random.default_rng(0))
+    cells = {}
+    for i in index:
+        cells[(g[i], y[i])] = cells.get((g[i], y[i]), 0) + 1
+    assert set(cells.values()) == {4}
+    rng = np.random.default_rng(1)
+    g = np.repeat(["a", "b", "c", "d", "e"], 12)
+    y = np.asarray(([1] * 3 + [0] * 9) * 5)
+    x = rng.normal(size=(len(g), 6))
+    x[:, 0] += 2.0 * y
+    first, second = lt.lodo(x, g, y, "B", 0), lt.lodo(x, g, y, "B", 0)
+    assert first == second
