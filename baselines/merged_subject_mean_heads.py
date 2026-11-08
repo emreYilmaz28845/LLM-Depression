@@ -424,18 +424,21 @@ XGB_SELECTION_RULE = "max mean per-dataset inner macro-F1, then min BCE, then gr
 
 
 def _fit_subject_xgb(x: np.ndarray, units: SubjectUnits, subjects: list[str], params: dict[str, Any],
-                     dataset_indicator: bool):
-    """Gradient-boosted trees on global-standardized subject means (dataset x class weights)."""
+                     dataset_indicator: bool, balancing: str = "dataset_class_weight",
+                     rng: np.random.Generator | None = None):
+    """Gradient-boosted trees on global-standardized subject means."""
     from xgboost import XGBClassifier
 
+    if balancing not in ("dataset_class_weight", "oversample_dataset_class"):
+        raise ValueError(f"subjmean_xgb does not support balancing {balancing!r}.")
     scalers = _fit_scalers(x, units, subjects, "global")
-    features = units.means(_standardize(x, units, scalers), subjects)
+    fit_subjects, weights = balanced_training_set(subjects, units, balancing, rng)
+    features = units.means(_standardize(x, units, scalers), fit_subjects)
     if dataset_indicator:
-        features = _with_indicator(features, [units.dataset[s] for s in subjects])
-    weights = dataset_class_weights(subjects, units)
+        features = _with_indicator(features, [units.dataset[s] for s in fit_subjects])
     model = XGBClassifier(**params, subsample=1.0, colsample_bytree=0.5, tree_method="hist",
                           random_state=HEAD_SEED, n_jobs=2, eval_metric="logloss")
-    model.fit(features, units.y(subjects), sample_weight=weights * len(weights) / weights.sum())
+    model.fit(features, units.y(fit_subjects), sample_weight=weights * len(weights) / weights.sum())
     return scalers, dataset_indicator, model
 
 
@@ -448,8 +451,12 @@ def _subject_xgb_logits(x: np.ndarray, units: SubjectUnits, head, subjects: list
 
 
 def fit_subjmean_xgb(x_train, train_rows, x_holdout, holdout_rows, grid=XGB_GRID,
-                     dataset_indicator: bool = False) -> dict[str, Any]:
-    """XGBoost counterpart of ``subjmean_l2``: same subjects, weights, inner folds and selection rule."""
+                     dataset_indicator: bool = False, balancing: str = "dataset_class_weight",
+                     oversample_seed: int = 0) -> dict[str, Any]:
+    """XGBoost counterpart of ``subjmean_l2``: same subjects, balancing, inner folds and selection rule."""
+    def rng(fit_index: int) -> np.random.Generator:
+        return np.random.default_rng([oversample_seed, fit_index])
+
     tr = SubjectUnits(train_rows)
     ho = SubjectUnits(holdout_rows)
     train = sorted(tr.units)
@@ -457,9 +464,10 @@ def fit_subjmean_xgb(x_train, train_rows, x_holdout, holdout_rows, grid=XGB_GRID
     candidates = []
     for index, params in enumerate(grid):
         oof: dict[str, float] = {}
-        for fold in inner["folds"]:
+        for fold_index, fold in enumerate(inner["folds"]):
             held = set(fold["validation_subject_ids"])
-            head = _fit_subject_xgb(x_train, tr, [s for s in train if s not in held], params, dataset_indicator)
+            head = _fit_subject_xgb(x_train, tr, [s for s in train if s not in held], params, dataset_indicator,
+                                    balancing, rng(fold_index))
             held_list = [s for s in train if s in held]
             oof.update(zip(held_list, _subject_xgb_logits(x_train, tr, head, held_list).tolist()))
         logits = np.asarray([oof[s] for s in train])
@@ -471,7 +479,8 @@ def fit_subjmean_xgb(x_train, train_rows, x_holdout, holdout_rows, grid=XGB_GRID
             "per_dataset_macro_f1": {d: m["macro_f1"] for d, m in per.items()},
         })
     best = max(candidates, key=lambda c: (c["mean_dataset_macro_f1"], -c["binary_cross_entropy"], -c["grid_index"]))
-    head = _fit_subject_xgb(x_train, tr, train, best["params"], dataset_indicator)
+    head = _fit_subject_xgb(x_train, tr, train, best["params"], dataset_indicator, balancing,
+                            rng(len(inner["folds"])))
     holdout = sorted(ho.units)
     logits = _subject_xgb_logits(x_holdout, ho, head, holdout)
     predictions = [
@@ -479,14 +488,14 @@ def fit_subjmean_xgb(x_train, train_rows, x_holdout, holdout_rows, grid=XGB_GRID
          "probability": 1.0 / (1.0 + math.exp(-z)), "mean_logit": z, "num_units": len(ho.units[s])}
         for s, z in zip(holdout, logits.tolist())
     ]
-    fit_info = {"dataset_indicator": dataset_indicator, "balancing": "dataset_class_weight"}
+    fit_info = {"dataset_indicator": dataset_indicator, "balancing": balancing}
     if dataset_indicator:
         gain = head[2].get_booster().get_score(importance_type="gain")
         n = features_dim = len(head[0]["*"][0])
         fit_info["indicator_gain"] = {d: float(gain.get(f"f{n + i}", 0.0)) for i, d in enumerate(DATASETS)}
         fit_info["feature_dimension"] = features_dim
     return {
-        "balancing": {"policy": "dataset_class_weight", "oversample_seed": None},
+        "balancing": {"policy": balancing, "oversample_seed": oversample_seed if balancing in SEEDED_BALANCING else None},
         "dataset_shift": {"normalization": "global", "dataset_indicator": dataset_indicator},
         "selection": {"selected_params": best["params"], "rule": XGB_SELECTION_RULE,
                       "inner_folds": INNER_FOLDS, "inner_seed": INNER_SEED,
@@ -575,7 +584,8 @@ def run(features_dir: Path, output_dir: Path, source: str, frozen_caches: list[P
                                                          normalization=normalization,
                                                          dataset_indicator=dataset_indicator,
                                                          erasure=erasure),
-               "subjmean_xgb": lambda *a: fit_subjmean_xgb(*a, dataset_indicator=dataset_indicator)}
+               "subjmean_xgb": lambda *a: fit_subjmean_xgb(*a, dataset_indicator=dataset_indicator, balancing=balancing,
+                                                         oversample_seed=oversample_seed)}
     for name in heads:
         result = fitters[name](x_train, train_rows, x_holdout, holdout_rows)
         head_dir = output_dir / name

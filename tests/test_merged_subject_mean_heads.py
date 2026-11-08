@@ -9,6 +9,7 @@ from baselines.merged_subject_mean_heads import (
     _fit_subject_head,
     _subject_logits,
     fit_subjmean_l2,
+    fit_subjmean_xgb,
     balanced_training_set,
     class_balanced_hierarchical_weights,
     dataset_class_weights,
@@ -356,3 +357,12 @@ def test_xgb_head_runs_with_indicator_and_is_deterministic(tmp_path):
     assert head["selection"]["selected_params"] in [c["params"] for c in head["selection"]["candidates"]]
     assert (tmp_path / "a" / "subjmean_xgb" / "predictions_subject_level.csv").read_text() == \
         (tmp_path / "b" / "subjmean_xgb" / "predictions_subject_level.csv").read_text()
+
+
+def test_xgb_head_accepts_oversampling_and_rejects_other_policies(tmp_path):
+    pytest.importorskip("xgboost")
+    rows, vectors = _imbalanced_rows()
+    head = fit_subjmean_xgb(vectors, rows, vectors, rows, balancing="oversample_dataset_class", oversample_seed=1)
+    assert head["balancing"] == {"policy": "oversample_dataset_class", "oversample_seed": 1}
+    with pytest.raises(ValueError, match="subjmean_xgb"):
+        fit_subjmean_xgb(vectors, rows, vectors, rows, balancing="none")
