@@ -14,8 +14,8 @@ subject (``dataset_probe`` loaders). Variants:
 
 Head: L2 logistic (``fit_logistic``), equal dataset mass and balanced classes
 (sample weights by default; ``--balancing oversample`` instead copies every
-training dataset x class cell up to the largest one, seeded remainder, unit
-weights; scaler and LEACE are still fit on the original training subjects),
+training dataset x class cell up to the largest one, seeded remainder, copies
+entered as integer weights; scaler and LEACE are still fit on the original training subjects),
 penalty chosen by leave-one-training-dataset-out inner CV (mean inner macro-F1,
 then lower BCE, then larger penalty) so selection also rewards transfer.
 Threshold 0 on the logit; binary-strict subject-level metrics.
@@ -97,8 +97,10 @@ def _fit_predict(variant, penalty, xtr, gtr, ytr, xte, gte, rng=None):
         w = _weights(gtr, ytr)
         weight, bias, _ = fit_logistic(ztr, ytr, w / w.sum() * len(w), penalty)
     else:
-        index = _oversample(gtr, ytr, rng)
-        weight, bias, _ = fit_logistic(ztr[index], ytr[index], np.ones(len(index)), penalty)
+        # Copies enter as integer weights on the original rows: the same loss, and the SVD inside
+        # fit_logistic does not converge on matrices with many duplicated rows.
+        copies = np.bincount(_oversample(gtr, ytr, rng), minlength=len(ytr)).astype(float)
+        weight, bias, _ = fit_logistic(ztr, ytr, copies, penalty)
     return zte @ weight + bias
 
 
