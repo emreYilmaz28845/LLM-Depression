@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from scripts.knn_reliability_analysis import (
-    gate, holm, knn_share, overlap, paired, paired_uncertainty, scores, select_threshold,
+    aggregate, gate, holm, knn_share, overlap, paired, paired_uncertainty, scores, select_threshold,
 )
 
 
@@ -58,3 +58,10 @@ def test_identical_predictions_have_zero_paired_difference():
 def test_invalid_prediction_counts_as_wrong():
     assert scores([0, 1], [-1, 1])["accuracy"] == .5
     assert scores([0, 1], [-1, 1])["macro_f1"] == .5
+
+
+def test_fold_mean_is_not_silently_replaced_by_pooled_metric():
+    d = pd.DataFrame({"fold": [0, 0] + [1] * 6, "label": [0, 1] * 4,
+                      "prediction": [0, 1] + [1, 0] * 3})
+    assert aggregate(d, "prediction")["macro_f1"] == .5
+    assert scores(d.label, d.prediction)["macro_f1"] == .25
