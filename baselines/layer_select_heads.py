@@ -60,8 +60,26 @@ def selection_key(best: dict[str, Any], layer: int) -> tuple:
     return (best["macro_f1"], -best["binary_cross_entropy"], best["l2_penalty"], -layer)
 
 
+def parse_layers(spec: str | None) -> list[int] | None:
+    """``None``/``all`` keeps every layer; ``a:b:s`` is an inclusive stepped range; else a comma list."""
+    if spec is None or spec.strip().lower() == "all":
+        return None
+    spec = spec.strip()
+    if ":" in spec:
+        start, stop, step = (int(x) for x in spec.split(":"))
+        if step <= 0 or stop < start:
+            raise ValueError(f"Bad layer range {spec!r}.")
+        layers = list(range(start, stop + 1, step))
+    else:
+        layers = [int(x) for x in spec.split(",") if x.strip()]
+    if not layers or len(set(layers)) != len(layers) or min(layers) < 0:
+        raise ValueError(f"Bad layer list {spec!r}.")
+    return sorted(layers)
+
+
 def run(*, layers_root: Path, dev_layers_root: Path | None, split_files: list[Path], protocol: str,
-        output_dir: Path, route: dict[str, Any], grid=DEFAULT_L2_GRID) -> dict[str, Any]:
+        output_dir: Path, route: dict[str, Any], grid=DEFAULT_L2_GRID,
+        layers: list[int] | None = None) -> dict[str, Any]:
     if protocol not in PROTOCOLS:
         raise ValueError(f"Unknown protocol {protocol!r}.")
     if (protocol == "daic_official") != (dev_layers_root is not None):
@@ -70,6 +88,12 @@ def run(*, layers_root: Path, dev_layers_root: Path | None, split_files: list[Pa
     dev_layers = layer_dirs(dev_layers_root) if dev_layers_root else None
     if dev_layers is not None and sorted(dev_layers) != sorted(main_layers):
         raise ValueError("Dev and main caches hold different layers.")
+    if layers is not None:
+        missing = sorted(set(layers) - set(main_layers))
+        if missing:
+            raise ValueError(f"Requested layers not in {layers_root}: {missing}")
+        main_layers = {k: main_layers[k] for k in layers}
+        dev_layers = {k: dev_layers[k] for k in layers} if dev_layers else None
     if output_dir.exists() and any(output_dir.iterdir()):
         raise ValueError(f"Refusing to overwrite existing output: {output_dir}")
     staged = output_dir.with_name(output_dir.name + ".partial")
@@ -88,7 +112,7 @@ def run(*, layers_root: Path, dev_layers_root: Path | None, split_files: list[Pa
         if sample_ids is None:
             sample_ids = ids
         elif ids != sample_ids:
-            raise ValueError(f"{path}: rows differ from layer 0.")
+            raise ValueError(f"{path}: rows differ from the first candidate layer.")
         manifest_hashes.add(meta.get("manifest_sha256"))
         per_layer[layer] = [run_fold(cache, split, protocol, grid) for split in splits]
     if len(manifest_hashes) != 1:
@@ -179,10 +203,13 @@ def main() -> None:
     parser.add_argument("--protocol", required=True, choices=PROTOCOLS)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--route", default="{}")
+    parser.add_argument("--layers", default=None,
+                        help="Candidate layers: 'all' (default), an inclusive range 'start:stop:step', "
+                             "or a comma list. Recorded in result_config.json.")
     args = parser.parse_args()
     summary = run(layers_root=args.layers_root, dev_layers_root=args.dev_layers_root,
                   split_files=args.split_files, protocol=args.protocol, output_dir=args.output_dir,
-                  route=json.loads(args.route))
+                  route=json.loads(args.route), layers=parse_layers(args.layers))
     print(json.dumps({"route": summary["route"], "fold_mean": summary["fold_mean"],
                       "selected_layers": summary["selected_layers"]}, indent=2), flush=True)
 
