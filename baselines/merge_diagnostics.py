@@ -507,7 +507,7 @@ def main() -> None:
             if an == "cv":
                 res = analysis_cv(src)
             else:
-                cv = json.loads(cv_path.read_text()) if an in ("mde", "band", "tfidf") else None
+                cv = json.loads(cv_path.read_text())["result"] if an in ("mde", "band", "tfidf") else None
                 res = {"mde": lambda: analysis_mde(src, cv), "curve": lambda: analysis_curve(src),
                        "direction": lambda: analysis_direction(src), "target_n": lambda: analysis_target_n(src),
                        "band": lambda: analysis_band(src, cv), "tfidf": lambda: analysis_tfidf(src, cv)}[an]()
