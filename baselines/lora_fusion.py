@@ -105,8 +105,11 @@ def load_lora(prov_path: Path) -> tuple[dict, list]:
         cfg = yaml.safe_load(Path(roles["llm_run_config"]["path"]).read_text())
         if cfg.get("evaluation", {}).get("sample_prediction_mode") != "likelihood":
             raise ValueError(f"non-likelihood run: {fd}")
-        m = re.search(r"/(text_only|audio_text)/([a-z0-9_]+)/.*_s(\d+)_f(\d+)_", fd)
-        mod, ds, seed, fold = m.group(1), m.group(2), int(m.group(3)), int(m.group(4))
+        m = re.search(r"/(text_only|audio_text)/([a-z0-9_]+)/[^/]+/fold_(\d+)$", fd)
+        mod, ds, fold = m.group(1), m.group(2), int(m.group(3))
+        seed = int(cfg["config"]["seed"])
+        if cfg["config"].get("dataset") not in (ds, None) and not ds.startswith(str(cfg["config"]["dataset"])):
+            raise ValueError(f"dataset mismatch in {fd}: {cfg['config'].get('dataset')}")
         key = (ds, MODS[mod], seed, fold)
         if key in cells:
             raise ValueError(f"duplicate cell {key}")
