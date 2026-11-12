@@ -35,7 +35,7 @@ from sklearn.linear_model import LogisticRegression
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from knn_reliability_analysis import CORPORA, aggregate, flat_means, holm, read, sha, write  # noqa: E402
-from margin_selector_analysis import SEEDS, join, load_cells, scale_of, seed_fold_mean, uncertainty  # noqa: E402
+from margin_selector_analysis import SEEDS, add_backend_args, get_cells, join, scale_of, seed_fold_mean, uncertainty  # noqa: E402
 from baselines import frozen_standalone_heads as fsh  # noqa: E402
 
 MODS = ("text_only", "audio_text", "audio_only")
@@ -121,7 +121,7 @@ def run(args):
     def record(path, role):
         evidence.append({"role": role, "path": str(path), "sha256": sha(path)})
 
-    cells = load_cells(args.cell_provenance, record, mods=MODS)
+    cells = get_cells(args, record, MODS)
     rows, regions, coefs, banks = [], [], [], {}
     for ds in CORPORA:
         bank, info = embedding_bank(args.source, ds, record); banks[ds] = info
@@ -218,7 +218,7 @@ def run(args):
     write(out / "selector_config.json", {
         "source_commit": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
                                         cwd=Path(__file__).parent).stdout.strip(),
-        "source_script_sha256": sha(__file__), "seeds": SEEDS, "k": K, "reps": args.reps, "rng_seed": args.seed,
+        "source_script_sha256": sha(__file__), "backend": args.backend, "seeds": SEEDS, "k": K, "reps": args.reps, "rng_seed": args.seed,
         "embedding": "frozen Qwen3-Omni audio+text native, flat window mean per subject; z-norm on selection rows; cosine",
         "rules": {"ola": "K nearest selection subjects; higher local accuracy wins; tie -> text",
                   "lca": "per model, K nearest selection subjects with true label = model's prediction; tie -> text",
@@ -238,11 +238,11 @@ def run(args):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--source", type=Path, required=True, help="checkout holding output_model/ frozen caches")
     p.add_argument("--cell-provenance", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--reps", type=int, default=5000)
     p.add_argument("--seed", type=int, default=20261112)
+    add_backend_args(p)
     run(p.parse_args())
 
 
