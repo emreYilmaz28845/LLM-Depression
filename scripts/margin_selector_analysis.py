@@ -133,7 +133,7 @@ def inner_val_path(fd, epoch):
     return found[0]
 
 
-def load_cells(prov_path, record):
+def load_cells(prov_path, record, mods=MODS):
     cells = read(prov_path)
     out = {}
     for c in cells:
@@ -141,7 +141,7 @@ def load_cells(prov_path, record):
         if not cid.startswith("S-qwen-") or not cid.endswith("-N"):
             continue
         ds, mod, seed, fold, _ = cid[len("S-qwen-"):].rsplit("-", 4)
-        if ds not in CORPORA or mod not in MODS:
+        if ds not in CORPORA or mod not in mods:
             continue
         pv = c["provenance"]
         p = pv.get("text_rerun") or pv.get("androids_rerun") or pv.get("fit") or pv.get("row", {})
