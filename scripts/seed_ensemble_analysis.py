@@ -28,7 +28,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from knn_reliability_analysis import CORPORA, aggregate, holm, sha, write  # noqa: E402
-from margin_selector_analysis import SEEDS, join, load_cells, scale_of, uncertainty  # noqa: E402
+from margin_selector_analysis import SEEDS, add_backend_args, get_cells, join, scale_of, uncertainty  # noqa: E402
 
 MODS = ("text_only", "audio_text")
 METHODS = ("text_ens3", "ens6", "seed_agree")
@@ -59,7 +59,7 @@ def run(args):
     def record(path, role):
         evidence.append({"role": role, "path": str(path), "sha256": sha(path)})
 
-    cells = load_cells(args.cell_provenance, record, mods=MODS)
+    cells = get_cells(args, record, MODS)
     rows = []
     for ds in CORPORA:
         folds = sorted({k[2] for k in cells if k[0] == ds})
@@ -127,7 +127,7 @@ def run(args):
     write(out / "seed_ensemble_config.json", {
         "source_commit": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
                                         cwd=Path(__file__).parent).stdout.strip(),
-        "source_script_sha256": sha(__file__), "seeds": SEEDS, "reps": args.reps, "rng_seed": args.seed,
+        "source_script_sha256": sha(__file__), "backend": args.backend, "seeds": SEEDS, "reps": args.reps, "rng_seed": args.seed,
         "rules": {"text_ens3": "sign of mean scaled margin over 3 text seeds",
                   "at_ens3": "sign of mean scaled margin over 3 audio+text seeds (descriptive)",
                   "ens6": "sign of mean scaled margin over 3 text + 3 audio+text seeds",
@@ -149,6 +149,7 @@ def main():
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--reps", type=int, default=5000)
     p.add_argument("--seed", type=int, default=20261113)
+    add_backend_args(p)
     run(p.parse_args())
 
 

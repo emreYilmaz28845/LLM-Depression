@@ -174,6 +174,21 @@ def load_cells(prov_path, record, mods=MODS):
     return out
 
 
+def get_cells(args, record, mods=MODS):
+    """Direct-LLM likelihood cells (default) or LoRA-embedding logistic-head cells."""
+    if getattr(args, "backend", "llm") == "lora_heads":
+        from lora_head_cells import load_lora_cells
+        return load_lora_cells(args.source, record, mods)
+    return load_cells(args.cell_provenance, record, mods=mods)
+
+
+def add_backend_args(p):
+    p.add_argument("--backend", choices=("llm", "lora_heads"), default="llm",
+                   help="llm: candidate-label likelihood margins; lora_heads: L2 logistic head logits on LoRA embeddings")
+    p.add_argument("--source", type=Path, default=Path("/home/emre/Projects/AudioLLM/LLM-Depression"),
+                   help="checkout holding output_model/ (LoRA head outputs and caches)")
+
+
 def join(a, b, what):
     keys = ["subject_id"]
     if a.subject_id.duplicated().any() or b.subject_id.duplicated().any():
@@ -193,7 +208,7 @@ def run(args):
     def record(path, role):
         evidence.append({"role": role, "path": str(path), "sha256": sha(path)})
 
-    cells = load_cells(args.cell_provenance, record)
+    cells = get_cells(args, record)
     rows, thresholds, diag = [], [], []
     for ds in CORPORA:
         for seed in SEEDS:
@@ -285,7 +300,7 @@ def run(args):
     write(out / "margin_analysis_config.json", {
         "source_commit": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
                                         cwd=Path(__file__).parent).stdout.strip(),
-        "source_script_sha256": sha(__file__), "seeds": SEEDS, "tau_grid": [str(t) for t in GRID],
+        "source_script_sha256": sha(__file__), "backend": args.backend, "seeds": SEEDS, "tau_grid": [str(t) for t in GRID],
         "rules": {"max_conf": "larger |z| wins; tie -> text (identical to sign(z_text + z_audio_text))",
                   "advisor_gate": "both |z|>=tau -> margin_sum; only A+T -> A+T; else text; tau per fold on inner val, tie -> larger tau"},
         "scale": "z = margin / median |margin| of the same model on the same fold's inner validation (label-free)",
@@ -305,6 +320,7 @@ def main():
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--reps", type=int, default=5000)
     p.add_argument("--seed", type=int, default=20261111)
+    add_backend_args(p)
     run(p.parse_args())
 
 
