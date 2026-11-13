@@ -24,6 +24,27 @@ every fit set (each inner-CV fold and the final fit), so selection and reported
 subjects never enter it. With a select grid, K is chosen with L2 on the same
 inner validation. Without these options the head is unchanged.
 
+Optional training-set augmentation (``--augment METHOD --augment-ratio R
+--augment-seed S``): after the scaler, R x n_c synthetic subject rows are added
+per class c to every fit set (each inner-CV fold and the final fit, built only
+from that fit set's subjects; selection and reported subjects never enter).
+One synthetic set per fit set is shared by all L2 candidates. Methods:
+
+* ``smote``: interpolate a subject mean with one of its 5 nearest same-class
+  neighbours (Euclidean, standardized subject-mean space);
+* ``mixup``: mix two random training subjects (any class) with
+  lambda ~ Beta(0.4, 0.4); the soft label becomes two rows (label 1 with weight
+  p, label 0 with weight 1 - p);
+* ``gauss``: draw from a Gaussian with the class mean and the class's sample
+  covariance (a random combination of the centred class members);
+* ``wboot``: resample a real subject's units with replacement, and the windows
+  inside each unit with replacement, then take the hierarchical mean.
+
+Row weights are the real-data balanced class weights times the soft-label
+share, so class balance is unchanged. smote, mixup and gauss stay inside the
+span of the real subject means (the logistic fit already works in that span),
+so they can only reweight; wboot adds within-subject variation.
+
 With ``--allow-adapter`` the same head runs on LoRA caches instead. A LoRA
 adapter differs per fold, so each fold then takes its own cache (one
 ``--cache-dirs`` entry per split file), and the cache's ``final_eval``
@@ -74,6 +95,11 @@ from src.utils import read_json, save_json, write_jsonl
 SCHEMA_VERSION = "frozen_standalone_heads.v2"
 VARIANT = "logreg_subjmean_l2sel"
 PCA_VARIANT = "logreg_subjmean_pca_l2sel"
+AUG_VARIANT = "logreg_subjmean_aug_l2sel"
+AUG_METHODS = ("smote", "mixup", "gauss", "wboot")
+SMOTE_NEIGHBOURS = 5
+MIXUP_ALPHA = 0.4
+FINAL_FIT_ID = 99
 PROTOCOLS = ("daic_official", "train_val_test", "train_val", "train_cv_test")
 INNER_CV_PROTOCOLS = ("train_val", "train_cv_test")
 INNER_FOLDS = 5
@@ -204,12 +230,87 @@ def pca_diagnostics(cache: PooledCache, prep: dict[str, Any], subjects: list[str
             "between_subject_share_full_space": share(z, means)}
 
 
-def _fit(cache: PooledCache, subjects: list[str], penalty: float, k: int | None = None,
-         prep: dict[str, Any] | None = None):
-    prep = prep if prep is not None else _prepare(cache, subjects, k)
+def _synthetic(cache: PooledCache, prep: dict[str, Any], subjects: list[str], x: np.ndarray, y: np.ndarray,
+               augment: dict[str, Any], rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Synthetic rows (features, hard labels, soft-label share) built from the fit subjects only."""
+    method, ratio = augment["method"], float(augment["ratio"])
+    rows, labels, share = [], [], []
+    if method == "mixup":
+        n = int(round(ratio * len(y)))
+        i, j = rng.integers(0, len(y), n), rng.integers(0, len(y), n)
+        lam = rng.beta(MIXUP_ALPHA, MIXUP_ALPHA, n)
+        mixed = lam[:, None] * x[i] + (1 - lam[:, None]) * x[j]
+        p = lam * y[i] + (1 - lam) * y[j]
+        return (np.concatenate([mixed, mixed]), np.r_[np.ones(n, np.int64), np.zeros(n, np.int64)],
+                np.r_[p, 1 - p])
+    z = (cache.x - prep["mean"]) / prep["scale"] if method == "wboot" else None
+    for label in (0, 1):
+        members = np.flatnonzero(y == label)
+        n = int(round(ratio * len(members)))
+        if n == 0:
+            continue
+        xc = x[members]
+        if method == "smote":
+            if len(members) < 2:
+                raise ValueError("SMOTE needs at least two subjects per class.")
+            k = min(SMOTE_NEIGHBOURS, len(members) - 1)
+            dist = ((xc[:, None, :] - xc[None, :, :]) ** 2).sum(-1)
+            np.fill_diagonal(dist, np.inf)
+            neighbours = np.argsort(dist, axis=1, kind="stable")[:, :k]
+            base = rng.integers(0, len(members), n)
+            other = neighbours[base, rng.integers(0, k, n)]
+            gap = rng.random(n)[:, None]
+            new = xc[base] + gap * (xc[other] - xc[base])
+        elif method == "gauss":
+            if len(members) < 2:
+                raise ValueError("The class Gaussian needs at least two subjects per class.")
+            centred = xc - xc.mean(0)
+            new = xc.mean(0) + rng.standard_normal((n, len(members))) @ centred / np.sqrt(len(members) - 1)
+        elif method == "wboot":
+            new = []
+            for b in rng.integers(0, len(members), n):
+                units = list(cache.units[subjects[members[b]]].values())
+                picked = rng.integers(0, len(units), len(units))
+                new.append(np.mean([z[rng.choice(units[u], len(units[u]), replace=True)].mean(0)
+                                    for u in picked], axis=0))
+            new = np.stack(new)
+        else:
+            raise ValueError(f"Unknown augmentation method {method!r}.")
+        rows.append(new)
+        labels.append(np.full(n, label, np.int64))
+        share.append(np.ones(n))
+    if not rows:
+        return np.empty((0, x.shape[1])), np.empty(0, np.int64), np.empty(0)
+    return np.concatenate(rows), np.concatenate(labels), np.concatenate(share)
+
+
+def _design(cache: PooledCache, prep: dict[str, Any], subjects: list[str], k: int | None,
+            augment: dict[str, Any] | None = None, rng: np.random.Generator | None = None):
+    """Fit rows, labels and weights: real subject means plus optional synthetic rows."""
     x = _features(cache, prep, subjects, k)
     y = cache.y(subjects)
-    weight, bias, info = fit_logistic(x, y, balanced_weights(y), penalty)
+    class_weight = balanced_weights(y)
+    if not augment:
+        return x, y, class_weight, {}
+    if k:
+        raise ValueError("Augmentation and PCA cannot be combined.")
+    per_class = {label: float(class_weight[y == label][0]) for label in (0, 1)}
+    xs, ys, share = _synthetic(cache, prep, subjects, x, y, augment, rng)
+    weights = np.r_[class_weight, np.asarray([per_class[int(v)] for v in ys]) * share]
+    keep = weights > 0
+    x_all, y_all = np.concatenate([x, xs])[keep], np.r_[y, ys][keep]
+    info = {"real_rows": int(len(y)), "synthetic_rows": int(keep[len(y):].sum()),
+            "synthetic_weight_share": float(weights[len(y):].sum() / weights.sum())}
+    return x_all, y_all, weights[keep], info
+
+
+def _fit(cache: PooledCache, subjects: list[str], penalty: float, k: int | None = None,
+         prep: dict[str, Any] | None = None, design=None):
+    prep = prep if prep is not None else _prepare(cache, subjects, k)
+    x, y, w, aug_info = design if design is not None else _design(cache, prep, subjects, k)
+    weight, bias, info = fit_logistic(x, y, w, penalty)
+    if aug_info:
+        info = {**info, "augmentation": aug_info}
     return prep, k, weight, bias, info
 
 
@@ -231,8 +332,15 @@ def inner_cv_folds(subjects: list[str], y: np.ndarray) -> list[list[str]]:
     return folds
 
 
+def _aug_rng(augment: dict[str, Any] | None, outer_fold: int, fit_id: int) -> np.random.Generator | None:
+    if not augment:
+        return None
+    return np.random.default_rng([int(augment["seed"]), int(outer_fold), int(fit_id)])
+
+
 def run_fold(cache: PooledCache, split: dict[str, Any], protocol: str, grid,
-             pca_grid: tuple[int, ...] | None = None) -> dict[str, Any]:
+             pca_grid: tuple[int, ...] | None = None, augment: dict[str, Any] | None = None,
+             outer_fold: int = 0) -> dict[str, Any]:
     train = sorted(str(s) for s in split["train_subject_ids"])
     selection = sorted(str(s) for s in split.get("selection_subject_ids", []))
     final = sorted(str(s) for s in split.get("final_eval_subject_ids", []))
@@ -266,24 +374,30 @@ def run_fold(cache: PooledCache, split: dict[str, Any], protocol: str, grid,
         y_train = cache.y(train)
         inner = inner_cv_folds(train, y_train)
         oof: dict[tuple, dict[str, float]] = {c: {} for c in configs}
-        for held in inner:
+        for fit_id, held in enumerate(inner):
             fit_subjects = [s for s in train if s not in set(held)]
             prep = _prepare(cache, fit_subjects, max_k)
+            designs = {k: _design(cache, prep, fit_subjects, k, augment, _aug_rng(augment, outer_fold, fit_id))
+                       for k in ks}
             for k, penalty in configs:
-                head = _fit(cache, fit_subjects, penalty, k, prep)
+                head = _fit(cache, fit_subjects, penalty, k, prep, designs[k])
                 oof[(k, penalty)].update(zip(held, _logits(cache, head, held).tolist()))
         for k, penalty in configs:
             m = score_metrics(y_train, np.asarray([oof[(k, penalty)][s] for s in train]))
             candidates.append(candidate(k, penalty, m))
         best = _select(candidates)
         prep = _prepare(cache, train, max_k)
-        head = _fit(cache, train, best["l2_penalty"], best.get("pca_components"), prep)
+        k_best = best.get("pca_components")
+        head = _fit(cache, train, best["l2_penalty"], k_best, prep,
+                    _design(cache, prep, train, k_best, augment, _aug_rng(augment, outer_fold, FINAL_FIT_ID)))
     else:
         heads = {}
         y_sel = cache.y(select_on)
         prep = _prepare(cache, train, max_k)
+        designs = {k: _design(cache, prep, train, k, augment, _aug_rng(augment, outer_fold, FINAL_FIT_ID))
+                   for k in ks}
         for k, penalty in configs:
-            heads[(k, penalty)] = _fit(cache, train, penalty, k, prep)
+            heads[(k, penalty)] = _fit(cache, train, penalty, k, prep, designs[k])
             m = score_metrics(y_sel, _logits(cache, heads[(k, penalty)], select_on))
             candidates.append(candidate(k, penalty, m, heads[(k, penalty)][4]))
         best = _select(candidates)
@@ -355,13 +469,19 @@ def _check_adapter_partition(cache_dir: Path, split: dict[str, Any], protocol: s
 def run_route(
     *, cache_dirs: list[Path], dev_caches: list[Path] | None, split_files: list[Path], protocol: str,
     output_dir: Path, route: dict[str, Any], grid=DEFAULT_L2_GRID, allow_adapter: bool = False,
-    pca_grid: tuple[int, ...] | None = None,
+    pca_grid: tuple[int, ...] | None = None, augment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if protocol not in PROTOCOLS:
         raise ValueError(f"Unknown protocol {protocol!r}.")
     if pca_grid is not None and (not pca_grid or min(pca_grid) < 1):
         raise ValueError("PCA components must be positive integers.")
-    variant = PCA_VARIANT if pca_grid else VARIANT
+    if augment:
+        if pca_grid:
+            raise ValueError("Augmentation and PCA cannot be combined.")
+        if augment.get("method") not in AUG_METHODS or float(augment.get("ratio", 0)) <= 0:
+            raise ValueError(f"Bad augmentation config {augment!r}.")
+        augment = {"method": augment["method"], "ratio": float(augment["ratio"]), "seed": int(augment["seed"])}
+    variant = AUG_VARIANT if augment else PCA_VARIANT if pca_grid else VARIANT
     if (protocol == "daic_official") != bool(dev_caches):
         raise ValueError("A dev cache is required for, and only for, daic_official.")
     if len(cache_dirs) not in {1, len(split_files)}:
@@ -399,6 +519,13 @@ def run_route(
                                        "(equal mass per subject and per unit within it)",
                            "selection": "fixed" if len(set(pca_grid)) == 1 else "inner_validation_with_l2",
                            "refit": "every fit set (each inner-CV fold and the final fit)"}
+    if augment:
+        identity["augmentation"] = {
+            **augment, "smote_neighbours": SMOTE_NEIGHBOURS, "mixup_alpha": MIXUP_ALPHA,
+            "space": "standardized subject means (train-only scaler of each fit set)",
+            "fit_sets": "every fit set (each inner-CV fold and the final fit), fit subjects only",
+            "rng": "numpy default_rng([seed, outer_fold, fit_id]); fit_id = inner fold or 99 for the final fit",
+            "weights": "real balanced class weights x soft-label share"}
     identity["config_sha256"] = canonical_sha256(identity)
     save_json(identity, output_dir / "result_config.json")
     folds = []
@@ -407,7 +534,8 @@ def run_route(
         cache = loaded[fold if len(loaded) > 1 else 0][0]
         if allow_adapter:
             _check_adapter_partition(cache_dirs[fold], split, protocol)
-        result = run_fold(cache, split, protocol, grid, tuple(sorted(set(pca_grid))) if pca_grid else None)
+        result = run_fold(cache, split, protocol, grid, tuple(sorted(set(pca_grid))) if pca_grid else None,
+                          augment, fold)
         fold_dir = output_dir / f"fold_{fold}"
         fold_dir.mkdir()
         save_json(result["selection"], fold_dir / "selection.json")
@@ -457,6 +585,9 @@ def parse_args() -> argparse.Namespace:
     pca.add_argument("--pca-components", type=int, help="Fixed number of PCA components before the head.")
     pca.add_argument("--pca-select-grid", type=int, nargs="+",
                      help="Choose the number of PCA components with L2 on the inner validation.")
+    parser.add_argument("--augment", choices=AUG_METHODS, help="Synthetic training rows (see module doc).")
+    parser.add_argument("--augment-ratio", type=float, default=1.0, help="Synthetic rows per real row and class.")
+    parser.add_argument("--augment-seed", type=int, default=0)
     return parser.parse_args()
 
 
@@ -466,7 +597,9 @@ def main() -> None:
                         protocol=args.protocol, output_dir=args.output_dir, route=json.loads(args.route),
                         allow_adapter=args.allow_adapter,
                         pca_grid=(args.pca_components,) if args.pca_components else
-                        (tuple(args.pca_select_grid) if args.pca_select_grid else None))
+                        (tuple(args.pca_select_grid) if args.pca_select_grid else None),
+                        augment={"method": args.augment, "ratio": args.augment_ratio, "seed": args.augment_seed}
+                        if args.augment else None)
     print(json.dumps({"route": summary["route"], "fold_mean": summary["fold_mean"]}, indent=2), flush=True)
 
 

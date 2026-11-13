@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: feat-embedding-augmentation-20261113
+slug: feat-embedding-augmentation-20261113
+tier: 2
+branch: agent/feat-embedding-augmentation-20261113
+worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-feat-embedding-augmentation-20261113
+parent_branch: main
+parent_sha: 2b922ca0949311c056f6e2ecd0d28ecc43806612
+created_at_utc: "2026-11-13T11:38:42Z"
+experiment_group_path: null
+type: complementary
