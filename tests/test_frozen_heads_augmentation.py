@@ -123,3 +123,10 @@ def test_rejects_pca_with_augmentation(tmp_path):
         run_route(cache_dirs=[tmp_path / "cache"], dev_caches=None, split_files=[split], protocol="train_val",
                   output_dir=tmp_path / "a", route={}, pca_grid=(2,), augment={"method": "smote", "ratio": 1,
                                                                              "seed": 0})
+
+
+def test_report_sign_flip_and_holm():
+    from baselines.augmentation_heads_report import holm, sign_flip_p
+    assert sign_flip_p(np.ones(5)) == pytest.approx(2 / 32)
+    assert sign_flip_p(np.asarray([1.0, -1.0])) == 1.0
+    assert holm({"a": 0.01, "b": 0.04, "c": 0.5}) == {"a": 0.03, "b": 0.08, "c": 0.5}
