@@ -7,9 +7,12 @@ import torch
 
 
 class Qwen2AudioSFTCollator:
-    def __init__(self, processor, debug: bool = False):
+    def __init__(self, processor, debug: bool = False, emit_head_targets: bool = False):
         self.processor = processor
         self.debug = debug
+        # LP-FT (training.objective=head_bce): also emit the class label and the
+        # prompt length so the head can read the last prompt token.
+        self.emit_head_targets = emit_head_targets
         self.last_debug_example: dict[str, Any] | None = None
 
     def _processor_kwargs(self, text: str, audio: list[np.ndarray] | None) -> dict[str, Any]:
@@ -43,6 +46,12 @@ class Qwen2AudioSFTCollator:
         if prompt_ids.ndim == 2:
             prompt_ids = prompt_ids[0]
         prompt_len = int(len(prompt_ids))
+        if self.emit_head_targets and not np.array_equal(input_ids[:prompt_len], prompt_ids):
+            # The head reads position prompt_len - 1 of the full sequence; that is
+            # the extraction vector only if the prompt tokens are a prefix.
+            raise ValueError(
+                f"sample_id={example['sample_id']}: prompt tokens are not a prefix of the training tokens."
+            )
         labels = input_ids.copy()
         labels[:prompt_len] = -100
         output = {
@@ -92,6 +101,13 @@ class Qwen2AudioSFTCollator:
                 dtype=torch.float32,
             )
 
+        if self.emit_head_targets:
+            batch_dict["head_label"] = torch.tensor(
+                [float(item["label"]) for item in processed_items], dtype=torch.float32
+            )
+            batch_dict["prompt_len"] = torch.tensor(
+                [int(item["prompt_len"]) for item in processed_items], dtype=torch.long
+            )
         if "input_features" in processed_items[0]:
             all_features = np.concatenate([item["input_features"] for item in processed_items], axis=0)
             all_feature_masks = np.concatenate([item["feature_attention_mask"] for item in processed_items], axis=0)

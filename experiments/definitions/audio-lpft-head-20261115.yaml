@@ -1,0 +1,53 @@
+schema_version: audiollm.experiment_group.v1
+group_id: audio-lpft-head-20261115
+title: DAIC audio-only Qwen3-Omni LoRA trained through a warm-started classification head (LP-FT)
+research_question: >-
+  Does LoRA fine-tuning of Qwen3-Omni improve on frozen Qwen3-Omni features + subject-mean L2
+  head on DAIC-WOZ audio-only when LoRA is trained through that head (LP-FT) instead of the
+  candidate-label likelihood? Three likelihood-trained recipes stayed below frozen + head
+  (0.770 test macro-F1): LLM decision 0.522 / 0.559 / 0.593, LoRA features + head 0.724 /
+  0.676 / 0.585. Design and pre-registered rule: experiments/plans/daic_audio_lpft_head_20261115.md.
+dataset: daic
+baseline: >-
+  Frozen Qwen3-Omni + subject-mean L2 head (baselines/frozen_standalone_heads.py, protocol
+  daic_official, L2 10 on official dev): DAIC official test macro-F1 0.770, AUROC 0.892
+  (output_model/frozen_base_standalone_heads/heads/daic/audio_only_native). The LP-FT head is
+  initialised from this head, so epoch 0 equals the baseline.
+treatment: >-
+  configs/experiments/daic_audio_only_harmonized_lpft_head_v1.yaml: v2 data, prompt, LoRA shape
+  (rank 8, alpha 16, dropout 0.1) and class_equal_subject_mass weights; training.objective
+  head_bce (chunk-level BCE on the head logit + frozen L2 on the head), LoRA lr 5e-5, head lr
+  1e-4, at most 8 epochs, early stopping on inner-val head BCE patience 2, selection inner-val
+  macro-F1 with epoch 0 as a candidate.
+expected_seeds:
+  - 7
+expected_folds:
+  - 0
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: lpft_head
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+runs:
+  - logical_run: daic_audio_lpft
+    dataset: daic
+    modality: audio_only
+    config: configs/experiments/daic_audio_only_harmonized_lpft_head_v1.yaml
+    folds:
+      - 0
+    endpoint: official_test_partition
+    folds_note: >-
+      Full official split (train 107, dev 35, test 47), seed 7, split seed 1337. Test decision:
+      best_model hidden-state extraction (test view) + scripts/lpft_head_apply.py with the
+      saved lpft_head.pt.
+scope:
+  campaign: audio_lpft_head_20261115
+  language: native
+  evidence_dir: outputs/audio_lpft_head_20261115
+  lane: exp-audio-lpft-head-20261115
+  checkpoint_role: best_model
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar

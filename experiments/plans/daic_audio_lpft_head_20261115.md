@@ -1,6 +1,6 @@
 # DAIC audio-only LP-FT: LoRA trained through a warm-started classification head
 
-Status: design, not implemented. Date: 2026-11-15. Lane: exp-audio-lora-recipe-fix-20261114 (PR #322).
+Status: implemented (lane exp-audio-lpft-head-20261115). Date: 2026-11-15. Lane: exp-audio-lora-recipe-fix-20261114 (PR #322).
 
 ## Question
 
@@ -51,7 +51,7 @@ The features got worse for a head with every likelihood-trained recipe. This mat
 
 - Epoch 0 (before any update) is evaluated on official dev and is a valid checkpoint candidate. If it wins, the result is "fine-tuning does not help".
 - Checkpoint selection: inner-val macro-F1 (project invariant), ties broken by lower val BCE, then earlier epoch.
-- `best_model` saves the LoRA adapter and `head.pt` (+ sha256). The test evaluation loads both; no `last_model` fallback.
+- `best_model` saves the LoRA adapter and `lpft_head.pt` (+ sha256). The test evaluation loads both; no `last_model` fallback.
 - Metrics written in the existing `headline/binary_strict_*` schema (macro-F1, positive-F1, UAR; AUROC of the head probability as a secondary number). INVALID cannot occur.
 - This is a different decision rule from likelihood. It is reported as its own row ("LoRA + head, LP-FT"), never in the likelihood LoRA column.
 
@@ -61,9 +61,9 @@ Official dev (35 subjects) chooses the frozen head's L2 and also the LP-FT epoch
 
 ## Gates before the real run
 
-1. Unit tests: scaler fold-in equals standardise-then-head; train-time feature function equals the extraction vector; epoch 0 is a selection candidate; `head.pt` round-trip; objective dispatch refuses missing `head_init`.
-2. Parity smoke on MN5 (non-reportable): load base + zero LoRA + head, run the dev and test forward without training. Dev and test subject logits must match the frozen head's logits (max abs difference to be fixed before the run, target < 0.05) and test macro-F1 must equal 0.770. If parity fails, stop: it is an implementation bug, not a result.
-3. Short training smoke (20 subjects, 1 epoch) to check FSDP with the extra head parameters, memory and checkpoint saving.
+1. Unit tests (`tests/test_lpft_head.py`): scaler fold-in equals standardise-then-head; head forward and L2 term; head state round trip; last-prompt-token indexing; collator emits targets and refuses a prompt that is not a token prefix; selection eval scores subject-mean logits; epoch-0 parity check.
+2. Local head-init check (`scripts/build_lpft_head_init.py`): the refit selects L2 10.0 on official dev and reproduces test macro-F1 0.770 / AUROC 0.892; the folded head differs from the standardised head by about 4e-15; `scripts/lpft_head_apply.py` on the frozen test cache with the saved fp32 head gives 0.770 again.
+3. In-run gates instead of separate MN5 smokes (implementation decision): `split.smoke_subject_limit` also caps the selection split, which would break the parity check, and the real run reaches every gate early. Epoch 0 runs the dev evaluation through the training-time feature path and stops the job unless dev macro-F1 equals 0.7464 exactly and subject BCE is within 0.01 of 0.4993 (minimum dev subject margin 0.166, so bf16 noise should not flip a subject). Epoch 0 then saves `best_model` with `lpft_head.pt` before any update, and epoch 1 exercises FSDP with the replicated head. This saves the two smoke jobs (about 75 core-hours).
 
 ## Pre-registered decision rule (DAIC official test, 47 subjects, seed 7)
 
@@ -77,19 +77,18 @@ Measured v2 jobs (1 node x 4 GPUs): train 49046399 2 h 09 min (6 epochs, about 1
 
 | Job | Estimate | Core-hours |
 |---|---|---|
-| Parity smoke (no training) | about 25 min x 4 GPUs | about 35 |
-| Training smoke (20 subjects, 1 epoch) | about 30 min x 4 GPUs | about 40 |
 | LP-FT train (start-up + epoch-0 eval + up to 8 epochs of about 16 min) | 1.3 h if it stops at epoch 3-4, 2.4 h at most | 105-195 |
-| Test evaluation | about 15 min x 4 GPUs | about 20 |
-| Total | | about 200 expected, about 290 at most |
+| Paired likelihood eval job (secondary, not the decision rule) | about 10 min x 4 GPUs | about 15 |
+| Hidden-state extraction of best_model, test view | about 8 min x 4 GPUs | about 15 |
+| Total | | about 140 expected, about 230 at most |
 
 No hidden-state extraction is needed. One failed-attempt rerun would add up to about 195. Quota gate remainder on 2026-11-14: about 259k.
 
 ## Implementation work (estimate about 1-2 days)
 
 1. `scripts/build_lpft_head_init.py`: refit and fold the frozen head, verify 0.770 / 0.892, write `head_init.npz` + identity JSON.
-2. `src/model/lpft_head.py`: fp32 linear head; load/save with sha256.
-3. `src/train.py`: `training.objective: head_bce` branch (prompt-only collator path, final-hidden capture, weighted BCE, two parameter groups, head inside the FSDP-prepared module), epoch-0 selection eval, head-based dev evaluation, `head.pt` in `best_model`.
-4. Test evaluation entry point for `best_model` + `head.pt` writing the standard prediction and metric files.
+2. `src/lpft_head.py`: fp32 linear head; load/save with sha256.
+3. `src/train.py`: `training.objective: head_bce` branch (prompt-only collator path, final-hidden capture, weighted BCE, two parameter groups, head inside the FSDP-prepared module), epoch-0 selection eval, head-based dev evaluation, `lpft_head.pt` in `best_model`.
+4. `scripts/lpft_head_apply.py`: applies `best_model/lpft_head.pt` to the best_model hidden-state extraction (test view) and writes metrics and subject predictions with the frozen-head metric code.
 5. Config `configs/experiments/daic_audio_only_harmonized_lpft_head_v1.yaml` and a new logical run in `experiments/definitions/audio-lora-recipe-fix-20261114.yaml`.
 6. Tests listed under gates.

@@ -52,7 +52,8 @@ def _backend(config: dict[str, Any]):
 
 
 def build_collator(
-    config: dict[str, Any], processor, debug: bool = False, require_unit_range: bool | None = None
+    config: dict[str, Any], processor, debug: bool = False, require_unit_range: bool | None = None,
+    emit_head_targets: bool = False,
 ):
     """Backend-dispatched collator factory for train/selection/final DataLoaders.
 
@@ -64,6 +65,8 @@ def build_collator(
     if resolve_model_backend(config) == MODEL_BACKEND_GEMMA4:
         from src.model.gemma4_io import Gemma4SFTCollator  # noqa: PLC0415
 
+        if emit_head_targets:
+            raise ValueError("LP-FT head targets are implemented for the Qwen collator only.")
         if require_unit_range is None:
             require_unit_range = str(config.get("dataset", "")).lower() == "daic"
         return Gemma4SFTCollator(
@@ -71,7 +74,7 @@ def build_collator(
         )
     from src.model.collator import Qwen2AudioSFTCollator  # noqa: PLC0415
 
-    return Qwen2AudioSFTCollator(processor=processor, debug=debug)
+    return Qwen2AudioSFTCollator(processor=processor, debug=debug, emit_head_targets=emit_head_targets)
 
 
 def prepare_backend_examples(
