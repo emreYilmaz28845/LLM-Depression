@@ -183,3 +183,14 @@ def test_lpft_selection_eval_scores_subject_means(tmp_path, monkeypatch):
     assert (tmp_path / "val_epoch_0" / "predictions_subject_level.csv").exists()
     assert (tmp_path / "val_epoch_0" / "metrics_lpft_head.json").exists()
     assert set(result["primary_headline_metrics"]) >= {"macro_f1", "positive_f1", "accuracy", "precision", "recall"}
+
+
+def test_lpft_selection_eval_avoids_inference_mode():
+    # Epoch 0 is the run's first FSDP unshard; storage created under
+    # inference_mode breaks the checkpoint state_dict afterwards (MN5 job 49050580).
+    import inspect
+
+    source = inspect.getsource(train_module._evaluate_lpft_head_selection)
+    code = "\n".join(line for line in source.splitlines() if not line.strip().startswith("#"))
+    assert "torch.no_grad()" in code
+    assert "inference_mode" not in code

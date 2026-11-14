@@ -1275,7 +1275,10 @@ def _evaluate_lpft_head_selection(
         component_eval_dir = ensure_dir(logs_dir / f"{component['log_dir_prefix']}_epoch_{epoch}")
         examples = component["examples"]
         sample_logits: list[float] = []
-        with torch.inference_mode():
+        # no_grad, not inference_mode: at LP-FT epoch 0 this is the first FSDP
+        # unshard of the run, and unsharded storage created under inference_mode
+        # cannot be updated in place later (checkpoint state_dict fails).
+        with torch.no_grad():
             for batch in component["loss_loader"]:
                 batch = _move_batch_to_device(batch, device)
                 logits, _ = _lpft_head_logits(model, lpft_head, batch)
