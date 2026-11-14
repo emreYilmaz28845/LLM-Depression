@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import gc
 import json
 import math
@@ -44,6 +45,18 @@ from src.lr_schedule import (
     trainable_parameter_fingerprint,
 )
 from src.daic_mil import candidate_mean_token_logprob, streaming_subject_mil_backward
+from src.lpft_head import (
+    HEAD_STATE_FILENAME as LPFT_HEAD_STATE_FILENAME,
+    OBJECTIVE_HEAD_BCE,
+    all_reduce_mean_grads as lpft_all_reduce_mean_grads,
+    build_head_module as build_lpft_head_module,
+    headline_from_head_metrics as lpft_headline_from_head_metrics,
+    last_prompt_hidden as lpft_last_prompt_hidden,
+    load_head_init as load_lpft_head_init,
+    save_head as save_lpft_head,
+    subject_mean_logits as lpft_subject_mean_logits,
+    subject_predictions as lpft_subject_predictions,
+)
 from src.data.prompt_context import prompt_context_record
 from src.experiment_tracking.manifest_policy import (
     MANIFEST_POLICY_PREBUILT,
@@ -124,6 +137,7 @@ from src.utils import (
     save_yaml,
     set_seed,
     sha256_file,
+    write_jsonl,
 )
 
 from src.experiment_tracking.canonical import (
@@ -1213,6 +1227,134 @@ def _evaluate_selection_components(
     }
 
 
+def _lpft_model_inputs(batch: dict[str, Any]) -> tuple[dict[str, Any], Any, Any]:
+    """Split an LP-FT batch into model inputs, class targets and prompt lengths."""
+    batch = dict(batch)
+    head_label = batch.pop("head_label")
+    prompt_lens = batch.pop("prompt_len")
+    batch.pop("labels", None)
+    batch.pop("loss_weight", None)
+    return batch, head_label, prompt_lens
+
+
+def _lpft_head_logits(model, lpft_head, batch: dict[str, Any]):
+    model_inputs, head_label, prompt_lens = _lpft_model_inputs(batch)
+    outputs = model(**model_inputs, output_hidden_states=True, use_cache=False, return_dict=True)
+    hidden = lpft_last_prompt_hidden(outputs.hidden_states[-1], prompt_lens)
+    return lpft_head(hidden), head_label
+
+
+def _evaluate_lpft_head_selection(
+    accelerator,
+    model,
+    lpft_head,
+    selection_components: list[dict[str, Any]],
+    config: dict[str, Any],
+    logs_dir: Path,
+    epoch: int,
+) -> dict[str, Any]:
+    """Epoch-end selection for training.objective=head_bce.
+
+    Same contract as ``_evaluate_selection_components``: every rank runs the same
+    forwards in the same order (FSDP collectives), only the main process writes.
+    The decision is the warm-started head on the final-layer last-prompt-token
+    vector; the subject logit is the mean chunk logit, threshold 0. The selection
+    loss is the unweighted subject-level BCE, the same number the frozen head
+    reports.
+    """
+    from baselines.subject_mean_logreg_head import score_metrics  # noqa: PLC0415
+
+    prepare_model_for_evaluation(model, config)
+    lpft_head.eval()
+    component_headlines: list[tuple[str, dict[str, Any]]] = []
+    component_losses: dict[str, float] = {}
+    component_eval_dirs: dict[str, str] = {}
+    primary: dict[str, Any] = {}
+    device = accelerator.device
+    for index, component in enumerate(selection_components):
+        component_eval_dir = ensure_dir(logs_dir / f"{component['log_dir_prefix']}_epoch_{epoch}")
+        examples = component["examples"]
+        sample_logits: list[float] = []
+        # no_grad, not inference_mode: at LP-FT epoch 0 this is the first FSDP
+        # unshard of the run, and unsharded storage created under inference_mode
+        # cannot be updated in place later (checkpoint state_dict fails).
+        with torch.no_grad():
+            for batch in component["loss_loader"]:
+                batch = _move_batch_to_device(batch, device)
+                logits, _ = _lpft_head_logits(model, lpft_head, batch)
+                sample_logits.extend(float(v) for v in logits.detach().float().cpu().tolist())
+        if len(sample_logits) != len(examples):
+            raise RuntimeError(
+                f"LP-FT selection produced {len(sample_logits)} logits for {len(examples)} examples."
+            )
+        subjects, labels, subject_logits = lpft_subject_mean_logits(sample_logits, examples)
+        metrics = score_metrics(labels, subject_logits)
+        metrics["prediction_backend"] = "lpft_head"
+        headline = lpft_headline_from_head_metrics(metrics)
+        loss = float(metrics["binary_cross_entropy"])
+        if accelerator.is_main_process:
+            counts: dict[str, int] = defaultdict(int)
+            for row in examples:
+                counts[str(row["subject_id"])] += 1
+            predictions = lpft_subject_predictions(subjects, labels, subject_logits, counts)
+            write_jsonl(predictions, component_eval_dir / "predictions_subject_level.jsonl")
+            with open(component_eval_dir / "predictions_subject_level.csv", "w", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=list(predictions[0]))
+                writer.writeheader()
+                writer.writerows(predictions)
+            write_jsonl(
+                [
+                    {"sample_id": str(row["sample_id"]), "subject_id": str(row["subject_id"]),
+                     "label": int(row["label"]), "logit": float(z)}
+                    for row, z in zip(examples, sample_logits)
+                ],
+                component_eval_dir / "predictions_sample_level.jsonl",
+            )
+            save_json({"epoch": int(epoch), "headline_metrics": headline}, component_eval_dir / "metrics_lpft_head.json")
+            LOGGER.info(
+                "Selection component epoch=%s | dataset=%s split=%s aggregation_level=subject | backend=lpft_head | "
+                "loss=%.6f positive_f1=%.6f macro_f1=%.6f precision=%.6f recall=%.6f auroc=%.6f",
+                epoch, component["dataset"], component["split_name"], loss,
+                float(headline["positive_f1"]), float(headline["macro_f1"]), float(headline["precision"]),
+                float(headline["recall"]), float(headline["auroc"]),
+            )
+        component_headlines.append((component["name"], headline))
+        component_losses[f"{component['name']}_loss"] = loss
+        component_eval_dirs[component["name"]] = str(component_eval_dir)
+        if index == 0:
+            primary = {"headline": headline, "loss": loss, "dir": component_eval_dir}
+    return {
+        "component_headlines": component_headlines,
+        "component_losses": component_losses,
+        "component_eval_dirs": component_eval_dirs,
+        "primary_headline_metrics": primary.get("headline"),
+        "primary_selection_loss": primary.get("loss"),
+        "primary_eval_dir": primary.get("dir"),
+    }
+
+
+def _check_lpft_epoch_zero_parity(selection_eval: dict[str, Any], lpft_cfg: dict[str, Any]) -> dict[str, Any]:
+    """Epoch 0 must reproduce the frozen head on the selection split, or the
+    training-time feature path differs from the extraction path."""
+    reference = lpft_cfg.get("expected_selection") or {}
+    if not reference:
+        raise ValueError("training.lpft_head.expected_selection (macro_f1, binary_cross_entropy) is required.")
+    headline = selection_eval["primary_headline_metrics"]
+    loss = float(selection_eval["primary_selection_loss"])
+    report = {
+        "macro_f1": float(headline["macro_f1"]),
+        "expected_macro_f1": float(reference["macro_f1"]),
+        "binary_cross_entropy": loss,
+        "expected_binary_cross_entropy": float(reference["binary_cross_entropy"]),
+        "bce_tolerance": float(lpft_cfg.get("parity_bce_tolerance", 0.01)),
+    }
+    report["passed"] = bool(
+        abs(report["macro_f1"] - report["expected_macro_f1"]) < 1e-9
+        and abs(loss - report["expected_binary_cross_entropy"]) <= report["bce_tolerance"]
+    )
+    return report
+
+
 def _micro_batches_per_rank_per_epoch(
     train_loader,
     train_dataset,
@@ -1981,7 +2123,8 @@ def main() -> None:
             silence_audio=bool(config["data"].get("silence_audio", False)),
             chunk_sampling="deterministic",
         )
-    collator = build_collator(config, processor, debug=args.label_mask_debug)
+    lpft_enabled = str(config.get("training", {}).get("objective", "token_ce")) == OBJECTIVE_HEAD_BCE
+    collator = build_collator(config, processor, debug=args.label_mask_debug, emit_head_targets=lpft_enabled)
     if args.label_mask_debug:
         _emit_label_mask_debug(train_dataset, collator, processor, logs_dir)
 
@@ -2002,7 +2145,7 @@ def main() -> None:
             batch_size=int(config["training"]["per_device_eval_batch_size"]),
             shuffle=False,
             num_workers=int(config["training"]["dataloader_num_workers"]),
-            collate_fn=build_collator(config, processor, debug=False),
+            collate_fn=build_collator(config, processor, debug=False, emit_head_targets=lpft_enabled),
         )
     selection_components: list[dict[str, Any]] = []
     if selection_enabled:
@@ -2055,8 +2198,24 @@ def main() -> None:
         weight_decay=float(config["training"]["weight_decay"]),
     )
     objective = str(config.get("training", {}).get("objective", "token_ce"))
-    if objective not in {"token_ce", "subject_mean_margin_mil"}:
+    if objective not in {"token_ce", "subject_mean_margin_mil", OBJECTIVE_HEAD_BCE}:
         raise ValueError(f"Unsupported training.objective={objective!r}.")
+    lpft_cfg: dict[str, Any] = dict(config["training"].get("lpft_head") or {})
+    lpft_init: dict[str, Any] | None = None
+    if objective == OBJECTIVE_HEAD_BCE:
+        if not selection_enabled:
+            raise ValueError("head_bce needs a selection split: epoch 0 is a selection candidate.")
+        if joint_selection_groups:
+            raise ValueError("head_bce supports a single selection component.")
+        if int(config["training"]["per_device_train_batch_size"]) != 1:
+            raise ValueError("head_bce requires per_device_train_batch_size=1 (per-example loss weights).")
+        if not lpft_cfg.get("init_path") or not lpft_cfg.get("init_sha256"):
+            raise ValueError("head_bce requires training.lpft_head.init_path and init_sha256.")
+        lpft_init = load_lpft_head_init(lpft_cfg["init_path"])
+        if lpft_init["sha256"] != str(lpft_cfg["init_sha256"]):
+            raise ValueError(
+                f"LP-FT head init sha256 {lpft_init['sha256']} != configured {lpft_cfg['init_sha256']}."
+            )
     if objective == "subject_mean_margin_mil":
         if str(config["dataset"]).lower() != "daic" or str(config["data"].get("sample_mode", "")).lower() != "subject_mil":
             raise ValueError("subject_mean_margin_mil requires dataset=daic and data.sample_mode=subject_mil.")
@@ -2142,6 +2301,16 @@ def main() -> None:
         )
         scheduler = build_update_counted_scheduler(optimizer, lr_schedule_record)
     lr_schedule_record["num_processes"] = int(accelerator.num_processes)
+    lpft_head = None
+    lpft_head_optimizer = None
+    if objective == OBJECTIVE_HEAD_BCE:
+        assert lpft_init is not None
+        lpft_head = build_lpft_head_module(lpft_init, accelerator.device)
+        lpft_head_optimizer = torch.optim.AdamW(
+            lpft_head.parameters(),
+            lr=float(lpft_cfg.get("learning_rate", 1e-4)),
+            weight_decay=0.0,  # the head's L2 is the frozen fit's penalty, added to the loss
+        )
     lr_schedule_record["base_learning_rate"] = float(config["training"]["learning_rate"])
     if "first_update_lr_factor" in lr_schedule_record:
         lr_schedule_record["first_update_lr"] = (
@@ -2306,6 +2475,21 @@ def main() -> None:
 
     selection_metric_cfg = _resolve_selection_metric(config)
     run_config["selection_protocol"]["metric_name"] = selection_metric_cfg["metric"] if selection_enabled else None
+    if objective == OBJECTIVE_HEAD_BCE:
+        assert lpft_init is not None
+        run_config["lpft_head"] = {
+            "objective": OBJECTIVE_HEAD_BCE,
+            "init_path": str(lpft_cfg["init_path"]),
+            "init_sha256": lpft_init["sha256"],
+            "l2_penalty_standardized": float(lpft_init["l2_penalty"]),
+            "head_learning_rate": float(lpft_cfg.get("learning_rate", 1e-4)),
+            "feature": "final-layer hidden state (output_hidden_states[-1]) at position prompt_len - 1",
+            "decision": "mean chunk logit per subject, threshold 0 (probability 0.5)",
+            "selection_loss": "unweighted subject-level BCE of the head",
+            "epoch_zero": "warm-started head with the untrained LoRA, evaluated and selectable",
+            "expected_selection": lpft_cfg.get("expected_selection"),
+        }
+        run_config["selection_protocol"]["selection_prediction_backend"] = "lpft_head"
     run_config["selection_protocol"]["metric_mode"] = selection_metric_cfg["mode"] if selection_enabled else None
     if tracking_context is not None and accelerator.is_main_process:
         _attach_tracking_block(run_config, tracking_context, int(args.fold))
@@ -2374,10 +2558,15 @@ def main() -> None:
 
     update_tracker = UpdateTracker(lr_schedule_record, logger=LOGGER)
     parameter_fingerprint = trainable_parameter_fingerprint(model, accelerator.device)
-    for epoch in range(1, int(config["training"]["num_train_epochs"]) + 1):
-        if d3tec_epoch_schedule is not None:
+    # LP-FT evaluates epoch 0 (warm-started head, untouched LoRA) as a selection
+    # candidate before any update.
+    first_epoch = 0 if objective == OBJECTIVE_HEAD_BCE else 1
+    lpft_parity_report: dict[str, Any] | None = None
+    for epoch in range(first_epoch, int(config["training"]["num_train_epochs"]) + 1):
+        lpft_epoch_zero = objective == OBJECTIVE_HEAD_BCE and epoch == 0
+        if d3tec_epoch_schedule is not None and not lpft_epoch_zero:
             train_dataset.examples = d3tec_epoch_schedule[epoch - 1]
-        if daic_epoch_schedule is not None:
+        if daic_epoch_schedule is not None and not lpft_epoch_zero:
             train_dataset.examples = daic_epoch_schedule[epoch - 1]
         model.train()
         # The previous epoch's selection eval disables gradient checkpointing and
@@ -2434,13 +2623,24 @@ def main() -> None:
         elif objective == "token_ce":
             mil_batches = []
             training_batches = train_loader
+        elif objective == OBJECTIVE_HEAD_BCE:
+            mil_batches = []
+            training_batches = [] if lpft_epoch_zero else train_loader
+            assert lpft_head is not None
+            lpft_head.train()
         else:
             raise ValueError(f"Unsupported training.objective={objective!r}.")
         for step, batch in enumerate(training_batches, start=1):
             with activation_offload_context(config), accelerator.accumulate(model):
                 loss_weights = batch.pop("loss_weight", None)
-                outputs = model(**batch)
-                loss = outputs.loss
+                if objective == OBJECTIVE_HEAD_BCE:
+                    head_logits, head_targets = _lpft_head_logits(model, lpft_head, batch)
+                    loss = torch.nn.functional.binary_cross_entropy_with_logits(
+                        head_logits, head_targets.to(head_logits.device).float()
+                    )
+                else:
+                    outputs = model(**batch)
+                    loss = outputs.loss
                 if loss_weights is not None:
                     if int(loss_weights.numel()) != 1:
                         raise ValueError(
@@ -2448,6 +2648,10 @@ def main() -> None:
                             "requires batch size 1."
                         )
                     loss = loss * loss_weights.reshape(-1)[0].to(loss.device)
+                if objective == OBJECTIVE_HEAD_BCE:
+                    # The frozen fit's penalty, counted once per update (Accelerate
+                    # averages the micro-batch losses of one update).
+                    loss = loss + lpft_head.l2_term()
                 accelerator.backward(loss)
                 grad_norm = None
                 log_this_step = False
@@ -2461,6 +2665,13 @@ def main() -> None:
                 optimizer.step()
                 update_tracker.step_scheduler(scheduler, accelerator.sync_gradients)
                 optimizer.zero_grad()
+                if objective == OBJECTIVE_HEAD_BCE and accelerator.sync_gradients:
+                    lpft_all_reduce_mean_grads(lpft_head)
+                    torch.nn.utils.clip_grad_norm_(
+                        lpft_head.parameters(), float(config["training"]["max_grad_norm"])
+                    )
+                    lpft_head_optimizer.step()
+                    lpft_head_optimizer.zero_grad(set_to_none=True)
             epoch_losses.append(float(loss.detach().item()))
             if log_this_step:
                 step_log.write(epoch=epoch, step=step, loss=epoch_losses[-1], lr=step_lr, grad_norm=grad_norm)
@@ -2497,12 +2708,28 @@ def main() -> None:
         accelerator.wait_for_everyone()
         # Loud guard: an epoch that leaves every trainable parameter unchanged,
         # or ends with all LoRA B matrices at zero, is an untrained model.
-        update_tracker.finish_epoch()
-        parameter_fingerprint = check_epoch_changed_parameters(
-            model, accelerator.device, parameter_fingerprint, epoch=epoch
-        )
+        # LP-FT epoch 0 is the deliberately untrained warm start.
+        if not lpft_epoch_zero:
+            update_tracker.finish_epoch()
+            parameter_fingerprint = check_epoch_changed_parameters(
+                model, accelerator.device, parameter_fingerprint, epoch=epoch
+            )
         selection_eval: dict[str, Any] | None = None
-        if selection_enabled:
+        if selection_enabled and objective == OBJECTIVE_HEAD_BCE:
+            selection_eval = _evaluate_lpft_head_selection(
+                accelerator, model, lpft_head, selection_components, config, logs_dir, epoch,
+            )
+            if lpft_epoch_zero:
+                lpft_parity_report = _check_lpft_epoch_zero_parity(selection_eval, lpft_cfg)
+                if accelerator.is_main_process:
+                    save_json(lpft_parity_report, logs_dir / "lpft_epoch0_parity.json")
+                    LOGGER.info("LP-FT epoch-0 parity | %s", lpft_parity_report)
+                if not lpft_parity_report["passed"]:
+                    raise RuntimeError(
+                        "LP-FT epoch 0 does not reproduce the frozen head on the selection split; "
+                        f"the training-time feature path differs from extraction: {lpft_parity_report}"
+                    )
+        elif selection_enabled:
             selection_eval = _evaluate_selection_components(
                 accelerator,
                 model,
@@ -2682,7 +2909,14 @@ def main() -> None:
         if save_best_selected:
             save_training_checkpoint(accelerator, model, processor, best_dir, config=config)
             saved_adapter_error = None
-            if accelerator.is_main_process:
+            if accelerator.is_main_process and lpft_head is not None:
+                head_sha = save_lpft_head(
+                    lpft_head,
+                    best_dir / LPFT_HEAD_STATE_FILENAME,
+                    {"epoch": int(epoch), "init_sha256": lpft_init["sha256"] if lpft_init else None},
+                )
+                LOGGER.info("Saved LP-FT head epoch=%s sha256=%s", epoch, head_sha)
+            if accelerator.is_main_process and not lpft_epoch_zero:
                 try:
                     assert_saved_adapter_trained(best_dir)
                 except RuntimeError as exc:
