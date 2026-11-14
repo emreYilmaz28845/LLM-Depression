@@ -52,7 +52,17 @@ runs:
     folds_note: >-
       Pilot on the full official split (train 107, dev 35, test 47), seed 7, split seed 1337.
       New run names; the paper runs are never overwritten.
-
+  - logical_run: daic_audio_recipefix_v2_reg
+    dataset: daic
+    modality: audio_only
+    config: configs/experiments/daic_audio_only_harmonized_selmacrof1_likelihood_v1_recipefix_v2_reg.yaml
+    folds:
+      - 0
+    endpoint: official_test_partition
+    folds_note: >-
+      Regularized arm after v1 overfit (dev loss rose after epoch 1): lr 1e-4, weight decay
+      0.01, LoRA dropout 0.1, rank 8 / alpha 16, early stopping on inner-val loss patience 3,
+      max 12 epochs; seed 7. Followed by hidden-state extraction and the same subject-mean head.
 scope:
   campaign: audio_lora_recipefix_20261114
   language: native
