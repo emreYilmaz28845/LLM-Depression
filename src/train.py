@@ -155,6 +155,62 @@ ALL_CHUNKS_SUBJECT_NORMALIZED_POLICY = "all_chunks_subject_normalized"
 PACKED30_LOSS_WEIGHT_SCHEMA_VERSION = "packed30_subject_normalized_loss_weight.v1"
 
 
+CLASS_EQUAL_SUBJECT_MASS = "class_equal_subject_mass"
+CLASS_EQUAL_SUBJECT_MASS_SCHEMA_VERSION = "class_equal_subject_mass_loss_weight.v1"
+
+
+def apply_class_equal_subject_mass(
+    examples: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Rescale existing per-window ``loss_weight`` so both classes carry equal total mass.
+
+    Runs after the subject-level weighting (hierarchical or subject-normalized), which
+    gives every training subject the same total weight. Multiplying each window of a
+    class by ``total_mass / (2 * class_mass)`` keeps the within-class structure, makes
+    the depressed and non-depressed classes carry half of the loss each, and the final
+    rescale keeps the mean window weight at one.
+    """
+    if not examples:
+        raise ValueError("Cannot class-balance an empty training partition.")
+    class_mass: dict[int, float] = defaultdict(float)
+    class_subjects: dict[int, set[str]] = defaultdict(set)
+    for example in examples:
+        if "loss_weight" not in example:
+            raise ValueError(f"{CLASS_EQUAL_SUBJECT_MASS} needs loss_weight on every training window.")
+        label = int(example["label"])
+        class_mass[label] += float(example["loss_weight"])
+        class_subjects[label].add(str(example["subject_id"]))
+    if set(class_mass) != {0, 1}:
+        raise ValueError(f"{CLASS_EQUAL_SUBJECT_MASS} requires both classes in training.")
+    total_mass = class_mass[0] + class_mass[1]
+    factors = {label: total_mass / (2.0 * mass) for label, mass in class_mass.items()}
+    scaled = [float(ex["loss_weight"]) * factors[int(ex["label"])] for ex in examples]
+    rescale = len(scaled) / sum(scaled)
+    weighted = [
+        {**ex, "pre_class_balance_loss_weight": float(ex["loss_weight"]), "loss_weight": w * rescale}
+        for ex, w in zip(examples, scaled)
+    ]
+    new_mass: dict[int, float] = defaultdict(float)
+    for ex in weighted:
+        new_mass[int(ex["label"])] += float(ex["loss_weight"])
+    if not math.isclose(new_mass[0], new_mass[1], rel_tol=1e-9, abs_tol=1e-9):
+        raise ValueError(f"{CLASS_EQUAL_SUBJECT_MASS} failed to equalize class mass: {dict(new_mass)}")
+    mean_weight = sum(float(ex["loss_weight"]) for ex in weighted) / len(weighted)
+    if not math.isclose(mean_weight, 1.0, rel_tol=0.0, abs_tol=1e-9):
+        raise ValueError(f"{CLASS_EQUAL_SUBJECT_MASS} weights do not average one: {mean_weight}")
+    audit = {
+        "schema_version": CLASS_EQUAL_SUBJECT_MASS_SCHEMA_VERSION,
+        "formula": "loss_weight * total_mass / (2 * class_mass), rescaled_to_mean_one",
+        "sample_count": len(weighted),
+        "subjects_per_class": {str(k): len(v) for k, v in sorted(class_subjects.items())},
+        "class_mass_before": {str(k): v for k, v in sorted(class_mass.items())},
+        "class_factor": {str(k): v for k, v in sorted(factors.items())},
+        "class_mass_after": {str(k): v for k, v in sorted(new_mass.items())},
+        "mean_loss_weight": mean_weight,
+    }
+    return weighted, audit
+
+
 def apply_subject_normalized_chunk_weights(
     examples: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -806,7 +862,7 @@ def _build_weighted_train_sampler(
     config: dict[str, Any],
 ) -> WeightedRandomSampler | None:
     mode = str(config.get("training", {}).get("class_balance", "none")).strip().lower()
-    if mode in {"", "none", "off", "false", "subject_inverse_frequency"}:
+    if mode in {"", "none", "off", "false", "subject_inverse_frequency", CLASS_EQUAL_SUBJECT_MASS}:
         return None
     if mode == SAMPLING_MODE_SUBJECT_OVERSAMPLE:
         return None
@@ -1725,11 +1781,13 @@ def main() -> None:
                 f"train_chunk_policy={ALL_CHUNKS_SUBJECT_NORMALIZED_POLICY} requires "
                 "per_device_train_batch_size=1."
             )
-        if str(config.get("training", {}).get("class_balance", "none")).strip().lower() != "none":
+        if str(config.get("training", {}).get("class_balance", "none")).strip().lower() not in {
+            "none",
+            CLASS_EQUAL_SUBJECT_MASS,
+        }:
             raise ValueError(
                 f"train_chunk_policy={ALL_CHUNKS_SUBJECT_NORMALIZED_POLICY} requires "
-                "training.class_balance=none (subject-normalized loss weights are the "
-                "only v1 weighting)."
+                f"training.class_balance=none or {CLASS_EQUAL_SUBJECT_MASS}."
             )
         train_examples, packed30_weight_audit = apply_subject_normalized_chunk_weights(
             train_examples
@@ -1738,6 +1796,15 @@ def main() -> None:
             packed30_weight_audit,
             logs_dir / "packed30_training_weight_audit.json",
         )
+    class_balance_mode = str(config["training"].get("class_balance", "none")).strip().lower()
+    if class_balance_mode == CLASS_EQUAL_SUBJECT_MASS:
+        if androids_weight_audit is None and packed30_weight_audit is None:
+            raise ValueError(
+                f"training.class_balance={CLASS_EQUAL_SUBJECT_MASS} needs subject-level window "
+                "weights (all_windows_hierarchical_weighted or all_chunks_subject_normalized)."
+            )
+        train_examples, class_balance_audit = apply_class_equal_subject_mass(train_examples)
+        save_json(class_balance_audit, logs_dir / "class_balance_weight_audit.json")
     d3tec_epoch_schedule: list[list[dict[str, Any]]] | None = None
     d3tec_schedule_audit: dict[str, Any] | None = None
     daic_epoch_schedule: list[list[dict[str, Any]]] | None = None
