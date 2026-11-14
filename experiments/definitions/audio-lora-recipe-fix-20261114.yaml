@@ -1,0 +1,75 @@
+schema_version: audiollm.experiment_group.v1
+group_id: audio-lora-recipe-fix-20261114
+title: DAIC audio-only Qwen3-Omni LoRA recipe-fix pilot and memorization check
+research_question: >-
+  Does standalone LoRA fine-tuning of Qwen3-Omni fail on DAIC-WOZ audio-only because of the
+  training recipe or in itself? The paper recipe (effective batch 128, no class balancing,
+  early stopping on inner-val macro-F1 with patience 3) gave test macro-F1 0.449 and a test
+  AUROC of the likelihood margin near 0.49, while frozen Qwen3-Omni features with a
+  subject-mean L2 head reach 0.770 on the same test subjects. Decision rule pre-registered in
+  journal j-20261114T132202Z-abc5.
+dataset: daic
+baseline: >-
+  Paper runs q3ms_daic_audio_only_native_s{7,1337,2024}_f0_r1 of the qwen3-multiseed-native-20261002
+  campaign (config configs/main/daic_audio_only_harmonized_selmacrof1_likelihood_v1.yaml at
+  dd410ab6; 2 nodes x 4 GPUs, accumulation 16, effective batch 128). Test macro-F1 0.522 /
+  0.412 / 0.412.
+treatment: >-
+  configs/experiments/daic_audio_only_harmonized_selmacrof1_likelihood_v1_recipefix_v1.yaml:
+  same data (participant-only packed30, subject-normalized weights), prompt and evaluation;
+  training.class_balance=class_equal_subject_mass, accumulation 4 on 1 node x 4 GPUs
+  (effective batch 16), early stopping on inner_val_auroc with patience 5, at most 12 epochs.
+  Checkpoint selection unchanged (inner_val_macro_f1).
+expected_seeds:
+  - 7
+expected_folds:
+  - 0
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: likelihood
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+runs:
+  - logical_run: daic_audio_recipefix_memcheck
+    dataset: daic
+    modality: audio_only
+    config: configs/experiments/daic_audio_only_harmonized_selmacrof1_likelihood_v1_recipefix_v1.yaml
+    folds:
+      - 0
+    endpoint: official_test_partition
+    folds_note: >-
+      Memorization / pipeline check only: split.smoke_subject_limit=20, early stopping off,
+      10 epochs, seed 7. Pass if training loss falls close to zero. Test metrics are not
+      reported.
+  - logical_run: daic_audio_recipefix_pilot
+    dataset: daic
+    modality: audio_only
+    config: configs/experiments/daic_audio_only_harmonized_selmacrof1_likelihood_v1_recipefix_v1.yaml
+    folds:
+      - 0
+    endpoint: official_test_partition
+    folds_note: >-
+      Pilot on the full official split (train 107, dev 35, test 47), seed 7, split seed 1337.
+      New run names; the paper runs are never overwritten.
+  - logical_run: daic_audio_recipefix_v2_reg
+    dataset: daic
+    modality: audio_only
+    config: configs/experiments/daic_audio_only_harmonized_selmacrof1_likelihood_v1_recipefix_v2_reg.yaml
+    folds:
+      - 0
+    endpoint: official_test_partition
+    folds_note: >-
+      Regularized arm after v1 overfit (dev loss rose after epoch 1): lr 1e-4, weight decay
+      0.01, LoRA dropout 0.1, rank 8 / alpha 16, early stopping on inner-val loss patience 3,
+      max 12 epochs; seed 7. Followed by hidden-state extraction and the same subject-mean head.
+scope:
+  campaign: audio_lora_recipefix_20261114
+  language: native
+  evidence_dir: outputs/audio_lora_recipefix_20261114
+  lane: exp-audio-lora-recipe-fix-20261114
+  checkpoint_role: best_model
+  report_metrics:
+    - macro_f1
+    - positive_f1
+    - uar
