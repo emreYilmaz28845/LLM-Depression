@@ -446,6 +446,14 @@ def is_fixed_feature_cache(meta: dict[str, Any]) -> bool:
     return meta.get("weights_source") == "base_model_no_adapter" or meta.get("model_backend") in HANDCRAFTED_BACKENDS
 
 
+def _dev_cache_identity(dev_cache: Path) -> dict[str, Any]:
+    """Only the dev cache's final_eval partition is read; a many-shot dev cache has nothing else."""
+    from src.features.hidden_classifier_policy import file_identity  # noqa: PLC0415
+
+    return {n: file_identity(Path(dev_cache) / n)
+            for n in ("final_eval.npz", "final_eval_rows.jsonl", "extraction_metadata.json")}
+
+
 def _load_caches(cache_dir: Path, dev_cache: Path | None, allow_adapter: bool,
                  per_fold: bool = False) -> tuple[PooledCache, dict]:
     meta = read_json(cache_dir / "extraction_metadata.json")
@@ -525,7 +533,7 @@ def run_route(
         "l2_grid": list(grid), "inner_folds": INNER_FOLDS, "inner_seed": INNER_SEED, "threshold": 0.5,
         "feature_source": feature_source,
         "cache_identities": [cache_identity(c) for c in cache_dirs],
-        "dev_cache_identities": [cache_identity(c) for c in dev_caches] if dev_caches else None,
+        "dev_cache_identities": [_dev_cache_identity(c) for c in dev_caches] if dev_caches else None,
         "checkpoints": [m.get("checkpoint_dir") for _, m in loaded] if allow_adapter else None,
         "split_files": [{"path": str(p), "sha256": canonical_sha256(read_json(p))} for p in split_files],
         "base_model": meta.get("base_model"), "model_backend": meta.get("model_backend"),
