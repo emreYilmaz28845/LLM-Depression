@@ -23,6 +23,16 @@ from transformers import get_linear_schedule_with_warmup
 
 from src.data.runtime import AudioTextDataset
 from src.evaluate import evaluate_examples
+from src.lr_schedule import (
+    LR_SCHEDULE_LEGACY_V1,
+    UpdateTracker,
+    assert_saved_adapter_trained,
+    build_update_counted_scheduler,
+    check_epoch_changed_parameters,
+    plan_merged_block_schedule,
+    resolve_lr_schedule_mode,
+    trainable_parameter_fingerprint,
+)
 from src.merged.protocol import (
     DATASETS,
     build_dataset_aware_schedule,
@@ -48,6 +58,7 @@ from src.model.runtime import (
     resolve_processor_sampling_rate,
     restore_model_for_training,
 )
+from src.step_log import DEFAULT_EVERY as STEP_LOG_DEFAULT_EVERY, STEP_LOG_NAME, StepLogWriter
 from src.training_strategy import (
     TRAINING_STRATEGY_FSDP,
     _force_gradient_sync_in_accumulation,
@@ -228,6 +239,18 @@ def _write_composition(
         },
         path,
     )
+
+
+def _check_saved_adapter(accelerator: Accelerator, best_dir: Path) -> None:
+    """Fail on every rank when the saved adapter's LoRA B tensors are all zero."""
+    error = None
+    if accelerator.is_main_process:
+        try:
+            assert_saved_adapter_trained(best_dir)
+        except RuntimeError as exc:
+            error = str(exc)
+    if broadcast_flag(accelerator, error is not None):
+        raise RuntimeError(error or f"Saved merged checkpoint in {best_dir} is untrained.")
 
 
 def train_merged_fold(
@@ -516,13 +539,64 @@ def train_merged_fold(
             {"epochs": [schedule["audit"] for schedule in schedules]},
             logs_dir / "schedule_audit.json",
         )
-    total_steps = sum(len(schedule["blocks"]) for schedule in schedules)
-    scheduler = get_linear_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=int(total_steps * float(model_config["training"].get("warmup_ratio", 0.03))),
-        num_training_steps=max(1, total_steps),
+    blocks_per_epoch = [len(schedule["blocks"]) for schedule in schedules]
+    warmup_ratio = float(model_config["training"].get("warmup_ratio", 0.03))
+    lr_schedule_mode = resolve_lr_schedule_mode(model_config)
+    if lr_schedule_mode == LR_SCHEDULE_LEGACY_V1:
+        # Pre-fix schedule, kept only to reproduce old merged runs: Accelerate
+        # steps a prepared scheduler num_processes times per scheduler.step(),
+        # so the LR reached 0 after epochs / num_processes epochs.
+        total_steps = sum(blocks_per_epoch)
+        legacy_warmup = int(total_steps * warmup_ratio)
+        scheduler = get_linear_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=legacy_warmup,
+            num_training_steps=max(1, total_steps),
+        )
+        model, optimizer, scheduler = accelerator.prepare(model, optimizer, scheduler)
+        lr_schedule_record: dict[str, Any] = {
+            "lr_schedule_mode": LR_SCHEDULE_LEGACY_V1,
+            "legacy_total_scheduler_steps": total_steps,
+            "legacy_warmup_scheduler_steps": legacy_warmup,
+            "blocks_per_epoch": blocks_per_epoch,
+        }
+    else:
+        # One optimizer update per schedule block on every rank. The scheduler
+        # is deliberately not handed to Accelerate, which would step it
+        # num_processes times per call; this loop steps it once per update.
+        model, optimizer = accelerator.prepare(model, optimizer)
+        lr_schedule_record = plan_merged_block_schedule(blocks_per_epoch, warmup_ratio)
+        scheduler = build_update_counted_scheduler(optimizer, lr_schedule_record)
+    base_learning_rate = float(model_config["training"].get("learning_rate", 2.0e-4))
+    lr_schedule_record["num_processes"] = int(accelerator.num_processes)
+    lr_schedule_record["base_learning_rate"] = base_learning_rate
+    if "first_update_lr_factor" in lr_schedule_record:
+        lr_schedule_record["first_update_lr"] = base_learning_rate * lr_schedule_record["first_update_lr_factor"]
+        lr_schedule_record["last_update_lr"] = base_learning_rate * lr_schedule_record["last_update_lr_factor"]
+        LOGGER.info(
+            "LR schedule | mode=%s blocks_per_epoch=%s total_updates=%s warmup_updates=%s "
+            "first_update_lr=%.3e last_update_lr=%.3e num_processes=%s",
+            lr_schedule_record["lr_schedule_mode"],
+            blocks_per_epoch[0] if len(set(blocks_per_epoch)) == 1 else blocks_per_epoch,
+            lr_schedule_record["total_updates"],
+            lr_schedule_record["warmup_updates"],
+            lr_schedule_record["first_update_lr"],
+            lr_schedule_record["last_update_lr"],
+            lr_schedule_record["num_processes"],
+        )
+    else:
+        LOGGER.warning("LR schedule | mode=legacy_v1 (pre-fix merged schedule) %s", lr_schedule_record)
+    if is_local_main_process:
+        save_json(lr_schedule_record, logs_dir / "lr_schedule.json")
+    max_grad_norm = float(model_config["training"].get("max_grad_norm", 1.0))
+    step_log = StepLogWriter(
+        logs_dir / STEP_LOG_NAME,
+        every=int(model_config["training"].get("step_log_every", STEP_LOG_DEFAULT_EVERY)),
+        max_grad_norm=max_grad_norm,
+        enabled=bool(is_local_main_process),
     )
-    model, optimizer, scheduler = accelerator.prepare(model, optimizer, scheduler)
+    update_tracker = UpdateTracker(lr_schedule_record, logger=LOGGER)
+    parameter_fingerprint = trainable_parameter_fingerprint(model, accelerator.device)
 
     history: list[dict[str, Any]] = []
     best_metric = float("-inf")
@@ -534,7 +608,9 @@ def train_merged_fold(
         model.train()
         restore_model_for_training(accelerator.unwrap_model(model), model_config)
         block_rows: list[dict[str, Any]] = []
-        for block in schedule["blocks"]:
+        update_tracker.start_epoch(epoch_index)
+        epoch_lrs: list[float] = []
+        for block_position, block in enumerate(schedule["blocks"], start=1):
             optimizer.zero_grad()
             block_indices = list(block["example_indices"])
             global_weight = float(block["example_weight_total"])
@@ -587,11 +663,23 @@ def train_merged_fold(
             gathered_loss_stats = accelerator.gather(loss_stats.reshape(1, 2))
             global_loss_denominator = float(gathered_loss_stats[:, 1].sum().item())
             global_loss_numerator = float(gathered_loss_stats[:, 0].sum().item())
+            grad_norm = None
+            log_this_step = False
             if accelerator.sync_gradients:
-                accelerator.clip_grad_norm_(model.parameters(), float(model_config["training"].get("max_grad_norm", 1.0)))
+                grad_norm = accelerator.clip_grad_norm_(model.parameters(), max_grad_norm)
+                epoch_lrs.append(update_tracker.record_update(optimizer))
+                log_this_step = step_log.count_optimizer_step()
             optimizer.step()
-            scheduler.step()
+            update_tracker.step_scheduler(scheduler, accelerator.sync_gradients)
             optimizer.zero_grad()
+            if log_this_step:
+                step_log.write(
+                    epoch=epoch_index,
+                    step=block_position,
+                    loss=global_loss_numerator / global_loss_denominator if global_loss_denominator else 0.0,
+                    lr=epoch_lrs[-1],
+                    grad_norm=grad_norm,
+                )
             block_rows.append({
                 "block_index": int(block["block_index"]),
                 "example_count": len(block_indices),
@@ -600,6 +688,12 @@ def train_merged_fold(
                 "normalized_loss": global_loss_numerator / global_loss_denominator if global_loss_denominator else 0.0,
             })
         accelerator.wait_for_everyone()
+        # Loud guards: the epoch made exactly the planned updates, and it
+        # changed the trainable parameters (no update at LR 0).
+        update_tracker.finish_epoch()
+        parameter_fingerprint = check_epoch_changed_parameters(
+            model, accelerator.device, parameter_fingerprint, epoch=epoch_index
+        )
         # The epoch-end selection evaluation runs on every rank: FSDP needs all
         # ranks inside the forward collectives, and the sharded model must be
         # evaluated through the prepared module (a direct call on the unwrapped
@@ -640,6 +734,11 @@ def train_merged_fold(
                 "realized_dataset_contributions": schedule["audit"]["realized_dataset_weight_contributions"],
                 "schedule_hash": schedule["audit"]["schedule_hash"],
                 "sample_prediction_mode": prediction_mode,
+                "optimizer_updates": len(epoch_lrs),
+                "lr_first_update": epoch_lrs[0] if epoch_lrs else None,
+                "lr_last_update": epoch_lrs[-1] if epoch_lrs else None,
+                "lr_mean": sum(epoch_lrs) / len(epoch_lrs) if epoch_lrs else None,
+                "lr_schedule_mode": lr_schedule_record["lr_schedule_mode"],
             }
             if use_selection:
                 assert mean_macro is not None
@@ -675,6 +774,7 @@ def train_merged_fold(
                 shutil.rmtree(best_dir)
             accelerator.wait_for_everyone()
             save_training_checkpoint(accelerator, model, processor, best_dir, config=model_config)
+            _check_saved_adapter(accelerator, best_dir)
         stop_tensor = torch.tensor(0, dtype=torch.int32, device=accelerator.device)
         if accelerator.is_main_process and use_selection and history and history[-1].get("stopped_early"):
             stop_tensor.fill_(1)
@@ -699,6 +799,7 @@ def train_merged_fold(
             shutil.rmtree(best_dir)
         accelerator.wait_for_everyone()
         save_training_checkpoint(accelerator, model, processor, best_dir, config=model_config)
+        _check_saved_adapter(accelerator, best_dir)
     if accelerator.is_main_process:
         if best_epoch < 0:
             raise RuntimeError("Merged training completed without selecting a checkpoint.")
@@ -719,8 +820,10 @@ def train_merged_fold(
             "selected_epoch": int(best_epoch),
             "completed_epochs": len(history),
             "selection_metric_value": None if math.isnan(best_metric) else float(best_metric),
+            "lr_schedule": lr_schedule_record,
         }
         save_json(complete, complete_path)
+    step_log.close()
     # Per-rank memory evidence, in the same format as the standalone trainer.
     # Without it the merged shape decision cannot be checked against the
     # recorded peaks of the standalone audio lane.

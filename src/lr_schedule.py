@@ -128,6 +128,46 @@ def simulate_legacy_lrs(
     return lrs
 
 
+def plan_merged_block_schedule(blocks_per_epoch: Sequence[int], warmup_ratio: float) -> dict[str, Any]:
+    """Update-counted plan for the merged trainer.
+
+    ``src/merged/train.py`` makes exactly one optimizer update per schedule
+    block on every rank (no Accelerate gradient accumulation), so the update
+    count of an epoch is its block count, independent of ``num_processes``.
+    """
+    plan = plan_update_schedule([int(count) for count in blocks_per_epoch], 1, warmup_ratio)
+    plan["update_unit"] = "merged_schedule_block"
+    plan.pop("micro_batches_per_rank_per_epoch", None)
+    plan["blocks_per_epoch"] = [int(count) for count in blocks_per_epoch]
+    return plan
+
+
+def simulate_legacy_merged_lrs(
+    *, blocks_per_epoch: Sequence[int], warmup_ratio: float, num_processes: int
+) -> list[float]:
+    """LR factor of every real update under the pre-fix merged schedule.
+
+    The legacy merged trainer sized ``get_linear_schedule_with_warmup`` with
+    the total block count, passed it to ``accelerator.prepare`` and called
+    ``scheduler.step()`` once per block; Accelerate (``split_batches=False``)
+    then stepped it ``num_processes`` times per call.
+    """
+    total_steps = max(1, sum(int(count) for count in blocks_per_epoch))
+    warmup_steps = int(total_steps * float(warmup_ratio))
+
+    def hf_linear(step: int) -> float:
+        if step < warmup_steps:
+            return float(step) / float(max(1, warmup_steps))
+        return max(0.0, float(total_steps - step) / float(max(1, total_steps - warmup_steps)))
+
+    lrs: list[float] = []
+    scheduler_step = 0
+    for _ in range(total_steps):
+        lrs.append(hf_linear(scheduler_step))
+        scheduler_step += int(num_processes)
+    return lrs
+
+
 class UpdateTracker:
     """Counts real optimizer updates and steps the scheduler once per update.
 
