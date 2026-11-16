@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: feat-qwen3-androids-official-folds-20261008
+slug: feat-qwen3-androids-official-folds-20261008
+tier: 2
+branch: agent/feat-qwen3-androids-official-folds-20261008
+worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-feat-qwen3-androids-official-folds-20261008
+parent_branch: null
+parent_sha: 35f2d91e55acf6f21cd9e0f82590a56648180044
+created_at_utc: "2026-10-08T10:48:18Z"
+experiment_group_path: experiments/definitions/qwen3-androids-official-folds-20261008.yaml
+type: complementary
