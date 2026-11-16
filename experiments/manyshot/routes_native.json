@@ -1,0 +1,64 @@
+[
+ {
+  "name": "androids_interview/text_only_native",
+  "dataset": "androids_interview",
+  "protocol": "train_val_test",
+  "reference_checkpoint_dir": "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/qwen3_androids_mergedfolds_native_20261015/text_only/androids_interview/q3amf_text_only_native_s1337_f0_r1/fold_0/best_model",
+  "split_files": [
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/qwen3_androids_mergedfolds_native_20261015/text_only/androids_interview/q3amf_text_only_native_s1337_f0_r1/fold_0/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/qwen3_androids_mergedfolds_native_20261015/text_only/androids_interview/q3amf_text_only_native_s1337_f1_r1/fold_1/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/qwen3_androids_mergedfolds_native_20261015/text_only/androids_interview/q3amf_text_only_native_s1337_f2_r1/fold_2/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/qwen3_androids_mergedfolds_native_20261015/text_only/androids_interview/q3amf_text_only_native_s1337_f3_r1/fold_3/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/qwen3_androids_mergedfolds_native_20261015/text_only/androids_interview/q3amf_text_only_native_s1337_f4_r1/fold_4/logs/split_used.json"
+  ]
+ },
+ {
+  "name": "cmdc/text_only_native",
+  "dataset": "cmdc",
+  "protocol": "train_val",
+  "reference_checkpoint_dir": "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/cmdc/qwen38_pc_cmdc_f0_20260922/fold_0/best_model",
+  "split_files": [
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/cmdc/qwen38_pc_cmdc_f0_20260922/fold_0/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/cmdc/qwen38_pc_cmdc_f1_20260922/fold_1/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/cmdc/qwen38_pc_cmdc_f2_20260922/fold_2/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/cmdc/qwen38_pc_cmdc_f3_20260922/fold_3/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/cmdc/qwen38_pc_cmdc_f4_20260922/fold_4/logs/split_used.json"
+  ]
+ },
+ {
+  "name": "d3tec/text_only_native",
+  "dataset": "d3tec",
+  "protocol": "train_val_test",
+  "reference_checkpoint_dir": "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/d3tec/qwen38_pc_d3tec_f0_20260922/fold_0/best_model",
+  "split_files": [
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/d3tec/qwen38_pc_d3tec_f0_20260922/fold_0/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/d3tec/qwen38_pc_d3tec_f1_20260922/fold_1/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/d3tec/qwen38_pc_d3tec_f2_20260922/fold_2/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/d3tec/qwen38_pc_d3tec_f3_20260922/fold_3/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/d3tec/qwen38_pc_d3tec_f4_20260922/fold_4/logs/split_used.json"
+  ]
+ },
+ {
+  "name": "daic/text_only_native",
+  "dataset": "daic",
+  "protocol": "daic_official",
+  "reference_checkpoint_dir": "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/daic/qwen38_pc_daic_f0_20260922/fold_0/best_model",
+  "dev_reference_checkpoint_dir": "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/daic/qwen38_pc_daic_f0_20260922/fold_0/best_model",
+  "split_files": [
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/daic/qwen38_pc_daic_f0_20260922/fold_0/logs/split_used.json"
+  ]
+ },
+ {
+  "name": "turkish/text_only_native",
+  "dataset": "turkish",
+  "protocol": "train_val",
+  "reference_checkpoint_dir": "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/turkish/turkish_pooled_baseline_text_only_f0_20260925/fold_0/best_model",
+  "split_files": [
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/turkish/turkish_pooled_baseline_text_only_f0_20260925/fold_0/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/turkish/turkish_pooled_baseline_text_only_f1_20260925/fold_1/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/turkish/turkish_pooled_baseline_text_only_f2_20260925/fold_2/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/turkish/turkish_pooled_baseline_text_only_f3_20260925/fold_3/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/turkish/turkish_pooled_baseline_text_only_f4_20260925/fold_4/logs/split_used.json"
+  ]
+ }
+]

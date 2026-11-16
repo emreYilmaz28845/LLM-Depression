@@ -45,6 +45,11 @@ share, so class balance is unchanged. smote, mixup and gauss stay inside the
 span of the real subject means (the logistic fit already works in that span),
 so they can only reweight; wboot adds within-subject variation.
 
+With ``--per-fold-caches`` the same head runs on fold-specific frozen-base
+caches whose vectors depend on the fold's training subjects (many-shot context,
+``src/features/extract_manyshot_hidden.py``): one cache per split file, and the
+cache's ``final_eval`` subjects must equal that fold's reported subjects.
+
 With ``--allow-adapter`` the same head runs on LoRA caches instead. A LoRA
 adapter differs per fold, so each fold then takes its own cache (one
 ``--cache-dirs`` entry per split file), and the cache's ``final_eval``
@@ -105,6 +110,7 @@ INNER_CV_PROTOCOLS = ("train_val", "train_cv_test")
 INNER_FOLDS = 5
 INNER_SEED = 1337
 HANDCRAFTED_BACKENDS = ("opensmile_mfcc",)
+PER_FOLD_WEIGHTS_SOURCES = ("base_model_manyshot_context",)
 
 
 def unit_key(row: dict[str, Any]) -> str:
@@ -440,9 +446,14 @@ def is_fixed_feature_cache(meta: dict[str, Any]) -> bool:
     return meta.get("weights_source") == "base_model_no_adapter" or meta.get("model_backend") in HANDCRAFTED_BACKENDS
 
 
-def _load_caches(cache_dir: Path, dev_cache: Path | None, allow_adapter: bool) -> tuple[PooledCache, dict]:
+def _load_caches(cache_dir: Path, dev_cache: Path | None, allow_adapter: bool,
+                 per_fold: bool = False) -> tuple[PooledCache, dict]:
     meta = read_json(cache_dir / "extraction_metadata.json")
-    if not allow_adapter and not is_fixed_feature_cache(meta):
+    if per_fold:
+        if meta.get("weights_source") not in PER_FOLD_WEIGHTS_SOURCES:
+            raise ValueError("--per-fold-caches needs a fold-specific frozen-base cache "
+                             f"(weights_source in {PER_FOLD_WEIGHTS_SOURCES}).")
+    elif not allow_adapter and not is_fixed_feature_cache(meta):
         raise ValueError("Cache is not a frozen base-model (no adapter) or handcrafted-feature extraction.")
     if allow_adapter and is_fixed_feature_cache(meta):
         raise ValueError("--allow-adapter was given but the cache is a frozen base or handcrafted extraction.")
@@ -470,7 +481,10 @@ def run_route(
     *, cache_dirs: list[Path], dev_caches: list[Path] | None, split_files: list[Path], protocol: str,
     output_dir: Path, route: dict[str, Any], grid=DEFAULT_L2_GRID, allow_adapter: bool = False,
     pca_grid: tuple[int, ...] | None = None, augment: dict[str, Any] | None = None,
+    per_fold: bool = False,
 ) -> dict[str, Any]:
+    if per_fold and allow_adapter:
+        raise ValueError("--per-fold-caches and --allow-adapter are exclusive.")
     if protocol not in PROTOCOLS:
         raise ValueError(f"Unknown protocol {protocol!r}.")
     if pca_grid is not None and (not pca_grid or min(pca_grid) < 1):
@@ -486,14 +500,18 @@ def run_route(
         raise ValueError("A dev cache is required for, and only for, daic_official.")
     if len(cache_dirs) not in {1, len(split_files)}:
         raise ValueError("Give one cache for all folds or one cache per split file.")
-    if allow_adapter and len(cache_dirs) != len(split_files):
-        raise ValueError("Adapter caches are fold-specific: give one cache per split file.")
+    if (allow_adapter or per_fold) and len(cache_dirs) != len(split_files):
+        raise ValueError("Fold-specific caches: give one cache per split file.")
     if dev_caches and len(dev_caches) != len(cache_dirs):
         raise ValueError("Give one dev cache per main cache.")
-    loaded = [_load_caches(c, dev_caches[i] if dev_caches else None, allow_adapter)
+    loaded = [_load_caches(c, dev_caches[i] if dev_caches else None, allow_adapter, per_fold)
               for i, c in enumerate(cache_dirs)]
     meta = loaded[0][1]
-    feature_source = ("lora_adapter" if allow_adapter else
+    if per_fold:
+        for i, (_, m) in enumerate(loaded):
+            if m.get("outer_fold") != i:
+                raise ValueError(f"Cache {cache_dirs[i]} is for outer fold {m.get('outer_fold')}, not {i}.")
+    feature_source = ("lora_adapter" if allow_adapter else "manyshot_context" if per_fold else
                       "handcrafted" if meta.get("model_backend") in HANDCRAFTED_BACKENDS else "frozen_base")
     if output_dir.exists() and any(output_dir.iterdir()):
         raise ValueError(f"Refusing to overwrite existing output: {output_dir}")
@@ -532,7 +550,7 @@ def run_route(
     for fold, path in enumerate(split_files):
         split = read_json(path)
         cache = loaded[fold if len(loaded) > 1 else 0][0]
-        if allow_adapter:
+        if allow_adapter or per_fold:
             _check_adapter_partition(cache_dirs[fold], split, protocol)
         result = run_fold(cache, split, protocol, grid, tuple(sorted(set(pca_grid))) if pca_grid else None,
                           augment, fold)
@@ -577,6 +595,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dev-caches", nargs="+", type=Path, help="DAIC only: one dev cache per main cache.")
     parser.add_argument("--allow-adapter", action="store_true",
                         help="Accept per-fold LoRA caches instead of a frozen base cache.")
+    parser.add_argument("--per-fold-caches", action="store_true",
+                        help="Accept fold-specific frozen-base caches (many-shot context), one per split file.")
     parser.add_argument("--split-files", required=True, nargs="+", type=Path)
     parser.add_argument("--protocol", required=True, choices=PROTOCOLS)
     parser.add_argument("--output-dir", required=True, type=Path)
@@ -595,7 +615,7 @@ def main() -> None:
     args = parse_args()
     summary = run_route(cache_dirs=args.cache_dirs, dev_caches=args.dev_caches, split_files=args.split_files,
                         protocol=args.protocol, output_dir=args.output_dir, route=json.loads(args.route),
-                        allow_adapter=args.allow_adapter,
+                        allow_adapter=args.allow_adapter, per_fold=args.per_fold_caches,
                         pca_grid=(args.pca_components,) if args.pca_components else
                         (tuple(args.pca_select_grid) if args.pca_select_grid else None),
                         augment={"method": args.augment, "ratio": args.augment_ratio, "seed": args.augment_seed}
