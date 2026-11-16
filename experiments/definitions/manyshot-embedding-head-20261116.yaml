@@ -1,0 +1,54 @@
+schema_version: audiollm.experiment_group.v1
+group_id: manyshot-embedding-head-20261116
+title: Many-shot-context Qwen3.8-27B text features + subject-mean L2 head vs zero-shot features (OZY-148)
+research_question: >-
+  When the prompt is preceded by labelled examples of other training subjects
+  (many-shot in-context), does the last-prompt-token hidden state of frozen
+  Qwen3.8-27B give a better subject-mean L2 logistic head than the same
+  model's zero-shot hidden state, and better than the many-shot answer itself?
+dataset: >-
+  Native-transcript text routes of the frozen-base study: Androids interview,
+  CMDC, D3TEC and Turkish (5 outer folds), DAIC-WOZ native (official split
+  with the official-dev subjects). English translation routes are out of scope.
+baseline: >-
+  Arm A: frozen Qwen3.8-27B zero-shot text caches and heads of
+  frozen-base-standalone-heads-20261024 (same reference runs, manifests,
+  prompts and split_used.json). Arm C: the colleague's many-shot answer
+  logprob run (MN5 ozu659681, compare5.json many_fit), read-only reference.
+treatment: >-
+  Arm B: src/features/extract_manyshot_hidden.py. Per outer fold the fit
+  subjects are split into 5 label-stratified inner groups (seed 1337); a fit
+  subject is embedded after shots from the fit subjects outside its group,
+  other subjects with each of the 5 shot sets and averaged. Shots are the
+  stored user prompts with their gold label as the assistant turn, shuffled
+  with a fixed seed. Final post-norm hidden state of the last prompt token
+  (5120-d). No adapter. 1 node x 2 H100, layer-wise split; the shared prefix
+  cache is reused per row. Head baselines/frozen_standalone_heads.py
+  --per-fold-caches (logreg_subjmean_l2sel, unchanged).
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: frozen_base_logreg_subjmean_l2sel
+  aggregation: subject_level
+  evaluation_view: harmonized_all_windows_full_coverage
+comparison_rule: >-
+  Unweighted five-fold mean of subject-level Macro-F1, Positive-F1 and UAR
+  (DAIC: official test), paired by route: B vs A and B vs C. One run per
+  route, no SD.
+exclusions:
+  - lora_training
+  - english_translation_routes
+  - kimi_or_other_models
+  - extra_seeds
+  - optuna_or_hpo
+  - paper_or_prism_edits
+github_issue: null
+github_pr: null
