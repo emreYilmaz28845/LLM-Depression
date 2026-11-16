@@ -97,7 +97,7 @@ def test_zeroshot_plan_has_one_set_without_note_and_matches_reference_prompt():
     for s in pool.values():
         s[0]["reference_prompt_text"] = tok.apply_chat_template(
             [{"role": "system", "content": "SYS"}, {"role": "user", "content": s[0]["user"]}],
-            add_generation_prompt=True, enable_thinking=False, tokenize=False)
+            add_generation_prompt=True, enable_thinking=False, tokenize=False).replace("<think>\n\n</think>\n\n", "")
     split = {"train_subject_ids": ids[:6], "selection_subject_ids": ids[6:]}
     _, sets, _ = plan_fold({"protocol": "train_val"}, split, pool, 0, _args("zeroshot"), Renderer(tok))
     assert len(sets) == 1 and sets[0]["shots"] == []
@@ -120,4 +120,5 @@ def test_real_qwen38_template_prefix_is_shared_across_rows():
     assert p1 == p2 and s1 != s2
     assert tok(t1)["input_ids"] == p1 + s1
     assert "Non-depressed" in tok.decode(p1) and "Final one." in tok.decode(s1)
-    assert tok.decode(s1).rstrip().endswith("</think>")
+    assert tok.decode(s1).endswith("<|im_start|>assistant\n")
+    assert r.suffix(t1, t1[:r.cut(t1)], p1, verify=True) == s1

@@ -33,9 +33,8 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 run() { python src/features/extract_manyshot_hidden.py --model-dir "$MODEL_DIR" --output-root "$OUT_ROOT" "$@"; }
 
 if [ "${SMOKE:-0}" = "1" ]; then
-  # 1) prompt/token plan of every native route (CPU), 2) zero-shot arm reproduces the frozen
-  # Qwen3.8 cache, 3) many-shot fold 0 with cache-free and determinism checks.
-  run --routes experiments/manyshot/routes_native.json --plan-only
+  # 1) zero-shot arm reproduces the frozen Qwen3.8 cache, 2) many-shot fold 0 with cache-free
+  # and determinism checks. (Token plan of all routes: --plan-only, job 49110231.)
   run --routes experiments/manyshot/routes_smoke_androids.json --mode zeroshot --folds 0 \
       --output-root "$OUT_ROOT/zeroshot" \
       --compare-cache "$BASE/AudioLLM/experiment_runtime/exp-frozen-base-standalone-heads-20261024/caches/androids_interview/text_only_native/main"

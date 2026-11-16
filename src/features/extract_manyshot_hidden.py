@@ -63,6 +63,10 @@ NOTE = ("\n\nThe conversation contains labelled examples: transcripts of other p
         "study, each followed by that participant's true study label. Use them as reference for how the "
         "labels relate to the transcripts in this study, then label the final participant.")
 USER_TURN_MARK = "<|im_start|>user"
+# enable_thinking=False appends a closed empty thinking block after the assistant header. The
+# frozen Qwen3.8 caches (arm A) were extracted from prompts that end at the assistant header, so
+# the block is removed: both arms read the same position.
+CLOSED_THINK = "<think>\n\n</think>\n\n"
 OPTIONAL_ROW_KEYS = (
     "response_id", "question_condition", "turn_key", "question_id", "window_id",
     "prompt_id", "segment_index", "num_segments", "chunk_id", "protocol_id", "chunk_index", "num_chunks",
@@ -243,18 +247,37 @@ class Renderer:
         self.tok = tokenizer
 
     def text(self, msgs):
-        return self.tok.apply_chat_template(msgs, add_generation_prompt=True, enable_thinking=False,
+        text = self.tok.apply_chat_template(msgs, add_generation_prompt=True, enable_thinking=False,
                                             tokenize=False)
+        if not text.endswith(CLOSED_THINK):
+            raise ValueError("Generation prompt does not end with the closed thinking block.")
+        return text[:-len(CLOSED_THINK)]
 
-    def split(self, text: str) -> tuple[list[int], list[int], str]:
+    @staticmethod
+    def cut(text: str) -> int:
         cut = text.rfind(USER_TURN_MARK)
         if cut <= 0:
             raise ValueError("Last user turn not found in the rendered prompt.")
+        return cut
+
+    def split(self, text: str) -> tuple[list[int], list[int], str]:
+        """Full check: tokenize the whole prompt and the prefix (slow for long prompts)."""
+        cut = self.cut(text)
         full = self.tok(text, add_special_tokens=True)["input_ids"]
         prefix = self.tok(text[:cut], add_special_tokens=True)["input_ids"]
         if full[:len(prefix)] != prefix:
             raise ValueError("Prefix tokens are not a prefix of the full prompt tokens.")
         return prefix, full[len(prefix):], text
+
+    def suffix(self, text: str, prefix_text: str, prefix_ids: list[int], verify: bool) -> list[int]:
+        """Tokens of the last user turn; the prefix text must match the shot set's prefix."""
+        cut = self.cut(text)
+        if text[:cut] != prefix_text:
+            raise AssertionError("Rows of one shot set do not share the prefix.")
+        suffix = self.tok(text[cut:], add_special_tokens=False)["input_ids"]
+        if verify and self.tok(text, add_special_tokens=True)["input_ids"] != prefix_ids + suffix:
+            raise AssertionError("Prefix + suffix tokens differ from the full prompt tokens.")
+        return suffix
 
 
 def sha(ids: list[int]) -> str:
@@ -334,15 +357,16 @@ def plan_fold(route, split, pool, fold, args, renderer):
         if not donors <= set(plan["fit"]):
             raise AssertionError("Shots contain a non-fit subject.")
         first = pool[(st["own"] + st["shared"])[0]][0]
-        prefix, _, _ = renderer.split(renderer.text(messages(system, shots, first["user"])))
+        first_text = renderer.text(messages(system, shots, first["user"]))
+        prefix_text = first_text[:renderer.cut(first_text)]
+        prefix = renderer.tok(prefix_text, add_special_tokens=True)["input_ids"]
         st.update({"shots": shots, "prefix_ids": prefix, "prefix_sha256": sha(prefix),
                    "n_shot_rows": len(shots), "n_shot_subjects": len(donors)})
         st["rows"] = []
         for s in st["own"] + st["shared"]:
             for r in pool[s]:
-                pre, suf, text = renderer.split(renderer.text(messages(system, shots, r["user"])))
-                if pre != prefix:
-                    raise AssertionError("Rows of one shot set do not share the prefix.")
+                text = renderer.text(messages(system, shots, r["user"]))
+                suf = renderer.suffix(text, prefix_text, prefix, verify=len(st["rows"]) < 2)
                 if args.mode == "zeroshot" and r.get("reference_prompt_text") and text != r["reference_prompt_text"]:
                     raise AssertionError(f"{r['row']['sample_id']}: zero-shot prompt differs from the reference.")
                 st["rows"].append({"subject": s, "own": s in set(st["own"]), "ex": r, "suffix": suf})
