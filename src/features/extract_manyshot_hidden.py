@@ -143,7 +143,7 @@ def load_examples(ref_dir: Path, final_eval_source: str) -> tuple[list[dict[str,
                    "subject_id": str(ex["subject_id"]), "label": int(ex["label"])}
             row.update({k: ex[k] for k in OPTIONAL_ROW_KEYS if k in ex})
             out.append({"row": row, "system": ex.get("prompt_system_text") or "", "user": user,
-                        "reference_prompt_text": ex.get("prompt_text")})
+                        "reference_prompt_text": None})
     provenance = {
         "dataset": config["dataset"],
         "condition": resolve_condition(None, saved.get("input_modality"), use_emotion(config)),
@@ -249,9 +249,11 @@ class Renderer:
     def text(self, msgs):
         text = self.tok.apply_chat_template(msgs, add_generation_prompt=True, enable_thinking=False,
                                             tokenize=False)
+        # Kept, as in the reference extractor (render_qwen38_prompt): the pooled token is the
+        # last token of the closed thinking block, the exact position the model answers from.
         if not text.endswith(CLOSED_THINK):
             raise ValueError("Generation prompt does not end with the closed thinking block.")
-        return text[:-len(CLOSED_THINK)]
+        return text
 
     @staticmethod
     def cut(text: str) -> int:
@@ -367,10 +369,19 @@ def plan_fold(route, split, pool, fold, args, renderer):
             for r in pool[s]:
                 text = renderer.text(messages(system, shots, r["user"]))
                 suf = renderer.suffix(text, prefix_text, prefix, verify=len(st["rows"]) < 2)
-                if args.mode == "zeroshot" and r.get("reference_prompt_text") and text != r["reference_prompt_text"]:
+                if args.mode == "zeroshot" and text != _reference_prompt(renderer, system, r):
                     raise AssertionError(f"{r['row']['sample_id']}: zero-shot prompt differs from the reference.")
                 st["rows"].append({"subject": s, "own": s in set(st["own"]), "ex": r, "suffix": suf})
     return plan, sets, system
+
+
+def _reference_prompt(renderer, system: str, r: dict[str, Any]) -> str:
+    """The prompt the frozen Qwen3.8 extractor feeds (prepare_qwen38_example -> render_qwen38_prompt)."""
+    if r.get("reference_prompt_text") is not None:
+        return r["reference_prompt_text"]
+    from src.model.qwen38_lora import render_qwen38_prompt  # noqa: PLC0415
+
+    return render_qwen38_prompt(renderer.tok, system, r["user"])
 
 
 def write_cache(out_dir: Path, name: str, rows: list[dict], vectors: list[np.ndarray]) -> dict[str, Any]:
