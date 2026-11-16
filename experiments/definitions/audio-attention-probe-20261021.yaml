@@ -1,0 +1,46 @@
+schema_version: audiollm.experiment_group.v1
+group_id: audio-attention-probe-20261021
+title: Does the Qwen3-Omni Thinker use the audio? Attention mass, audio ablation and prosody prompting
+research_question: >-
+  On a few DAIC test inputs, how much attention do the answer positions of the
+  fine-tuned Qwen3-Omni-30B-A3B Thinker (and of the base model with the adapter
+  disabled) put on the audio-token span, layer by layer, compared with the
+  transcript and the uniform share? Do the candidate-label scores change when the
+  audio is replaced by silence or by another subject's audio? When asked to
+  describe speech rate, pitch variation, pauses and loudness before a judgment,
+  does the model's description match simple acoustic measurements, and does it
+  describe prosody for a silent input? Diagnostic probe requested by the advisor
+  on 2026-10-21; not a reportable scientific result.
+dataset: daic
+baseline: >-
+  The existing DAIC Qwen3-Omni checkpoints of the promptcontext_v1_qwen3omni_likelihood
+  campaign, fold 0: qwen3omni_daic_audio_text_fold0_prod_20260923 and
+  qwen3omni_daic_audio_only_fold0_prod_20260923 (best_model adapters), with their
+  saved run_config.yaml, manifest and split. No training.
+treatment: >-
+  scripts/probe_audio_attention.py run once on one node (4 x H100, device-map
+  sharded, 1 h wall limit): one correctly predicted depressed and one correctly
+  predicted non-depressed test subject (middle packed30 chunk), attention rows
+  recomputed from each layer's q/k projections, likelihood scores under real,
+  silent and swapped audio, and prosody generations with acoustic measurements.
+expected_seeds:
+  - 1337
+expected_folds:
+  - 0
+primary_metric:
+  namespace: diagnostic/audio_attention
+  name: audio_attention_mass_decision_row
+  backend: likelihood
+  aggregation: sample_level
+  evaluation_view: harmonized_all_windows_full_coverage
+runs:
+  - logical_run: qwen3omni_daic_audio_attention_probe
+    dataset: daic
+    modality: audio_text
+    config: configs/main/daic_audio_text_harmonized_selmacrof1_likelihood_v1_promptcontext_v1_qwen3omni_30b_a3b.yaml
+    folds:
+      - 0
+    endpoint: outer_fold_test_partition
+    folds_note: >-
+      Diagnostic probe on two test subjects only; never report these numbers as a
+      classification result.
