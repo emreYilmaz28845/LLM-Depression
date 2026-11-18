@@ -83,6 +83,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output-root", type=Path, help="Base for routes without an absolute output_dir.")
     p.add_argument("--mode", choices=("manyshot", "zeroshot"), default="manyshot")
     p.add_argument("--folds", type=int, nargs="+", help="Outer folds to run (default: all).")
+    p.add_argument("--shot-scheme", choices=("groups", "loo"), default="groups",
+                   help="groups: G inner groups (fit rows see the other groups' shots, other rows the mean over "
+                        "the G sets). loo: one fixed shot order of all fit subjects; a fit subject is embedded "
+                        "with every other fit subject, other rows with all fit subjects.")
+    p.add_argument("--answer-scores", action="store_true",
+                   help="Also store the mean token log-probability of each label after the prompt "
+                        "(the candidate-label likelihood of src/evaluate.score_candidate_label).")
+    p.add_argument("--shard", help="i/n: run only shot sets with index %% n == i. Finished sets are saved "
+                                   "and skipped on restart; the cache is written by a run without --shard.")
+    p.add_argument("--only-sets", type=int, nargs="+",
+                   help="Smoke only: run these shot-set indices (negative = from the end); no cache written.")
     p.add_argument("--inner-groups", type=int, default=5)
     p.add_argument("--inner-seed", type=int, default=1337)
     p.add_argument("--shot-seed", type=int, default=0)
@@ -324,6 +335,35 @@ class Encoder:
             _, vec = self._run(suffix, copy.deepcopy(prefix_cache))
         return vec.astype(np.float32)
 
+    def row_scores(self, prefix_cache, suffix: list[int], candidates: list[list[int]]):
+        """Vector of the last prompt token and the mean log-probability of each candidate's tokens.
+
+        One forward of ``suffix + candidate`` per candidate on a copy of the prefix cache; the
+        prompt positions are causal, so the vector does not depend on the candidate (checked).
+        """
+        torch = self.torch
+        n = len(suffix)
+        vecs, scores = [], []
+        with torch.inference_mode():
+            for cand in candidates:
+                ids, cache, hidden = suffix + cand, copy.deepcopy(prefix_cache), []
+                for start in range(0, len(ids), self.chunk):
+                    piece = torch.tensor([ids[start:start + self.chunk]], dtype=torch.long, device=self.device)
+                    out = self.decoder(input_ids=piece, past_key_values=cache, use_cache=True, return_dict=True)
+                    cache = out.past_key_values
+                    lo = max(n - 1 - start, 0)
+                    if start + piece.shape[1] > n - 1:
+                        hidden.append(out.last_hidden_state[0, lo:])
+                del cache
+                h = torch.cat(hidden, 0)  # positions n-1 .. len(ids)-1
+                vecs.append(h[0].float().cpu().numpy().astype(np.float32))
+                head = self.model.lm_head
+                logits = head(h[:len(cand)].to(head.weight.device)).float()
+                logp = torch.log_softmax(logits, dim=-1)
+                target = torch.tensor(cand, dtype=torch.long, device=logp.device)
+                scores.append(float(logp.gather(-1, target[:, None]).squeeze(-1).mean().item()))
+        return vecs[0], scores, float(max(np.abs(v - vecs[0]).max() for v in vecs))
+
     def uncached(self, ids: list[int]) -> np.ndarray:
         torch = self.torch
         with torch.inference_mode():
@@ -346,12 +386,24 @@ def plan_fold(route, split, pool, fold, args, renderer):
     system = next(iter(pool.values()))[0]["system"]
     if args.mode == "zeroshot":
         sets = [{"group": None, "donors": [], "own": plan["fit"], "shared": plan["others"]}]
+    elif getattr(args, "shot_scheme", "groups") == "loo":
+        sets = [{"group": s, "donors": [d for d in plan["fit"] if d != s], "own": [s], "shared": []}
+                for s in plan["fit"]]
+        sets.append({"group": "all", "donors": list(plan["fit"]), "own": [], "shared": plan["others"]})
     else:
         groups = inner_groups(plan["fit"], labels, args.inner_groups, args.inner_seed, fold)
         sets = [{"group": g, "donors": [s for s in plan["fit"] if s not in set(members)],
                  "own": members, "shared": plan["others"]} for g, members in enumerate(groups)]
+    loo = args.mode == "manyshot" and getattr(args, "shot_scheme", "groups") == "loo"
+    # LOO: one shot order for the fold; each set drops one subject's turns from it, so every
+    # context is the same up to that subject (fit and evaluation rows see nearly the same prompt).
+    order = shot_rows(pool, plan["fit"], args.shot_seed * 100003 + fold * 101) if loo else None
     for i, st in enumerate(sets):
-        shots = shot_rows(pool, st["donors"], args.shot_seed * 100003 + fold * 101 + i)
+        if loo:
+            keep = set(st["donors"])
+            shots = [r for r in order if r["row"]["subject_id"] in keep]
+        else:
+            shots = shot_rows(pool, st["donors"], args.shot_seed * 100003 + fold * 101 + i)
         donors = set(st["donors"])
         for s in st["own"] + st["shared"]:
             if s in donors:
@@ -427,136 +479,259 @@ def main() -> None:
             jobs.append((route, prov, fold, split_path, plan, sets, system, out_dir, summary))
     if args.plan_only or not jobs:
         return
+    shard = parse_shard(args.shard)
+    candidates = None
+    if args.answer_scores:
+        candidates = [renderer.tok(LABEL_TEXT[k], add_special_tokens=False)["input_ids"] for k in ANSWER_ORDER]
 
-    import torch  # noqa: PLC0415
-    import transformers  # noqa: PLC0415
+    if candidates is not None:
+        for _r, _p, _f, _sp, _pl, sets, system, _o, _s in jobs:
+            first = sets[0]["rows"][0]
+            text = renderer.text(messages(system, sets[0]["shots"], first["ex"]["user"]))
+            for cand, k in zip(candidates, ANSWER_ORDER):
+                full = renderer.tok(text + LABEL_TEXT[k], add_special_tokens=True)["input_ids"]
+                if full != sets[0]["prefix_ids"] + first["suffix"] + cand:
+                    raise AssertionError(f"Label {LABEL_TEXT[k]!r} does not tokenize the same after the prompt.")
+    selected = {j[2]: pick_sets(len(j[5]), args.only_sets) for j in jobs}
+    need_model = any(i in selected[j[2]] for j in jobs for i in set_todo(j[7], j[5], shard))
+    enc = compare = None
+    if need_model:
+        import torch  # noqa: PLC0415
 
-    torch.manual_seed(0)
-    enc = Encoder(args.model_dir, args.prefill_chunk)
-    compare = None
-    if args.compare_cache:
-        from baselines.subject_mean_logreg_head import load_partition  # noqa: PLC0415
-        compare = {}
-        for part in ("outer_train", "final_eval"):
-            x, rows = load_partition(args.compare_cache, part)
-            compare.update({r["sample_id"]: x[i] for i, r in enumerate(rows)})
+        torch.manual_seed(0)
+        enc = Encoder(args.model_dir, args.prefill_chunk)
+        if args.compare_cache:
+            from baselines.subject_mean_logreg_head import load_partition  # noqa: PLC0415
+            compare = {}
+            for part in ("outer_train", "final_eval"):
+                x, rows = load_partition(args.compare_cache, part)
+                compare.update({r["sample_id"]: x[i] for i, r in enumerate(rows)})
 
     for route, prov, fold, split_path, plan, sets, system, out_dir, summary in jobs:
-        own_vec: dict[str, np.ndarray] = {}
-        shared_sum: dict[str, np.ndarray] = {}
-        shared_n: dict[str, int] = {}
-        checks: dict[str, Any] = {"uncached": [], "determinism_max_abs_diff": None, "compare_cache": []}
-        timing = []
-        for i, st in enumerate(sets):
-            t0 = time.time()
-            cache = enc.prefix(st["prefix_ids"])
-            t_prefix = time.time() - t0
-            t1 = time.time()
-            for j, item in enumerate(st["rows"]):
-                ex = item["ex"]
-                vec = enc.row(cache, item["suffix"])
-                if not np.isfinite(vec).all() or vec.shape != (HIDDEN_SIZE,):
-                    raise ValueError(f"Bad vector for {ex['row']['sample_id']}.")
-                if i == 0 and j == 0:
-                    again = enc.row(cache, item["suffix"])
-                    checks["determinism_max_abs_diff"] = float(np.abs(vec - again).max())
-                if i == 0 and j < args.check_uncached:
-                    ref = enc.uncached(st["prefix_ids"] + item["suffix"])
-                    checks["uncached"].append({"max_abs_diff": float(np.abs(vec - ref).max()),
-                                               "max_abs_ref": float(np.abs(ref).max()),
-                                               "cosine": cosine(vec, ref)})
-                if compare is not None and ex["row"]["sample_id"] in compare:
-                    other = compare[ex["row"]["sample_id"]].astype(np.float32)
-                    checks["compare_cache"].append({"max_abs_diff": float(np.abs(vec - other).max()),
-                                                    "cosine": cosine(vec, other)})
-                sid = ex["row"]["sample_id"]
-                if item["own"]:
-                    if sid in own_vec:
-                        raise AssertionError(f"{sid} embedded twice as a fit row.")
-                    own_vec[sid] = vec
-                else:
-                    shared_sum[sid] = shared_sum.get(sid, 0) + vec.astype(np.float64)
-                    shared_n[sid] = shared_n.get(sid, 0) + 1
-            del cache
-            torch.cuda.empty_cache()
-            timing.append({"set": i, "prefix_tokens": len(st["prefix_ids"]), "prefix_seconds": round(t_prefix, 1),
-                           "rows": len(st["rows"]), "rows_seconds": round(time.time() - t1, 1)})
-            print("SET", json.dumps({"route": route["name"], "fold": fold, **timing[-1]}), flush=True)
-        if checks["uncached"]:
-            print("CHECK_UNCACHED", json.dumps(checks["uncached"]), flush=True)
-        if checks["compare_cache"]:
-            cc = checks["compare_cache"]
-            print("CHECK_COMPARE", json.dumps({"n": len(cc), "min_cosine": min(c["cosine"] for c in cc),
-                                               "max_abs_diff": max(c["max_abs_diff"] for c in cc)}), flush=True)
-        print("CHECK_DETERMINISM", checks["determinism_max_abs_diff"], flush=True)
-        if args.max_shot_sets:
-            print(f"[smoke] {route['name']} fold {fold}: partial shot sets, cache not written", flush=True)
+        set_dir = sets_dir(out_dir)
+        set_dir.mkdir(parents=True, exist_ok=True)
+        for i in set_todo(out_dir, sets, shard):
+            if i not in selected[fold]:
+                continue
+            run_set(enc, sets[i], i, set_dir, args, candidates, compare, route["name"], fold)
+        if shard is not None or args.max_shot_sets or args.only_sets:
+            done = sum((set_dir / f"set_{i:04d}.json").exists() for i in range(len(sets)))
+            print(f"[shard] {route['name']} fold {fold}: {done}/{len(sets)} sets on disk; cache not written",
+                  flush=True)
             continue
+        assemble(route, prov, fold, split_path, plan, sets, out_dir, args, renderer)
 
-        expected = len(sets)
-        vectors: dict[str, np.ndarray] = dict(own_vec)
-        for sid, total in shared_sum.items():
-            if shared_n[sid] != expected:
-                raise AssertionError(f"{sid}: {shared_n[sid]} of {expected} shot sets.")
-            vectors[sid] = (total / shared_n[sid]).astype(np.float32)
-        partial = out_dir.with_name(out_dir.name + ".partial")
-        if partial.exists():
-            raise RuntimeError(f"Partial output exists: {partial}")
-        partial.mkdir(parents=True)
-        pool_rows = {r["ex"]["row"]["sample_id"]: r["ex"]["row"] for st in sets for r in st["rows"]}
-        parts = {}
-        layout = [("outer_train", partial, "outer_train"), ("final_eval", partial, "final_eval")]
-        if "dev" in plan:
-            (partial / "dev").mkdir()
-            layout.append(("dev", partial / "dev", "final_eval"))
-        meta_common = {
-            "schema_version": SCHEMA_VERSION, "model_backend": "qwen38",
-            "base_model": "/gpfs/projects/etur92/ozu647717/models/Qwen3.8-27B",
-            "base_model_path": str(args.model_dir),
-            "checkpoint_type": "base_model", "weights_source": WEIGHTS_SOURCE[args.mode],
-            "hidden_layer": "final", "pooling": POOLING, "vector_dimension": HIDDEN_SIZE, "vector_dtype": "float32",
-            "hidden_definition": "language-model decoder final RMSNorm output, last prompt token",
-            "prompt_encoding": "apply_chat_template(add_generation_prompt=True, enable_thinking=False)",
-            "manyshot": {
-                "mode": args.mode, "note": NOTE if args.mode == "manyshot" else None,
-                "label_text": LABEL_TEXT, "inner_groups": args.inner_groups if args.mode == "manyshot" else 0,
-                "inner_seed": args.inner_seed, "shot_seed": args.shot_seed,
-                "shot_donors": "fit subjects outside the embedded subject's inner group",
-                "non_fit_vectors": "mean over all shot sets",
-                "prefix_sha256": [s["prefix_sha256"] for s in sets],
-                "prefix_tokens": [len(s["prefix_ids"]) for s in sets],
-                "shot_rows": [s["n_shot_rows"] for s in sets],
-                "shot_subjects": [s["n_shot_subjects"] for s in sets],
-                "cache_reuse": "prefix cache deep-copied per row; prefill chunk " + str(args.prefill_chunk),
-            },
-            "outer_fold": fold, "protocol": route["protocol"],
-            "split_file": str(split_path), "split_file_sha256": sha256_file(split_path),
-            "checks": checks, "timing": timing,
-            **{k: prov[k] for k in ("dataset", "condition", "input_modality", "protocol_id", "manifest_sha256",
-                                    "manifest", "manifest_file_sha256", "reference_checkpoint_dir",
-                                    "saved_run_config_sha256", "saved_split_sha256", "split_metadata_sha256")},
-            "gold_label_protection": {"embedded_row_label_in_input": False,
-                                      "shot_labels_in_input": args.mode == "manyshot",
-                                      "shot_subjects": "fit subjects only, never the embedded subject"},
-            "versions": {"python": platform.python_version(), "torch": torch.__version__,
-                         "transformers": transformers.__version__},
-        }
-        for part, directory, file_name in layout:
-            subjects = plan[part]
-            rows, vecs = [], []
-            for s in subjects:
-                for e in sorted((pool_rows[k] for k in pool_rows if pool_rows[k]["subject_id"] == s),
-                                key=lambda r: r["sample_id"]):
-                    rows.append({**e, "partition": file_name, "fold": fold, "pooling": POOLING})
-                    vecs.append(vectors[e["sample_id"]])
-            parts[part] = write_cache(directory, file_name, rows, vecs)
-        save_json({**meta_common, "partitions": {k: v for k, v in parts.items() if k != "dev"}},
-                  partial / "extraction_metadata.json")
-        if "dev" in plan:
-            save_json({**meta_common, "partitions": {"final_eval": parts["dev"]}, "role": "daic_official_dev"},
-                      partial / "dev" / "extraction_metadata.json")
-        partial.rename(out_dir)
-        print("[done]", route["name"], "fold", fold, json.dumps(parts), flush=True)
+
+ANSWER_ORDER = (1, 0)  # answer score columns: Depressed, Non-depressed
+
+
+def pick_sets(n: int, only: list[int] | None) -> set[int]:
+    """--only-sets indices (negative counts from the end) or all sets."""
+    return set(range(n)) if not only else {i % n for i in only}
+
+
+def parse_shard(text: str | None) -> tuple[int, int] | None:
+    if not text:
+        return None
+    i, n = (int(x) for x in text.split("/"))
+    if not 0 <= i < n:
+        raise ValueError(f"Bad --shard {text!r}.")
+    return i, n
+
+
+def sets_dir(out_dir: Path) -> Path:
+    return out_dir.with_name(out_dir.name + ".sets")
+
+
+def set_todo(out_dir: Path, sets: list[dict], shard) -> list[int]:
+    """Indices of this shard's shot sets that have no saved result yet."""
+    if (out_dir / "extraction_metadata.json").exists():
+        return []
+    d = sets_dir(out_dir)
+    idx = [i for i in range(len(sets)) if shard is None or i % shard[1] == shard[0]]
+    return [i for i in idx if not (d / f"set_{i:04d}.json").exists()]
+
+
+def run_set(enc, st, i, set_dir: Path, args, candidates, compare, route_name, fold) -> None:
+    """Embed (and score) every row of one shot set and save the result atomically."""
+    import torch  # noqa: PLC0415
+
+    checks: dict[str, Any] = {"uncached": [], "determinism_max_abs_diff": None, "compare_cache": [],
+                              "candidate_vector_max_abs_diff": None}
+    t0 = time.time()
+    cache = enc.prefix(st["prefix_ids"])
+    t_prefix = time.time() - t0
+    t1 = time.time()
+    vecs, scores = [], []
+    for j, item in enumerate(st["rows"]):
+        ex = item["ex"]
+        if candidates is not None:
+            vec, sc, cand_diff = enc.row_scores(cache, item["suffix"], candidates)
+            scores.append(sc)
+            checks["candidate_vector_max_abs_diff"] = max(cand_diff, checks["candidate_vector_max_abs_diff"] or 0.0)
+            if j == 0:
+                plain = enc.row(cache, item["suffix"])
+                checks["scoring_vs_plain_max_abs_diff"] = float(np.abs(vec - plain).max())
+        else:
+            vec = enc.row(cache, item["suffix"])
+        if not np.isfinite(vec).all() or vec.shape != (HIDDEN_SIZE,):
+            raise ValueError(f"Bad vector for {ex['row']['sample_id']}.")
+        if j == 0:
+            again = enc.row(cache, item["suffix"])
+            checks["determinism_max_abs_diff"] = float(np.abs(vec - again).max())
+        if j < args.check_uncached and i == 0:
+            ref = enc.uncached(st["prefix_ids"] + item["suffix"])
+            checks["uncached"].append({"max_abs_diff": float(np.abs(vec - ref).max()),
+                                       "max_abs_ref": float(np.abs(ref).max()), "cosine": cosine(vec, ref)})
+        if compare is not None and ex["row"]["sample_id"] in compare:
+            other = compare[ex["row"]["sample_id"]].astype(np.float32)
+            checks["compare_cache"].append({"max_abs_diff": float(np.abs(vec - other).max()),
+                                            "cosine": cosine(vec, other)})
+        vecs.append(vec)
+    del cache
+    torch.cuda.empty_cache()
+    timing = {"set": i, "prefix_tokens": len(st["prefix_ids"]), "prefix_seconds": round(t_prefix, 1),
+              "rows": len(st["rows"]), "rows_seconds": round(time.time() - t1, 1)}
+    print("SET", json.dumps({"route": route_name, "fold": fold, **timing, "checks": {
+        k: v for k, v in checks.items() if not isinstance(v, list)}}), flush=True)
+    if checks["uncached"]:
+        print("CHECK_UNCACHED", json.dumps(checks["uncached"]), flush=True)
+    if checks["compare_cache"]:
+        cc = checks["compare_cache"]
+        print("CHECK_COMPARE", json.dumps({"n": len(cc), "min_cosine": min(c["cosine"] for c in cc),
+                                           "max_abs_diff": max(c["max_abs_diff"] for c in cc)}), flush=True)
+    tmp = set_dir / f"set_{i:04d}.tmp.npz"
+    np.savez(tmp, vectors=np.stack(vecs).astype(np.float32),
+             scores=np.asarray(scores, dtype=np.float64).reshape(len(vecs), -1))
+    tmp.rename(set_dir / f"set_{i:04d}.npz")
+    meta = {"set": i, "group": st["group"], "prefix_sha256": st["prefix_sha256"],
+            "sample_ids": [r["ex"]["row"]["sample_id"] for r in st["rows"]],
+            "own": [bool(r["own"]) for r in st["rows"]], "timing": timing, "checks": checks}
+    (set_dir / f"set_{i:04d}.tmp.json").write_text(json.dumps(meta))
+    (set_dir / f"set_{i:04d}.tmp.json").rename(set_dir / f"set_{i:04d}.json")
+
+
+def assemble(route, prov, fold, split_path, plan, sets, out_dir: Path, args, renderer) -> None:
+    """Build the frozen-format cache from the saved shot-set results of one fold."""
+    import transformers  # noqa: PLC0415
+    from src.utils import save_json, sha256_file  # noqa: PLC0415
+
+    set_dir = sets_dir(out_dir)
+    own_vec: dict[str, np.ndarray] = {}
+    own_score: dict[str, np.ndarray] = {}
+    shared_sum: dict[str, np.ndarray] = {}
+    shared_score: dict[str, np.ndarray] = {}
+    shared_n: dict[str, int] = {}
+    timing, set_checks = [], []
+    for i, st in enumerate(sets):
+        meta = json.loads((set_dir / f"set_{i:04d}.json").read_text())
+        data = np.load(set_dir / f"set_{i:04d}.npz")
+        expected_ids = [r["ex"]["row"]["sample_id"] for r in st["rows"]]
+        if meta["prefix_sha256"] != st["prefix_sha256"] or meta["sample_ids"] != expected_ids:
+            raise AssertionError(f"Saved set {i} does not match the current plan.")
+        timing.append(meta["timing"])
+        set_checks.append({"set": i, **meta["checks"]})
+        has_scores = data["scores"].shape[1] > 0
+        for k, (sid, own) in enumerate(zip(meta["sample_ids"], meta["own"])):
+            vec = data["vectors"][k]
+            sc = data["scores"][k] if has_scores else None
+            if own:
+                if sid in own_vec:
+                    raise AssertionError(f"{sid} embedded twice as a fit row.")
+                own_vec[sid] = vec
+                if sc is not None:
+                    own_score[sid] = sc
+            else:
+                shared_sum[sid] = shared_sum.get(sid, 0) + vec.astype(np.float64)
+                shared_n[sid] = shared_n.get(sid, 0) + 1
+                if sc is not None:
+                    shared_score[sid] = shared_score.get(sid, 0) + sc
+    expected = sum(1 for st in sets if st["shared"])
+    vectors: dict[str, np.ndarray] = dict(own_vec)
+    answer: dict[str, np.ndarray] = dict(own_score)
+    for sid, total in shared_sum.items():
+        if shared_n[sid] != expected:
+            raise AssertionError(f"{sid}: {shared_n[sid]} of {expected} shot sets.")
+        vectors[sid] = (total / shared_n[sid]).astype(np.float32)
+        if sid in shared_score:
+            answer[sid] = shared_score[sid] / shared_n[sid]
+    partial = out_dir.with_name(out_dir.name + ".partial")
+    if partial.exists():
+        raise RuntimeError(f"Partial output exists: {partial}")
+    partial.mkdir(parents=True)
+    pool_rows = {r["ex"]["row"]["sample_id"]: r["ex"]["row"] for st in sets for r in st["rows"]}
+    parts = {}
+    layout = [("outer_train", partial, "outer_train"), ("final_eval", partial, "final_eval")]
+    if "dev" in plan:
+        (partial / "dev").mkdir()
+        layout.append(("dev", partial / "dev", "final_eval"))
+    loo = args.mode == "manyshot" and args.shot_scheme == "loo"
+    checks = {"per_set": set_checks,
+              "determinism_max_abs_diff": max((c["determinism_max_abs_diff"] or 0.0) for c in set_checks),
+              "uncached": [u for c in set_checks for u in c["uncached"]],
+              "compare_cache_min_cosine": min((u["cosine"] for c in set_checks for u in c["compare_cache"]),
+                                              default=None)}
+    meta_common = {
+        "schema_version": SCHEMA_VERSION, "model_backend": "qwen38",
+        "base_model": "/gpfs/projects/etur92/ozu647717/models/Qwen3.8-27B",
+        "base_model_path": str(args.model_dir),
+        "checkpoint_type": "base_model", "weights_source": WEIGHTS_SOURCE[args.mode],
+        "hidden_layer": "final", "pooling": POOLING, "vector_dimension": HIDDEN_SIZE, "vector_dtype": "float32",
+        "hidden_definition": "language-model decoder final RMSNorm output, last prompt token",
+        "prompt_encoding": "apply_chat_template(add_generation_prompt=True, enable_thinking=False)",
+        "manyshot": {
+            "mode": args.mode, "shot_scheme": args.shot_scheme if args.mode == "manyshot" else None,
+            "note": NOTE if args.mode == "manyshot" else None,
+            "label_text": LABEL_TEXT,
+            "inner_groups": args.inner_groups if args.mode == "manyshot" and not loo else 0,
+            "inner_seed": args.inner_seed, "shot_seed": args.shot_seed,
+            "shot_donors": ("all other fit subjects, one fixed order per fold" if loo else
+                            "fit subjects outside the embedded subject's inner group"),
+            "non_fit_vectors": "one set with all fit subjects as shots" if loo else "mean over all shot sets",
+            "n_shot_sets": len(sets),
+            "prefix_sha256": [s["prefix_sha256"] for s in sets],
+            "prefix_tokens": [len(s["prefix_ids"]) for s in sets],
+            "shot_rows": [s["n_shot_rows"] for s in sets],
+            "shot_subjects": [s["n_shot_subjects"] for s in sets],
+            "cache_reuse": "prefix cache deep-copied per row; prefill chunk " + str(args.prefill_chunk),
+        },
+        "answer_scores": ({"file": "<partition>_answer_scores.jsonl", "columns": [LABEL_TEXT[k] for k in ANSWER_ORDER],
+                           "score": "mean token log-probability of the label after the prompt "
+                                    "(src/evaluate.score_candidate_label)"} if answer else None),
+        "outer_fold": fold, "protocol": route["protocol"],
+        "split_file": str(split_path), "split_file_sha256": sha256_file(split_path),
+        "checks": checks, "timing": timing,
+        **{k: prov[k] for k in ("dataset", "condition", "input_modality", "protocol_id", "manifest_sha256",
+                                "manifest", "manifest_file_sha256", "reference_checkpoint_dir",
+                                "saved_run_config_sha256", "saved_split_sha256", "split_metadata_sha256")},
+        "gold_label_protection": {"embedded_row_label_in_input": False,
+                                  "shot_labels_in_input": args.mode == "manyshot",
+                                  "shot_subjects": "fit subjects only, never the embedded subject"},
+        "versions": {"python": platform.python_version(), "transformers": transformers.__version__},
+    }
+    from src.utils import write_jsonl  # noqa: PLC0415
+
+    for part, directory, file_name in layout:
+        rows, vecs, ans = [], [], []
+        for s in plan[part]:
+            for e in sorted((pool_rows[k] for k in pool_rows if pool_rows[k]["subject_id"] == s),
+                            key=lambda r: r["sample_id"]):
+                rows.append({**e, "partition": file_name, "fold": fold, "pooling": POOLING})
+                vecs.append(vectors[e["sample_id"]])
+                if answer:
+                    sc = answer[e["sample_id"]]
+                    ans.append({"sample_id": e["sample_id"], "subject_id": e["subject_id"], "label": e["label"],
+                                **{f"logprob_{LABEL_TEXT[k]}": float(sc[n]) for n, k in enumerate(ANSWER_ORDER)}})
+        parts[part] = write_cache(directory, file_name, rows, vecs)
+        if answer:
+            write_jsonl(ans, directory / f"{file_name}_answer_scores.jsonl")
+    save_json({**meta_common, "partitions": {k: v for k, v in parts.items() if k != "dev"}},
+              partial / "extraction_metadata.json")
+    if "dev" in plan:
+        save_json({**meta_common, "partitions": {"final_eval": parts["dev"]}, "role": "daic_official_dev"},
+                  partial / "dev" / "extraction_metadata.json")
+    partial.rename(out_dir)
+    print("[done]", route["name"], "fold", fold, json.dumps(parts), flush=True)
 
 
 if __name__ == "__main__":
