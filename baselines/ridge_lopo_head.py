@@ -329,16 +329,29 @@ def run_split_fold(
     x_rep = cache.subject_means(cache.x, report_subjects)
     y_rep = cache.y(report_subjects)
 
-    selection = select_c_nested_lopo(
-        x_fit,
-        y_fit,
-        c_grid,
-        seed=seed,
-        outer_fold=fold,
-        oversample=oversample,
-        threshold=threshold,
-        min_std=min_std,
-    )
+    if len(c_grid) == 1:
+        fixed_c = float(c_grid[0])
+        selection = {
+            "method": "fixed_c",
+            "num_inner_folds": 0,
+            "selected_c": fixed_c,
+            "selected_lambda": 1.0 / fixed_c,
+            "selected_at_min_c": True,
+            "selected_at_max_c": True,
+            "selected_inner_metrics": None,
+            "candidates": [{"c": fixed_c, "lambda": 1.0 / fixed_c}],
+        }
+    else:
+        selection = select_c_nested_lopo(
+            x_fit,
+            y_fit,
+            c_grid,
+            seed=seed,
+            outer_fold=fold,
+            oversample=oversample,
+            threshold=threshold,
+            min_std=min_std,
+        )
     best_c = selection["selected_c"]
     rng_final = _fold_rng(seed, fold, FINAL_FIT_ID)
     mean, std, solutions = _prepare_and_fit_path(
@@ -391,17 +404,26 @@ def run_outer_lopo(
     all_idx = np.arange(n)
     for outer_i in range(n):
         keep = all_idx != outer_i
-        sel = select_c_nested_lopo(
-            x_all[keep],
-            y_all[keep],
-            c_grid,
-            seed=seed,
-            outer_fold=outer_i,
-            oversample=oversample,
-            threshold=threshold,
-            min_std=min_std,
-        )
-        best_c = sel["selected_c"]
+        if len(c_grid) == 1:
+            best_c = float(c_grid[0])
+            inner_f1 = None
+            at_min = True
+            at_max = True
+        else:
+            sel = select_c_nested_lopo(
+                x_all[keep],
+                y_all[keep],
+                c_grid,
+                seed=seed,
+                outer_fold=outer_i,
+                oversample=oversample,
+                threshold=threshold,
+                min_std=min_std,
+            )
+            best_c = sel["selected_c"]
+            inner_f1 = sel["selected_inner_metrics"]["macro_f1"]
+            at_min = sel["selected_at_min_c"]
+            at_max = sel["selected_at_max_c"]
         rng_final = _fold_rng(seed, outer_i, FINAL_FIT_ID)
         mean, std, solutions = _prepare_and_fit_path(
             x_all[keep], y_all[keep], (best_c,), oversample=oversample, rng=rng_final, min_std=min_std
@@ -412,9 +434,9 @@ def run_outer_lopo(
             {
                 "subject_id": subjects[outer_i],
                 "selected_c": best_c,
-                "selected_inner_macro_f1": sel["selected_inner_metrics"]["macro_f1"],
-                "selected_at_min_c": sel["selected_at_min_c"],
-                "selected_at_max_c": sel["selected_at_max_c"],
+                "selected_inner_macro_f1": inner_f1,
+                "selected_at_min_c": at_min,
+                "selected_at_max_c": at_max,
             }
         )
 
@@ -428,7 +450,7 @@ def run_outer_lopo(
         "metrics": metrics,
         "predictions": predictions,
         "selection_summary": {
-            "method": "outer_lopo_with_nested_inner_lopo",
+            "method": "outer_lopo_fixed_c" if len(c_grid) == 1 else "outer_lopo_with_nested_inner_lopo",
             "num_outer_folds": n,
             "c_selection_counts": c_counts,
             "selected_at_min_c_count": sum(1 for item in per_subject_selection if item["selected_at_min_c"]),
@@ -526,7 +548,7 @@ def run_route(
         "threshold": float(threshold),
         "min_std": float(min_std),
         "znorm": "train_only_subject_level",
-        "selection_method": "nested_lopo",
+        "selection_method": "fixed_c" if len(c_grid) == 1 else "nested_lopo",
         "feature_source": feature_source,
         "cache_identities": [cache_identity(c) for c in cache_dirs],
         "dev_cache_identities": [cache_identity(c) for c in dev_caches] if dev_caches else None,

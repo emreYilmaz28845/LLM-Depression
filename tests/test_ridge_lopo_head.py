@@ -63,7 +63,7 @@ def _write_synthetic_cache(
 def test_default_yaml_config_matches_ozy158_spec() -> None:
     cfg = load_head_config(DEFAULT_CONFIG_PATH)
     assert cfg["config_name"] == "ridge_lopo_ozy158_v1"
-    assert cfg["c_grid"] == (0.001, 0.01, 0.1, 1.0, 10.0)
+    assert cfg["c_grid"] == (0.001,)
     assert cfg["seed"] == 100
     assert cfg["oversample_minority"] is True
     assert cfg["threshold"] == 0.0
@@ -269,8 +269,11 @@ def test_daic_traindev_test_fits_train_plus_dev_and_reports_test(tmp_path: Path)
         split_files=[split_path],
         protocol="daic_traindev_test",
         output_dir=tmp_path / "out_zs_traindev",
+        c_grid=(0.001,),
     )
     assert summary_zs["folds"][0]["fit_subjects"] == 14
     assert summary_zs["folds"][0]["report_subjects"] == 4
+    assert summary_zs["folds"][0]["selected_c"] == 0.001
+    assert read_json(tmp_path / "out_zs_traindev" / "result_config.json")["selection_method"] == "fixed_c"
     assert summary_zs["fold_mean"]["macro_f1"] >= 0.85
 
