@@ -1,0 +1,34 @@
+# Separate standalone head configuration for OZY-158 / OZY-159.
+# Does not replace the repository default L2 logistic head
+# (baselines/frozen_standalone_heads.py).
+schema_version: ridge_lopo_head_config.v1
+name: ridge_lopo_ozy158_v1
+issue_refs:
+  - OZY-158
+  - OZY-159
+
+head:
+  variant: ridge_closedform_oversample_znorm_lopo
+  solver: closed_form_svd_ridge
+  targets: plus_minus_one  # label 1 -> +1.0, label 0 -> -1.0
+  penalty_parameterization: lambda_equals_1_over_c
+  intercept: unpenalized
+  threshold: 0.0
+  c_grid: [0.001, 0.01, 0.1, 1.0, 10.0]
+
+preprocessing:
+  pooling: hierarchical_subject_mean
+  znorm: train_only_subject_level
+  min_std: 1.0e-6
+
+balancing:
+  oversample_minority: true
+  oversample_scope: train_fold_only
+  seed: 100
+
+selection:
+  method: nested_lopo
+  metric: macro_f1
+  tie_breakers:
+    - min_mse
+    - smaller_c  # stronger L2 regularization (larger lambda = 1/C)
