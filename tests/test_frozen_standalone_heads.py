@@ -179,3 +179,37 @@ def test_accepts_handcrafted_mfcc_cache_with_same_head(tmp_path):
     with pytest.raises(ValueError, match="handcrafted"):
         run_route(cache_dirs=[tmp_path / "mfcc"], dev_caches=None, split_files=[split], protocol="train_val",
                   output_dir=tmp_path / "o_adapter", route={}, allow_adapter=True)
+
+
+def test_per_fold_caches_mode_for_manyshot_context(tmp_path):
+    subjects = _subjects()
+    splits, caches = [], []
+    for fold in range(2):
+        val = subjects[fold * 8:(fold + 1) * 8]
+        train = [s for s in subjects if s not in val]
+        splits.append(_split(tmp_path, f"f{fold}", {"train_subject_ids": [s for s, _ in train],
+                                                     "selection_subject_ids": [s for s, _ in val],
+                                                     "final_eval_subject_ids": []}))
+        _fold_cache(tmp_path / f"ms{fold}", train, val, seed=fold)
+        meta_path = tmp_path / f"ms{fold}" / "extraction_metadata.json"
+        meta = json.loads(meta_path.read_text())
+        meta.update({"weights_source": "base_model_manyshot_context", "outer_fold": fold})
+        meta_path.write_text(json.dumps(meta))
+        caches.append(tmp_path / f"ms{fold}")
+    with pytest.raises(ValueError, match="frozen base"):
+        run_route(cache_dirs=caches, dev_caches=None, split_files=splits, protocol="train_val",
+                  output_dir=tmp_path / "o0", route={})
+    with pytest.raises(ValueError, match="outer fold"):
+        run_route(cache_dirs=caches[::-1], dev_caches=None, split_files=splits, protocol="train_val",
+                  output_dir=tmp_path / "o2", route={}, per_fold=True)
+    _fold_cache(tmp_path / "lora", subjects[8:], subjects[:8])
+    with pytest.raises(ValueError, match="fold-specific frozen-base"):
+        run_route(cache_dirs=[tmp_path / "lora"], dev_caches=None, split_files=splits[:1],
+                  protocol="train_val", output_dir=tmp_path / "o3", route={}, per_fold=True)
+    with pytest.raises(ValueError, match="exclusive"):
+        run_route(cache_dirs=caches, dev_caches=None, split_files=splits, protocol="train_val",
+                  output_dir=tmp_path / "o5", route={}, per_fold=True, allow_adapter=True)
+    summary = run_route(cache_dirs=caches, dev_caches=None, split_files=splits, protocol="train_val",
+                        output_dir=tmp_path / "o4", route={}, per_fold=True)
+    assert summary["feature_source"] == "manyshot_context"
+    assert [f["report"] for f in summary["folds"]] == [8, 8]

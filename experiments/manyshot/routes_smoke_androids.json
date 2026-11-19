@@ -1,0 +1,15 @@
+[
+ {
+  "name": "androids_interview/text_only_native",
+  "dataset": "androids_interview",
+  "protocol": "train_val_test",
+  "reference_checkpoint_dir": "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/qwen3_androids_mergedfolds_native_20261015/text_only/androids_interview/q3amf_text_only_native_s1337_f0_r1/fold_0/best_model",
+  "split_files": [
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/qwen3_androids_mergedfolds_native_20261015/text_only/androids_interview/q3amf_text_only_native_s1337_f0_r1/fold_0/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/qwen3_androids_mergedfolds_native_20261015/text_only/androids_interview/q3amf_text_only_native_s1337_f1_r1/fold_1/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/qwen3_androids_mergedfolds_native_20261015/text_only/androids_interview/q3amf_text_only_native_s1337_f2_r1/fold_2/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/qwen3_androids_mergedfolds_native_20261015/text_only/androids_interview/q3amf_text_only_native_s1337_f3_r1/fold_3/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/qwen3_androids_mergedfolds_native_20261015/text_only/androids_interview/q3amf_text_only_native_s1337_f4_r1/fold_4/logs/split_used.json"
+  ]
+ }
+]

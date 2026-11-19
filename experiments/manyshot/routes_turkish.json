@@ -1,0 +1,15 @@
+[
+ {
+  "name": "turkish/text_only_native",
+  "dataset": "turkish",
+  "protocol": "train_val",
+  "reference_checkpoint_dir": "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/turkish/turkish_pooled_baseline_text_only_f0_20260925/fold_0/best_model",
+  "split_files": [
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/turkish/turkish_pooled_baseline_text_only_f0_20260925/fold_0/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/turkish/turkish_pooled_baseline_text_only_f1_20260925/fold_1/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/turkish/turkish_pooled_baseline_text_only_f2_20260925/fold_2/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/turkish/turkish_pooled_baseline_text_only_f3_20260925/fold_3/logs/split_used.json",
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/turkish/turkish_pooled_baseline_text_only_f4_20260925/fold_4/logs/split_used.json"
+  ]
+ }
+]

@@ -1,0 +1,11 @@
+schema_version: audiollm.experiment_lane.v1
+experiment_id: feat-ozy-148-manyshot-embedding-20261116
+slug: ozy-148-manyshot-embedding
+tier: 2
+branch: agent/feat-ozy-148-manyshot-embedding
+worktree: /home/emre/Projects/AudioLLM/worktrees/LLM-Depression-feat-ozy-148-manyshot-embedding
+parent_branch: main
+parent_sha: 956d25dceb85db999093d336b5ba5fb1f8d70294
+created_at_utc: "2026-11-16T13:52:25Z"
+experiment_group_path: experiments/definitions/manyshot-embedding-head-20261116.yaml
+type: complementary

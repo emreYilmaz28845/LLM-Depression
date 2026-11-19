@@ -1,0 +1,12 @@
+[
+ {
+  "name": "daic/text_only_native",
+  "dataset": "daic",
+  "protocol": "daic_official",
+  "reference_checkpoint_dir": "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/daic/qwen38_pc_daic_f0_20260922/fold_0/best_model",
+  "dev_reference_checkpoint_dir": "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/daic/qwen38_pc_daic_f0_20260922/fold_0/best_model",
+  "split_files": [
+   "/gpfs/projects/etur92/ozu647717/AudioLLM/LLM-Depression/output_model/promptcontext_v1_qwen38_likelihood/text_only/daic/qwen38_pc_daic_f0_20260922/fold_0/logs/split_used.json"
+  ]
+ }
+]
