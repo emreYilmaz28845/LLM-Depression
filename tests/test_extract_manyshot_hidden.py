@@ -247,3 +247,29 @@ def test_assemble_rejects_a_stale_saved_set(tmp_path):
     (set_dir / "set_0000.json").write_text(json.dumps(meta))
     with pytest.raises(AssertionError, match="does not match the current plan"):
         m.assemble({"name": "d", "protocol": "daic_official"}, {}, 0, tmp_path, plan, sets, out_dir, args, None)
+
+
+def test_daic_traindev_test_loo_uses_train_plus_dev_and_excludes_test_from_shots():
+    pool = _pool(18, rows_per_subject=1)
+    split = _daic_split(pool)  # 10 train, 4 dev, 4 test
+    traindev = sorted(split["train_subject_ids"] + split["selection_subject_ids"])
+    test_ids = set(split["final_eval_subject_ids"])
+    plan, sets, _ = plan_fold(
+        {"protocol": "daic_traindev_test"}, split, pool, 0, _loo_args(answer_scores=False), Renderer(FakeTokenizer())
+    )
+    assert plan["fit"] == traindev
+    assert plan["outer_train"] == traindev
+    assert plan["final_eval"] == sorted(test_ids)
+    assert plan["others"] == sorted(test_ids)
+    assert "dev" not in plan
+    assert len(sets) == len(traindev) + 1  # 14 LOO sets + 1 full-traindev set for test
+    for st in sets[:-1]:
+        donors = {r["row"]["subject_id"] for r in st["shots"]}
+        embedded = {r["subject"] for r in st["rows"]}
+        assert len(embedded) == 1 and len(donors) == len(traindev) - 1
+        assert not (donors & test_ids)
+        assert not (donors & embedded)
+    last = sets[-1]
+    assert {r["row"]["subject_id"] for r in last["shots"]} == set(traindev)
+    assert {r["subject"] for r in last["rows"]} == test_ids
+

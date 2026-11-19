@@ -64,7 +64,7 @@ DEFAULT_SEED = 100
 DEFAULT_THRESHOLD = 0.0
 MIN_STD = 1e-6
 FINAL_FIT_ID = -1
-SPLIT_PROTOCOLS = ("daic_official", "train_val_test", "train_val", "train_cv_test")
+SPLIT_PROTOCOLS = ("daic_official", "daic_traindev_test", "train_val_test", "train_val", "train_cv_test")
 PROTOCOLS = (*SPLIT_PROTOCOLS, "outer_lopo")
 
 
@@ -310,6 +310,12 @@ def run_split_fold(
     fit_subjects = sorted(str(s) for s in split["train_subject_ids"])
     sel_subjects = sorted(str(s) for s in split.get("selection_subject_ids") or [])
     fin_subjects = sorted(str(s) for s in split.get("final_eval_subject_ids") or [])
+    if protocol == "daic_traindev_test":
+        if not sel_subjects or not fin_subjects:
+            raise ValueError("daic_traindev_test requires non-empty selection (dev) and final_eval (test) subjects.")
+        if set(fit_subjects) & set(sel_subjects):
+            raise ValueError("Train and selection (dev) subjects overlap.")
+        fit_subjects = sorted(set(fit_subjects) | set(sel_subjects))
     report_subjects = sel_subjects if protocol == "train_val" else fin_subjects
     if not fit_subjects or not report_subjects:
         raise ValueError(f"Empty fit or report split in protocol {protocol!r}.")
@@ -468,8 +474,10 @@ def run_route(
     else:
         if not split_files:
             raise ValueError(f"Protocol {protocol!r} requires --split-files.")
-        if (protocol == "daic_official") != bool(dev_caches):
-            raise ValueError("A dev cache is required for, and only for, daic_official.")
+        if protocol == "daic_official" and not dev_caches:
+            raise ValueError("A dev cache is required for daic_official.")
+        if protocol not in {"daic_official", "daic_traindev_test"} and dev_caches:
+            raise ValueError("A dev cache is only allowed for daic_official or daic_traindev_test.")
         if len(cache_dirs) not in {1, len(split_files)}:
             raise ValueError("Give one cache for all folds or one cache per split file.")
         if (allow_adapter or per_fold_caches) and len(cache_dirs) != len(split_files):
