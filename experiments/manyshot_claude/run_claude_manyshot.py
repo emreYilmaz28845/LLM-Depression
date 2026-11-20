@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import random
 import re
 import subprocess
@@ -106,13 +107,14 @@ def parse_answer(text: str) -> tuple[int | None, str]:
     return None, ""
 
 
-def call_claude_cli(prompt: str, model: str, timeout: int) -> dict:
+def call_claude_cli(prompt: str, model: str, effort: str, timeout: int) -> dict:
     """One ``claude -p`` call with no tools, no MCP and no user/project settings or memory files."""
     with tempfile.TemporaryDirectory() as cwd:
-        cmd = ["claude", "-p", "--model", model, "--output-format", "json",
+        cmd = ["claude", "-p", "--model", model, "--effort", effort, "--output-format", "json",
                "--system-prompt", SYSTEM_PROMPT, "--tools", "", "--strict-mcp-config",
                "--setting-sources", "local", "--no-session-persistence"]
-        proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True, cwd=cwd, timeout=timeout)
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_EFFORT"}  # effort comes only from --effort
+        proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True, cwd=cwd, timeout=timeout, env=env)
     if proc.returncode != 0:
         raise RuntimeError(f"claude exited {proc.returncode}: {proc.stderr[-2000:]}")
     out = json.loads(proc.stdout)
@@ -140,6 +142,7 @@ def main() -> None:
     p.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     p.add_argument("--backend", choices=("dry-run", "claude-cli"), default="dry-run")
     p.add_argument("--model", default="claude-opus-5-5")
+    p.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"), default="high")
     p.add_argument("--shot-seed", type=int, default=0)
     p.add_argument("--limit", type=int, help="Smoke: only the first N test subjects.")
     p.add_argument("--timeout", type=int, default=900)
@@ -164,7 +167,7 @@ def main() -> None:
 
     run_info = {
         "experiment": "OZY-162 DAIC many-shot prompting with Claude", "backend": args.backend,
-        "model": args.model, "shot_seed": args.shot_seed, "manifest": str(args.manifest.resolve()),
+        "model": args.model, "effort": args.effort, "shot_seed": args.shot_seed, "manifest": str(args.manifest.resolve()),
         "manifest_sha256": sha256_file(args.manifest), "system_prompt_sha256": sha256_text(SYSTEM_PROMPT),
         "shot_block_sha256": sha256_text(prefix), "n_shots": len(shots),
         "shot_label_counts": {LABEL_TEXT[k]: sum(s["label"] == k for s in shots) for k in (1, 0)},
@@ -199,13 +202,13 @@ def main() -> None:
                 continue
             prompt = prefix + "\n\n" + target_block(t)
             t0 = time.time()
-            res = call_claude_cli(prompt, args.model, args.timeout)
+            res = call_claude_cli(prompt, args.model, args.effort, args.timeout)
             answer = res.get("result", "")
             pred, explanation = parse_answer(answer)
             rec = {"subject_id": t["subject_id"], "label": t["label"], "pred": pred,
                    "pred_text": LABEL_TEXT.get(pred, "INVALID"), "explanation": explanation,
                    "raw_answer": answer, "prompt_sha256": sha256_text(prompt),
-                   "usage": res.get("usage"), "cost_usd": res.get("total_cost_usd"),
+                   "effort": args.effort, "usage": res.get("usage"), "cost_usd": res.get("total_cost_usd"),
                    "model_usage": res.get("modelUsage"), "seconds": round(time.time() - t0, 1)}
             with resp_path.open("a") as f:
                 f.write(json.dumps(rec) + "\n")
