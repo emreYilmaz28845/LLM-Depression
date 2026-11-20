@@ -161,7 +161,7 @@ def main() -> None:
     p.add_argument("--backend", choices=("dry-run", "claude-cli"), default="dry-run")
     p.add_argument("--model", default="claude-opus-5-5")
     p.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"), default="medium")
-    p.add_argument("--prompt-version", choices=sorted(PROMPTS), default="v1")
+    p.add_argument("--prompt-version", choices=sorted(PROMPTS), default="v2")
     p.add_argument("--shot-seed", type=int, default=0)
     p.add_argument("--limit", type=int, help="Smoke: only the first N test subjects.")
     p.add_argument("--timeout", type=int, default=900)

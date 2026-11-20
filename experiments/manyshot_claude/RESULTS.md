@@ -6,21 +6,25 @@ train+dev subjects as labelled shots (42 Depressed / 100 Non-depressed, fixed or
 is the test subject's participant transcript (`full_participant_transcript`, the same text as Qwen3.8
 text_only_native). Claude answers with a JSON label and an explanation.
 
+**Reference result: prompt v2 only** (user decision, 2026-11-20). In v2 the explanation must name the 2-3 most
+similar labelled examples by number and label, as Cenk Hoca asked ("explaining by looking at the examples is
+important"). Run artifacts: `outputs/ozy162_claude_manyshot_v2_effmedium/`.
+
 | Method (DAIC official test, 47 subjects) | macro-F1 | positive-F1 | UAR |
 |---|---|---|---|
-| Claude Opus 5.5 many-shot, prompt v1 (explanation may compare with the examples) | 0.766 | 0.667 | 0.761 |
-| Claude Opus 5.5 many-shot, prompt v2 (explanation must name the most similar labelled examples) | 0.797 | 0.714 | 0.797 |
+| **Claude Opus 5.5 many-shot prompting, prompt v2** | **0.797** | **0.714** | **0.797** |
 | Qwen3.8 A: frozen zero-shot embedding + head (OZY-148) | 0.735 | | |
 | Qwen3.8 B: many-shot embedding + head (OZY-148) | 0.750 | | |
 | Qwen3.8 C: Enes many-shot logprob (`many_fit`) | 0.776 | | |
 
-Confusion (subject-level): v1 TP 9, FN 5, FP 4, TN 29; v2 TP 10, FN 4, FP 4, TN 29.
-v1 and v2 agree on 46/47 subjects. The whole difference is one depressed subject that v2 got right, which is
-within run-to-run variation, so this is not evidence that v2 classifies better. What v2 changes is the
-explanations: 47/47 name at least 2 numbered examples (v1: 13/47 cite any example number). All 152 cited
-example labels match the real shot labels (checked against the shot order).
-There were 0 INVALID answers, and INVALID would count as wrong (binary_strict). The Qwen rows are copied
-from `experiments/manyshot/RESULTS.md`; only macro-F1 is reported there.
+Confusion (subject-level): TP 10, FN 4, FP 4, TN 29; 14 predicted positive vs 14 true positives. There were
+0 INVALID answers, and INVALID would count as wrong (binary_strict). All 47 explanations name at least 2
+numbered examples, and all 152 cited example labels match the real shot labels (checked against the shot
+order). The Qwen rows are copied from `experiments/manyshot/RESULTS.md`; only macro-F1 is reported there.
+
+Superseded, not a reference: an earlier full run with prompt v1, where comparing with the examples was optional
+(`outputs/ozy162_claude_manyshot_effmedium/`), gave macro-F1 0.766 / positive-F1 0.667 / UAR 0.761. It agrees
+with v2 on 46/47 subjects, so the gap is within run-to-run variation and should not be read as a prompt effect.
 
 ## Caveats
 
