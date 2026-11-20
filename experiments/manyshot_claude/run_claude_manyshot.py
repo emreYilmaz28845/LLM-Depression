@@ -107,11 +107,17 @@ def parse_answer(text: str) -> tuple[int | None, str]:
     return None, ""
 
 
-def call_claude_cli(prompt: str, model: str, effort: str, timeout: int) -> dict:
-    """One ``claude -p`` call with no tools, no MCP and no user/project settings or memory files."""
+def call_claude_cli(system: str, prompt: str, model: str, effort: str, timeout: int) -> dict:
+    """One ``claude -p`` call with no tools, no MCP and no user/project settings or memory files.
+
+    The shots live in the system prompt so the CLI's system-prompt cache breakpoint covers them and
+    every test subject after the first reads them from the prompt cache.
+    """
     with tempfile.TemporaryDirectory() as cwd:
+        sys_file = Path(cwd) / "system.txt"
+        sys_file.write_text(system)
         cmd = ["claude", "-p", "--model", model, "--effort", effort, "--output-format", "json",
-               "--system-prompt", SYSTEM_PROMPT, "--tools", "", "--strict-mcp-config",
+               "--system-prompt-file", str(sys_file), "--tools", "", "--strict-mcp-config",
                "--setting-sources", "local", "--no-session-persistence"]
         env = {k: v for k, v in os.environ.items() if k != "CLAUDE_EFFORT"}  # effort comes only from --effort
         proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True, cwd=cwd, timeout=timeout, env=env)
@@ -164,12 +170,14 @@ def main() -> None:
     if args.limit:
         targets = targets[:args.limit]
     prefix = shot_block(shots)
+    system = SYSTEM_PROMPT + "\n\n" + prefix
 
     run_info = {
         "experiment": "OZY-162 DAIC many-shot prompting with Claude", "backend": args.backend,
         "model": args.model, "effort": args.effort, "shot_seed": args.shot_seed, "manifest": str(args.manifest.resolve()),
         "manifest_sha256": sha256_file(args.manifest), "system_prompt_sha256": sha256_text(SYSTEM_PROMPT),
-        "shot_block_sha256": sha256_text(prefix), "n_shots": len(shots),
+        "shot_block_sha256": sha256_text(prefix), "system_with_shots_sha256": sha256_text(system),
+        "layout": "system = instructions + labelled shots; user = target transcript", "n_shots": len(shots),
         "shot_label_counts": {LABEL_TEXT[k]: sum(s["label"] == k for s in shots) for k in (1, 0)},
         "n_targets": len(targets), "shot_block_chars": len(prefix),
         "approx_shot_tokens": len(prefix) // 4,
@@ -200,9 +208,9 @@ def main() -> None:
         for t in targets:
             if t["subject_id"] in done:
                 continue
-            prompt = prefix + "\n\n" + target_block(t)
+            prompt = target_block(t)
             t0 = time.time()
-            res = call_claude_cli(prompt, args.model, args.effort, args.timeout)
+            res = call_claude_cli(system, prompt, args.model, args.effort, args.timeout)
             answer = res.get("result", "")
             pred, explanation = parse_answer(answer)
             rec = {"subject_id": t["subject_id"], "label": t["label"], "pred": pred,
