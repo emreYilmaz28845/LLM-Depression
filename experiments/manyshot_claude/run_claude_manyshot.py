@@ -53,6 +53,18 @@ SYSTEM_PROMPT = (
 )
 
 
+# v2 (Cenk Hoca, 2026-11-20: "explaining by looking at the examples is important"): the explanation must
+# name the most similar labelled examples by number. v1 is kept unchanged for the first reported run.
+SYSTEM_PROMPT_V2 = SYSTEM_PROMPT.split("The explanation must")[0] + (
+    "The explanation must be grounded in the labelled examples. Name the 2-3 labelled examples that are "
+    "most similar to the final participant, by example number and label (for example 'Example 12 "
+    "(Depressed)'), and say what they share with the final participant. Cite concrete evidence from the "
+    "final participant's transcript. If the most similar examples carry the other label, say why you "
+    "still chose this label."
+)
+PROMPTS = {"v1": SYSTEM_PROMPT, "v2": SYSTEM_PROMPT_V2}
+
+
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -149,6 +161,7 @@ def main() -> None:
     p.add_argument("--backend", choices=("dry-run", "claude-cli"), default="dry-run")
     p.add_argument("--model", default="claude-opus-5-5")
     p.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"), default="medium")
+    p.add_argument("--prompt-version", choices=sorted(PROMPTS), default="v1")
     p.add_argument("--shot-seed", type=int, default=0)
     p.add_argument("--limit", type=int, help="Smoke: only the first N test subjects.")
     p.add_argument("--timeout", type=int, default=900)
@@ -170,12 +183,13 @@ def main() -> None:
     if args.limit:
         targets = targets[:args.limit]
     prefix = shot_block(shots)
-    system = SYSTEM_PROMPT + "\n\n" + prefix
+    instructions = PROMPTS[args.prompt_version]
+    system = instructions + "\n\n" + prefix
 
     run_info = {
         "experiment": "OZY-162 DAIC many-shot prompting with Claude", "backend": args.backend,
         "model": args.model, "effort": args.effort, "shot_seed": args.shot_seed, "manifest": str(args.manifest.resolve()),
-        "manifest_sha256": sha256_file(args.manifest), "system_prompt_sha256": sha256_text(SYSTEM_PROMPT),
+        "manifest_sha256": sha256_file(args.manifest), "prompt_version": args.prompt_version, "system_prompt_sha256": sha256_text(instructions),
         "shot_block_sha256": sha256_text(prefix), "system_with_shots_sha256": sha256_text(system),
         "layout": "system = instructions + labelled shots; user = target transcript", "n_shots": len(shots),
         "shot_label_counts": {LABEL_TEXT[k]: sum(s["label"] == k for s in shots) for k in (1, 0)},
@@ -188,7 +202,7 @@ def main() -> None:
     print(json.dumps(run_info, indent=1), flush=True)
 
     if args.backend == "dry-run" and not args.metrics_only:
-        (out / "system_prompt.txt").write_text(SYSTEM_PROMPT)
+        (out / "system_prompt.txt").write_text(instructions)
         (out / "shot_block.txt").write_text(prefix)
         (out / "dry_run.json").write_text(json.dumps(run_info, indent=1))
         print(f"[dry-run] wrote prompts to {out}; nothing was sent.")
