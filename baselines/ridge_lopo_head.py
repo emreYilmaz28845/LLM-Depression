@@ -137,7 +137,14 @@ def fit_ridge_path(
     x_centered = x - x_mean
     t_centered = t - t_mean
 
-    u, singular, vt = np.linalg.svd(x_centered, full_matrices=False)
+    try:
+        u, singular, vt = np.linalg.svd(x_centered, full_matrices=False)
+    except np.linalg.LinAlgError:
+        # LAPACK gesdd can fail to converge on some matrices; gesvd computes the
+        # same decomposition with a slower but more robust algorithm.
+        import scipy.linalg
+
+        u, singular, vt = scipy.linalg.svd(x_centered, full_matrices=False, lapack_driver="gesvd")
     ut_t = u.T @ t_centered
     s2 = singular ** 2
 
