@@ -1,4 +1,5 @@
-# Separate standalone head configuration for OZY-158 / OZY-159.
+# Separate standalone head configuration for OZY-158 / OZY-159
+# (updated per Cenk Demiroglu's edited OZY-158 comment: fixed C = 0.001, LOPO, no CV).
 # Does not replace the repository default L2 logistic head
 # (baselines/frozen_standalone_heads.py).
 schema_version: ridge_lopo_head_config.v1
@@ -14,7 +15,7 @@ head:
   penalty_parameterization: lambda_equals_1_over_c
   intercept: unpenalized
   threshold: 0.0
-  c_grid: [0.001, 0.01, 0.1, 1.0, 10.0]
+  c_grid: [0.001]
 
 preprocessing:
   pooling: hierarchical_subject_mean
@@ -27,7 +28,7 @@ balancing:
   seed: 100
 
 selection:
-  method: nested_lopo
+  method: fixed_c  # nested_lopo is used automatically if len(c_grid) > 1
   metric: macro_f1
   tie_breakers:
     - min_mse

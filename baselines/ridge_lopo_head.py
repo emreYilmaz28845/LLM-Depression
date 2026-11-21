@@ -64,7 +64,7 @@ DEFAULT_SEED = 100
 DEFAULT_THRESHOLD = 0.0
 MIN_STD = 1e-6
 FINAL_FIT_ID = -1
-SPLIT_PROTOCOLS = ("daic_official", "train_val_test", "train_val", "train_cv_test")
+SPLIT_PROTOCOLS = ("daic_official", "daic_traindev_test", "train_val_test", "train_val", "train_cv_test")
 PROTOCOLS = (*SPLIT_PROTOCOLS, "outer_lopo")
 
 
@@ -137,7 +137,14 @@ def fit_ridge_path(
     x_centered = x - x_mean
     t_centered = t - t_mean
 
-    u, singular, vt = np.linalg.svd(x_centered, full_matrices=False)
+    try:
+        u, singular, vt = np.linalg.svd(x_centered, full_matrices=False)
+    except np.linalg.LinAlgError:
+        # LAPACK gesdd can fail to converge on some matrices; gesvd computes the
+        # same decomposition with a slower but more robust algorithm.
+        import scipy.linalg
+
+        u, singular, vt = scipy.linalg.svd(x_centered, full_matrices=False, lapack_driver="gesvd")
     ut_t = u.T @ t_centered
     s2 = singular ** 2
 
@@ -310,6 +317,12 @@ def run_split_fold(
     fit_subjects = sorted(str(s) for s in split["train_subject_ids"])
     sel_subjects = sorted(str(s) for s in split.get("selection_subject_ids") or [])
     fin_subjects = sorted(str(s) for s in split.get("final_eval_subject_ids") or [])
+    if protocol == "daic_traindev_test":
+        if not sel_subjects or not fin_subjects:
+            raise ValueError("daic_traindev_test requires non-empty selection (dev) and final_eval (test) subjects.")
+        if set(fit_subjects) & set(sel_subjects):
+            raise ValueError("Train and selection (dev) subjects overlap.")
+        fit_subjects = sorted(set(fit_subjects) | set(sel_subjects))
     report_subjects = sel_subjects if protocol == "train_val" else fin_subjects
     if not fit_subjects or not report_subjects:
         raise ValueError(f"Empty fit or report split in protocol {protocol!r}.")
@@ -323,16 +336,29 @@ def run_split_fold(
     x_rep = cache.subject_means(cache.x, report_subjects)
     y_rep = cache.y(report_subjects)
 
-    selection = select_c_nested_lopo(
-        x_fit,
-        y_fit,
-        c_grid,
-        seed=seed,
-        outer_fold=fold,
-        oversample=oversample,
-        threshold=threshold,
-        min_std=min_std,
-    )
+    if len(c_grid) == 1:
+        fixed_c = float(c_grid[0])
+        selection = {
+            "method": "fixed_c",
+            "num_inner_folds": 0,
+            "selected_c": fixed_c,
+            "selected_lambda": 1.0 / fixed_c,
+            "selected_at_min_c": True,
+            "selected_at_max_c": True,
+            "selected_inner_metrics": None,
+            "candidates": [{"c": fixed_c, "lambda": 1.0 / fixed_c}],
+        }
+    else:
+        selection = select_c_nested_lopo(
+            x_fit,
+            y_fit,
+            c_grid,
+            seed=seed,
+            outer_fold=fold,
+            oversample=oversample,
+            threshold=threshold,
+            min_std=min_std,
+        )
     best_c = selection["selected_c"]
     rng_final = _fold_rng(seed, fold, FINAL_FIT_ID)
     mean, std, solutions = _prepare_and_fit_path(
@@ -385,17 +411,26 @@ def run_outer_lopo(
     all_idx = np.arange(n)
     for outer_i in range(n):
         keep = all_idx != outer_i
-        sel = select_c_nested_lopo(
-            x_all[keep],
-            y_all[keep],
-            c_grid,
-            seed=seed,
-            outer_fold=outer_i,
-            oversample=oversample,
-            threshold=threshold,
-            min_std=min_std,
-        )
-        best_c = sel["selected_c"]
+        if len(c_grid) == 1:
+            best_c = float(c_grid[0])
+            inner_f1 = None
+            at_min = True
+            at_max = True
+        else:
+            sel = select_c_nested_lopo(
+                x_all[keep],
+                y_all[keep],
+                c_grid,
+                seed=seed,
+                outer_fold=outer_i,
+                oversample=oversample,
+                threshold=threshold,
+                min_std=min_std,
+            )
+            best_c = sel["selected_c"]
+            inner_f1 = sel["selected_inner_metrics"]["macro_f1"]
+            at_min = sel["selected_at_min_c"]
+            at_max = sel["selected_at_max_c"]
         rng_final = _fold_rng(seed, outer_i, FINAL_FIT_ID)
         mean, std, solutions = _prepare_and_fit_path(
             x_all[keep], y_all[keep], (best_c,), oversample=oversample, rng=rng_final, min_std=min_std
@@ -406,9 +441,9 @@ def run_outer_lopo(
             {
                 "subject_id": subjects[outer_i],
                 "selected_c": best_c,
-                "selected_inner_macro_f1": sel["selected_inner_metrics"]["macro_f1"],
-                "selected_at_min_c": sel["selected_at_min_c"],
-                "selected_at_max_c": sel["selected_at_max_c"],
+                "selected_inner_macro_f1": inner_f1,
+                "selected_at_min_c": at_min,
+                "selected_at_max_c": at_max,
             }
         )
 
@@ -422,7 +457,7 @@ def run_outer_lopo(
         "metrics": metrics,
         "predictions": predictions,
         "selection_summary": {
-            "method": "outer_lopo_with_nested_inner_lopo",
+            "method": "outer_lopo_fixed_c" if len(c_grid) == 1 else "outer_lopo_with_nested_inner_lopo",
             "num_outer_folds": n,
             "c_selection_counts": c_counts,
             "selected_at_min_c_count": sum(1 for item in per_subject_selection if item["selected_at_min_c"]),
@@ -468,8 +503,10 @@ def run_route(
     else:
         if not split_files:
             raise ValueError(f"Protocol {protocol!r} requires --split-files.")
-        if (protocol == "daic_official") != bool(dev_caches):
-            raise ValueError("A dev cache is required for, and only for, daic_official.")
+        if protocol == "daic_official" and not dev_caches:
+            raise ValueError("A dev cache is required for daic_official.")
+        if protocol not in {"daic_official", "daic_traindev_test"} and dev_caches:
+            raise ValueError("A dev cache is only allowed for daic_official or daic_traindev_test.")
         if len(cache_dirs) not in {1, len(split_files)}:
             raise ValueError("Give one cache for all folds or one cache per split file.")
         if (allow_adapter or per_fold_caches) and len(cache_dirs) != len(split_files):
@@ -518,7 +555,7 @@ def run_route(
         "threshold": float(threshold),
         "min_std": float(min_std),
         "znorm": "train_only_subject_level",
-        "selection_method": "nested_lopo",
+        "selection_method": "fixed_c" if len(c_grid) == 1 else "nested_lopo",
         "feature_source": feature_source,
         "cache_identities": [cache_identity(c) for c in cache_dirs],
         "dev_cache_identities": [cache_identity(c) for c in dev_caches] if dev_caches else None,

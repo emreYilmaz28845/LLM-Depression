@@ -63,7 +63,7 @@ def _write_synthetic_cache(
 def test_default_yaml_config_matches_ozy158_spec() -> None:
     cfg = load_head_config(DEFAULT_CONFIG_PATH)
     assert cfg["config_name"] == "ridge_lopo_ozy158_v1"
-    assert cfg["c_grid"] == (0.001, 0.01, 0.1, 1.0, 10.0)
+    assert cfg["c_grid"] == (0.001,)
     assert cfg["seed"] == 100
     assert cfg["oversample_minority"] is True
     assert cfg["threshold"] == 0.0
@@ -221,3 +221,59 @@ def test_per_fold_manyshot_cache_accepted_without_allow_adapter(tmp_path: Path) 
     )
     assert summary["feature_source"] == "base_model_manyshot_context"
     assert summary["fold_mean"]["macro_f1"] >= 0.85
+
+
+def test_daic_traindev_test_fits_train_plus_dev_and_reports_test(tmp_path: Path) -> None:
+    rng = np.random.default_rng(77)
+    d = 10
+    train_items = [(f"tr_{i}", 1 if i < 4 else 0, rng.normal(2.0 if i < 4 else -2.0, 0.3, (1, d))) for i in range(10)]
+    dev_items = [(f"dv_{i}", 1 if i < 2 else 0, rng.normal(2.0 if i < 2 else -2.0, 0.3, (1, d))) for i in range(4)]
+    test_items = [(f"te_{i}", 1 if i < 2 else 0, rng.normal(2.0 if i < 2 else -2.0, 0.3, (1, d))) for i in range(4)]
+
+    # Case 1: many-shot daic_traindev_test cache (dev already inside outer_train, no --dev-caches).
+    ms_cache = tmp_path / "ms_traindev"
+    _write_synthetic_cache(
+        ms_cache,
+        train_subjects=train_items + dev_items,
+        eval_subjects=test_items,
+        weights_source="base_model_manyshot_context",
+    )
+    split_path = tmp_path / "split.json"
+    save_json(
+        {
+            "train_subject_ids": [s for s, _, _ in train_items],
+            "selection_subject_ids": [s for s, _, _ in dev_items],
+            "final_eval_subject_ids": [s for s, _, _ in test_items],
+        },
+        split_path,
+    )
+    summary_ms = run_route(
+        cache_dirs=[ms_cache],
+        split_files=[split_path],
+        protocol="daic_traindev_test",
+        output_dir=tmp_path / "out_ms_traindev",
+        per_fold_caches=True,
+    )
+    assert summary_ms["folds"][0]["fit_subjects"] == 14
+    assert summary_ms["folds"][0]["report_subjects"] == 4
+    assert summary_ms["fold_mean"]["macro_f1"] >= 0.85
+
+    # Case 2: zero-shot frozen DAIC cache with separate --dev-caches.
+    zs_main = tmp_path / "zs_main"
+    zs_dev = tmp_path / "zs_dev"
+    _write_synthetic_cache(zs_main, train_subjects=train_items, eval_subjects=test_items)
+    _write_synthetic_cache(zs_dev, train_subjects=train_items, eval_subjects=dev_items)
+    summary_zs = run_route(
+        cache_dirs=[zs_main],
+        dev_caches=[zs_dev],
+        split_files=[split_path],
+        protocol="daic_traindev_test",
+        output_dir=tmp_path / "out_zs_traindev",
+        c_grid=(0.001,),
+    )
+    assert summary_zs["folds"][0]["fit_subjects"] == 14
+    assert summary_zs["folds"][0]["report_subjects"] == 4
+    assert summary_zs["folds"][0]["selected_c"] == 0.001
+    assert read_json(tmp_path / "out_zs_traindev" / "result_config.json")["selection_method"] == "fixed_c"
+    assert summary_zs["fold_mean"]["macro_f1"] >= 0.85
+

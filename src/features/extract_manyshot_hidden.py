@@ -71,7 +71,7 @@ OPTIONAL_ROW_KEYS = (
     "response_id", "question_condition", "turn_key", "question_id", "window_id",
     "prompt_id", "segment_index", "num_segments", "chunk_id", "protocol_id", "chunk_index", "num_chunks",
 )
-PROTOCOLS = ("daic_official", "train_val_test", "train_val")
+PROTOCOLS = ("daic_official", "daic_traindev_test", "train_val_test", "train_val")
 
 
 def parse_args() -> argparse.Namespace:
@@ -208,19 +208,29 @@ def fold_plan(route: dict[str, Any], split: dict[str, Any], pool: dict[str, Any]
         if fin:
             raise ValueError("train_val split has final_eval subjects.")
         parts = {"outer_train": fit, "final_eval": sel}
+        others = sel
     elif protocol == "train_val_test":
         parts = {"outer_train": fit + sel, "final_eval": fin}
+        others = sorted(set(sel) | set(fin))
+    elif protocol == "daic_traindev_test":
+        # OZY-159: official train + dev form the fit/LOO shot pool; official test stays out of shots.
+        if not sel or not fin:
+            raise ValueError("daic_traindev_test requires non-empty selection (dev) and final_eval (test) subjects.")
+        parts = {"outer_train": sorted(set(fit) | set(sel)), "final_eval": fin}
+        others = fin
     else:
         parts = {"outer_train": fit, "final_eval": fin, "dev": sel}
+        others = sorted(set(sel) | set(fin))
     groups = [set(fit), set(sel), set(fin)]
     if any(a & b for i, a in enumerate(groups) for b in groups[i + 1:]):
         raise ValueError("Fit, selection and final subjects overlap.")
     missing = (set(fit) | set(sel) | set(fin)) - set(pool)
     if missing:
         raise ValueError(f"{len(missing)} split subjects are not in the prompt pool.")
-    if not fit or not parts["final_eval"]:
+    effective_fit = parts["outer_train"] if protocol == "daic_traindev_test" else fit
+    if not effective_fit or not parts["final_eval"]:
         raise ValueError("Empty fit or report subjects.")
-    return {"fit": fit, "others": sorted(set(sel) | set(fin)), **parts}
+    return {"fit": effective_fit, "others": others, **parts}
 
 
 def inner_groups(fit: list[str], labels: dict[str, int], n: int, seed: int, fold: int) -> list[list[str]]:
