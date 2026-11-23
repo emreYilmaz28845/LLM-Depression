@@ -1,0 +1,46 @@
+schema_version: audiollm.experiment_group.v1
+group_id: qwen-manyshot-explain-20261124
+title: Qwen3.8-27B many-shot classification with a generated explanation (advisor prompt v3_advisor)
+research_question: >-
+  When frozen Qwen3.8-27B reads numbered labelled examples (full transcript ->
+  gold label) and is told "Base your answer on the examples in the prompt and
+  explain your answer", how well does its generated label classify DAIC-WOZ and
+  Turkish participants, and what explanations does it give?
+dataset: >-
+  DAIC-WOZ text (reference manifest sha256 8d96abc2..., full participant
+  transcripts, no 4000-char cap) and Turkish pooled_t17 text (reference
+  manifest sha256 a0daf665..., both question sets per participant, label
+  BDI >= 17).
+baseline: >-
+  DAIC: OZY-159 Qwen3.8 many-shot likelihood (same 142 train+dev shots, 47
+  official test) and Claude Opus OZY-162 v2 / zero-shot (first 4000 chars only).
+  Turkish: OZY-158 frozen text + ridge LOPO reference (n=120).
+treatment: >-
+  experiments/manyshot_qwen_explain/run_qwen_manyshot_explain.py, prompt
+  v3_advisor. DAIC: 142 official train+dev subjects as shots in one fixed order
+  (shot seed 0), each official test subject classified after them. Turkish:
+  LOPO, each participant after the other 119 (one global order, target
+  removed). Greedy decoding, thinking off, max 768 new tokens, JSON with the
+  explanation before the label; label read from the answer, INVALID = wrong.
+  1 node x 2 H100, layer-wise split; DAIC prefix cache reused per target.
+expected_seeds:
+  - 0
+expected_folds:
+  - 0
+primary_metric:
+  namespace: headline/binary_strict
+  name: macro_f1
+  backend: qwen38_manyshot_generated_label
+  aggregation: subject_level
+  evaluation_view: full_transcript_subject
+comparison_rule: >-
+  Pooled subject-level Macro-F1, Positive-F1 and UAR with the confusion matrix
+  (DAIC: 47 official test subjects; Turkish: 120 LOPO answers). One run, no SD.
+exclusions:
+  - lora_training
+  - english_translation_routes
+  - extra_seeds
+  - prompt_tuning_on_test_results
+  - paper_or_prism_edits
+github_issue: null
+github_pr: 331
