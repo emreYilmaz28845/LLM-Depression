@@ -37,7 +37,16 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-DEFAULT_MANIFEST = Path("outputs/manifests_daic_participant_packed30/daic_manifest.jsonl")
+# Reference DAIC manifest: the one the frozen Qwen3.8 / Qwen3-Omni caches (OZY-158) and OZY-148/159 used, with
+# full participant transcripts. Local copy of the MN5 file (read-only rsync from transfer1):
+REFERENCE_MANIFEST_SOURCE = ("/gpfs/projects/etur92/ozu647717/AudioLLM/experiment_runtime/"
+                             "feat-qwen38-standalone-promptcontext-20260922/manifests/daic/daic_manifest.jsonl")
+REFERENCE_MANIFEST_SHA256 = "8d96abc2a411403f0340792c0906cc1d9d9b8bf6c62ab0b07aa081b42894659d"
+DEFAULT_MANIFEST = Path("outputs/manifests_daic_reference/daic_manifest.jsonl")
+# The local outputs/manifests_daic_participant_packed30 manifest caps full_participant_transcript at 4000 chars.
+# Every OZY-162 run before 2026-11-24 used it, so it saw only the first 4000 chars. A transcript of exactly this
+# length is taken as a sign of that cap.
+TRUNCATION_CAP_CHARS = 4000
 LABEL_TEXT = {1: "Depressed", 0: "Non-depressed"}
 TEXT_LABEL = {v.lower(): k for k, v in LABEL_TEXT.items()}
 SHOT_SPLITS = ("train", "val")  # official train + dev (OZY-159 protocol)
@@ -119,7 +128,20 @@ def load_subjects(manifest: Path) -> dict[str, dict]:
     for rec in subjects.values():
         if not rec["text"]:
             raise ValueError(f"Subject {rec['subject_id']}: empty transcript.")
+    capped = sorted(s for s, rec in subjects.items() if len(rec["text"]) == TRUNCATION_CAP_CHARS)
+    if capped:
+        raise ValueError(f"{len(capped)} transcripts are exactly {TRUNCATION_CAP_CHARS} chars, which looks like the "
+                         f"truncated local manifest; use the reference manifest ({REFERENCE_MANIFEST_SOURCE}).")
     return subjects
+
+
+def check_reference_manifest(manifest: Path) -> str:
+    """Return the manifest's sha256; fail unless it is the reference DAIC manifest."""
+    digest = sha256_file(manifest)
+    if digest != REFERENCE_MANIFEST_SHA256:
+        raise ValueError(f"{manifest}: sha256 {digest} is not the reference DAIC manifest "
+                         f"{REFERENCE_MANIFEST_SHA256} ({REFERENCE_MANIFEST_SOURCE}).")
+    return digest
 
 
 def shot_block(shots: list[dict]) -> str:
@@ -206,6 +228,7 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     resp_path = out / "responses.jsonl"
 
+    manifest_sha256 = check_reference_manifest(args.manifest)
     subjects = load_subjects(args.manifest)
     shots = sorted((s for s in subjects.values() if s["split"] in SHOT_SPLITS), key=lambda s: s["subject_id"])
     random.Random(args.shot_seed).shuffle(shots)
@@ -230,7 +253,8 @@ def main() -> None:
     run_info = {
         "experiment": ("Claude Opus zero-shot DAIC (no shots)" if zero_shot else "OZY-162 DAIC many-shot prompting with Claude"), "backend": args.backend,
         "model": args.model, "effort": args.effort, "shot_seed": args.shot_seed, "manifest": str(args.manifest.resolve()),
-        "manifest_sha256": sha256_file(args.manifest), "prompt_version": prompt_version, "system_prompt_sha256": sha256_text(instructions),
+        "manifest_sha256": manifest_sha256, "manifest_source": REFERENCE_MANIFEST_SOURCE,
+        "max_transcript_chars": max(len(x["text"]) for x in subjects.values()), "prompt_version": prompt_version, "system_prompt_sha256": sha256_text(instructions),
         "shot_block_sha256": sha256_text(prefix), "system_with_shots_sha256": sha256_text(system),
         "layout": ("system = instructions only; user = target transcript" if zero_shot
                    else "system = instructions + labelled shots; user = target transcript"), "n_shots": len(shots),

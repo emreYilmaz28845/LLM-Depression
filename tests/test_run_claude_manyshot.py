@@ -42,3 +42,34 @@ def test_advisor_zeroshot_prompt_is_advisor_prompt_without_examples():
     assert "example" not in zs.lower()
     assert "Explain your answer." in zs and "PHQ-8 >= 10" in zs
     assert zs.endswith(mod.ANSWER_FORMAT)
+
+
+def _write_manifest(path, texts):
+    import hashlib
+    import json
+    rows = []
+    for i, t in enumerate(texts):
+        rows.append(json.dumps({"subject_id": str(300 + i), "split_original": "train", "label": i % 2,
+                                "full_participant_transcript": t,
+                                "full_participant_transcript_sha256": hashlib.sha256(t.encode()).hexdigest()}))
+    path.write_text("\n".join(rows) + "\n")
+
+
+def test_load_subjects_rejects_transcripts_capped_at_4000_chars(tmp_path):
+    import pytest
+    m = tmp_path / "m.jsonl"
+    _write_manifest(m, ["short text", "x" * mod.TRUNCATION_CAP_CHARS])
+    with pytest.raises(ValueError, match="exactly 4000 chars"):
+        mod.load_subjects(m)
+    _write_manifest(m, ["short text", "x" * (mod.TRUNCATION_CAP_CHARS + 1)])
+    assert len(mod.load_subjects(m)) == 2
+
+
+def test_check_reference_manifest_rejects_other_files(tmp_path):
+    import pytest
+    m = tmp_path / "m.jsonl"
+    _write_manifest(m, ["short text"])
+    with pytest.raises(ValueError, match="not the reference DAIC manifest"):
+        mod.check_reference_manifest(m)
+    assert mod.DEFAULT_MANIFEST.name == "daic_manifest.jsonl"
+    assert len(mod.REFERENCE_MANIFEST_SHA256) == 64
