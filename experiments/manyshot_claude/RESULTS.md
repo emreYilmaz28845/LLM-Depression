@@ -3,17 +3,75 @@
 Claude Opus 5.5 (`claude-opus-5-5`, effort medium, `claude -p`) classifies each official DAIC test subject
 directly. There are no embeddings and no head. The system prompt holds the instructions plus all 142 official
 train+dev subjects as labelled shots (42 Depressed / 100 Non-depressed, fixed order, shot seed 0). The user turn
-is the test subject's participant transcript (`full_participant_transcript`, the same text as Qwen3.8
-text_only_native). Claude answers with a JSON label and an explanation.
+is the test subject's participant transcript (`full_participant_transcript` from the reference DAIC manifest, the same text as the frozen
+Qwen3.8 embeddings, OZY-158, and OZY-148/159). Claude answers with a JSON label and an explanation.
 
-**Reference result: prompt v2 only** (user decision, 2026-11-20). In v2 the explanation must name the 2-3 most
+## Full-transcript results (2026-11-24) — use these
+
+**Correction.** Every Claude run before 2026-11-24 read the local manifest
+`outputs/manifests_daic_participant_packed30/daic_manifest.jsonl` (sha256 bfb9597ff28e…), where
+`full_participant_transcript` is capped at 4000 characters (128 of 189 subjects are exactly 4000 after
+stripping). Those runs saw only the first ~800 words of each interview. The frozen Qwen embeddings (OZY-158)
+and OZY-148/159 used full transcripts. The runner now defaults to the reference manifest (copy of MN5
+`experiment_runtime/feat-qwen38-standalone-promptcontext-20260922/manifests/daic/daic_manifest.jsonl`, sha256
+8d96abc2a411…), refuses any other sha256 or any transcript of exactly 4000 chars, and records the manifest
+source and sha256 in `run_info.json`. Old numbers are kept below, labelled "first 4000 chars".
+
+All runs: DAIC-WOZ official test (47 subjects, 14 Depressed), Claude Opus 5.5, effort medium, one answer per
+subject, binary_strict (INVALID counts as wrong). Many-shot = all 142 official train+dev subjects as numbered
+labelled examples (shot seed 0). Full-text shot block: 1.005M chars, 327.9k input tokens (from `usage`);
+the longest request was 335.8k tokens, well under the 1M context.
+
+| Run | Text | n | macro-F1 | pos-F1 | UAR | TP / FN / FP / TN | INVALID | same answer old vs new | Artifacts (manifest sha256) |
+|---|---|---|---|---|---|---|---|---|---|
+| Many-shot, advisor prompt | first 4000 chars | 47 | 0.766 | 0.667 | 0.761 | 9 / 5 / 4 / 29 | 0 |  | `daic_claude_advisor_manyshot_effmedium` (bfb9597ff28e) |
+| Many-shot, advisor prompt | full transcript | 47 | 0.743 | 0.667 | 0.772 | 11 / 3 / 8 / 25 | 0 | 41/47 | `daic_fulltext_claude_advisor_manyshot_effmedium` (8d96abc2a411) |
+| Many-shot, prompt v2 | first 4000 chars | 47 | 0.796 | 0.714 | 0.796 | 10 / 4 / 4 / 29 | 0 |  | `ozy162_claude_manyshot_v2_effmedium` (bfb9597ff28e) |
+| Many-shot, prompt v2 | full transcript | 47 | 0.763 | 0.688 | 0.787 | 11 / 3 / 7 / 26 | 0 | 43/47 | `daic_fulltext_claude_v2_manyshot_effmedium` (8d96abc2a411) |
+| Zero-shot, advisor prompt | first 4000 chars | 47 | 0.755 | 0.640 | 0.740 | 8 / 6 / 3 / 30 | 0 |  | `daic_claude_advisor_zeroshot_effmedium` (bfb9597ff28e) |
+| Zero-shot, advisor prompt | full transcript | 47 | 0.763 | 0.688 | 0.787 | 11 / 3 / 7 / 26 | 0 | 40/47 | `daic_fulltext_claude_advisor_zeroshot_effmedium` (8d96abc2a411) |
+| Zero-shot, original prompt | first 4000 chars | 47 | 0.755 | 0.640 | 0.740 | 8 / 6 / 3 / 30 | 0 |  | `ozy_claude_zeroshot_effmedium` (bfb9597ff28e) |
+| Zero-shot, original prompt | full transcript | 47 | 0.724 | 0.647 | 0.756 | 11 / 3 / 9 / 24 | 0 | 38/47 | `daic_fulltext_claude_zeroshot_effmedium` (8d96abc2a411) |
+| Many-shot, prompt v1 (not rerun) | first 4000 chars | 47 | 0.766 | 0.667 | 0.761 | 9 / 5 / 4 / 29 | 0 |  | `ozy162_claude_manyshot_effmedium` (bfb9597ff28e) |
+
+Table made by `experiments/manyshot_claude/compare_runs.py` from each run's `responses.jsonl`. The "first 4000
+chars" v1/v2/original zero-shot artifacts are in the OZY-162 lane
+(`worktrees/LLM-Depression-feat-ozy-162-daic-claude-manyshot/outputs/`); all others are in this lane's `outputs/`.
+
+What changed with full text:
+
+- Full text makes Claude call more people Depressed: FN drops to 3 in every run (from 4-6), FP rises to 7-9
+  (from 3-4). Positive-F1 and UAR move little; macro-F1 drops for many-shot (v2 0.796 -> 0.763).
+- With full text, the four runs give almost the same answers: advisor zero-shot and v2 many-shot agree on 47/47
+  subjects, advisor many-shot agrees with each of them on 46/47, the original zero-shot with advisor zero-shot on
+  45/47. So **the 142 examples do not change the label** on full transcripts; the earlier "many-shot gain"
+  (0.755 -> 0.797) does not hold. Many-shot still differs in what the explanation can cite.
+- The advisor prompt (Cenk Hoca, 2026-11-23: his sentence as is, "Base your answer on the examples in the
+  prompt and explain your answer"; examples stay numbered, no rule to name similar ones) gives explanations that
+  cite a numbered example in only 7/47 subjects (v2, which requires naming 2-3 examples, cited them in 47/47 on
+  the first-4000-chars run). Explanation workbook for the advisor: `outputs/daic_fulltext_claude_advisor_explanations.xlsx`
+  (`build_explanation_sheet.py`; tabs Setup, many-shot, zero-shot; errors first; PHQ-8 column; no subject IDs).
+- 47 subjects with 14 positive: one flipped subject moves macro-F1 by ~0.02-0.03 and positive-F1 by ~0.04,
+  and the v1 vs v2 runs (first 4000 chars) already differed by 0.03. None of the differences above is beyond
+  run-to-run variation.
+
+Full-text cost (API-equivalent, notional, Claude Pro): advisor many-shot $4.66, v2 many-shot $7.38 (it wrote
+its own shot cache), advisor zero-shot $1.64, original zero-shot $1.73; plus a 3-subject smoke
+(`daic_fulltext_claude_advisor_manyshot_smoke`, $2.84) and a 311k-token synthetic-filler context probe ($2.49,
+no DAIC data). Code: commit a16ce34 (run_info git_commit).
+
+## First 4000 chars only (superseded, kept for the record)
+
+Everything below was run on the truncated manifest and is kept only for comparison with the table above.
+
+**Was the reference result before the truncation was found: prompt v2** (user decision, 2026-11-20). In v2 the explanation must name the 2-3 most
 similar labelled examples by number and label, as Cenk Hoca asked ("explaining by looking at the examples is
 important"). Run artifacts: `outputs/ozy162_claude_manyshot_v2_effmedium/`.
 
 | Method (DAIC official test, 47 subjects) | macro-F1 | positive-F1 | UAR |
 |---|---|---|---|
-| **Claude Opus 5.5 many-shot prompting, prompt v2** | **0.797** | **0.714** | **0.797** |
-| Claude Opus 5.5 zero-shot prompting (no shots, `--n-shots 0`) | 0.755 | 0.640 | 0.740 |
+| Claude Opus 5.5 many-shot prompting, prompt v2 (first 4000 chars) | 0.797 | 0.714 | 0.797 |
+| Claude Opus 5.5 zero-shot prompting (no shots, `--n-shots 0`; first 4000 chars) | 0.755 | 0.640 | 0.740 |
 | Qwen3.8 A: frozen zero-shot embedding + head (OZY-148) | 0.735 | | |
 | Qwen3.8 B: many-shot embedding + head (OZY-148) | 0.750 | | |
 | Qwen3.8 C: Enes many-shot logprob (`many_fit`) | 0.776 | | |
@@ -27,7 +85,7 @@ Superseded, not a reference: an earlier full run with prompt v1, where comparing
 (`outputs/ozy162_claude_manyshot_effmedium/`), gave macro-F1 0.766 / positive-F1 0.667 / UAR 0.761. It agrees
 with v2 on 46/47 subjects, so the gap is within run-to-run variation and should not be read as a prompt effect.
 
-## Zero-shot (Cenk Hoca, 2026-11-23)
+### Zero-shot (Cenk Hoca, 2026-11-23; first 4000 chars)
 
 Same 47 test subjects, model, effort, label definition and JSON answer format as v2, but the system prompt has
 no labelled examples, so the explanation can cite only the participant's transcript. Run artifacts:
@@ -44,7 +102,7 @@ no labelled examples, so the explanation can cite only the participant's transcr
 - Cost ~$1.14 API-equivalent (notional, Claude Pro), ~885 s total call time.
 - Code: commit 1052976.
 
-## Caveats
+### Caveats
 
 - Single run. Opus 5.5 has no temperature control, so a rerun can give different answers. The raw answers
   are stored per subject.
@@ -52,7 +110,7 @@ no labelled examples, so the explanation can cite only the participant's transcr
 - The shots use the official train+dev subjects (OZY-159 protocol). The Qwen rows A/B/C use train shots with
   dev for selection, so the shot pools differ.
 
-## Provenance
+### Provenance (first-4000-chars runs)
 
 - Code: `experiments/manyshot_claude/run_claude_manyshot.py`, commit eed1c25 (run_info git_commit = worktree HEAD).
 - Manifest: `outputs/manifests_daic_participant_packed30/daic_manifest.jsonl` (sha256 in run_info.json).
