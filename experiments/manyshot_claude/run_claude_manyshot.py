@@ -13,6 +13,9 @@ Backends:
   dry-run     build every prompt, write prompts + size report; sends nothing anywhere.
   claude-cli  ``claude -p`` (the user's Claude subscription). Sends DAIC transcripts to Anthropic.
 
+Zero-shot (``--n-shots 0``): no labelled examples; the system prompt is only the instructions and the
+explanation can cite only the participant's transcript.
+
 Usage:
   python experiments/manyshot_claude/run_claude_manyshot.py --out-dir OUT --backend dry-run
   python experiments/manyshot_claude/run_claude_manyshot.py --out-dir OUT --backend claude-cli \
@@ -64,6 +67,15 @@ SYSTEM_PROMPT_V2 = SYSTEM_PROMPT.split("The explanation must")[0] + (
 )
 PROMPTS = {"v1": SYSTEM_PROMPT, "v2": SYSTEM_PROMPT_V2}
 
+# Zero-shot (Cenk Hoca, 2026-11-23: "Claude opus 5.5 zero shot performans nasil?"): same task, label
+# definition and answer format as v2, but no labelled examples, so the explanation can only cite the transcript.
+SYSTEM_PROMPT_ZEROSHOT = SYSTEM_PROMPT.split("You will first see")[0] + (
+    "Classify the participant whose transcript follows.\n\n"
+    "Answer with exactly one JSON object and nothing else:\n"
+    '{"label": "Depressed" or "Non-depressed", "explanation": "<3-6 sentences>"}\n'
+    "The explanation must cite concrete evidence from the participant's transcript."
+)
+
 
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -101,9 +113,9 @@ def shot_block(shots: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
-def target_block(target: dict) -> str:
-    return ("### Final participant (classify this one)\nTranscript:\n" + target["text"] +
-            "\n\nReturn the JSON object now.")
+def target_block(target: dict, zero_shot: bool = False) -> str:
+    head = "### Participant (classify this one)" if zero_shot else "### Final participant (classify this one)"
+    return head + "\nTranscript:\n" + target["text"] + "\n\nReturn the JSON object now."
 
 
 def parse_answer(text: str) -> tuple[int | None, str]:
@@ -163,6 +175,9 @@ def main() -> None:
     p.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"), default="medium")
     p.add_argument("--prompt-version", choices=sorted(PROMPTS), default="v2")
     p.add_argument("--shot-seed", type=int, default=0)
+    p.add_argument("--n-shots", type=int, choices=(0,),
+                   help="0 = zero-shot: no labelled examples, zero-shot prompt (ignores --prompt-version). "
+                        "Omit for many-shot with every train+dev subject.")
     p.add_argument("--limit", type=int, help="Smoke: only the first N test subjects.")
     p.add_argument("--timeout", type=int, default=900)
     p.add_argument("--i-confirm-data-transfer-approved", action="store_true",
@@ -182,20 +197,27 @@ def main() -> None:
         raise AssertionError("A test subject is among the shots.")
     if args.limit:
         targets = targets[:args.limit]
-    prefix = shot_block(shots)
-    instructions = PROMPTS[args.prompt_version]
-    system = instructions + "\n\n" + prefix
+    zero_shot = args.n_shots == 0
+    if zero_shot:
+        shots, prefix = [], ""
+        prompt_version, instructions = "zeroshot", SYSTEM_PROMPT_ZEROSHOT
+        system = instructions
+    else:
+        prefix = shot_block(shots)
+        prompt_version, instructions = args.prompt_version, PROMPTS[args.prompt_version]
+        system = instructions + "\n\n" + prefix
 
     run_info = {
-        "experiment": "OZY-162 DAIC many-shot prompting with Claude", "backend": args.backend,
+        "experiment": ("Claude Opus zero-shot DAIC (no shots)" if zero_shot else "OZY-162 DAIC many-shot prompting with Claude"), "backend": args.backend,
         "model": args.model, "effort": args.effort, "shot_seed": args.shot_seed, "manifest": str(args.manifest.resolve()),
-        "manifest_sha256": sha256_file(args.manifest), "prompt_version": args.prompt_version, "system_prompt_sha256": sha256_text(instructions),
+        "manifest_sha256": sha256_file(args.manifest), "prompt_version": prompt_version, "system_prompt_sha256": sha256_text(instructions),
         "shot_block_sha256": sha256_text(prefix), "system_with_shots_sha256": sha256_text(system),
-        "layout": "system = instructions + labelled shots; user = target transcript", "n_shots": len(shots),
+        "layout": ("system = instructions only; user = target transcript" if zero_shot
+                   else "system = instructions + labelled shots; user = target transcript"), "n_shots": len(shots),
         "shot_label_counts": {LABEL_TEXT[k]: sum(s["label"] == k for s in shots) for k in (1, 0)},
         "n_targets": len(targets), "shot_block_chars": len(prefix),
         "approx_shot_tokens": len(prefix) // 4,
-        "max_target_chars": max(len(target_block(t)) for t in targets),
+        "max_target_chars": max(len(target_block(t, zero_shot)) for t in targets),
         "git_commit": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip(),
         "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
@@ -222,7 +244,7 @@ def main() -> None:
         for t in targets:
             if t["subject_id"] in done:
                 continue
-            prompt = target_block(t)
+            prompt = target_block(t, zero_shot)
             t0 = time.time()
             res = call_claude_cli(system, prompt, args.model, args.effort, args.timeout)
             answer = res.get("result", "")

@@ -13,6 +13,7 @@ important"). Run artifacts: `outputs/ozy162_claude_manyshot_v2_effmedium/`.
 | Method (DAIC official test, 47 subjects) | macro-F1 | positive-F1 | UAR |
 |---|---|---|---|
 | **Claude Opus 5.5 many-shot prompting, prompt v2** | **0.797** | **0.714** | **0.797** |
+| Claude Opus 5.5 zero-shot prompting (no shots, `--n-shots 0`) | 0.755 | 0.640 | 0.740 |
 | Qwen3.8 A: frozen zero-shot embedding + head (OZY-148) | 0.735 | | |
 | Qwen3.8 B: many-shot embedding + head (OZY-148) | 0.750 | | |
 | Qwen3.8 C: Enes many-shot logprob (`many_fit`) | 0.776 | | |
@@ -25,6 +26,23 @@ order). The Qwen rows are copied from `experiments/manyshot/RESULTS.md`; only ma
 Superseded, not a reference: an earlier full run with prompt v1, where comparing with the examples was optional
 (`outputs/ozy162_claude_manyshot_effmedium/`), gave macro-F1 0.766 / positive-F1 0.667 / UAR 0.761. It agrees
 with v2 on 46/47 subjects, so the gap is within run-to-run variation and should not be read as a prompt effect.
+
+## Zero-shot (Cenk Hoca, 2026-11-23)
+
+Same 47 test subjects, model, effort, label definition and JSON answer format as v2, but the system prompt has
+no labelled examples, so the explanation can cite only the participant's transcript. Run artifacts:
+`outputs/ozy_claude_zeroshot_effmedium/` (3-subject smoke: `outputs/ozy_claude_zeroshot_smoke_effmedium/`).
+
+- Confusion: TP 8, FN 6, FP 3, TN 30; 11 predicted positive vs 14 true. 0 INVALID answers.
+- Zero-shot and many-shot v2 give the same label on 44/47 subjects. The many-shot gain (0.755 -> 0.797 macro-F1)
+  comes from 3 subjects, which is within the run-to-run variation seen between v1 and v2 (46/47 agreement).
+- The explanations describe symptoms in the transcript (low mood, sleep, anhedonia, hopelessness, stressors,
+  isolation). Zero-shot errors look like this: a participant who reports a depression diagnosis and
+  hopelessness but has PHQ-8 < 10 is called Depressed; a positive, active participant whose interview has
+  few direct symptom answers is called Non-depressed. Many-shot explanations can also point to similar
+  labelled examples, which zero-shot cannot.
+- Cost ~$1.14 API-equivalent (notional, Claude Pro), ~885 s total call time.
+- Code: commit 1052976.
 
 ## Caveats
 

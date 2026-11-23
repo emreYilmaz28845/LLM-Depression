@@ -18,3 +18,11 @@ def test_invalid_counts_as_wrong():
     recs = [{"label": 1, "pred": None}, {"label": 0, "pred": 0}]
     m = mod.metrics(recs)
     assert m["invalid"] == 1 and m["uar"] == 0.5
+
+
+def test_zeroshot_prompt_has_no_examples_and_same_answer_format():
+    zs = mod.SYSTEM_PROMPT_ZEROSHOT
+    assert "example" not in zs.lower()
+    assert '{"label": "Depressed" or "Non-depressed", "explanation": "<3-6 sentences>"}' in zs
+    assert "PHQ-8 >= 10" in zs
+    assert "Final participant" not in mod.target_block({"text": "t"}, zero_shot=True)
