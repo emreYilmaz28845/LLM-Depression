@@ -65,7 +65,16 @@ SYSTEM_PROMPT_V2 = SYSTEM_PROMPT.split("The explanation must")[0] + (
     "final participant's transcript. If the most similar examples carry the other label, say why you "
     "still chose this label."
 )
-PROMPTS = {"v1": SYSTEM_PROMPT, "v2": SYSTEM_PROMPT_V2}
+# advisor (Cenk Hoca, 2026-11-23 WhatsApp): his sentence as is, "Base your answer on the examples in the prompt
+# and explain your answer". He dropped the v2 demand to name the 2-3 most similar examples ("Benzeri bulmasi zor");
+# the examples stay numbered so the model can still cite them.
+ADVISOR_SENTENCE = "Base your answer on the examples in the prompt and explain your answer."
+ANSWER_FORMAT = (
+    "Answer with exactly one JSON object and nothing else:\n"
+    '{"label": "Depressed" or "Non-depressed", "explanation": "<3-6 sentences>"}'
+)
+SYSTEM_PROMPT_ADVISOR = SYSTEM_PROMPT.split("Answer with exactly")[0] + ADVISOR_SENTENCE + "\n\n" + ANSWER_FORMAT
+PROMPTS = {"v1": SYSTEM_PROMPT, "v2": SYSTEM_PROMPT_V2, "advisor": SYSTEM_PROMPT_ADVISOR}
 
 # Zero-shot (Cenk Hoca, 2026-11-23: "Claude opus 5.5 zero shot performans nasil?"): same task, label
 # definition and answer format as v2, but no labelled examples, so the explanation can only cite the transcript.
@@ -74,6 +83,13 @@ SYSTEM_PROMPT_ZEROSHOT = SYSTEM_PROMPT.split("You will first see")[0] + (
     "Answer with exactly one JSON object and nothing else:\n"
     '{"label": "Depressed" or "Non-depressed", "explanation": "<3-6 sentences>"}\n'
     "The explanation must cite concrete evidence from the participant's transcript."
+)
+
+# Zero-shot twin of the advisor prompt: the same text with only the parts about examples removed (there are none),
+# so the instruction becomes "Explain your answer." Used by --n-shots 0 --prompt-version advisor.
+SYSTEM_PROMPT_ZEROSHOT_ADVISOR = (
+    SYSTEM_PROMPT.split("You will first see")[0] + "Classify the participant whose transcript follows.\n\n"
+    + "Explain your answer.\n\n" + ANSWER_FORMAT
 )
 
 
@@ -176,7 +192,8 @@ def main() -> None:
     p.add_argument("--prompt-version", choices=sorted(PROMPTS), default="v2")
     p.add_argument("--shot-seed", type=int, default=0)
     p.add_argument("--n-shots", type=int, choices=(0,),
-                   help="0 = zero-shot: no labelled examples, zero-shot prompt (ignores --prompt-version). "
+                   help="0 = zero-shot: no labelled examples. --prompt-version advisor selects the advisor zero-shot "
+                        "prompt; any other version uses the original zero-shot prompt. "
                         "Omit for many-shot with every train+dev subject.")
     p.add_argument("--limit", type=int, help="Smoke: only the first N test subjects.")
     p.add_argument("--timeout", type=int, default=900)
@@ -200,7 +217,10 @@ def main() -> None:
     zero_shot = args.n_shots == 0
     if zero_shot:
         shots, prefix = [], ""
-        prompt_version, instructions = "zeroshot", SYSTEM_PROMPT_ZEROSHOT
+        if args.prompt_version == "advisor":
+            prompt_version, instructions = "zeroshot_advisor", SYSTEM_PROMPT_ZEROSHOT_ADVISOR
+        else:
+            prompt_version, instructions = "zeroshot", SYSTEM_PROMPT_ZEROSHOT
         system = instructions
     else:
         prefix = shot_block(shots)

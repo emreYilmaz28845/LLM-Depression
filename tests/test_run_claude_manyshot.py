@@ -26,3 +26,19 @@ def test_zeroshot_prompt_has_no_examples_and_same_answer_format():
     assert '{"label": "Depressed" or "Non-depressed", "explanation": "<3-6 sentences>"}' in zs
     assert "PHQ-8 >= 10" in zs
     assert "Final participant" not in mod.target_block({"text": "t"}, zero_shot=True)
+
+
+def test_advisor_prompt_keeps_sentence_verbatim_and_drops_v2_naming_rule():
+    adv = mod.PROMPTS["advisor"]
+    assert "Base your answer on the examples in the prompt and explain your answer." in adv
+    assert "2-3" not in adv and "most similar" not in adv
+    assert adv.startswith(mod.SYSTEM_PROMPT.split("Answer with exactly")[0])
+    assert adv.endswith(mod.ANSWER_FORMAT)
+    assert "### Example 1\n" in mod.shot_block([{"text": "t", "label": 1}])
+
+
+def test_advisor_zeroshot_prompt_is_advisor_prompt_without_examples():
+    zs = mod.SYSTEM_PROMPT_ZEROSHOT_ADVISOR
+    assert "example" not in zs.lower()
+    assert "Explain your answer." in zs and "PHQ-8 >= 10" in zs
+    assert zs.endswith(mod.ANSWER_FORMAT)
