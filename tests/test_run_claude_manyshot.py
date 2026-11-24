@@ -114,3 +114,14 @@ def test_v4_v5_prompts_are_zero_shot_and_v5_extends_v1():
     assert "last two weeks" in v5
     assert v5.replace(v5.split("Classify the participant whose transcript follows.\n\n")[1].split("Answer with")[0], "") \
         == mod.SYSTEM_PROMPT_ZEROSHOT
+
+
+def test_traindev_targets_require_zero_shot(tmp_path, monkeypatch):
+    import sys
+    import pytest
+    monkeypatch.setattr(mod, "check_reference_manifest", lambda m: "x")
+    m = tmp_path / "m.jsonl"
+    _write_manifest(m, ["short text a", "short text b"])
+    monkeypatch.setattr(sys, "argv", ["x", "--out-dir", str(tmp_path / "o"), "--manifest", str(m), "--targets", "traindev"])
+    with pytest.raises(SystemExit, match="--n-shots 0"):
+        mod.main()

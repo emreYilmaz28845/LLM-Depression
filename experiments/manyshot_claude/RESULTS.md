@@ -129,6 +129,18 @@ interviewer's questions in the prompt; our prompt has the participant's side onl
 which does not match the official 47. Opus may have seen DAIC-WOZ in pre-training; this cannot be ruled out.
 Artifacts: `outputs/daic_fulltext_claude_zs_v4_effmedium{,_r2,_r3,_r4}/`; cost r2-r4 $0.57 each (API-equivalent).
 
+## Zero-shot v4 + linear calibration: plan, written before the run (2026-11-24)
+
+Same protocol as OZY-159 (`daic_traindev_test`): fit on official train+dev (142), official test (47) locked and
+used once.
+1. Run zero-shot v4 on the 142 train+dev subjects (`--targets traindev`); the prompt has no examples, so no subject
+   sees another subject's label.
+2. Fit one ordinary least-squares regression on those 142: PHQ-8 total ~ intercept + 8 item scores. No
+   hyperparameter, no selection, no refit.
+3. Apply it unchanged to each of the 4 existing test runs (r1-r4); report mean (SD) over the 4 runs and r1 alone.
+   Label = predicted score >= 10 (fixed). Report RMSE, MAE, Spearman, macro-F1, pos-F1, UAR next to the raw item
+   total. Subjects whose v4 answer is INVALID are dropped from the fit and counted wrong on test.
+
 ## First 4000 chars only (superseded, kept for the record)
 
 Everything below was run on the truncated manifest and is kept only for comparison with the table above.

@@ -270,7 +270,10 @@ def main() -> None:
                    help="0 = zero-shot: no labelled examples. --prompt-version advisor selects the advisor zero-shot "
                         "prompt; any other version uses the original zero-shot prompt. "
                         "Omit for many-shot with every train+dev subject.")
-    p.add_argument("--limit", type=int, help="Smoke: only the first N test subjects.")
+    p.add_argument("--targets", choices=("test", "traindev"), default="test",
+                   help="traindev: score the 142 official train+dev subjects instead of the test set "
+                        "(zero-shot only, e.g. to fit a calibration on v4 item scores).")
+    p.add_argument("--limit", type=int, help="Smoke: only the first N target subjects.")
     p.add_argument("--timeout", type=int, default=900)
     p.add_argument("--i-confirm-data-transfer-approved", action="store_true",
                    help="Required for claude-cli: DAIC-WOZ transcripts leave this machine.")
@@ -288,9 +291,13 @@ def main() -> None:
     targets = sorted((s for s in subjects.values() if s["split"] == EVAL_SPLIT), key=lambda s: int(s["subject_id"]))
     if {s["subject_id"] for s in shots} & {t["subject_id"] for t in targets}:
         raise AssertionError("A test subject is among the shots.")
+    zero_shot = args.n_shots == 0
+    if args.targets == "traindev":
+        if not zero_shot:
+            sys.exit("--targets traindev needs --n-shots 0: train+dev subjects are the many-shot examples.")
+        targets = sorted((s for s in subjects.values() if s["split"] in SHOT_SPLITS), key=lambda s: int(s["subject_id"]))
     if args.limit:
         targets = targets[:args.limit]
-    zero_shot = args.n_shots == 0
     if zero_shot:
         shots, prefix = [], ""
         if args.prompt_version in ZEROSHOT_ONLY:
@@ -316,7 +323,7 @@ def main() -> None:
         "layout": ("system = instructions only; user = target transcript" if zero_shot
                    else "system = instructions + labelled shots; user = target transcript"), "n_shots": len(shots),
         "shot_label_counts": {LABEL_TEXT[k]: sum(s["label"] == k for s in shots) for k in (1, 0)},
-        "n_targets": len(targets), "shot_block_chars": len(prefix),
+        "n_targets": len(targets), "targets": args.targets, "shot_block_chars": len(prefix),
         "approx_shot_tokens": len(prefix) // 4,
         "max_target_chars": max(len(target_block(t, zero_shot)) for t in targets),
         "git_commit": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip(),
@@ -369,7 +376,7 @@ def main() -> None:
 
     records = [done[t["subject_id"]] for t in targets if t["subject_id"] in done]
     if records:
-        m = {"split": "official_test", "aggregation": "subject-level, one answer per subject",
+        m = {"split": "official_test" if args.targets == "test" else "official_train_dev", "aggregation": "subject-level, one answer per subject",
              **metrics(records), "complete": len(records) == len(targets)}
         (out / "metrics.json").write_text(json.dumps(m, indent=1))
         print(json.dumps(m, indent=1))
