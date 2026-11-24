@@ -125,3 +125,17 @@ def test_traindev_targets_require_zero_shot(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["x", "--out-dir", str(tmp_path / "o"), "--manifest", str(m), "--targets", "traindev"])
     with pytest.raises(SystemExit, match="--n-shots 0"):
         mod.main()
+
+
+def test_calibrate_v4_ols_recovers_linear_map():
+    import importlib.util as u
+    import numpy as np
+    from pathlib import Path
+    sp = u.spec_from_file_location("cal", Path(__file__).resolve().parents[1] / "experiments/manyshot_claude/calibrate_v4.py")
+    c = u.module_from_spec(sp)
+    sp.loader.exec_module(c)
+    rng = np.random.default_rng(0)
+    x = rng.integers(0, 4, size=(60, 8)).astype(float)
+    y = 1.0 + x @ np.arange(1, 9) * 0.5
+    coef = c.fit_ols(x, y)
+    assert np.allclose(coef, [1.0, *(np.arange(1, 9) * 0.5)], atol=1e-8)
