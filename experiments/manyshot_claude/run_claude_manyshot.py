@@ -37,7 +37,16 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-DEFAULT_MANIFEST = Path("outputs/manifests_daic_participant_packed30/daic_manifest.jsonl")
+# Reference DAIC manifest: the one the frozen Qwen3.8 / Qwen3-Omni caches (OZY-158) and OZY-148/159 used, with
+# full participant transcripts. Local copy of the MN5 file (read-only rsync from transfer1):
+REFERENCE_MANIFEST_SOURCE = ("/gpfs/projects/etur92/ozu647717/AudioLLM/experiment_runtime/"
+                             "feat-qwen38-standalone-promptcontext-20260922/manifests/daic/daic_manifest.jsonl")
+REFERENCE_MANIFEST_SHA256 = "8d96abc2a411403f0340792c0906cc1d9d9b8bf6c62ab0b07aa081b42894659d"
+DEFAULT_MANIFEST = Path("outputs/manifests_daic_reference/daic_manifest.jsonl")
+# The local outputs/manifests_daic_participant_packed30 manifest caps full_participant_transcript at 4000 chars.
+# Every OZY-162 run before 2026-11-24 used it, so it saw only the first 4000 chars. A transcript of exactly this
+# length is taken as a sign of that cap.
+TRUNCATION_CAP_CHARS = 4000
 LABEL_TEXT = {1: "Depressed", 0: "Non-depressed"}
 TEXT_LABEL = {v.lower(): k for k, v in LABEL_TEXT.items()}
 SHOT_SPLITS = ("train", "val")  # official train + dev (OZY-159 protocol)
@@ -65,7 +74,16 @@ SYSTEM_PROMPT_V2 = SYSTEM_PROMPT.split("The explanation must")[0] + (
     "final participant's transcript. If the most similar examples carry the other label, say why you "
     "still chose this label."
 )
-PROMPTS = {"v1": SYSTEM_PROMPT, "v2": SYSTEM_PROMPT_V2}
+# advisor (Cenk Hoca, 2026-11-23 WhatsApp): his sentence as is, "Base your answer on the examples in the prompt
+# and explain your answer". He dropped the v2 demand to name the 2-3 most similar examples ("Benzeri bulmasi zor");
+# the examples stay numbered so the model can still cite them.
+ADVISOR_SENTENCE = "Base your answer on the examples in the prompt and explain your answer."
+ANSWER_FORMAT = (
+    "Answer with exactly one JSON object and nothing else:\n"
+    '{"label": "Depressed" or "Non-depressed", "explanation": "<3-6 sentences>"}'
+)
+SYSTEM_PROMPT_ADVISOR = SYSTEM_PROMPT.split("Answer with exactly")[0] + ADVISOR_SENTENCE + "\n\n" + ANSWER_FORMAT
+PROMPTS = {"v1": SYSTEM_PROMPT, "v2": SYSTEM_PROMPT_V2, "advisor": SYSTEM_PROMPT_ADVISOR}
 
 # Zero-shot (Cenk Hoca, 2026-11-23: "Claude opus 5.5 zero shot performans nasil?"): same task, label
 # definition and answer format as v2, but no labelled examples, so the explanation can only cite the transcript.
@@ -75,6 +93,51 @@ SYSTEM_PROMPT_ZEROSHOT = SYSTEM_PROMPT.split("You will first see")[0] + (
     '{"label": "Depressed" or "Non-depressed", "explanation": "<3-6 sentences>"}\n'
     "The explanation must cite concrete evidence from the participant's transcript."
 )
+
+# Zero-shot twin of the advisor prompt: the same text with only the parts about examples removed (there are none),
+# so the instruction becomes "Explain your answer." Used by --n-shots 0 --prompt-version advisor.
+SYSTEM_PROMPT_ZEROSHOT_ADVISOR = (
+    SYSTEM_PROMPT.split("You will first see")[0] + "Classify the participant whose transcript follows.\n\n"
+    + "Explain your answer.\n\n" + ANSWER_FORMAT
+)
+
+# Zero-shot v4 and v5 (user, 2026-11-24), after the error analysis of the full-text runs: the model leaned on
+# diagnosis history and the "were you ever diagnosed" answer instead of current symptoms. v4 asks for the eight
+# PHQ-8 item scores and the label is computed by code (sum >= 10); v5 is zero-shot v1 plus one paragraph that
+# points the model at the last two weeks.
+_ZS_HEAD = SYSTEM_PROMPT.split("You will first see")[0]
+PHQ8_ITEMS = (
+    "Little interest or pleasure in doing things",
+    "Feeling down, depressed, or hopeless",
+    "Trouble falling or staying asleep, or sleeping too much",
+    "Feeling tired or having little energy",
+    "Poor appetite or overeating",
+    "Feeling bad about yourself, or that you are a failure or have let yourself or your family down",
+    "Trouble concentrating on things, such as reading the newspaper or watching television",
+    "Moving or speaking so slowly that other people could have noticed, or the opposite: being so fidgety or "
+    "restless that you have been moving around a lot more than usual",
+)
+SYSTEM_PROMPT_ZEROSHOT_V4 = _ZS_HEAD + (
+    "Estimate how the participant would have answered each PHQ-8 item about the last two weeks, using what the "
+    "transcript says. Score each item 0 = not at all, 1 = several days, 2 = more than half the days, 3 = nearly "
+    "every day. If the transcript has no direct evidence for an item, give your best estimate and say so in the "
+    "explanation.\n\nItems:\n" + "\n".join(f"{i}. {t}" for i, t in enumerate(PHQ8_ITEMS, 1)) + "\n\n"
+    "Answer with exactly one JSON object and nothing else:\n"
+    '{"items": [<item 1 score>, ..., <item 8 score>], "explanation": "<3-6 sentences>"}\n'
+    "The explanation must cite the transcript evidence behind the higher item scores."
+)
+SYSTEM_PROMPT_ZEROSHOT_V5 = _ZS_HEAD + (
+    "Classify the participant whose transcript follows.\n\n"
+    "Judge the participant's state in the last two weeks, as the PHQ-8 does. A past diagnosis, past or current "
+    "treatment, medication, or a hard life event is not by itself evidence of current depression, and denying a "
+    "diagnosis is not by itself evidence against it. Base the label on the current symptoms the participant "
+    "describes: how often they feel down or hopeless, lose interest, sleep badly, feel tired, eat differently, "
+    "feel bad about themselves, have trouble concentrating, or feel slowed down or restless.\n\n"
+    "Answer with exactly one JSON object and nothing else:\n"
+    '{"label": "Depressed" or "Non-depressed", "explanation": "<3-6 sentences>"}\n'
+    "The explanation must cite concrete evidence from the participant's transcript."
+)
+ZEROSHOT_ONLY = {"v4": SYSTEM_PROMPT_ZEROSHOT_V4, "v5": SYSTEM_PROMPT_ZEROSHOT_V5}
 
 
 def sha256_text(text: str) -> str:
@@ -103,7 +166,20 @@ def load_subjects(manifest: Path) -> dict[str, dict]:
     for rec in subjects.values():
         if not rec["text"]:
             raise ValueError(f"Subject {rec['subject_id']}: empty transcript.")
+    capped = sorted(s for s, rec in subjects.items() if len(rec["text"]) == TRUNCATION_CAP_CHARS)
+    if capped:
+        raise ValueError(f"{len(capped)} transcripts are exactly {TRUNCATION_CAP_CHARS} chars, which looks like the "
+                         f"truncated local manifest; use the reference manifest ({REFERENCE_MANIFEST_SOURCE}).")
     return subjects
+
+
+def check_reference_manifest(manifest: Path) -> str:
+    """Return the manifest's sha256; fail unless it is the reference DAIC manifest."""
+    digest = sha256_file(manifest)
+    if digest != REFERENCE_MANIFEST_SHA256:
+        raise ValueError(f"{manifest}: sha256 {digest} is not the reference DAIC manifest "
+                         f"{REFERENCE_MANIFEST_SHA256} ({REFERENCE_MANIFEST_SOURCE}).")
+    return digest
 
 
 def shot_block(shots: list[dict]) -> str:
@@ -129,6 +205,20 @@ def parse_answer(text: str) -> tuple[int | None, str]:
         if label is not None:
             return label, str(obj.get("explanation", "")).strip()
     return None, ""
+
+
+def parse_items_answer(text: str) -> tuple[int | None, str, list[int] | None]:
+    """v4: eight PHQ-8 item scores (0-3) from the last JSON object; label = sum >= 10. None = INVALID."""
+    for m in reversed(list(re.finditer(r"\{.*?\}", text, flags=re.S))):
+        try:
+            obj = json.loads(m.group(0))
+        except json.JSONDecodeError:
+            continue
+        items = obj.get("items")
+        if (isinstance(items, list) and len(items) == len(PHQ8_ITEMS)
+                and all(isinstance(x, int) and not isinstance(x, bool) and 0 <= x <= 3 for x in items)):
+            return int(sum(items) >= 10), str(obj.get("explanation", "")).strip(), items
+    return None, "", None
 
 
 def call_claude_cli(system: str, prompt: str, model: str, effort: str, timeout: int) -> dict:
@@ -173,10 +263,12 @@ def main() -> None:
     p.add_argument("--backend", choices=("dry-run", "claude-cli"), default="dry-run")
     p.add_argument("--model", default="claude-opus-5-5")
     p.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"), default="medium")
-    p.add_argument("--prompt-version", choices=sorted(PROMPTS), default="v2")
+    p.add_argument("--prompt-version", choices=sorted(PROMPTS) + sorted(ZEROSHOT_ONLY), default="v2",
+                   help="v4 (PHQ-8 item scores) and v5 (last two weeks) exist only with --n-shots 0.")
     p.add_argument("--shot-seed", type=int, default=0)
     p.add_argument("--n-shots", type=int, choices=(0,),
-                   help="0 = zero-shot: no labelled examples, zero-shot prompt (ignores --prompt-version). "
+                   help="0 = zero-shot: no labelled examples. --prompt-version advisor selects the advisor zero-shot "
+                        "prompt; any other version uses the original zero-shot prompt. "
                         "Omit for many-shot with every train+dev subject.")
     p.add_argument("--limit", type=int, help="Smoke: only the first N test subjects.")
     p.add_argument("--timeout", type=int, default=900)
@@ -189,6 +281,7 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     resp_path = out / "responses.jsonl"
 
+    manifest_sha256 = check_reference_manifest(args.manifest)
     subjects = load_subjects(args.manifest)
     shots = sorted((s for s in subjects.values() if s["split"] in SHOT_SPLITS), key=lambda s: s["subject_id"])
     random.Random(args.shot_seed).shuffle(shots)
@@ -200,9 +293,16 @@ def main() -> None:
     zero_shot = args.n_shots == 0
     if zero_shot:
         shots, prefix = [], ""
-        prompt_version, instructions = "zeroshot", SYSTEM_PROMPT_ZEROSHOT
+        if args.prompt_version in ZEROSHOT_ONLY:
+            prompt_version, instructions = f"zeroshot_{args.prompt_version}", ZEROSHOT_ONLY[args.prompt_version]
+        elif args.prompt_version == "advisor":
+            prompt_version, instructions = "zeroshot_advisor", SYSTEM_PROMPT_ZEROSHOT_ADVISOR
+        else:
+            prompt_version, instructions = "zeroshot", SYSTEM_PROMPT_ZEROSHOT
         system = instructions
     else:
+        if args.prompt_version in ZEROSHOT_ONLY:
+            sys.exit(f"--prompt-version {args.prompt_version} is zero-shot only; pass --n-shots 0.")
         prefix = shot_block(shots)
         prompt_version, instructions = args.prompt_version, PROMPTS[args.prompt_version]
         system = instructions + "\n\n" + prefix
@@ -210,7 +310,8 @@ def main() -> None:
     run_info = {
         "experiment": ("Claude Opus zero-shot DAIC (no shots)" if zero_shot else "OZY-162 DAIC many-shot prompting with Claude"), "backend": args.backend,
         "model": args.model, "effort": args.effort, "shot_seed": args.shot_seed, "manifest": str(args.manifest.resolve()),
-        "manifest_sha256": sha256_file(args.manifest), "prompt_version": prompt_version, "system_prompt_sha256": sha256_text(instructions),
+        "manifest_sha256": manifest_sha256, "manifest_source": REFERENCE_MANIFEST_SOURCE,
+        "max_transcript_chars": max(len(x["text"]) for x in subjects.values()), "prompt_version": prompt_version, "system_prompt_sha256": sha256_text(instructions),
         "shot_block_sha256": sha256_text(prefix), "system_with_shots_sha256": sha256_text(system),
         "layout": ("system = instructions only; user = target transcript" if zero_shot
                    else "system = instructions + labelled shots; user = target transcript"), "n_shots": len(shots),
@@ -248,8 +349,14 @@ def main() -> None:
             t0 = time.time()
             res = call_claude_cli(system, prompt, args.model, args.effort, args.timeout)
             answer = res.get("result", "")
-            pred, explanation = parse_answer(answer)
+            items = None
+            if prompt_version == "zeroshot_v4":
+                pred, explanation, items = parse_items_answer(answer)
+            else:
+                pred, explanation = parse_answer(answer)
             rec = {"subject_id": t["subject_id"], "label": t["label"], "pred": pred,
+                   **({"phq8_items": items, "phq8_total": sum(items) if items else None} if items is not None
+                      or prompt_version == "zeroshot_v4" else {}),
                    "pred_text": LABEL_TEXT.get(pred, "INVALID"), "explanation": explanation,
                    "raw_answer": answer, "prompt_sha256": sha256_text(prompt),
                    "effort": args.effort, "usage": res.get("usage"), "cost_usd": res.get("total_cost_usd"),
