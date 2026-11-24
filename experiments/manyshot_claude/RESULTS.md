@@ -92,6 +92,43 @@ false negatives deny a diagnosis or describe recovery but have PHQ-8 12-18. Two 
   `outputs/daic_fulltext_claude_zs_v4_effmedium/` (responses include `phq8_items`, `phq8_total`) and
   `outputs/daic_fulltext_claude_zs_v5_effmedium/`. Code: commit 0d13f35.
 
+## Zero-shot v4 as a PHQ-8 score: repeat runs and literature (2026-11-24)
+
+Zero-shot v4 run 4 times (same prompt, same 47 official test subjects, effort medium; no temperature control).
+RMSE/MAE/Spearman compare the item total (0-24) with the real PHQ-8 score.
+
+| Run | macro-F1 | pos-F1 | UAR | TP / FN / FP / TN | RMSE | MAE | Spearman |
+|---|---|---|---|---|---|---|---|
+| r1 | 0.776 | 0.667 | 0.755 | 8 / 6 / 2 / 31 | 4.36 | 3.21 | 0.817 |
+| r2 | 0.776 | 0.667 | 0.755 | 8 / 6 / 2 / 31 | 4.43 | 3.23 | 0.812 |
+| r3 | 0.776 | 0.667 | 0.755 | 8 / 6 / 2 / 31 | 4.75 | 3.45 | 0.757 |
+| r4 | 0.776 | 0.667 | 0.755 | 8 / 6 / 2 / 31 | 4.42 | 3.23 | 0.821 |
+| mean (SD) | 0.776 (0) | 0.667 (0) | 0.755 (0) | | 4.49 (0.18) | 3.28 (0.11) | 0.802 (0.030) |
+
+- The binary result is the same in all 4 runs (45/47 subjects get the same label; the 2 that flip cancel out).
+  Per-subject totals move by 0.45 points (mean SD). INVALID 0 in every run.
+- Constant baselines on the same 47 subjects: train+dev mean (6.67) RMSE 6.41 / MAE 5.43; train+dev median (5.5)
+  RMSE 6.57 / MAE 5.33.
+- The model compresses the scale: subjects with PHQ-8 >= 10 are under-scored by 5.9 points on average, subjects
+  below 10 over-scored by 1.3 (run r1).
+
+Published DAIC-WOZ test results (checked 2026-11-24 against the papers; MAE only where RMSE is only in figures):
+
+| Method | Test n | Training | RMSE | MAE |
+|---|---|---|---|---|
+| Lee, Han & Woo 2026, PLOS Digit Health: 23 zero-shot LLaMA-3.1-70B features + linear regression | 46 | regression on 140 | figure only | 2.91 |
+| Same, only the 8 PHQ-symptom features + regression | 46 | regression on 140 | figure only | 2.97 |
+| **Ours: Opus 5.5 zero-shot v4, item total used directly (mean of 4 runs)** | 47 | none | 4.49 | 3.28 |
+| Lee et al.: LLM asked directly for a severity score | 46 | none | figure only | 3.51 |
+| Earlier text models cited by Lee et al. | 46-47 | yes | | 3.46-3.80 |
+| Schmidt et al. 2025 (PTTSD, arXiv 2511.04476), best DAIC | "56" (paper's count) | yes | 4.77 | 3.55 |
+| Stepanov et al. 2017 (AVEC 2017 winner, arXiv 1711.06095), test | AVEC test | yes | 4.94 | 4.11 |
+
+Caveats: Lee et al. drop 3 subjects without interviewer text (Test Set 1 = official test minus one) and keep the
+interviewer's questions in the prompt; our prompt has the participant's side only. PTTSD reports 56 test subjects,
+which does not match the official 47. Opus may have seen DAIC-WOZ in pre-training; this cannot be ruled out.
+Artifacts: `outputs/daic_fulltext_claude_zs_v4_effmedium{,_r2,_r3,_r4}/`; cost r2-r4 $0.57 each (API-equivalent).
+
 ## First 4000 chars only (superseded, kept for the record)
 
 Everything below was run on the truncated manifest and is kept only for comparison with the table above.
