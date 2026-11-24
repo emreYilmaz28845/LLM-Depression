@@ -62,6 +62,36 @@ its own shot cache), advisor zero-shot $1.64, original zero-shot $1.73; plus a 3
 (`daic_fulltext_claude_advisor_manyshot_smoke`, $2.84) and a 311k-token synthetic-filler context probe ($2.49,
 no DAIC data). Code: commit a16ce34 (run_info git_commit).
 
+## Zero-shot v4 and v5: current symptoms instead of history (2026-11-24)
+
+Why: in the four full-text runs the same 10 subjects are wrong every time. Their explanations show the model
+leaning on diagnosis history: false positives have a past diagnosis, treatment or heavy stress but PHQ-8 5-9;
+false negatives deny a diagnosis or describe recovery but have PHQ-8 12-18. Two zero-shot prompts test this
+(prompt text in `run_claude_manyshot.py`, `ZEROSHOT_ONLY`; approved by the user before the run):
+
+- v4: the model scores the eight PHQ-8 items for the last two weeks (0-3 each, best estimate where the transcript
+  has no direct evidence); code sets Depressed = item sum >= 10 (the PHQ-8 cutoff, not tuned).
+- v5: zero-shot v1 plus one paragraph: judge the last two weeks; past diagnosis, treatment or hard events are not
+  by themselves evidence, and denying a diagnosis is not evidence against.
+
+| Run (full transcripts, 47 subjects) | macro-F1 | pos-F1 | UAR | TP / FN / FP / TN | INVALID |
+|---|---|---|---|---|---|
+| Zero-shot v1 (reference) | 0.724 | 0.647 | 0.756 | 11 / 3 / 9 / 24 | 0 |
+| Zero-shot v4 (PHQ-8 items) | 0.776 | 0.667 | 0.755 | 8 / 6 / 2 / 31 | 0 |
+| Zero-shot v5 (last two weeks) | 0.766 | 0.667 | 0.761 | 9 / 5 / 4 / 29 | 0 |
+
+- Both prompts cut false positives (v1 9 -> v4 2, v5 4) and add false negatives (3 -> 6, 5). Of the 10
+  always-wrong subjects, v4 fixes 5 (all false positives) and v5 fixes 3; the new errors are all depressed
+  subjects at PHQ-8 10-12, just above the cutoff. Positive-F1 and UAR do not improve; macro-F1 rises because the
+  majority class gains. Single runs, n=47: the gain is within run-to-run variation.
+- v4's item total tracks the real PHQ-8 score: Spearman rho 0.817 (n=47), mean absolute error 3.2 points, AUROC
+  of the total for the binary label 0.879. The model under-scores slightly (mean 6.1 vs 7.0), which is why
+  borderline depressed subjects fall below 10. Depressed vs non-depressed item means differ most on sleep
+  (2.2 vs 0.9), feeling down (1.7 vs 0.8) and feeling bad about oneself (1.7 vs 0.9); appetite is flat (0.2 vs 0.2).
+- Cost (API-equivalent, Claude Pro): v4 $1.60, v5 $1.78, v4 smoke (3 subjects) ~$0.09. Artifacts:
+  `outputs/daic_fulltext_claude_zs_v4_effmedium/` (responses include `phq8_items`, `phq8_total`) and
+  `outputs/daic_fulltext_claude_zs_v5_effmedium/`. Code: commit 0d13f35.
+
 ## First 4000 chars only (superseded, kept for the record)
 
 Everything below was run on the truncated manifest and is kept only for comparison with the table above.
