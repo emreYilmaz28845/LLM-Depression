@@ -290,3 +290,20 @@ def test_shards_write_separate_files_and_metrics_need_all(tmp_path, monkeypatch)
     b = [json.loads(x)["subject_id"] for x in (out / "responses.shard1of2.jsonl").read_text().splitlines()]
     assert a == ["302", "308"] and b == ["305", "311"]
     assert json.loads((out / "metrics.json").read_text())["n_subjects"] == 4
+
+
+def test_smoke_gate(tmp_path):
+    from experiments.manyshot_qwen_explain import check_smoke
+
+    good = [{"subject_id": s, "pred": 1, "finished": True} for s in ("a", "b", "c")]
+    (tmp_path / "responses.jsonl").write_text("\n".join(json.dumps(r) for r in good))
+    (tmp_path / "checks.jsonl").write_text(json.dumps({"subject_id": "a", "determinism_identical": True,
+                                                       "uncached_identical": False}))
+    assert check_smoke.main([str(tmp_path)]) == 0
+    (tmp_path / "responses.jsonl").write_text("\n".join(json.dumps({**r, "pred": None}) if r["subject_id"] == "b"
+                                                        else json.dumps(r) for r in good))
+    assert check_smoke.main([str(tmp_path)]) == 1
+    (tmp_path / "responses.jsonl").write_text("\n".join(json.dumps(r) for r in good))
+    (tmp_path / "checks.jsonl").write_text(json.dumps({"subject_id": "a", "determinism_identical": False}))
+    assert check_smoke.main([str(tmp_path)]) == 1
+    assert check_smoke.main([str(tmp_path), "--min-targets", "4"]) == 1

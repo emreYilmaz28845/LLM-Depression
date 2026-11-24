@@ -29,6 +29,11 @@ export PYTHONDONTWRITEBYTECODE=1 TOKENIZERS_PARALLELISM=false HF_HUB_OFFLINE=1 T
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 cd "$PROJECT_ROOT"
 mkdir -p "$OUT_DIR"
+if [ -n "${REQUIRE_SMOKE_DIR:-}" ]; then
+  # Gate for jobs queued behind the smoke (afterok only sees the exit code): stop unless every smoke
+  # answer has a valid label, finished before max_new_tokens, and the determinism check held.
+  python experiments/manyshot_qwen_explain/check_smoke.py "$REQUIRE_SMOKE_DIR" --min-targets "${SMOKE_MIN_TARGETS:-3}"
+fi
 python -c 'import torch, transformers; print("versions", torch.__version__, transformers.__version__)'
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
