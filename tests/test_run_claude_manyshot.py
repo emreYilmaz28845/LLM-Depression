@@ -73,3 +73,26 @@ def test_check_reference_manifest_rejects_other_files(tmp_path):
         mod.check_reference_manifest(m)
     assert mod.DEFAULT_MANIFEST.name == "daic_manifest.jsonl"
     assert len(mod.REFERENCE_MANIFEST_SHA256) == 64
+
+
+def test_cited_examples_reads_singular_plural_and_lists():
+    import importlib.util as u
+    from pathlib import Path
+    sp = u.spec_from_file_location("bes", Path(__file__).resolve().parents[1] / "experiments/manyshot_claude/build_explanation_sheet.py")
+    b = u.module_from_spec(sp)
+    sp.loader.exec_module(b)
+    f = b.cited_examples
+    assert f("Most like Example 12 (Depressed) and Example 7.", 142) == [7, 12]
+    assert f("Like the examples (e.g., Examples 16, 25, 33) were usually labelled Non-depressed.", 142) == [16, 25, 33]
+    assert f("Like depressed examples (e.g., 47, 44, 95), they show anhedonia.", 142) == [44, 47, 95]
+    assert f("The depressed examples point to a PHQ-8 score of 10 or higher.", 142) == []
+    assert f("Examples 7, 14 and 43, were labelled; example 999 is out of range.", 142) == [7, 14, 43]
+
+
+def test_cited_examples_ignores_phq_thresholds():
+    import importlib.util as u
+    from pathlib import Path
+    sp = u.spec_from_file_location("bes2", Path(__file__).resolve().parents[1] / "experiments/manyshot_claude/build_explanation_sheet.py")
+    b = u.module_from_spec(sp)
+    sp.loader.exec_module(b)
+    assert b.cited_examples("Like Example 17, the transcript fits the examples with a PHQ-8 score below 10.", 142) == [17]

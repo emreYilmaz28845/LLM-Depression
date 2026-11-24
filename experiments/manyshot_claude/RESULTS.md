@@ -48,9 +48,11 @@ What changed with full text:
   (0.755 -> 0.797) does not hold. Many-shot still differs in what the explanation can cite.
 - The advisor prompt (Cenk Hoca, 2026-11-23: his sentence as is, "Base your answer on the examples in the
   prompt and explain your answer"; examples stay numbered, no rule to name similar ones) gives explanations that
-  cite a numbered example in only 7/47 subjects (v2, which requires naming 2-3 examples, cited them in 47/47 on
-  the first-4000-chars run). Explanation workbook for the advisor: `outputs/daic_fulltext_claude_advisor_explanations.xlsx`
-  (`build_explanation_sheet.py`; tabs Setup, many-shot, zero-shot; errors first; PHQ-8 column; no subject IDs).
+  cite at least one numbered example in 31/47 subjects (25/47 cite two or more), often as a list such as
+  "(e.g., Examples 16, 25, 33)"; v2, which requires naming 2-3 examples, cites them in 47/47 (counted with
+  `build_explanation_sheet.cited_examples`, which reads singular, plural and listed citations). Explanations are in
+  the advisor's Google Sheet (tabs Setup, Many-shot v2/v3, Zero-shot v1/v3; errors first; PHQ-8 column; anonymous
+  subject numbers, no DAIC IDs); local workbook `outputs/daic_fulltext_claude_advisor_explanations.xlsx`.
 - 47 subjects with 14 positive: one flipped subject moves macro-F1 by ~0.02-0.03 and positive-F1 by ~0.04,
   and the v1 vs v2 runs (first 4000 chars) already differed by 0.03. None of the differences above is beyond
   run-to-run variation.

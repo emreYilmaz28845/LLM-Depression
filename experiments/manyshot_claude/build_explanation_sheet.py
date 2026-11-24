@@ -47,6 +47,21 @@ def shot_order(run_info: dict) -> list[dict]:
     return shots
 
 
+def cited_examples(text: str, n_shots: int) -> list[int]:
+    """Example numbers an explanation cites: 'Example 12', 'Examples 7, 14 and 43', 'examples (e.g., 47, 44)'.
+
+    Reads the numbers after each 'example(s)' up to the end of that clause ('.', ';', ':' or ')'), ignoring PHQ-8
+    values, and keeps numbers between 1 and n_shots.
+    """
+    t = text.replace("e.g.", "eg").replace("i.e.", "ie")
+    out: set[int] = set()
+    for m in re.finditer(r"examples?\b", t, flags=re.I):
+        clause = re.split(r"[.;:)]", t[m.end():])[0][:200]
+        clause = re.sub(r"PHQ-?8[^\d]{0,30}\d*", "", clause)
+        out.update(int(n) for n in re.findall(r"(?<![\w-])(\d{1,3})(?!\d)", clause) if 1 <= int(n) <= n_shots)
+    return sorted(out)
+
+
 def case(gold: int, pred: int | None) -> str:
     if pred is None:
         return "INVALID"
@@ -85,10 +100,7 @@ def main() -> None:
             counts[c] += 1
             row = [c, runner.LABEL_TEXT[r["label"]], phq[r["subject_id"]], r["pred_text"]]
             if shots:
-                nums = sorted({int(n) for n in re.findall(r"Example\s+(\d+)", r["explanation"])})
-                bad = [n for n in nums if not 1 <= n <= len(shots)]
-                if bad:
-                    raise ValueError(f"Explanation cites a non-existent example: {bad}")
+                nums = cited_examples(r["explanation"], len(shots))
                 row.append("; ".join(f"Example {n} ({runner.LABEL_TEXT[shots[n - 1]['label']]}, "
                                      f"PHQ-8 {phq[shots[n - 1]['subject_id']]})" for n in nums) or "none")
             row.append(r["explanation"])
