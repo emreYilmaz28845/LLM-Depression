@@ -101,6 +101,44 @@ SYSTEM_PROMPT_ZEROSHOT_ADVISOR = (
     + "Explain your answer.\n\n" + ANSWER_FORMAT
 )
 
+# Zero-shot v4 and v5 (user, 2026-11-24), after the error analysis of the full-text runs: the model leaned on
+# diagnosis history and the "were you ever diagnosed" answer instead of current symptoms. v4 asks for the eight
+# PHQ-8 item scores and the label is computed by code (sum >= 10); v5 is zero-shot v1 plus one paragraph that
+# points the model at the last two weeks.
+_ZS_HEAD = SYSTEM_PROMPT.split("You will first see")[0]
+PHQ8_ITEMS = (
+    "Little interest or pleasure in doing things",
+    "Feeling down, depressed, or hopeless",
+    "Trouble falling or staying asleep, or sleeping too much",
+    "Feeling tired or having little energy",
+    "Poor appetite or overeating",
+    "Feeling bad about yourself, or that you are a failure or have let yourself or your family down",
+    "Trouble concentrating on things, such as reading the newspaper or watching television",
+    "Moving or speaking so slowly that other people could have noticed, or the opposite: being so fidgety or "
+    "restless that you have been moving around a lot more than usual",
+)
+SYSTEM_PROMPT_ZEROSHOT_V4 = _ZS_HEAD + (
+    "Estimate how the participant would have answered each PHQ-8 item about the last two weeks, using what the "
+    "transcript says. Score each item 0 = not at all, 1 = several days, 2 = more than half the days, 3 = nearly "
+    "every day. If the transcript has no direct evidence for an item, give your best estimate and say so in the "
+    "explanation.\n\nItems:\n" + "\n".join(f"{i}. {t}" for i, t in enumerate(PHQ8_ITEMS, 1)) + "\n\n"
+    "Answer with exactly one JSON object and nothing else:\n"
+    '{"items": [<item 1 score>, ..., <item 8 score>], "explanation": "<3-6 sentences>"}\n'
+    "The explanation must cite the transcript evidence behind the higher item scores."
+)
+SYSTEM_PROMPT_ZEROSHOT_V5 = _ZS_HEAD + (
+    "Classify the participant whose transcript follows.\n\n"
+    "Judge the participant's state in the last two weeks, as the PHQ-8 does. A past diagnosis, past or current "
+    "treatment, medication, or a hard life event is not by itself evidence of current depression, and denying a "
+    "diagnosis is not by itself evidence against it. Base the label on the current symptoms the participant "
+    "describes: how often they feel down or hopeless, lose interest, sleep badly, feel tired, eat differently, "
+    "feel bad about themselves, have trouble concentrating, or feel slowed down or restless.\n\n"
+    "Answer with exactly one JSON object and nothing else:\n"
+    '{"label": "Depressed" or "Non-depressed", "explanation": "<3-6 sentences>"}\n'
+    "The explanation must cite concrete evidence from the participant's transcript."
+)
+ZEROSHOT_ONLY = {"v4": SYSTEM_PROMPT_ZEROSHOT_V4, "v5": SYSTEM_PROMPT_ZEROSHOT_V5}
+
 
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -169,6 +207,20 @@ def parse_answer(text: str) -> tuple[int | None, str]:
     return None, ""
 
 
+def parse_items_answer(text: str) -> tuple[int | None, str, list[int] | None]:
+    """v4: eight PHQ-8 item scores (0-3) from the last JSON object; label = sum >= 10. None = INVALID."""
+    for m in reversed(list(re.finditer(r"\{.*?\}", text, flags=re.S))):
+        try:
+            obj = json.loads(m.group(0))
+        except json.JSONDecodeError:
+            continue
+        items = obj.get("items")
+        if (isinstance(items, list) and len(items) == len(PHQ8_ITEMS)
+                and all(isinstance(x, int) and not isinstance(x, bool) and 0 <= x <= 3 for x in items)):
+            return int(sum(items) >= 10), str(obj.get("explanation", "")).strip(), items
+    return None, "", None
+
+
 def call_claude_cli(system: str, prompt: str, model: str, effort: str, timeout: int) -> dict:
     """One ``claude -p`` call with no tools, no MCP and no user/project settings or memory files.
 
@@ -211,7 +263,8 @@ def main() -> None:
     p.add_argument("--backend", choices=("dry-run", "claude-cli"), default="dry-run")
     p.add_argument("--model", default="claude-opus-5-5")
     p.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"), default="medium")
-    p.add_argument("--prompt-version", choices=sorted(PROMPTS), default="v2")
+    p.add_argument("--prompt-version", choices=sorted(PROMPTS) + sorted(ZEROSHOT_ONLY), default="v2",
+                   help="v4 (PHQ-8 item scores) and v5 (last two weeks) exist only with --n-shots 0.")
     p.add_argument("--shot-seed", type=int, default=0)
     p.add_argument("--n-shots", type=int, choices=(0,),
                    help="0 = zero-shot: no labelled examples. --prompt-version advisor selects the advisor zero-shot "
@@ -240,12 +293,16 @@ def main() -> None:
     zero_shot = args.n_shots == 0
     if zero_shot:
         shots, prefix = [], ""
-        if args.prompt_version == "advisor":
+        if args.prompt_version in ZEROSHOT_ONLY:
+            prompt_version, instructions = f"zeroshot_{args.prompt_version}", ZEROSHOT_ONLY[args.prompt_version]
+        elif args.prompt_version == "advisor":
             prompt_version, instructions = "zeroshot_advisor", SYSTEM_PROMPT_ZEROSHOT_ADVISOR
         else:
             prompt_version, instructions = "zeroshot", SYSTEM_PROMPT_ZEROSHOT
         system = instructions
     else:
+        if args.prompt_version in ZEROSHOT_ONLY:
+            sys.exit(f"--prompt-version {args.prompt_version} is zero-shot only; pass --n-shots 0.")
         prefix = shot_block(shots)
         prompt_version, instructions = args.prompt_version, PROMPTS[args.prompt_version]
         system = instructions + "\n\n" + prefix
@@ -292,8 +349,14 @@ def main() -> None:
             t0 = time.time()
             res = call_claude_cli(system, prompt, args.model, args.effort, args.timeout)
             answer = res.get("result", "")
-            pred, explanation = parse_answer(answer)
+            items = None
+            if prompt_version == "zeroshot_v4":
+                pred, explanation, items = parse_items_answer(answer)
+            else:
+                pred, explanation = parse_answer(answer)
             rec = {"subject_id": t["subject_id"], "label": t["label"], "pred": pred,
+                   **({"phq8_items": items, "phq8_total": sum(items) if items else None} if items is not None
+                      or prompt_version == "zeroshot_v4" else {}),
                    "pred_text": LABEL_TEXT.get(pred, "INVALID"), "explanation": explanation,
                    "raw_answer": answer, "prompt_sha256": sha256_text(prompt),
                    "effort": args.effort, "usage": res.get("usage"), "cost_usd": res.get("total_cost_usd"),

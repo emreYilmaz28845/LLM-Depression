@@ -96,3 +96,21 @@ def test_cited_examples_ignores_phq_thresholds():
     b = u.module_from_spec(sp)
     sp.loader.exec_module(b)
     assert b.cited_examples("Like Example 17, the transcript fits the examples with a PHQ-8 score below 10.", 142) == [17]
+
+
+def test_v4_item_parser_and_label_rule():
+    f = mod.parse_items_answer
+    assert f('{"items": [2, 2, 2, 2, 1, 1, 0, 0], "explanation": "x"}') == (1, "x", [2, 2, 2, 2, 1, 1, 0, 0])
+    assert f('{"items": [1, 1, 1, 1, 1, 1, 1, 2], "explanation": "y"}')[0] == 0  # total 9
+    assert f('{"items": [1, 1, 1, 1, 1, 1, 1], "explanation": "short"}')[0] is None
+    assert f('{"items": [4, 0, 0, 0, 0, 0, 0, 0]}')[0] is None
+    assert f('{"items": [true, 0, 0, 0, 0, 0, 0, 0]}')[0] is None
+
+
+def test_v4_v5_prompts_are_zero_shot_and_v5_extends_v1():
+    v4, v5 = mod.ZEROSHOT_ONLY["v4"], mod.ZEROSHOT_ONLY["v5"]
+    assert "example" not in v4.lower() and "example" not in v5.lower()
+    assert all(item in v4 for item in mod.PHQ8_ITEMS) and '"items"' in v4
+    assert "last two weeks" in v5
+    assert v5.replace(v5.split("Classify the participant whose transcript follows.\n\n")[1].split("Answer with")[0], "") \
+        == mod.SYSTEM_PROMPT_ZEROSHOT
