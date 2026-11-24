@@ -141,6 +141,26 @@ used once.
    Label = predicted score >= 10 (fixed). Report RMSE, MAE, Spearman, macro-F1, pos-F1, UAR next to the raw item
    total. Subjects whose v4 answer is INVALID are dropped from the fit and counted wrong on test.
 
+### Result (run 2026-11-24, as planned above; `calibrate_v4.py`, output `outputs/daic_v4_calibration.json`)
+
+Train+dev v4 run: 142/142 valid, cost $4.56 (API-equivalent). Raw item total on train+dev: RMSE 4.14, MAE 3.18,
+Spearman 0.730, bias -1.25. OLS fit on all 142: intercept -0.34; item weights 1.69 (interest), 1.38 (down),
+1.52 (sleep), 1.63 (tired), 0.62 (appetite), 0.43 (self-worth), 1.97 (concentration), -0.32 (psychomotor).
+
+| Official test (47), mean (SD) over the 4 test runs | RMSE | MAE | Spearman | macro-F1 | pos-F1 | UAR |
+|---|---|---|---|---|---|---|
+| Raw item total | 4.49 (0.18) | 3.28 (0.11) | 0.802 (0.030) | 0.776 (0) | 0.667 (0) | 0.755 (0) |
+| Calibrated (OLS from train+dev) | 4.29 (0.16) | 3.13 (0.12) | 0.787 (0.029) | 0.813 (0.021) | 0.735 (0.026) | 0.808 (0.015) |
+
+- r1 alone, calibrated: RMSE 4.22, MAE 3.08, macro-F1 0.797 / pos-F1 0.714 / UAR 0.797. Per run macro-F1 0.797,
+  0.841, 0.818, 0.797.
+- Calibration removes the under-scoring (bias -0.91 -> +0.31) and mainly helps the label: pos-F1 0.667 -> 0.735,
+  UAR 0.755 -> 0.808. The score error drops a little (MAE 3.28 -> 3.13); ranking (Spearman) does not improve,
+  as expected for a linear map.
+- Against Lee et al. 2026 (same design, LLaMA-3.1-70B, 23 features incl. interviewer text, test n=46): MAE 2.91
+  (all features) and 2.97 (8 PHQ features). Ours 3.13 with 8 PHQ items from the participant's side only.
+- Not the OZY-158 reference protocol (that is LOPO over all 189 subjects); do not put these in the same column.
+
 ## First 4000 chars only (superseded, kept for the record)
 
 Everything below was run on the truncated manifest and is kept only for comparison with the table above.
