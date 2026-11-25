@@ -368,6 +368,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--check-determinism", type=int, default=0,
                    help="For the first N targets decode twice from the prefix cache and compare.")
     p.add_argument("--no-label-scores", action="store_true")
+    p.add_argument("--time-budget-min", type=float, default=0,
+                   help="Stop cleanly (before starting a target) when elapsed time since start plus 1.15x the "
+                        "slowest target so far would pass this many minutes; rerun with the same --out-dir to "
+                        "resume. For short Slurm limits (acc_debug: 2h). 0 = no budget.")
     p.add_argument("--plan-only", action="store_true", help="Build prompts, count tokens; no model.")
     p.add_argument("--metrics-only", action="store_true")
     return p.parse_args(argv)
@@ -390,7 +394,11 @@ def git_commit() -> str:
         return ""
 
 
+_clock = time.monotonic  # module attribute so tests can fake the clock
+
+
 def main(argv=None, generator_factory=None) -> None:
+    started = _clock()
     args = parse_args(argv)
     out = args.out_dir
     out.mkdir(parents=True, exist_ok=True)
@@ -468,10 +476,18 @@ def main(argv=None, generator_factory=None) -> None:
         eos = {i for i in (tok.convert_tokens_to_ids("<|im_end|>"), tok.eos_token_id) if isinstance(i, int)}
         checks = []
         prefix_key, prefix_cache = None, None
+        slowest = None
         for k, p in enumerate(planned):
             sid = p["target"]["subject_id"]
             if sid in done or (shard and k % shard[1] != shard[0]):
                 continue
+            if args.time_budget_min and slowest is not None and \
+                    _clock() - started + 1.15 * slowest > args.time_budget_min * 60:
+                print(f"TIME BUDGET: stopping before {sid} ({(_clock() - started) / 60:.1f} of "
+                      f"{args.time_budget_min} min used, slowest target {slowest / 60:.1f} min); "
+                      f"rerun with the same --out-dir to resume.", flush=True)
+                break
+            t_start = _clock()
             t0 = time.time()
             if p["prefix_sha256"] != prefix_key:
                 prefix_cache = None
@@ -524,6 +540,7 @@ def main(argv=None, generator_factory=None) -> None:
             with resp_path.open("a") as f:
                 f.write(json.dumps(rec) + "\n")
             done[sid] = rec
+            slowest = max(slowest or 0.0, _clock() - t_start)
             print(f"[{k + 1}/{len(planned)}] {sid}: gold={LABEL_TEXT[rec['label']]} pred={rec['pred_text']} "
                   f"tokens={rec['prompt_tokens']}+{len(gen_ids)} {rec['seconds']}", flush=True)
         if checks:

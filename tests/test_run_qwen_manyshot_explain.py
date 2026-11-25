@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -307,3 +308,31 @@ def test_smoke_gate(tmp_path):
     (tmp_path / "checks.jsonl").write_text(json.dumps({"subject_id": "a", "determinism_identical": False}))
     assert check_smoke.main([str(tmp_path)]) == 1
     assert check_smoke.main([str(tmp_path), "--min-targets", "4"]) == 1
+
+
+def test_time_budget_stops_cleanly_and_resumes(tmp_path, monkeypatch):
+    import transformers
+
+    monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", lambda *a, **k: FakeTokenizer())
+    manifest = tmp_path / "m.jsonl"
+    _write_daic_manifest(manifest)
+    FakeGenerator.answers = {s: '{"explanation": "e", "label": "Depressed"}' for s in ("302", "305", "308", "311")}
+    out = tmp_path / "out"
+    base = ["--dataset", "daic", "--manifest", str(manifest), "--model-dir", str(tmp_path),
+            "--out-dir", str(out), "--allow-other-manifest"]
+    now = [0.0]
+
+    def clock():  # every call advances 10 min: start + first target leave no room for a second one
+        now[0] += 600.0
+        return now[0]
+
+    monkeypatch.setattr(mod, "_clock", clock)
+    mod.main(base + ["--time-budget-min", "40"], generator_factory=FakeGenerator)
+    first = [json.loads(x)["subject_id"] for x in (out / "responses.jsonl").read_text().splitlines()]
+    assert first == ["302"]
+    assert json.loads((out / "metrics.json").read_text())["complete"] is False
+    monkeypatch.setattr(mod, "_clock", time.monotonic)
+    mod.main(base + ["--time-budget-min", "40"], generator_factory=FakeGenerator)
+    recs = [json.loads(x)["subject_id"] for x in (out / "responses.jsonl").read_text().splitlines()]
+    assert recs == ["302", "305", "308", "311"]
+    assert json.loads((out / "metrics.json").read_text())["complete"] is True
