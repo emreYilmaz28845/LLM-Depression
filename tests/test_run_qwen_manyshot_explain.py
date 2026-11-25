@@ -336,3 +336,38 @@ def test_time_budget_stops_cleanly_and_resumes(tmp_path, monkeypatch):
     recs = [json.loads(x)["subject_id"] for x in (out / "responses.jsonl").read_text().splitlines()]
     assert recs == ["302", "305", "308", "311"]
     assert json.loads((out / "metrics.json").read_text())["complete"] is True
+
+
+def test_zeroshot_phq8_uses_claude_v4_prompt_and_item_scores(tmp_path, monkeypatch):
+    import transformers
+
+    from experiments.manyshot_claude import run_claude_manyshot as claude
+
+    monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", lambda *a, **k: FakeTokenizer())
+    manifest = tmp_path / "m.jsonl"
+    _write_daic_manifest(manifest)
+    FakeGenerator.answers = {
+        "302": '{"items": [2, 2, 1, 2, 1, 1, 1, 0], "explanation": "e"}',   # 10 -> Depressed
+        "305": '{"items": [1, 1, 1, 1, 1, 1, 1, 1], "explanation": "e"}',   # 8 -> Non-depressed
+        "308": '{"items": [3, 3, 3], "explanation": "bad"}',                 # INVALID
+        "311": '{"items": [0, 0, 0, 0, 0, 0, 0, 0], "explanation": "e"}',
+    }
+    task = mod.build_tasks("daic", mod.load_subjects("daic", manifest), 0, "zeroshot_phq8")[0]
+    assert task["shots"] == []
+    system, user = mod.prompt_texts("daic", task, "zeroshot_phq8")
+    assert system == claude.SYSTEM_PROMPT_ZEROSHOT_V4 and user.startswith("### Participant (classify this one)")
+    out = tmp_path / "out"
+    base = ["--dataset", "daic", "--manifest", str(manifest), "--model-dir", str(tmp_path),
+            "--out-dir", str(out), "--allow-other-manifest", "--prompt", "zeroshot_phq8"]
+    mod.main(base, generator_factory=FakeGenerator)
+    by = {r["subject_id"]: r for r in map(json.loads, (out / "responses.jsonl").read_text().splitlines())}
+    assert by["302"]["pred"] == 1 and by["302"]["phq8_total"] == 10
+    assert by["305"]["pred"] == 0 and by["305"]["phq8_items"] == [1] * 8
+    assert by["308"]["pred"] is None and by["308"]["phq8_items"] is None
+    assert by["302"]["label_margin"] is None and by["302"]["cited_examples"] == []
+    info = json.loads((out / "run_info.json").read_text())
+    assert info["prompt_version"] == "claude_zeroshot_v4" and "example_subjects" not in info
+    tr = mod.build_tasks("daic", mod.load_subjects("daic", manifest), 0, "zeroshot_phq8", "traindev")
+    assert {t["target"]["split"] for t in tr} == {"train", "val"} and len(tr) == 8
+    with pytest.raises(ValueError, match="traindev needs the zero-shot"):
+        mod.build_tasks("daic", mod.load_subjects("daic", manifest), 0, "v3_advisor", "traindev")

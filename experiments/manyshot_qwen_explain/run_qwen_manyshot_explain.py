@@ -47,10 +47,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from experiments.manyshot_claude import run_claude_manyshot as claude_prompts  # noqa: E402
 from experiments.manyshot_qwen_explain.prompt_v3 import (  # noqa: E402
     LABEL_TEXT, LABEL_VALUE_START, PROMPT_VERSION, cited_examples, parse_answer, system_prompt,
     system_with_shots, target_block,
 )
+
+# Prompts: v3_advisor = many-shot with explanation (this module's main protocol). zeroshot_phq8 = the
+# Claude zero-shot v4 prompt imported unchanged (eight PHQ-8 item scores 0-3, label = sum >= 10), DAIC only,
+# so Qwen and Opus see byte-identical text.
+PROMPTS = ("v3_advisor", "zeroshot_phq8")
 
 # Reference manifests of the frozen Qwen3.8 text runs (extraction_metadata manifest_file_sha256).
 REFERENCE_MANIFEST_SHA256 = {
@@ -139,8 +145,17 @@ def load_subjects(dataset: str, manifest: Path) -> dict[str, dict]:
     return subjects
 
 
-def build_tasks(dataset: str, subjects: dict[str, dict], shot_seed: int) -> list[dict]:
+def build_tasks(dataset: str, subjects: dict[str, dict], shot_seed: int, prompt: str = "v3_advisor",
+                targets_split: str = "test") -> list[dict]:
     """One task per target: its shots (fixed global order) and nothing of the target among them."""
+    if prompt == "zeroshot_phq8":
+        if dataset != "daic":
+            raise ValueError("zeroshot_phq8 is DAIC only (PHQ-8).")
+        splits = (DAIC_EVAL_SPLIT,) if targets_split == "test" else DAIC_SHOT_SPLITS
+        targets = sorted((s for s in subjects.values() if s["split"] in splits), key=lambda s: int(s["subject_id"]))
+        return [{"target": t, "shots": []} for t in targets]
+    if targets_split != "test":
+        raise ValueError("--targets traindev needs the zero-shot prompt: train+dev are the many-shot examples.")
     if dataset == "daic":
         shots = sorted((s for s in subjects.values() if s["split"] in DAIC_SHOT_SPLITS),
                        key=lambda s: s["subject_id"])
@@ -189,12 +204,19 @@ class Renderer:
         return prefix, suffix
 
 
-def plan(dataset: str, tasks: list[dict], renderer: Renderer) -> list[dict]:
+def prompt_texts(dataset: str, task: dict, prompt: str = "v3_advisor") -> tuple[str, str]:
+    if prompt == "zeroshot_phq8":
+        return (claude_prompts.SYSTEM_PROMPT_ZEROSHOT_V4,
+                claude_prompts.target_block(task["target"], zero_shot=True))
+    return system_with_shots(dataset, task["shots"]), target_block(task["target"])
+
+
+def plan(dataset: str, tasks: list[dict], renderer: Renderer, prompt: str = "v3_advisor") -> list[dict]:
     """Token ids per task; DAIC tasks share one prefix (asserted)."""
     planned, prefix_cache = [], {}
     for k, task in enumerate(tasks):
-        system = system_with_shots(dataset, task["shots"])
-        text = renderer.render(system, target_block(task["target"]))
+        system, user = prompt_texts(dataset, task, prompt)
+        text = renderer.render(system, user)
         key = sha256_text(system)
         if key not in prefix_cache:
             prefix_cache.clear()  # LOPO prefixes are used once; keep memory flat
@@ -358,6 +380,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--allow-other-manifest", action="store_true",
                    help="Tests only: skip the reference manifest hash check (never reportable).")
     p.add_argument("--shot-seed", type=int, default=0)
+    p.add_argument("--prompt", choices=PROMPTS, default="v3_advisor")
+    p.add_argument("--targets", choices=("test", "traindev"), default="test",
+                   help="traindev: score the 142 official train+dev subjects (zeroshot_phq8 only, for calibration).")
     p.add_argument("--max-new-tokens", type=int, default=768)
     p.add_argument("--prefill-chunk", type=int, default=8192)
     p.add_argument("--limit", type=int, help="Smoke: only the first N targets.")
@@ -410,7 +435,9 @@ def main(argv=None, generator_factory=None) -> None:
         raise SystemExit(f"Manifest sha256 {manifest_sha[:12]} is not the {args.dataset} reference "
                          f"({REFERENCE_MANIFEST_SHA256[args.dataset][:12]}).")
     subjects = load_subjects(args.dataset, args.manifest)
-    tasks = build_tasks(args.dataset, subjects, args.shot_seed)
+    tasks = build_tasks(args.dataset, subjects, args.shot_seed, args.prompt, args.targets)
+    zs_phq8 = args.prompt == "zeroshot_phq8"
+    sys_text = claude_prompts.SYSTEM_PROMPT_ZEROSHOT_V4 if zs_phq8 else system_prompt(args.dataset)
     if args.limit:
         tasks = tasks[:args.limit]
 
@@ -433,15 +460,17 @@ def main(argv=None, generator_factory=None) -> None:
 
         tok = AutoTokenizer.from_pretrained(str(args.model_dir), local_files_only=True)
         renderer = Renderer(tok)
-        planned = plan(args.dataset, tasks, renderer)
+        planned = plan(args.dataset, tasks, renderer, args.prompt)
         prompt_tokens = [len(p["prefix_ids"]) + len(p["suffix_ids"]) for p in planned]
         info = {
             "experiment": "Qwen3.8-27B many-shot with generated explanation (advisor prompt)",
             "dataset": args.dataset,
-            "protocol": ("official train+dev shots (fixed order), official test targets" if args.dataset == "daic"
+            "protocol": (f"zero-shot PHQ-8 item scores (label = sum >= 10), official {args.targets} subjects"
+                         if zs_phq8 else
+                         "official train+dev shots (fixed order), official test targets" if args.dataset == "daic"
                          else "LOPO: each participant classified after the other 119"),
-            "prompt_version": PROMPT_VERSION, "system_prompt": system_prompt(args.dataset),
-            "system_prompt_sha256": sha256_text(system_prompt(args.dataset)),
+            "prompt_version": "claude_zeroshot_v4" if zs_phq8 else PROMPT_VERSION, "system_prompt": sys_text,
+            "system_prompt_sha256": sha256_text(sys_text), "targets": args.targets,
             "manifest": str(args.manifest.resolve()), "manifest_sha256": manifest_sha,
             "manifest_is_reference": manifest_sha == REFERENCE_MANIFEST_SHA256[args.dataset],
             "model_dir": str(args.model_dir), "shot_seed": args.shot_seed,
@@ -458,7 +487,7 @@ def main(argv=None, generator_factory=None) -> None:
             "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "versions": {"python": platform.python_version()},
         }
-        if args.dataset == "daic":
+        if args.dataset == "daic" and not zs_phq8:
             info["example_subjects"] = [s["subject_id"] for s in planned[0]["shots"]]
         print("PLAN", json.dumps({k: v for k, v in info.items() if k not in ("system_prompt", "example_subjects")}),
               flush=True)
@@ -497,9 +526,13 @@ def main(argv=None, generator_factory=None) -> None:
             gen_ids, finished = gen.generate(gen.copy(prefix_cache), p["suffix_ids"], args.max_new_tokens, eos)
             t_gen = time.time() - t0 - t_prefix
             answer = tok.decode([i for i in gen_ids if i not in eos], skip_special_tokens=False)
-            pred, explanation = parse_answer(answer)
+            items = None
+            if zs_phq8:
+                pred, explanation, items = claude_prompts.parse_items_answer(answer)
+            else:
+                pred, explanation = parse_answer(answer)
             margin, scores = None, None
-            if not args.no_label_scores and pred is not None:
+            if not args.no_label_scores and pred is not None and not zs_phq8:
                 lc = label_candidates(tok, answer)
                 if lc is not None:
                     before_ids = tok(lc[0], add_special_tokens=False)["input_ids"]
@@ -521,7 +554,7 @@ def main(argv=None, generator_factory=None) -> None:
                 checks.append({"subject_id": sid, **check})
                 print("CHECK", json.dumps(checks[-1]), flush=True)
             shot_ids = [s["subject_id"] for s in p["shots"]]
-            cites = cited_examples(explanation)
+            cites = [] if zs_phq8 else cited_examples(explanation)
             rec = {"subject_id": sid, "label": p["target"]["label"], "score": p["target"]["score"],
                    "pred": pred, "pred_text": LABEL_TEXT.get(pred, "INVALID"), "explanation": explanation,
                    "raw_answer": answer, "finished": finished, "n_generated_tokens": len(gen_ids),
@@ -535,6 +568,8 @@ def main(argv=None, generator_factory=None) -> None:
                                "total": round(time.time() - t0, 1)}}
             if hasattr(gen, "peak_gb"):
                 rec["peak_gpu_gb"] = gen.peak_gb()
+            if zs_phq8:
+                rec["phq8_items"], rec["phq8_total"] = items, (sum(items) if items is not None else None)
             if args.dataset == "turkish":
                 rec["example_subjects"] = shot_ids
             with resp_path.open("a") as f:
@@ -552,7 +587,7 @@ def main(argv=None, generator_factory=None) -> None:
     records = [done[s] for s in targets if s in done]
     if records and not (shard and len(records) < len(targets)):
         m = {"dataset": args.dataset,
-             "split": "official_test" if args.dataset == "daic" else "LOPO, all participants",
+             "split": (f"official_{args.targets}" if args.dataset == "daic" else "LOPO, all participants"),
              "aggregation": "pooled subject-level, one generated answer per subject (INVALID = wrong)",
              **metrics(records), "complete": len(records) == len(targets),
              "unfinished_answers": sum(not r["finished"] for r in records)}
