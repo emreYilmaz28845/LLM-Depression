@@ -12,6 +12,7 @@
 #
 # Usage: scripts/mn5_debug_chain.sh --name NAME --out-dir REMOTE_OUT --total N --export "VAR=..,VAR=.."
 #        [--script scripts/run_qwen_manyshot_explain_slurm.sh] [--workdir REMOTE_CODE] [--logs REMOTE_LOGDIR]
+# --export values may contain spaces (quoted on the remote side) but not commas or single quotes.
 #        [--time 02:00:00] [--gpus 2] [--max-links 20] [--max-pending 4] [--interval 300] [--host alogin2.bsc.es]
 set -uo pipefail
 NAME=""; OUT=""; TOTAL=""; EXPORT=""; SCRIPT=scripts/run_qwen_manyshot_explain_slurm.sh; WORKDIR=""; LOGS=""
@@ -50,7 +51,7 @@ while [ "$done_n" -lt "$TOTAL" ]; do
   used=$(gpus_in_use)
   if [ $((used + GPUS)) -gt 8 ]; then log "GPU cap: $used in use + $GPUS > 8; not submitting"; exit 2; fi
   jid=$(remote "cd $WORKDIR && sbatch --parsable -q acc_debug -t $TIME -J $NAME -o $LOGS/${NAME}_%j.out \
-        -e $LOGS/${NAME}_%j.err --export=ALL,$EXPORT $SCRIPT 2>&1 || true" | tail -1)
+        -e $LOGS/${NAME}_%j.err --export='ALL,$EXPORT' $SCRIPT 2>&1 || true" | tail -1)
   if ! [[ "$jid" =~ ^[0-9]+$ ]]; then  # e.g. acc_debug already holds this user's one allowed job
     log "sbatch refused: $jid; retrying in ${INTERVAL}s"; sleep "$INTERVAL"
     blocked=$(( ${blocked:-0} + INTERVAL ))
