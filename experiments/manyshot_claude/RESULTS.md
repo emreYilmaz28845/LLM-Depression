@@ -225,3 +225,25 @@ no labelled examples, so the explanation can cite only the participant's transcr
 - Set aside, not used in the results: `outputs/ozy162_smoke_singleblock_nocache/` (2 subjects, earlier
   single-block layout, high effort) and `outputs/ozy162_partial_effhigh_stopped/` (3 subjects, high effort,
   stopped when the user chose medium).
+
+## D3TEC zero-shot PHQ-9 item scoring (DAIC v4 port), 2026-11-25
+
+Claude Opus, effort medium, 62 participants (29 depressed, PHQ-9 >= 10). D3TEC has no official split, and
+zero-shot has no training, so everyone is scored; calibration is leave-one-participant-out (LOPO). Text = the
+27 Spanish ASR responses per participant, numbered (the prompt wording is not in our metadata). Script:
+`run_claude_d3tec_phq9.py`, `calibrate_d3tec_phq9.py`. 3 runs, ~$2.2 each.
+
+| | Spearman | MAE | macro-F1 (>= 10) | AUROC |
+|---|---|---|---|---|
+| raw totals (mean of 3 runs) | 0.54 | 6.18 | 0.41 | 0.73 |
+| LOPO-calibrated (mean of 3 runs) | — | 3.97 | 0.64 | — |
+| baseline: predict the mean | — | 4.87 | — | — |
+
+- The model scores far too low: mean predicted total 3.3 vs gold 9.3; raw >= 10 flags 1-3 of 29 depressed.
+  Ranking is still informative (AUROC .73), so the calibrated line recovers macro-F1 .64.
+- Stable: the label agrees in all 3 runs for 59/62; pairwise r of totals .93-.95.
+- Items that separate the groups (depressed / non-depressed mean): interest .54/.09, concentration .51/.07,
+  down 1.16/.66. Psychomotor, appetite and item 9 are ~0 (item 9 non-zero for 1 participant in 1 run).
+- Context: frozen-embedding ridge reference (OZY-158, LOPO) on D3TEC: A .674, T .559, A+T .642 macro-F1.
+  DAIC v4: Spearman .80, calibrated MAE 3.13, macro-F1 .813 — D3TEC is much weaker, as expected for short,
+  prompt-less, ASR'd answers that rarely talk about symptoms directly.
